@@ -67,40 +67,46 @@ void SpriteBatcher::EnsureCapacity(uint32_t neededInstances) {
               capacity_ * kRingFrames * sizeof(SpriteInstance) / (1024.0 * 1024.0));
 }
 
-void SpriteBatcher::Bake(const AtlasRegistry& atlas, std::span<const SpritePacket> packets) {
+void SpriteBatcher::Bake(const AtlasRegistry& atlas, std::span<const SpritePacket> packets,
+                         std::span<const SpritePacket> extraPackets) {
     auto t0 = std::chrono::steady_clock::now();
-    EnsureCapacity((uint32_t)packets.size());
+    EnsureCapacity((uint32_t)(packets.size() + extraPackets.size()));
 
     SpriteInstance* seg = ringMapped_ + (uint64_t)ringFrame_ * capacity_;
     batches_.clear();
     uint32_t written = 0;
-    uint32_t i = 0;
-    while (i < packets.size()) {
-        // 连续同键 → 一批
-        const SpritePacket& head = packets[i];
-        uint32_t start = i;
-        while (i < packets.size() && packets[i].key.SameBatch(head.key)) ++i;
-        uint32_t count = i - start;
 
-        Batch b;
-        b.key = head.key;
-        b.instanceOffset = written;
-        b.instanceCount = count;
-        batches_.push_back(b);
+    auto bakeSpan = [&](std::span<const SpritePacket> ps) {
+        uint32_t i = 0;
+        while (i < ps.size()) {
+            // 连续同键 → 一批
+            const SpritePacket& head = ps[i];
+            uint32_t start = i;
+            while (i < ps.size() && ps[i].key.SameBatch(head.key)) ++i;
+            uint32_t count = i - start;
 
-        for (uint32_t j = start; j < i; ++j) {
-            const SpritePacket& p = packets[j];
-            const SpriteInfo& spr = atlas.GetSprite(p.spriteId);
-            SpriteInstance& inst = seg[written++];
-            FillInstanceAffine(inst, p.posX, p.posY, p.rot, p.scaleX, p.scaleY);
-            inst.u0 = spr.u0;
-            inst.v0 = spr.v0;
-            inst.u1 = spr.u1;
-            inst.v1 = spr.v1;
-            inst.colorBits = p.colorBits;
-            inst.flags = p.flags;
+            Batch b;
+            b.key = head.key;
+            b.instanceOffset = written;
+            b.instanceCount = count;
+            batches_.push_back(b);
+
+            for (uint32_t j = start; j < i; ++j) {
+                const SpritePacket& p = ps[j];
+                const SpriteInfo& spr = atlas.GetSprite(p.spriteId);
+                SpriteInstance& inst = seg[written++];
+                FillInstanceAffine(inst, p.posX, p.posY, p.rot, p.scaleX, p.scaleY);
+                inst.u0 = spr.u0;
+                inst.v0 = spr.v0;
+                inst.u1 = spr.u1;
+                inst.v1 = spr.v1;
+                inst.colorBits = p.colorBits;
+                inst.flags = p.flags;
+            }
         }
-    }
+    };
+    bakeSpan(packets);
+    bakeSpan(extraPackets);
     lastInstanceCount_ = written;
 
     auto t1 = std::chrono::steady_clock::now();

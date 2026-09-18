@@ -8,6 +8,7 @@ add_library(lemon-engine STATIC
   Renderer/Atlas.cpp
   Renderer/Renderable.cpp
   Renderer/SpriteBatcher.cpp
+  Renderer/Particles.cpp
 )
 
 target_include_directories(lemon-engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

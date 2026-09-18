@@ -8,6 +8,7 @@
 
 #include "Core/Math.h"
 #include "Renderer/Atlas.h"
+#include "Renderer/Particles.h"
 #include "Renderer/Renderable.h"
 
 using namespace lemon;
@@ -153,6 +154,62 @@ void TestSortStability() {
         Expect(v[i - 1].sortKey <= v[i].sortKey, "sorted monotonic");
 }
 
+void TestParticles() {
+    ParticleSystem ps;
+    ps.SetBudget(10);
+    // 注册假图集页（AtlasRegistry 不触碰 device，句柄只透传）
+    AtlasRegistry atlas;
+    rhi::Texture fakeTex{1};
+    atlas.RegisterAtlas(0, fakeTex, 64, 64);
+    uint32_t sprA = atlas.AddSprite(0, 0, 0, 16, 16);
+    uint32_t sprB = atlas.AddSprite(0, 16, 0, 16, 16);
+
+    // 发射钳制：budget=10, rate=1000/s, dt=1 → 存活 10, 丢弃 990
+    EmitterConfig e;
+    e.rate = 1000.0f;
+    e.lifetimeMin = e.lifetimeMax = 5.0f;
+    e.spriteId = sprA;
+    float accum = 0;
+    ps.Emit(e, 1.0f, 42, accum);
+    Expect(ps.AliveCount() == 10, "emit clamped to budget");
+    Expect(ps.LastStats().droppedFull == 990, "dropped counted");
+
+    // 寿命尽 swap-and-pop 回收
+    ps.Simulate({0, 0}, 5.0f);
+    Expect(ps.AliveCount() == 0, "all expired recycled");
+
+    // 桶分组：同图集同参数的两个子纹理 → 键相同 → 合批（0 切换，图集合批的意义）
+    ps.SetBudget(1000);
+    EmitterConfig e2 = e;
+    e2.rate = 100.0f;
+    e2.lifetimeMin = e2.lifetimeMax = 10.0f;
+    e2.spriteId = sprB;
+    float acc1 = 0, acc2 = 0;
+    ps.Emit(e, 0.5f, 1, acc1);   // rate 1000 × 0.5s = 500 个 A
+    ps.Emit(e2, 0.5f, 2, acc2);  // rate 100 × 0.5s = 50 个 B（同图集同混合 → 同键）
+    Expect(ps.AliveCount() == 550, "two emitters alive");
+    auto packets = ps.Extract(atlas, {32, 32}, 1000, 1000);
+    Expect(packets.size() == 550, "all visible");
+    int switches = 0;
+    for (size_t i = 1; i < packets.size(); ++i)
+        if (!packets[i].key.SameBatch(packets[i - 1].key)) ++switches;
+    Expect(switches == 0, "same-atlas sprites share one batch key");
+
+    // 对照：不同混合模式 → 分段连续（各一段）
+    ParticleSystem ps2;
+    ps2.SetBudget(1000);
+    EmitterConfig eAlpha = e2;
+    eAlpha.blend = (uint8_t)BlendKind::Alpha;
+    float a1 = 0, a2 = 0;
+    ps2.Emit(e2, 0.5f, 1, a1);
+    ps2.Emit(eAlpha, 0.5f, 2, a2);
+    auto packets2 = ps2.Extract(atlas, {32, 32}, 1000, 1000);
+    int switches2 = 0;
+    for (size_t i = 1; i < packets2.size(); ++i)
+        if (!packets2[i].key.SameBatch(packets2[i - 1].key)) ++switches2;
+    Expect(switches2 == 1, "different blend splits contiguous runs");
+}
+
 } // namespace
 
 int main() {
@@ -164,6 +221,7 @@ int main() {
     TestAtlasUV();
     TestBatchKey();
     TestSortStability();
+    TestParticles();
     LEMON_LOG("engine-tests: %d checks OK", g_checks);
     return 0;
 }

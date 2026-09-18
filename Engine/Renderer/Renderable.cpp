@@ -135,8 +135,13 @@ std::span<const SpritePacket> RenderableManager::Extract(const AtlasRegistry& at
         packets_.push_back(p);
     }
 
-    std::sort(packets_.begin(), packets_.end(),
-              [](const SpritePacket& a, const SpritePacket& b) { return a.sortKey < b.sortKey; });
+    // 分组必须由完整 64 位批键哈希保证（摘要碰撞会让不同键交错 → 批数爆炸）；
+    // 同键内按 sortKey（order → seq）稳定有序
+    std::sort(packets_.begin(), packets_.end(), [](const SpritePacket& a, const SpritePacket& b) {
+        if (a.key.layer != b.key.layer) return a.key.layer < b.key.layer;
+        if (a.key.hash != b.key.hash) return a.key.hash < b.key.hash;
+        return a.sortKey < b.sortKey;
+    });
 
     stats_.visible = (uint32_t)packets_.size();
     builtSimVersion_ = simVersion_;

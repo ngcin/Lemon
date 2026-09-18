@@ -23,8 +23,10 @@ public:
     /// preheat：全部混合模式管线一次建齐（启动期；管线磁盘缓存加速二启）
     void Init(rhi::Device& device, uint32_t samplerLinearSlot, uint32_t samplerPointSlot);
 
-    /// Bake：已排序包 → 实例写入当前段 + 批表（渲染线程 CPU 段）
-    void Bake(const AtlasRegistry& atlas, std::span<const SpritePacket> packets);
+    /// Bake：已排序包段（精灵 + 可选粒子段，各段内有序）→ 实例写入当前段 + 批表。
+    /// 跨段同键不合并（批数上限误差 +1，语义无损）
+    void Bake(const AtlasRegistry& atlas, std::span<const SpritePacket> packets,
+              std::span<const SpritePacket> extraPackets = {});
 
     /// Record：按批录制命令（每批一次 push constant + 一次 draw）
     void Record(rhi::CommandList& cl, const Mat3x2& viewProj);
