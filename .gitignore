@@ -1,0 +1,17 @@
+# 构建产物
+build/
+out/
+*.obj
+*.o
+
+# CPM 缓存
+.cpm-cache/
+
+# IDE / 系统
+.DS_Store
+.idea/
+.vscode/
+*.user
+
+# 日志
+*.log

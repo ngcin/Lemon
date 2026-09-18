@@ -1,0 +1,27 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "mac",
+      "displayName": "macOS (MoltenVK, Release)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/mac",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "LEMON_BUILD_SPIKES": "ON"
+      }
+    },
+    {
+      "name": "mac-debug",
+      "displayName": "macOS (MoltenVK, Debug)",
+      "inherits": "mac",
+      "binaryDir": "${sourceDir}/build/mac-debug",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "mac", "configurePreset": "mac" },
+    { "name": "mac-debug", "configurePreset": "mac-debug" }
+  ]
+}

@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Lemon M0-W3 入口程序集：由 C++ 经 hostfxr load_assembly_and_get_function_pointer 加载。
+    注意：故意不引用 Script 工程 —— 用户脚本程序集只通过 Collectible ALC 从路径加载，
+    保证热重载（Unload + 重新 Load）类型宇宙干净（Luma ScriptLoadContext 同款模式）。
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>LemonSpike</AssemblyName>
+  </PropertyGroup>
+</Project>

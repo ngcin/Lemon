@@ -1,0 +1,11 @@
+/Users/ngcin/ZCodeProject/GameEngine/Lemon/spike/03-csharp/dotnet/Script/obj/Release/net10.0/Script.GeneratedMSBuildEditorConfig.editorconfig
+/Users/ngcin/ZCodeProject/GameEngine/Lemon/spike/03-csharp/dotnet/Script/obj/Release/net10.0/Script.AssemblyInfoInputs.cache
+/Users/ngcin/ZCodeProject/GameEngine/Lemon/spike/03-csharp/dotnet/Script/obj/Release/net10.0/Script.AssemblyInfo.cs
+/Users/ngcin/ZCodeProject/GameEngine/Lemon/spike/03-csharp/dotnet/Script/obj/Release/net10.0/Script.csproj.CoreCompileInputs.cache
+/Users/ngcin/ZCodeProject/GameEngine/Lemon/build/mac/spike/03-csharp/dotnet/Script.deps.json
+/Users/ngcin/ZCodeProject/GameEngine/Lemon/build/mac/spike/03-csharp/dotnet/Script.dll
+/Users/ngcin/ZCodeProject/GameEngine/Lemon/build/mac/spike/03-csharp/dotnet/Script.pdb
+/Users/ngcin/ZCodeProject/GameEngine/Lemon/spike/03-csharp/dotnet/Script/obj/Release/net10.0/Script.dll
+/Users/ngcin/ZCodeProject/GameEngine/Lemon/spike/03-csharp/dotnet/Script/obj/Release/net10.0/refint/Script.dll
+/Users/ngcin/ZCodeProject/GameEngine/Lemon/spike/03-csharp/dotnet/Script/obj/Release/net10.0/Script.pdb
+/Users/ngcin/ZCodeProject/GameEngine/Lemon/spike/03-csharp/dotnet/Script/obj/Release/net10.0/ref/Script.dll

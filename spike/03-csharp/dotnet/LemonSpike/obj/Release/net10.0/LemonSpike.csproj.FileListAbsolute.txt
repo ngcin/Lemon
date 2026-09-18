@@ -1,0 +1,11 @@
+/Users/ngcin/ZCodeProject/GameEngine/Lemon/spike/03-csharp/dotnet/LemonSpike/obj/Release/net10.0/LemonSpike.GeneratedMSBuildEditorConfig.editorconfig
+/Users/ngcin/ZCodeProject/GameEngine/Lemon/spike/03-csharp/dotnet/LemonSpike/obj/Release/net10.0/LemonSpike.AssemblyInfoInputs.cache
+/Users/ngcin/ZCodeProject/GameEngine/Lemon/spike/03-csharp/dotnet/LemonSpike/obj/Release/net10.0/LemonSpike.AssemblyInfo.cs
+/Users/ngcin/ZCodeProject/GameEngine/Lemon/spike/03-csharp/dotnet/LemonSpike/obj/Release/net10.0/LemonSpike.csproj.CoreCompileInputs.cache
+/Users/ngcin/ZCodeProject/GameEngine/Lemon/build/mac/spike/03-csharp/dotnet/LemonSpike.deps.json
+/Users/ngcin/ZCodeProject/GameEngine/Lemon/build/mac/spike/03-csharp/dotnet/LemonSpike.dll
+/Users/ngcin/ZCodeProject/GameEngine/Lemon/build/mac/spike/03-csharp/dotnet/LemonSpike.pdb
+/Users/ngcin/ZCodeProject/GameEngine/Lemon/spike/03-csharp/dotnet/LemonSpike/obj/Release/net10.0/LemonSpike.dll
+/Users/ngcin/ZCodeProject/GameEngine/Lemon/spike/03-csharp/dotnet/LemonSpike/obj/Release/net10.0/refint/LemonSpike.dll
+/Users/ngcin/ZCodeProject/GameEngine/Lemon/spike/03-csharp/dotnet/LemonSpike/obj/Release/net10.0/LemonSpike.pdb
+/Users/ngcin/ZCodeProject/GameEngine/Lemon/spike/03-csharp/dotnet/LemonSpike/obj/Release/net10.0/ref/LemonSpike.dll
