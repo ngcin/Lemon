@@ -33,6 +33,19 @@ cmake --build --preset mac    # 构建
 
 Windows：安装 LunarG Vulkan SDK + Visual Studio 2022，预设 `win` 待 M1 添加。
 
+## 测试（方法与判读详见 `../docs/EngineDesign/09-Testing.md`）
+
+```bash
+./build/mac/tests/lemon-tests                                           # 单测 167 项
+./build/mac/Samples/rhi-smoke/lemon-rhi-smoke --frames 300 --validate   # RHI 冒烟（含 mips/管线缓存）
+./build/mac/Samples/bench-mow/lemon-bench-mow --immediate               # M1 验收场
+./build/mac/Samples/bench-mow/lemon-bench-mow --resize-test --validate  # resize 压测
+./build/mac/Samples/bench-mow/lemon-bench-mow --device-loss 300 --validate --frames 900  # 设备丢失
+```
+
+纪律：Vulkan 改动默认带 `--validate` 自测并确认零错误；新负载先小 N + FIFO 再放大，
+正式数字才用 `--immediate`；bench 内置看门狗（EMA>250ms 自动中止）。
+
 ## 代码纪律（设计文档 01）
 
 - Vulkan/VMA 类型只出现在 `.cpp`（零泄漏，头文件用自有句柄）——spike 阶段单文件天然满足。
