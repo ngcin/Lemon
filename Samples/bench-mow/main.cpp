@@ -31,7 +31,7 @@ using namespace lemon::renderer;
 int main(int argc, char** argv) {
     uint32_t sprites = 100000, particles = 50000;
     int frames = 0, deviceLossAt = -1;
-    bool immediate = false, validate = false;
+    bool immediate = false, validate = false, resizeTest = false;
     float zoom = 1.0f; // >1 拉近：模拟压测 A 的"剔除后 15% 可见"语境
     for (int i = 1; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--sprites") && i + 1 < argc) sprites = (uint32_t)std::atoi(argv[++i]);
@@ -41,9 +41,10 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--validate")) validate = true;
         else if (!std::strcmp(argv[i], "--device-loss") && i + 1 < argc) deviceLossAt = std::atoi(argv[++i]);
         else if (!std::strcmp(argv[i], "--zoom") && i + 1 < argc) zoom = (float)std::atof(argv[++i]);
+        else if (!std::strcmp(argv[i], "--resize-test")) resizeTest = true;
     }
-    std::printf("[lemon] bench-mow: sprites=%u particles=%u zoom=%.2f\n", sprites, particles,
-                zoom);
+    std::printf("[lemon] bench-mow: sprites=%u particles=%u zoom=%.2f resizeTest=%d\n", sprites,
+                particles, zoom, resizeTest);
 
     auto window = Window::Create({.title = "Lemon bench-mow (M1 acceptance)", .width = 1280, .height = 720});
     if (!window) return 1;
@@ -129,6 +130,7 @@ int main(int argc, char** argv) {
     double batchSum = 0;
     uint32_t recreateEvents = 0, skippedFrames = 0;
     uint32_t minInstances = 0xFFFFFFFFu;
+    uint32_t resizeRequested = 0, resizeSeen = 0;
     uint64_t statFrames = 0;
     double emaFrameMs = 0;
     bool watchdogAbort = false, lossRecovered = false, running = true;
@@ -136,11 +138,26 @@ int main(int argc, char** argv) {
     std::vector<SpritePacket> hudPackets;
     char hud[8][96];
 
+    // resize 压测计划：大 → 常规 → 极小 → 极端宽高比 → 复原
+    static const struct { int frame, w, h; } kResizePlan[] = {
+        {300, 1600, 900}, {500, 640, 400}, {700, 320, 200},
+        {900, 1680, 380}, {1100, 1280, 720},
+    };
+
     while (running) {
         if (!window->PollEvents() || window->IsKeyDown(Key::Escape)) running = false;
         if (frames > 0 && (int)frame >= frames) running = false;
         if (!running) break;
-        if (window->TakeResized() && !device->RecreateSwapchain()) continue;
+        if (resizeTest) {
+            for (const auto& r : kResizePlan)
+                if ((int)frame == r.frame) {
+                    window->RequestResize(r.w, r.h);
+                    ++resizeRequested;
+                }
+        }
+        bool winResized = window->TakeResized();
+        if (winResized) ++resizeSeen;
+        if (winResized && !device->RecreateSwapchain()) continue;
         static bool pWasDown = false;
         bool pDown = window->IsKeyDown(Key::P);
         if (pDown && !pWasDown) {
@@ -309,6 +326,10 @@ int main(int argc, char** argv) {
             fps >= 60.0 ? "PASS" : "FAIL",
             batchMax - batchMin <= 2 ? "PASS" : "CHECK",
             deviceLossAt < 0 ? "n/a" : (lossRecovered ? "PASS" : "FAIL"), cpuRender);
+        if (resizeTest)
+            std::printf("  resize-test: requested=%u seen=%u expect seen>=requested, "
+                        "recreates=%u skipped=%u\n",
+                        resizeRequested, resizeSeen, recreateEvents, skippedFrames);
     }
     if (watchdogAbort) {
         std::printf("[lemon] bench-mow ABORT: EMA %.0fms > 250ms\n", emaFrameMs);

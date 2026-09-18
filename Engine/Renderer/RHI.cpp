@@ -631,12 +631,12 @@ struct Device::Impl {
     void TransitionImage(VkCommandBuffer cmd, VkImage image, uint32_t levelCount,
                          VkImageLayout oldL, VkImageLayout newL, VkAccessFlags srcAccess,
                          VkPipelineStageFlags srcStage, VkAccessFlags dstAccess,
-                         VkPipelineStageFlags dstStage) {
+                         VkPipelineStageFlags dstStage, uint32_t baseLevel = 0) {
         VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
         b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         b.image = image;
-        b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, levelCount, 0, 1};
+        b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, baseLevel, levelCount, 0, 1};
         b.oldLayout = oldL;
         b.newLayout = newL;
         b.srcAccessMask = srcAccess;
@@ -930,10 +930,12 @@ void Device::UploadTexture(Texture t, const void* rgba8Pixels, uint64_t byteSize
                                VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT,
                                VK_PIPELINE_STAGE_TRANSFER_BIT);
             for (uint32_t i = 1; i < levels; ++i) {
+                // mip 链逐层 blit：屏障必须打到本次的目标层 i（旧代码缺 baseLevel，
+                // 全打在 level 0 上，blit 源/目的布局双双不符，验证层必报错）
                 m->TransitionImage(cmd, img, 1, VK_IMAGE_LAYOUT_UNDEFINED,
                                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0,
                                    VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
-                                   VK_PIPELINE_STAGE_TRANSFER_BIT);
+                                   VK_PIPELINE_STAGE_TRANSFER_BIT, i);
                 int32_t srcW = std::max(1, (int32_t)r.desc.width >> (i - 1));
                 int32_t srcH = std::max(1, (int32_t)r.desc.height >> (i - 1));
                 int32_t dstW = std::max(1, (int32_t)r.desc.width >> i);
@@ -948,7 +950,7 @@ void Device::UploadTexture(Texture t, const void* rgba8Pixels, uint64_t byteSize
                 m->TransitionImage(cmd, img, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                                    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                    VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                   VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+                                   VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, i);
             }
             m->TransitionImage(cmd, img, levels, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,

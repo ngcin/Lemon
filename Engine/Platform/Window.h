@@ -29,6 +29,8 @@ public:
     bool PollEvents();
     /// 读取并清除"需要重建交换链"标志（resize/像素尺寸变化）
     bool TakeResized();
+    /// 程序化改窗口尺寸（测试用：压测 resize 重建路径）
+    void RequestResize(int w, int h);
     void* NativeHandle() const;
     void GetPixelSize(int& w, int& h) const;
     bool IsKeyDown(Key k) const;

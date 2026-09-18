@@ -64,21 +64,47 @@ std::vector<uint8_t> MakeLemonTexture(int size) {
     return px;
 }
 
+// 8px 棋盘格：缩小后各 mip 层收敛为红灰混合，肉眼可辨 mip 链是否生效
+std::vector<uint8_t> MakeCheckerTexture(int size, int checkPx) {
+    std::vector<uint8_t> px((size_t)size * size * 4);
+    for (int y = 0; y < size; ++y)
+        for (int x = 0; x < size; ++x) {
+            bool on = ((x / checkPx) + (y / checkPx)) % 2 == 0;
+            uint8_t* p = &px[((size_t)y * size + x) * 4];
+            p[0] = on ? 255 : 45;
+            p[1] = on ? 70 : 45;
+            p[2] = on ? 70 : 45;
+            p[3] = 255;
+        }
+    return px;
+}
+
 struct GpuResources {
     Texture tex;
+    Texture mipTex; // 256×256 棋盘 generateMips（9 层）——mip 生成链路覆盖
     Sampler samp;
     Buffer cornerVB, indexIB, instanceSSBO;
     Pipeline pipe;
     renderer::SpriteInstance* mapped = nullptr;
     static constexpr uint32_t kMaxInstances = 4096;
+    static constexpr uint32_t kMipQuads = 6; // 256→8px 一排递减，采到第 5 层
 };
 
 void BuildGpuResources(Device& dev, GpuResources& g) {
     auto px = MakeLemonTexture(64);
     g.tex = dev.CreateTexture({.width = 64, .height = 64, .debugName = "lemon64"});
     dev.UploadTexture(g.tex, px.data(), px.size());
+
+    auto checker = MakeCheckerTexture(256, 8);
+    g.mipTex = dev.CreateTexture({.width = 256,
+                                  .height = 256,
+                                  .generateMips = true,
+                                  .debugName = "checkerMips"});
+    dev.UploadTexture(g.mipTex, checker.data(), checker.size());
+
     g.samp = dev.CreateSampler({.min = FilterMode::Linear, .mag = FilterMode::Linear});
     dev.BindTextureToSlot(g.tex, 0);
+    dev.BindTextureToSlot(g.mipTex, 3);
     dev.BindSamplerToSlot(g.samp, 0);
 
     g.cornerVB = dev.CreateBuffer({.size = sizeof(float) * 2 * 4,
@@ -201,6 +227,23 @@ int main(int argc, char** argv) {
         }
         t += 1.0f / 60.0f;
 
+        // mips 覆盖：顶部一排 256→8px 棋盘四边形，逐级触发 1..5 层 mip 采样
+        {
+            float mx = 24.0f;
+            for (uint32_t q = 0; q < GpuResources::kMipQuads; ++q) {
+                float s = 256.0f / (float)(1u << q);
+                renderer::SpriteInstance& inst = gpu.mapped[kN + q];
+                renderer::FillInstanceAffine(inst, mx + s * 0.5f, 96.0f, 0.0f, s, s);
+                inst.u0 = 0.0f;
+                inst.v0 = 0.0f;
+                inst.u1 = 1.0f;
+                inst.v1 = 1.0f;
+                inst.colorBits = math::PackRGBA(255, 255, 255, 255);
+                inst.flags = 0;
+                mx += s + 10.0f;
+            }
+        }
+
         // --- 渲染：一 pass 一 draw ---
         const float clear[4] = {0.06f, 0.07f, 0.10f, 1.0f};
         cl.BeginPass(device->SwapchainFormat(), w, h, clear);
@@ -220,6 +263,13 @@ int main(int argc, char** argv) {
         pc.samplerIndex = 0;
         cl.PushConstants(&pc, sizeof(pc));
         cl.DrawQuadInstances(kN, 0);
+
+        // 第二次 draw：同一管线/几何，atlasIndex 切槽 3（bindless 数组非零下标 + mip 链采样）
+        renderer::SpritePushConstants pcMip = pc;
+        pcMip.baseInstance = kN;
+        pcMip.atlasIndex = 3;
+        cl.PushConstants(&pcMip, sizeof(pcMip));
+        cl.DrawQuadInstances(GpuResources::kMipQuads, kN);
         cl.EndPass();
 
         bool needsRecreate = false, deviceLost = false;
