@@ -229,7 +229,7 @@ int main() {
     double cppMs = (NowMs() - t0) / kBenchTicks;
 
     // C# 批量（同一负载）
-    double csCheck = 0;
+    [[maybe_unused]] double csCheck = 0;
     t0 = NowMs();
     for (int k = 0; k < kBenchTicks; k++) sink += csTick(instances.data(), kCount, k * (1.0f / 60.0f));
     double csMs = (NowMs() - t0) / kBenchTicks;

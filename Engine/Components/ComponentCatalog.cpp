@@ -44,7 +44,7 @@ constexpr FieldMeta kSortingOverride[] = {FIELD(SortingOverride, order, Int16)};
 
 // ---- Behavior（id 9..20）----
 constexpr FieldMeta kHealth[] = {FIELD(Health, max, Float), FIELD(Health, cur, Float),
-                                 FIELD(Health, iFrames, Float)};
+                                 FIELD_RT(Health, iFrames, Float)};
 constexpr FieldMeta kMover[] = {FIELD(Mover, speed, Float)};
 constexpr FieldMeta kPatrol[] = {FIELD(Patrol, a, Vec2), FIELD(Patrol, b, Vec2),
                                  FIELD(Patrol, pauseTime, Float),
@@ -60,22 +60,23 @@ constexpr FieldMeta kShooter[] = {
     FIELD_RT(Shooter, cooldown, Float), FIELD_RT(Shooter, target, EntityRef)};
 constexpr FieldMeta kProjectile[] = {
     FIELD(Projectile, speed, Float), FIELD(Projectile, lifetime, Float),
-    FIELD(Projectile, damage, Float), FIELD(Projectile, age, Float),
+    FIELD(Projectile, damage, Float), FIELD_RT(Projectile, age, Float),
     FIELD(Projectile, pierce, UInt8), FIELD(Projectile, homing, UInt8),
-    FIELD(Projectile, hits, UInt16)};
+    FIELD_RT(Projectile, hits, UInt16)};
 constexpr FieldMeta kSpawner[] = {
     FIELD(Spawner, prefabId, UInt32), FIELD(Spawner, interval, Float),
     FIELD(Spawner, burst, UInt16), FIELD(Spawner, range, Float),
     FIELD(Spawner, maxAlive, UInt32), FIELD(Spawner, spawnTeam, TeamRef),
-    FIELD(Spawner, cooldown, Float)};
+    FIELD_RT(Spawner, cooldown, Float)};
 constexpr FieldMeta kHazard[] = {FIELD(Hazard, dps, Float),
                                  FIELD(Hazard, tickInterval, Float),
-                                 FIELD(Hazard, tickPhase, Float)};
+                                 FIELD_RT(Hazard, tickPhase, Float)};
 constexpr FieldMeta kCollectible[] = {FIELD(Collectible, kind, UInt8),
                                       FIELD(Collectible, magnetRadius, Float)};
 constexpr FieldMeta kTrigger2D[] = {
     FIELD(Trigger2D, triggerId, UInt32), FIELD(Trigger2D, once, UInt8),
-    FIELD(Trigger2D, inside, UInt8), FIELD(Trigger2D, radius, Float)};
+    FIELD_RT(Trigger2D, inside, UInt8), FIELD_RT(Trigger2D, fired, UInt8),
+    FIELD(Trigger2D, radius, Float)};
 constexpr FieldMeta kKnockback[] = {FIELD(Knockback, impulse, Vec2),
                                     FIELD(Knockback, decay, Float)};
 
@@ -100,6 +101,30 @@ constexpr FieldMeta kIncrementalState[] = {
     FIELD(IncrementalState, cached, Double)};
 
 #undef FIELD
+#undef FIELD_RT
+
+// ---- 定长数组段（元素字段表 + 段登记；序列化/状态哈希共用，见 ArraySegMeta）----
+constexpr FieldMeta kStatusInst[] = {
+    { "id", FieldType::UInt16, (uint16_t)offsetof(StatusInst, id), 0 },
+    { "stacks", FieldType::UInt16, (uint16_t)offsetof(StatusInst, stacks), 0 },
+    { "remain", FieldType::Float, (uint16_t)offsetof(StatusInst, remain), 0 },
+    { "source", FieldType::UInt32, (uint16_t)offsetof(StatusInst, source), 0 }};
+constexpr FieldMeta kItemStack[] = {
+    { "itemId", FieldType::UInt32, (uint16_t)offsetof(ItemStack, itemId), 0 },
+    { "count", FieldType::UInt16, (uint16_t)offsetof(ItemStack, count), 0 }};
+#define SEG_OFF(C, f) (uint16_t)offsetof(C, f)
+constexpr ArraySegMeta kStatusEffectsSeg = {
+    "StatusEffects", "active", SEG_OFF(StatusEffects, active),
+    (uint16_t)sizeof(StatusInst), SEG_OFF(StatusEffects, count), 4,
+    kStatusInst, (uint16_t)(sizeof(kStatusInst) / sizeof(FieldMeta))};
+constexpr ArraySegMeta kInventorySeg = {
+    "Inventory", "items", SEG_OFF(Inventory, items),
+    (uint16_t)sizeof(ItemStack), SEG_OFF(Inventory, count), 16,
+    kItemStack, (uint16_t)(sizeof(kItemStack) / sizeof(FieldMeta))};
+constexpr ArraySegMeta kEquipmentSeg = {
+    "Equipment", "relicIds", SEG_OFF(Equipment, relicIds),
+    (uint16_t)sizeof(uint32_t), 0xFFFF, 3, nullptr, 0}; // 定长标量数组
+#undef SEG_OFF
 
 // 运行时构造钩子（模板自动生成；SceneArchive 按元数据访问组件）
 template <typename C>
@@ -127,7 +152,12 @@ void ForEachComponent(Scene& s, void (*cb)(Entity, const void*, void*), void* ct
 
 #define REGISTER(Name, fields)                                                       \
     reg.Register({#Name, 0, (uint16_t)(sizeof(fields) / sizeof(FieldMeta)),           \
-                  (uint32_t)sizeof(Name), fields, HasComponent<Name>,                 \
+                  (uint32_t)sizeof(Name), fields, nullptr, HasComponent<Name>,         \
+                  EmplaceComponent<Name>, ReadComponent<Name>,                        \
+                  ForEachComponent<Name>});
+#define REGISTER_SEG(Name, fields, seg)                                              \
+    reg.Register({#Name, 0, (uint16_t)(sizeof(fields) / sizeof(FieldMeta)),           \
+                  (uint32_t)sizeof(Name), fields, &seg, HasComponent<Name>,            \
                   EmplaceComponent<Name>, ReadComponent<Name>,                        \
                   ForEachComponent<Name>});
 
@@ -161,12 +191,13 @@ void RegisterAllComponents() {
     REGISTER(Trigger2D, kTrigger2D)
     REGISTER(Knockback, kKnockback)
     REGISTER(Stats, kStats)
-    REGISTER(StatusEffects, kStatusEffects)
-    REGISTER(Inventory, kInventory)
-    REGISTER(Equipment, kEquipment)
+    REGISTER_SEG(StatusEffects, kStatusEffects, kStatusEffectsSeg)
+    REGISTER_SEG(Inventory, kInventory, kInventorySeg)
+    REGISTER_SEG(Equipment, kEquipment, kEquipmentSeg)
     REGISTER(XpProgress, kXpProgress)
     REGISTER(IncrementalState, kIncrementalState)
 #undef REGISTER
+#undef REGISTER_SEG
 }
 
 } // namespace lemon::ecs

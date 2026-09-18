@@ -7,8 +7,9 @@ World::World(const WorldDesc& desc)
     : desc_(desc),
       jobs_(std::make_unique<JobSystem>(desc.threadCount)),
       systemRngs_(kMaxSystemRngs),
-      teams_(TeamTable::Default()), // 默认敌我表（03 §9）；资产侧加载后覆写
-      events_(desc.initialEventCapacity) {}
+      events_(desc.initialEventCapacity),
+      teams_(TeamTable::Default()) { // 默认敌我表（03 §9）；资产侧加载后覆写
+}
 
 World::~World() = default;
 
@@ -24,7 +25,7 @@ Scene& World::CreateScene(const char* name) {
 }
 
 void World::Step(float fixedDt) {
-    if (!active_) return;
+    if (!active_) return; // 无活动场景 = 空步（不崩；tick 不推进）
     pipeline_.RunStage(*this, *active_, SystemStage::Essential, fixedDt);
     pipeline_.RunStage(*this, *active_, SystemStage::FixedTick, fixedDt);
     ++tick_;

@@ -60,6 +60,52 @@ bool ReadField(const Json& src, const FieldMeta& f, char* comp, const Entity* re
     return false;
 }
 
+Json WriteField(const FieldMeta& f, const char* comp,
+                const std::unordered_map<Entity, uint32_t>& entityIds);
+
+// 数组段：读（元素对象数组或 uint32 数值数组；越界 count 截断到容量）
+void ReadArraySeg(const Json& src, const ArraySegMeta& seg, char* comp) {
+    if (!src.is_array()) return;
+    size_t n = src.size();
+    if (n > seg.maxCount) n = seg.maxCount;
+    char* base = comp + seg.offset;
+    for (size_t i = 0; i < n; ++i) {
+        char* elem = base + i * seg.elemSize;
+        const Json& ev = src[i];
+        if (seg.elemFields) {
+            for (uint16_t f = 0; f < seg.elemFieldCount; ++f)
+                if (ev.contains(seg.elemFields[f].name))
+                    ReadField(ev.at(seg.elemFields[f].name), seg.elemFields[f], elem,
+                              nullptr, 0);
+        } else if (ev.is_number_unsigned() || ev.is_number_integer()) {
+            *(uint32_t*)elem = ev.get<uint32_t>();
+        }
+    }
+    if (seg.countOffset != 0xFFFF) *(uint8_t*)(comp + seg.countOffset) = (uint8_t)n;
+}
+
+// 数组段：写（元素字段表 → 对象数组；标量段 → 数值数组）
+Json WriteArraySeg(const ArraySegMeta& seg, const char* comp) {
+    uint32_t n = seg.maxCount;
+    if (seg.countOffset != 0xFFFF) n = *(const uint8_t*)(comp + seg.countOffset);
+    if (n > seg.maxCount) n = seg.maxCount;
+    const char* base = comp + seg.offset;
+    Json arr = Json::array();
+    for (uint32_t i = 0; i < n; ++i) {
+        const char* elem = base + i * seg.elemSize;
+        if (seg.elemFields) {
+            Json obj = Json::object();
+            for (uint16_t f = 0; f < seg.elemFieldCount; ++f)
+                obj[seg.elemFields[f].name] =
+                    WriteField(seg.elemFields[f], elem, {});
+            arr.push_back(std::move(obj));
+        } else {
+            arr.push_back(*(const uint32_t*)elem);
+        }
+    }
+    return arr;
+}
+
 // 写：组件内存 → json 值（EntityRef 解析失败/句柄不在场景 → null）
 Json WriteField(const FieldMeta& f, const char* comp,
                 const std::unordered_map<Entity, uint32_t>& entityIds) {
@@ -123,6 +169,8 @@ std::string SceneArchive::Save(Scene& scene) {
                 if (m.fields[f].flags & kFieldRuntime) continue; // 运行时态不入档
                 obj[m.fields[f].name] = WriteField(m.fields[f], comp, entityIds);
             }
+            if (m.arraySeg) // 定长数组段（active/items/relicIds 等）
+                obj[m.arraySeg->field] = WriteArraySeg(*m.arraySeg, comp);
             comps[m.name] = std::move(obj);
         }
         entities.push_back(Json{{"components", std::move(comps)}});
@@ -155,8 +203,8 @@ bool SceneArchive::Load(Scene& scene, const std::string& jsonText) {
         LEMON_WARN("scene schema %u newer than engine %u", ver, kSchemaVersion);
         return false;
     }
-    if (!doc.contains("entities")) {
-        LEMON_WARN("scene missing entities");
+    if (!doc.contains("entities") || !doc.at("entities").is_array()) {
+        LEMON_WARN("scene missing/invalid entities array");
         return false;
     }
 
@@ -172,11 +220,13 @@ bool SceneArchive::Load(Scene& scene, const std::string& jsonText) {
     remap.reserve(entities.size());
     for (size_t i = 0; i < entities.size(); ++i) remap.push_back(scene.Create());
 
+    // 用户可编辑的文本档：字段类型错/结构坏不得抛穿加载器（json 异常就地降级）
     size_t i = 0;
     for (const Json& ent : entities) {
         Entity e = remap[i++];
-        if (!ent.contains("components")) continue;
+        if (!ent.is_object() || !ent.contains("components")) continue;
         const Json& comps = ent.at("components");
+        if (!comps.is_object()) continue;
         for (auto it = comps.begin(); it != comps.end(); ++it) {
             const ComponentMeta* m = reg.Find(it.key().c_str());
             if (!m) {
@@ -184,11 +234,27 @@ bool SceneArchive::Load(Scene& scene, const std::string& jsonText) {
                            it.key().c_str());
                 continue;
             }
+            if (!it.value().is_object()) continue;
             char* comp = (char*)m->emplaceFn(scene, e);
-            for (uint16_t f = 0; f < m->fieldCount; ++f)
-                if (it.value().contains(m->fields[f].name))
-                    ReadField(it.value().at(m->fields[f].name), m->fields[f], comp,
+            const Json& obj = it.value();
+            for (uint16_t f = 0; f < m->fieldCount; ++f) {
+                if (!obj.contains(m->fields[f].name)) continue;
+                try {
+                    ReadField(obj.at(m->fields[f].name), m->fields[f], comp,
                               remap.data(), remap.size());
+                } catch (const Json::exception& ex) {
+                    LEMON_WARN("field '%s.%s' type mismatch skipped: %s", m->name,
+                               m->fields[f].name, ex.what());
+                }
+            }
+            if (m->arraySeg && obj.contains(m->arraySeg->field)) {
+                try {
+                    ReadArraySeg(obj.at(m->arraySeg->field), *m->arraySeg, comp);
+                } catch (const Json::exception& ex) {
+                    LEMON_WARN("array seg '%s.%s' skipped: %s", m->name,
+                               m->arraySeg->field, ex.what());
+                }
+            }
         }
     }
     return true;

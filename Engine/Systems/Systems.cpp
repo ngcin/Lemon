@@ -102,6 +102,16 @@ void SpawnSystem::Tick(World& world, Scene& scene, float dt) {
         --censusCountdown_;
     }
 
+    const World::SpawnFn& spawn = world.GetSpawnFn();
+    if (!spawn) {
+        static bool warned = false;
+        if (!warned) {
+            LEMON_WARN("Spawner present but no spawn factory registered");
+            warned = true;
+        }
+        return;
+    }
+
     auto view = scene.View<Spawner, Transform2D>();
 
     for (auto [ent, sp, tf] : view.each()) {
@@ -114,15 +124,6 @@ void SpawnSystem::Tick(World& world, Scene& scene, float dt) {
         if (sp.maxAlive > 0 && teamCounts_[sp.spawnTeam & 63] >= sp.maxAlive)
             continue;
 
-        const World::SpawnFn& spawn = world.GetSpawnFn();
-        if (!spawn) {
-            static bool warned = false;
-            if (!warned) {
-                LEMON_WARN("Spawner present but no spawn factory registered");
-                warned = true;
-            }
-            return;
-        }
         Rng& rng = world.SystemRng(2); // 子流 id = 本系统注册序
         for (uint16_t b = 0; b < sp.burst; ++b) {
             if (sp.maxAlive > 0 && teamCounts_[sp.spawnTeam & 63] >= sp.maxAlive)
@@ -165,6 +166,8 @@ void AISystem::Tick(World& world, Scene& scene, float dt) {
         world.Jobs().ParallelFor(n, 256, [&](uint32_t b, uint32_t e) {
             for (uint32_t i = b; i < e; ++i) {
                 entt::entity ent = pool[i];
+                // 池切分不含伴生组件约束（与 Separation 同守卫，防缺件实体空引用）
+                if (!scene.Registry().all_of<Transform2D, Velocity>(ent)) continue;
                 Chase& ch = pool.get(ent);
                 Transform2D& tf = *scene.Registry().try_get<Transform2D>(ent);
                 Velocity& vel = *scene.Registry().try_get<Velocity>(ent);
@@ -356,7 +359,7 @@ void HitboxSystem::Tick(World& world, Scene& scene, float dt) {
                 if (!hm || !teams.Hostile(projTeam, hm->team)) return true;
                 Health* hp = scene.TryGet<Health>(hit);
                 if (!hp) return true;
-
+                if (hp->cur <= 0.0f) return true; // 当帧已死（防多源重复 Death 事件）
                 if (hp->iFrames > 0.0f) return true; // 无敌帧免疫
                 hp->cur -= pr.damage;
                 hp->iFrames = 0.1f; // 帧内多弹去重（全量 iFrames 策略 M5 细化）
@@ -420,6 +423,7 @@ void HitboxSystem::Tick(World& world, Scene& scene, float dt) {
                 const Meta* tm = scene.TryGet<Meta>(hit);
                 if (!tm || !teams.Hostile(zoneTeam, tm->team)) return true;
                 if (Health* hp = scene.TryGet<Health>(hit)) {
+                    if (hp->cur <= 0.0f) return true; // 当帧已死（防重复 Death）
                     hp->cur -= hz.dps * hz.tickInterval;
                     EventPacket ev{};
                     ev.type = GameEvent::Hit;
@@ -462,12 +466,11 @@ void TriggerSystem::Tick(World& world, Scene& scene, float dt) {
                 return false; // 只需存在性
             });
 
-        // tg._pad[0] 复用为 once 已触发标志（once=1 时：首触发后置位，不再重触发）
-        uint8_t& fired = tg._pad[0];
+        // once=1 时首触发后置 fired，不再重触发（字段登记为 runtime 不入档）
         if (anyInside && !tg.inside) {
             tg.inside = 1;
-            if (!(tg.once && fired)) {
-                fired = 1;
+            if (!(tg.once && tg.fired)) {
+                tg.fired = 1;
                 EventPacket ev{};
                 ev.type = GameEvent::TriggerEnter;
                 ev.src = Scene::FromEntt(ent);
@@ -476,7 +479,7 @@ void TriggerSystem::Tick(World& world, Scene& scene, float dt) {
             }
         } else if (!anyInside && tg.inside) {
             tg.inside = 0;
-            if (!(tg.once && fired)) { // once 触发器不报 Exit
+            if (!(tg.once && tg.fired)) { // once 触发器不报 Exit
                 EventPacket ev{};
                 ev.type = GameEvent::TriggerExit;
                 ev.src = Scene::FromEntt(ent);
@@ -508,7 +511,8 @@ void StatSystem::Tick(World& world, Scene& scene, float dt) {
             while (xp.xp >= xp.xpToNext) {
                 xp.xp -= xp.xpToNext;
                 ++xp.level;
-                xp.xpToNext = std::ceil(xp.xpToNext * xpCurveK);
+                // 下限 1：xpToNext 若被资产配成 0/极小，ceil 收敛会卡死升级环
+                xp.xpToNext = std::max(1.0f, std::ceil(xp.xpToNext * xpCurveK));
                 EventPacket ev{};
                 ev.type = GameEvent::LevelUp;
                 ev.src = Scene::FromEntt(ent);

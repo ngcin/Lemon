@@ -4,7 +4,6 @@
 #include <cstring>
 #include <utility>
 
-#include "Components/GameplayComponents.h"
 #include "ECS/ComponentRegistry.h"
 
 namespace lemon::ecs {
@@ -56,13 +55,13 @@ void HashComponent(Entity e, const void* comp, void* ctx) {
         h.Bytes(fm.name, std::strlen(fm.name)); // 字段名入哈希（schema 漂移即分歧）
     }
 
-    // 定长数组段（M2 特判；M5 数组元数据化后并入字段表）
-    if (std::strcmp(m.name, "StatusEffects") == 0) {
-        const auto* st = (const StatusEffects*)comp;
-        h.Bytes(st->active, sizeof(StatusInst) * st->count);
-    } else if (std::strcmp(m.name, "Inventory") == 0) {
-        const auto* inv = (const Inventory*)comp;
-        h.Bytes(inv->items, sizeof(ItemStack) * inv->count);
+    // 定长数组段：按 count（或定长容量）哈希元素原始字节（M5 数组元数据化后并表）
+    if (m.arraySeg) {
+        const ArraySegMeta& seg = *m.arraySeg;
+        uint32_t n = seg.maxCount;
+        if (seg.countOffset != 0xFFFF) n = *(const uint8_t*)((const char*)comp + seg.countOffset);
+        if (n > seg.maxCount) n = seg.maxCount;
+        h.Bytes((const char*)comp + seg.offset, (size_t)seg.elemSize * n);
     }
 }
 

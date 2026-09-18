@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -31,7 +32,9 @@ public:
     ~Scene(); // unique_ptr<SpatialHash> 析构需完整类型，定义在 .cpp
 
     Entity Create();
-    void Destroy(Entity e);      // 两阶段：入队，帧末 CommitDestroys 提交
+    /// 两阶段：入队，帧末 CommitDestroys 提交。线程安全（ProjectileLifetime 等
+    /// 并行系统从 worker 线程调用；销毁队列与打标共用一把锁）。
+    void Destroy(Entity e);
     bool Alive(Entity e) const;
     uint32_t AliveCount() const;
 
@@ -85,11 +88,13 @@ public:
         return registry_.storage<T>();
     }
 
-    /// 遍历全部活跃实体（SceneArchive / 提取层用；序 = 实体池内部序）
+    /// 遍历全部活跃实体（SceneArchive / 提取层用；序 = 实体池内部序）。
+    /// 过滤无效槽位：entt 3.15 swap_only 策略下死亡槽位以 tombstone 留在池内。
     template <typename F>
     void Each(F&& fn) {
         auto& pool = registry_.template storage<entt::entity>();
-        for (entt::entity e : pool) fn(FromEntt(e));
+        for (entt::entity e : pool)
+            if (registry_.valid(e)) fn(FromEntt(e));
     }
 
     void CommitDestroys();
@@ -114,6 +119,7 @@ public:
 private:
     entt::registry registry_;
     std::vector<entt::entity> destroyQueue_;
+    mutable std::mutex destroyMutex_; // Destroy（可多线程）↔ CommitDestroys 互斥
     std::string name_;
     std::unique_ptr<class physics2d::SpatialHash> spatial_;
     uint64_t createdTotal_ = 0;

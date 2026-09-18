@@ -84,7 +84,8 @@ struct Trigger2D {
     uint32_t triggerId = 0;
     uint8_t once = 0;
     uint8_t inside = 0;         // 运行时：上一帧是否有进入者（差分配对）
-    uint8_t _pad[2] = {};
+    uint8_t fired = 0;          // 运行时：once 触发器已触发标志
+    uint8_t _pad = 0;
     float radius = 32.0f;       // 触发半径（OverlapCircle 语义）
 };
 

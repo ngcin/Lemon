@@ -63,8 +63,9 @@ bool SpatialHash::PassFilter(Scene& s, uint32_t entRaw, const QueryFilter& f) co
     const ecs::Meta* meta = s.TryGet<ecs::Meta>(e);
     if (meta) {
         // team/layer 均为位索引（0..31 / 0..15）；≥ 上限视为数据错误 → 静默不命中
-        if (meta->team < 32 && !(f.teamMask & (1u << meta->team))) return false;
-        if (meta->layer < 16 && !(f.layerMask & (1u << meta->layer))) return false;
+        //（审计修复：原判断写反，越界值实际会"跳过过滤"被放行）
+        if (meta->team >= 32 || !(f.teamMask & (1u << meta->team))) return false;
+        if (meta->layer >= 16 || !(f.layerMask & (1u << meta->layer))) return false;
     }
     return true;
 }

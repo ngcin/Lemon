@@ -41,12 +41,27 @@ struct FieldMeta {
 /// FieldMeta.flags 位：运行时态字段（目标缓存/计时相位等），序列化跳过
 static constexpr uint32_t kFieldRuntime = 1u;
 
+/// 定长数组段元数据（StatusEffects.active / Inventory.items / Equipment.relicIds
+/// 这类"POD 元素定长数组 + count"字段；M2 特判路径，M5 数组元数据并入字段表后移除）
+struct ArraySegMeta {
+    const char* comp;      // 所属组件名
+    const char* field;     // 序列化键名
+    uint16_t offset;       // 数组首元素偏移
+    uint16_t elemSize;     // sizeof(元素)
+    uint16_t countOffset;  // uint8 count 字段偏移；0xFFFF = 定长（无 count，用 maxCount）
+    uint16_t maxCount;     // 容量
+    // 元素内字段表（元素内偏移）；nullptr = uint32 标量数组（json 数值数组）
+    const FieldMeta* elemFields;
+    uint16_t elemFieldCount;
+};
+
 struct ComponentMeta {
     const char* name;      // "Transform2D"（序列化键，改名 = 格式变更）
     uint16_t id;           // 登记序（运行时索引）
     uint16_t fieldCount;
     uint32_t sizeOf;
     const FieldMeta* fields;
+    const ArraySegMeta* arraySeg; // 数组段（无则 nullptr）
     // 运行时构造钩子（SceneArchive 按元数据读写组件，不逐组件手写 codec）
     bool (*hasFn)(class Scene&, Entity);
     void* (*emplaceFn)(class Scene&, Entity);      // 不存在时构造，返回组件指针
@@ -62,6 +77,8 @@ public:
 
     const ComponentMeta* Find(const char* name) const;
     const ComponentMeta& At(uint16_t id) const;
+    /// 按组件名查数组段（M2 特判路径；无返回 nullptr）
+    static const ArraySegMeta* FindArraySeg(const char* compName);
     uint16_t Count() const { return (uint16_t)metas_.size(); }
 
     static ComponentRegistry& Instance(); // Meyers 单例：先于任何登记调用构造
@@ -96,6 +113,11 @@ inline const ComponentMeta* ComponentRegistry::Find(const char* name) const {
 inline const ComponentMeta& ComponentRegistry::At(uint16_t id) const {
     LEMON_ASSERT(id < metas_.size(), "component id out of range");
     return metas_[id];
+}
+
+inline const ArraySegMeta* ComponentRegistry::FindArraySeg(const char* compName) {
+    const ComponentMeta* m = Instance().Find(compName);
+    return m ? m->arraySeg : nullptr;
 }
 
 } // namespace lemon::ecs

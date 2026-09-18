@@ -567,7 +567,7 @@ void TestSceneArchive() {
     chase.speed = 88.0f;
     chase.aggroRange = 400.0f;
     chase.targetTeam = 0;
-    Health& hp = src.Emplace<Health>(monster, Health{200, 150, 0.5f});
+    src.Emplace<Health>(monster, Health{200, 150, 0.5f});
     Meta& meta = src.Emplace<Meta>(monster);
     std::strcpy(meta.tag, "elite-01");
 
@@ -940,6 +940,227 @@ void TestSeparationForce() {
 
 } // namespace
 
+// --------------------------------------------- M2 审计修复回归 --------------
+#include "Core/JobSystem.h"
+#include "Serialization/SceneArchive.h"
+
+namespace {
+
+bool ExpectNear0(float a, float b) { return std::fabs(a - b) < 1e-5f; }
+
+// 数组段保真 + RT 字段不入档（SceneArchive 修复回归）
+void TestArchiveArraySegAndRuntimeFields() {
+    World world;
+    Scene& src = world.CreateScene("seg");
+
+    Entity e = src.Create();
+    src.Emplace<Transform2D>(e, Transform2D{{3, 4}});
+    StatusEffects& st = src.Emplace<StatusEffects>(e);
+    st.active[0] = StatusInst{11, 2, 4.5f, 0xABCDu};
+    st.active[1] = StatusInst{12, 1, 0.25f, 0x1234u};
+    st.count = 2;
+    Inventory& inv = src.Emplace<Inventory>(e);
+    inv.items[0] = ItemStack{101, 3};
+    inv.items[1] = ItemStack{102, 8};
+    inv.items[2] = ItemStack{103, 1};
+    inv.count = 3;
+    inv.gold = 777;
+    Equipment& eq = src.Emplace<Equipment>(e);
+    eq.relicIds[0] = 7;
+    eq.relicIds[1] = 8;
+    eq.relicIds[2] = 9;
+
+    // RT 字段（修复：此前漏标被误序列化）
+    src.Emplace<Health>(e, Health{200, 150, 0.5f}); // iFrames RT
+    Entity sp = src.Create();
+    src.Emplace<Transform2D>(sp, Transform2D{{0, 0}});
+    Spawner& spo = src.Emplace<Spawner>(sp);
+    spo.cooldown = 0.42f; // RT
+
+    std::string text = SceneArchive::Save(src);
+    Expect(text.find("\"iFrames\"") == std::string::npos, "iFrames not serialized");
+    Expect(text.find("\"cooldown\"") == std::string::npos,
+           "spawner cooldown not serialized");
+
+    World w2;
+    Scene& dst = w2.CreateScene("seg2");
+    Expect(SceneArchive::Load(dst, text), "seg scene load");
+    Expect(dst.AliveCount() == 2, "seg entity count");
+
+    bool found = false;
+    dst.View<StatusEffects>().each([&](auto, StatusEffects& s2) {
+        found = true;
+        Expect(s2.count == 2, "status count roundtrip");
+        Expect(s2.active[0].id == 11 && s2.active[0].stacks == 2 &&
+                   s2.active[0].source == 0xABCDu && ExpectNear0(s2.active[0].remain, 4.5f),
+               "status[0] roundtrip");
+        Expect(s2.active[1].id == 12 && s2.active[1].source == 0x1234u,
+               "status[1] roundtrip");
+    });
+    Expect(found, "status entity located");
+    dst.View<Inventory>().each([&](auto, Inventory& i2) {
+        Expect(i2.count == 3, "inventory count roundtrip");
+        Expect(i2.items[0].itemId == 101 && i2.items[0].count == 3, "item[0] roundtrip");
+        Expect(i2.items[2].itemId == 103 && i2.items[2].count == 1, "item[2] roundtrip");
+        Expect(i2.gold == 777, "gold roundtrip");
+    });
+    dst.View<Equipment>().each([&](auto, Equipment& e2) {
+        Expect(e2.relicIds[0] == 7 && e2.relicIds[1] == 8 && e2.relicIds[2] == 9,
+               "relicIds[0..2] roundtrip");
+    });
+    // RT 字段读档后回落默认值
+    dst.View<Spawner>().each(
+        [&](auto, Spawner& s2) { Expect(s2.cooldown == 0.0f, "cooldown reset (runtime)"); });
+}
+
+// 恶意/畸形 .lscene 不抛穿加载器（json 异常降级修复回归）
+void TestArchiveMalformedTolerance() {
+    World w;
+    Scene& s = w.CreateScene("bad");
+    // 字段类型错（pos 是字符串）
+    Expect(SceneArchive::Load(
+               s, R"({"schemaVersion":1,"entities":[)"
+                  R"({"components":{"Transform2D":{"pos":"oops","rot":0}}}]})"),
+           "type-mismatched field tolerated");
+    bool sawDefaultTf = false;
+    s.View<Transform2D>().each([&](auto, Transform2D& tf) {
+        sawDefaultTf = true;
+        Expect(tf.pos == Vec2::Zero(), "bad field left at default");
+        Expect(tf.rot == 0.0f, "sibling field still read");
+    });
+    Expect(sawDefaultTf, "entity created despite bad field");
+    // entities 非数组
+    Expect(!SceneArchive::Load(s, R"({"schemaVersion":1,"entities":5})"),
+           "non-array entities rejected");
+    // components 非对象
+    Expect(SceneArchive::Load(s, R"({"schemaVersion":1,"entities":[)"
+                                 R"({"components":17}]})"),
+           "non-object components tolerated");
+    // 数组段类型坏（items 非数组）→ 不崩，count 保持 0
+    Expect(SceneArchive::Load(
+               s, R"({"schemaVersion":1,"entities":[)"
+                  R"({"components":{"Inventory":{"gold":9,"items":"x"}}}]})"),
+           "bad array seg tolerated");
+    bool sawInv = false;
+    s.View<Inventory>().each([&](auto, Inventory& inv) {
+        sawInv = true;
+        Expect(inv.count == 0, "bad items leaves count 0");
+        Expect(inv.gold == 9, "sibling scalar still read");
+    });
+    Expect(sawInv, "inventory present after bad seg");
+}
+
+// 越界 team/layer 实体静默不命中（PassFilter 判断反转修复回归）
+void TestSpatialHashRangeClamp() {
+    World world;
+    Scene& s = world.CreateScene("range");
+    Entity bad = s.Create();
+    s.Emplace<Transform2D>(bad, Transform2D{{0, 0}});
+    s.Emplace<Meta>(bad).team = 40; // 越界（位索引域 [0,32)）
+    Entity badLayer = s.Create();
+    s.Emplace<Transform2D>(badLayer, Transform2D{{10, 0}});
+    s.Emplace<Meta>(badLayer).layer = 20;
+
+    SpatialHash hash;
+    hash.Configure(64.0f);
+    hash.Rebuild(s);
+    int hits = 0;
+    hash.OverlapCircle(s, {0, 0}, 100.0f, QueryFilter{}, 0.0f,
+                       [&](Entity, const Transform2D&) {
+                           ++hits;
+                           return true;
+                       });
+    Expect(hits == 0, "out-of-range team/layer never hit");
+}
+
+// 并发 Destroy（Scene::Destroy 数据竞争修复回归；ASan/TSan 下有效放大）
+void TestConcurrentDestroy() {
+    World world; // 默认多线程 JobSystem
+    Scene& s = world.CreateScene("concurrent");
+    std::vector<Entity> ents(4000);
+    for (Entity& e : ents) e = s.Create();
+
+    world.Jobs().ParallelFor((uint32_t)ents.size(), 64, [&](uint32_t b, uint32_t e2) {
+        for (uint32_t i = b; i < e2; ++i) s.Destroy(ents[i]);
+    });
+    Expect(s.PendingDestroyCount() == 4000, "all destroys queued");
+    s.CommitDestroys();
+    Expect(s.AliveCount() == 0, "all destroys committed");
+    Expect(s.PendingDestroyCount() == 0, "queue drained");
+}
+
+// DestroyQueueTag 语义（Destroy 打标、Commit 随销毁移除）
+void TestDestroyQueueTagLifecycle() {
+    Scene s("tag");
+    Entity e = s.Create();
+    s.Emplace<Transform2D>(e, Transform2D{{1, 1}});
+    s.Destroy(e);
+    Expect(s.Has<DestroyQueueTag>(e), "destroy tags entity");
+    Expect(s.Alive(e), "still alive until commit");
+    s.CommitDestroys();
+    Expect(!s.Alive(e), "committed destroy");
+}
+
+// World::Step 无活动场景 = 空步不崩
+void TestWorldStepWithoutScene() {
+    WorldDesc d;
+    d.threadCount = 1;
+    World w(d);
+    w.InstallDefaultSystems();
+    w.Step(1.0f / 60.0f);
+    Expect(w.TickIndex() == 0, "no-scene step is a no-op");
+}
+
+// 双死防护：同帧两发投射物 + 一个 Hazard 打同一目标 → 恰一个 Death 事件
+void TestNoDoubleDeathEvents() {
+    World world;
+    Scene& s = world.CreateScene("dd");
+    world.SetActiveScene(&s);
+
+    Entity shooter = s.Create(); // team0 射手（供弹体势力继承）
+    s.Emplace<Transform2D>(shooter, Transform2D{{0, 0}});
+    s.Emplace<Meta>(shooter).team = 0;
+
+    Entity victim = s.Create(); // team1 受害者
+    s.Emplace<Transform2D>(victim, Transform2D{{50, 0}});
+    s.Emplace<Meta>(victim).team = 1;
+    s.Emplace<Health>(victim, Health{10, 10, 0});
+
+    for (int i = 0; i < 2; ++i) { // 两发足以致死的弹（damage 10）
+        Entity p = s.Create();
+        s.Emplace<Transform2D>(p, Transform2D{{50, 0}});
+        s.Emplace<Meta>(p).team = 0;
+        s.Emplace<Velocity>(p);
+        Projectile& pr = s.Emplace<Projectile>(p);
+        pr.damage = 10.0f;
+        pr.lifetime = 10.0f;
+    }
+    Entity hz = s.Create(); // 叠一个同 tick Hazard
+    s.Emplace<Transform2D>(hz, Transform2D{{50, 0}});
+    s.Emplace<Meta>(hz).team = 0;
+    Hazard& h = s.Emplace<Hazard>(hz);
+    h.dps = 1000.0f;
+    h.tickInterval = 0.5f;
+    h.tickPhase = 0.0f;
+
+    s.Spatial().Rebuild(s);
+
+    // 只装命中相关系统（事件计数干净）
+    world.Pipeline().AddSystem(std::make_unique<HitboxSystem>());
+    world.Pipeline().AddSystem(std::make_unique<ScriptEventDispatchSystem>());
+    world.Pipeline().AddSystem(std::make_unique<DestroyCommitSystem>());
+    world.Pipeline().ResolveOrder();
+    int deaths = 0;
+    world.SetEventSink([&](World&, const EventPacket& p) {
+        if (p.type == GameEvent::Death && p.src == victim) ++deaths;
+    });
+    world.Step(1.0f / 60.0f);
+    Expect(deaths == 1, "exactly one death event for victim");
+    Expect(world.Events().Size() == 0, "events drained at frame end");
+}
+
+} // namespace
+
 int main() {
     TestVec2();
     TestMat3x2();
@@ -966,6 +1187,13 @@ int main() {
     TestSystemPipelineOrder();
     TestSimulationEndToEnd();
     TestSeparationForce();
+    TestArchiveArraySegAndRuntimeFields();
+    TestArchiveMalformedTolerance();
+    TestSpatialHashRangeClamp();
+    TestConcurrentDestroy();
+    TestDestroyQueueTagLifecycle();
+    TestWorldStepWithoutScene();
+    TestNoDoubleDeathEvents();
     LEMON_LOG("engine-tests: %d checks OK", g_checks);
     return 0;
 }

@@ -20,7 +20,7 @@ public:
     explicit RingQueue(uint32_t initialCapacity = kDefaultCapacity)
         : buf_(FloorPow2(initialCapacity)), mask_((uint32_t)buf_.size() - 1) {}
 
-    /// 满则扩容（翻倍，POD memcpy 搬运）；达硬上限返回 false 并计数（调用方告警）
+    /// 满则扩容（翻倍，保序搬运）；达硬上限返回 false 并计数（调用方告警）
     bool Push(const T& item) {
         if (size_ == buf_.size()) {
             if (buf_.size() >= kMaxCapacity) {

@@ -9,6 +9,7 @@
 //   --record/--replay  录制/回放输入流+状态哈希（文本格式，可 diff）
 #include <chrono>
 #include <cmath>
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -29,7 +30,7 @@ using namespace lemon::ecs;
 namespace {
 
 constexpr float kDt = 1.0f / 60.0f;
-constexpr uint64_t kMagic = 0x4C5245504C415931ull; // "LREPLAY1"
+constexpr char kMagic[] = "LREPLAY1"; // 录制档魔数（文本格式）
 
 struct Config {
     uint32_t monsters = 10000;
@@ -125,7 +126,7 @@ int main(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
         auto next = [&]() -> const char* { return (i + 1 < argc) ? argv[++i] : ""; };
         if (!std::strcmp(argv[i], "--n")) cfg.monsters = (uint32_t)std::atoi(next());
-        else if (!std::strcmp(argv[i], "--frames")) cfg.frames = (uint32_t)std::atoi(next());
+        else if (!std::strcmp(argv[i], "--frames")) cfg.frames = (uint32_t)std::max(1, std::atoi(next()));
         else if (!std::strcmp(argv[i], "--threads")) cfg.threads = std::atoi(next());
         else if (!std::strcmp(argv[i], "--seed")) cfg.seed = std::strtoull(next(), nullptr, 10);
         else if (!std::strcmp(argv[i], "--stats")) cfg.stats = true;
@@ -142,7 +143,7 @@ int main(int argc, char** argv) {
             LEMON_WARN("cannot open record file: %s", cfg.recordFile);
             return 1;
         }
-        std::fprintf(recFp, "LREPLAY1\n");
+        std::fprintf(recFp, "%s\n", kMagic);
         std::fprintf(recFp, "seed %llu threads %d\n", (unsigned long long)cfg.seed,
                      cfg.threads);
     }

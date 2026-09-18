@@ -5,7 +5,8 @@
 //   * 重建 O(n log n)；查询 O(覆盖 cell 内实体数)，零分配；
 //   * 静态层（地形常驻、增量维护）M6 Tilemap 接入，接口预留。
 // 实体侧形状语义：查询层无 solver、无实体半径组件（03 目录）；命中判定按
-// 查询方给定的探测半径（弹幕 4px、磁吸 32px 等，QueryFilter.probeRadius）。
+// 查询方给定的探测半径参数（probeRadius：弹幕 4px、磁吸 32px 等，与
+// QueryFilter 分离——同一过滤器可用于不同探测半径的多次查询）。
 #pragma once
 
 #include <cstdint>

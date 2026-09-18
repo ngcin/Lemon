@@ -28,8 +28,8 @@ struct Hierarchy {
 
 struct Meta {
     uint64_t prefabId = 0;   // 0 = 非实例；回链供编辑器 Apply/Revert
-    uint32_t team = 0;       // → TeamTable（块 5）
-    uint16_t layer = 0;      // 碰撞/过滤层位掩码
+    uint32_t team = 0;       // → TeamTable（块 5）；位索引语义，合法域 [0,32)
+    uint16_t layer = 0;      // 碰撞/过滤层位索引（[0,16)，查询侧 1<<layer）
     char tag[24] = {};       // 短标签（查找/调试；长名走资产 GUID）
 };
 
