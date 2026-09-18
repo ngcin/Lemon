@@ -5,6 +5,9 @@ add_library(lemon-engine STATIC
   Core/Log.cpp
   Platform/Window.cpp
   Renderer/RHI.cpp
+  Renderer/Atlas.cpp
+  Renderer/Renderable.cpp
+  Renderer/SpriteBatcher.cpp
 )
 
 target_include_directories(lemon-engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

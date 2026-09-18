@@ -1,0 +1,53 @@
+// Lemon 引擎 — 图集运行时（02 §3.2）
+// AtlasRegistry：纹理页(bindless 槽) + spriteId → UV 映射。
+// 编辑器/打包期的 MaxRects 图集打包在 M6 资产管线落地；M1 提供运行时注册与程序化默认图集。
+// 单图集放不下的超大 sprite 自动降级独立纹理页 —— 批键不同自然分批，无需特殊路径。
+#pragma once
+
+#include <cstdint>
+#include <vector>
+
+#include "Renderer/RHI.h"
+
+namespace lemon::renderer {
+
+struct SpriteInfo {
+    uint32_t atlasIndex = 0;   // bindless 纹理槽位
+    float u0 = 0, v0 = 0, u1 = 1, v1 = 1; // 归一化 UV（左上/右下）
+    uint16_t widthPx = 0, heightPx = 0;
+    uint8_t pivotX = 50, pivotY = 50;      // 归一化轴心（0-100，Unity 心智）
+};
+
+/// 纯函数：像素矩形 → 归一化 UV（单测覆盖，编辑器打包器复用）
+SpriteInfo MakeSpriteInfo(uint32_t atlasIndex, uint32_t atlasW, uint32_t atlasH, uint32_t px,
+                          uint32_t py, uint32_t w, uint32_t h);
+
+class AtlasRegistry {
+public:
+    /// 注册纹理页（返回 atlasIndex = bindless 槽位由调用方指定）
+    void RegisterAtlas(uint32_t atlasIndex, rhi::Texture tex, uint32_t width, uint32_t height);
+    /// 在页内登记一块子纹理，返回全局 spriteId
+    uint32_t AddSprite(uint32_t atlasIndex, uint32_t px, uint32_t py, uint32_t w, uint32_t h);
+    const SpriteInfo& GetSprite(uint32_t spriteId) const;
+    uint32_t SpriteCount() const { return (uint32_t)sprites_.size(); }
+    uint32_t AtlasCount() const { return (uint32_t)atlases_.size(); }
+
+    /// 程序化默认图集（引擎内置测试/占位素材：柠檬点/光晕/实心点/方块/环）
+    /// 生成 512×512 纹理注册到 bindless 槽 defaultSlot，返回登记的首个 spriteId 集合（见实现）
+    struct DefaultSprites {
+        uint32_t lemon64, glow128, dotWhite16, dotRed16, squareWhite16, ring32;
+    };
+    static DefaultSprites CreateDefaultAtlas(rhi::Device& device, AtlasRegistry& registry,
+                                             uint32_t defaultSlot);
+
+private:
+    struct AtlasPage {
+        uint32_t atlasIndex;
+        rhi::Texture tex;
+        uint32_t width, height;
+    };
+    std::vector<AtlasPage> atlases_;
+    std::vector<SpriteInfo> sprites_; // spriteId = 下标+1
+};
+
+} // namespace lemon::renderer
