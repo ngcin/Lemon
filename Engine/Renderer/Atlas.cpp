@@ -20,6 +20,11 @@ SpriteInfo MakeSpriteInfo(uint32_t atlasIndex, uint32_t atlasW, uint32_t atlasH,
     return s;
 }
 
+void AtlasRegistry::Reset() {
+    atlases_.clear();
+    sprites_.clear();
+}
+
 void AtlasRegistry::RegisterAtlas(uint32_t atlasIndex, rhi::Texture tex, uint32_t width,
                                   uint32_t height) {
     for (auto& a : atlases_)

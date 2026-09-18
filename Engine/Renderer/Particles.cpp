@@ -87,26 +87,25 @@ void ParticleSystem::Simulate(Vec2 gravity, float dt) {
 std::span<const SpritePacket> ParticleSystem::Extract(const AtlasRegistry& atlas,
                                                       Vec2 viewCenter, float viewHalfW,
                                                       float viewHalfH) {
-    // 计数桶分组：粒子层内 order 恒 0，桶序即稳定序 → O(n) 免排序（对比 std::sort 实测
-    // 8 万粒子 5ms → 桶化后大幅下降；键数粒子场景 ≤ 个位数）
+    // 计数桶分组（单遍生成 + 槽缓存 + 纯搬运分桶，与 RenderableManager 同方案）：
+    // 粒子层内 order 恒 0，桶序即稳定序 → O(n) 免排序（std::sort 实测 8 万粒子 4.9ms）
     struct KeySlot {
         SpriteBatchKey key;
         uint32_t spriteId;
-        uint32_t count;
-        uint32_t cursor;
+        uint32_t count, cursor;
     };
     KeySlot slots[kMaxParticleKeys];
     uint32_t slotCount = 0;
 
     const Rect view = Rect::FromCenterHalf(viewCenter, viewHalfW, viewHalfH).Expanded(64.0f);
-    uint32_t visible = 0;
-    // pass1：剔除 + 键计数（spriteId 线性缓存，粒子种类少）
+    packets_.clear();
+    slotOf_.clear();
+
     for (uint32_t i = 0; i < alive_; ++i) {
         const ParticleData& p = pool_[i];
         if (p.pos.x < view.min.x || p.pos.x > view.max.x || p.pos.y < view.min.y ||
             p.pos.y > view.max.y)
             continue;
-        ++visible;
         uint32_t si = 0;
         while (si < slotCount &&
                !(slots[si].spriteId == p.spriteId && slots[si].key.blend == p.blend &&
@@ -122,36 +121,14 @@ std::span<const SpritePacket> ParticleSystem::Extract(const AtlasRegistry& atlas
             ++slotCount;
         }
         ++slots[si].count;
-    }
-
-    // 前缀和定位每桶区间
-    packets_.resize(visible);
-    uint32_t offset = 0;
-    for (uint32_t si = 0; si < slotCount; ++si) {
-        slots[si].cursor = offset;
-        offset += slots[si].count;
-    }
-
-    // pass2：组包写入各桶（桶内按池顺序，天然稳定）
-    for (uint32_t i = 0; i < alive_; ++i) {
-        const ParticleData& p = pool_[i];
-        if (p.pos.x < view.min.x || p.pos.x > view.max.x || p.pos.y < view.min.y ||
-            p.pos.y > view.max.y)
-            continue;
-        uint32_t si = 0;
-        while (si + 1 < slotCount &&
-               !(slots[si].spriteId == p.spriteId && slots[si].key.blend == p.blend &&
-                 slots[si].key.filter == p.filter && slots[si].key.layer == p.sortingLayer))
-            ++si;
 
         const float t = p.age / p.lifetime;
-        const uint32_t ti = (uint32_t)(t * 256.0f);
-        SpritePacket& out = packets_[slots[si].cursor++];
-        out.sortKey = ((uint64_t)p.sortingLayer << 56) | ((slots[si].key.hash >> 45) & 0xFFFFull) << 40 |
-                      (uint64_t)i;
+        SpritePacket out;
+        out.sortKey = ((uint64_t)p.sortingLayer << 56) |
+                      ((slots[si].key.hash >> 45) & 0xFFFFull) << 40 | (uint64_t)i;
         out.key = slots[si].key;
         out.spriteId = p.spriteId;
-        out.colorBits = LerpColorPack(p.color0, p.color1, ti);
+        out.colorBits = LerpColorPack(p.color0, p.color1, (uint32_t)(t * 256.0f));
         out.flags = 0;
         out.posX = p.pos.x;
         out.posY = p.pos.y;
@@ -159,7 +136,21 @@ std::span<const SpritePacket> ParticleSystem::Extract(const AtlasRegistry& atlas
         // SpritePacket.scale 语义 = 渲染像素宽高（与 RenderableManager::Extract 一致）
         out.scaleX = math::Lerp(p.size0, p.size1, t);
         out.scaleY = out.scaleX;
+        packets_.push_back(out);
+        slotOf_.push_back((uint8_t)si);
     }
+
+    // 纯搬运分桶
+    uint32_t visible = (uint32_t)packets_.size();
+    uint32_t offset = 0;
+    for (uint32_t si = 0; si < slotCount; ++si) {
+        slots[si].cursor = offset;
+        offset += slots[si].count;
+    }
+    staging_.resize(visible);
+    for (uint32_t i = 0; i < visible; ++i)
+        staging_[slots[slotOf_[i]].cursor++] = packets_[i];
+    packets_.swap(staging_);
     return packets_;
 }
 

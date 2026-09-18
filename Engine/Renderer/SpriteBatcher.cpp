@@ -17,9 +17,15 @@ void SpriteBatcher::Init(rhi::Device& device, uint32_t samplerLinearSlot,
     EnsureCapacity(kInitialCapacity);
     CreatePipelines();
 
-    // 设备丢失重建：几何/环形缓冲/管线全部重建（经管线磁盘缓存快速恢复）
+    // 设备丢失重建：句柄已随设备销毁全部作废（必须先清，否则 EnsureCapacity
+    // 会因旧句柄"看似有效"跳过重建 → 无效 buffer 写描述符，验证层实测抓过）
     device.AddRecreateCallback("SpriteBatcher", [this](rhi::Device& d) {
         device_ = &d;
+        cornerVB_ = {};
+        indexIB_ = {};
+        instanceRing_ = {};
+        ringMapped_ = nullptr;
+        for (auto& p : pipelines_) p = {}; // capacity_ 保留，按原容量重建
         CreateGeometry();
         EnsureCapacity(kInitialCapacity);
         CreatePipelines();
@@ -68,9 +74,10 @@ void SpriteBatcher::EnsureCapacity(uint32_t neededInstances) {
 }
 
 void SpriteBatcher::Bake(const AtlasRegistry& atlas, std::span<const SpritePacket> packets,
-                         std::span<const SpritePacket> extraPackets) {
+                         std::span<const SpritePacket> particlePackets,
+                         std::span<const SpritePacket> textPackets) {
     auto t0 = std::chrono::steady_clock::now();
-    EnsureCapacity((uint32_t)(packets.size() + extraPackets.size()));
+    EnsureCapacity((uint32_t)(packets.size() + particlePackets.size() + textPackets.size()));
 
     SpriteInstance* seg = ringMapped_ + (uint64_t)ringFrame_ * capacity_;
     batches_.clear();
@@ -106,7 +113,8 @@ void SpriteBatcher::Bake(const AtlasRegistry& atlas, std::span<const SpritePacke
         }
     };
     bakeSpan(packets);
-    bakeSpan(extraPackets);
+    bakeSpan(particlePackets);
+    bakeSpan(textPackets);
     lastInstanceCount_ = written;
 
     auto t1 = std::chrono::steady_clock::now();

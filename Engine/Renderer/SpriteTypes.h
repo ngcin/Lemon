@@ -2,6 +2,7 @@
 // 实例 = 3×vec4 = 48B（02 §3.3 设计值；以 vec4 数组避免 std430 结构体空洞）
 #pragma once
 
+#include <cmath>
 #include <cstdint>
 
 namespace lemon::renderer {
@@ -22,7 +23,8 @@ static_assert(sizeof(SpriteInstance) == 48, "路径 A 实例必须 48B（02 §3.
 
 inline void FillInstanceAffine(SpriteInstance& out, float posX, float posY, float rotRad,
                                float scaleX, float scaleY) {
-    float cosR = __builtin_cosf(rotRad), sinR = __builtin_sinf(rotRad);
+    float sinR, cosR;
+    math::FastSinCos(rotRad, sinR, cosR); // LUT 共享索引（15 万次/帧级热路径）
     out.a = cosR * scaleX;
     out.b = sinR * scaleX;
     out.c = -sinR * scaleY;

@@ -77,6 +77,8 @@ private:
     uint32_t alive_ = 0;
     uint32_t budget_ = 100000;
     std::vector<SpritePacket> packets_;
+    std::vector<SpritePacket> staging_; // 分桶搬运缓冲
+    std::vector<uint8_t> slotOf_;       // 单遍生成时的槽索引缓存
     Stats stats_;
 };
 

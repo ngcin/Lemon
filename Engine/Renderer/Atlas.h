@@ -31,6 +31,8 @@ public:
     const SpriteInfo& GetSprite(uint32_t spriteId) const;
     uint32_t SpriteCount() const { return (uint32_t)sprites_.size(); }
     uint32_t AtlasCount() const { return (uint32_t)atlases_.size(); }
+    /// 设备丢失重建前清空（纹理句柄已失效；spriteId 由调用方按相同顺序重建恢复稳定）
+    void Reset();
 
     /// 程序化默认图集（引擎内置测试/占位素材：柠檬点/光晕/实心点/方块/环）
     /// 生成 512×512 纹理注册到 bindless 槽 defaultSlot，返回登记的首个 spriteId 集合（见实现）

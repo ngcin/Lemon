@@ -160,6 +160,43 @@ constexpr float Damp(float rate, float dt) { return 1.0f - std::exp(-rate * dt);
 constexpr float SnapTo(float v, float grid) { return grid * std::round(v / grid); }
 constexpr Vec2 SnapTo(Vec2 v, float grid) { return {SnapTo(v.x, grid), SnapTo(v.y, grid)}; }
 
+// ------------------------------------------------------- 三角函数查找表 --
+// 4096 项 LUT + 线性插值：热路径（每实例仿射 15 万次/帧级）替代 libm sin/cos，
+// 误差 < 1e-3（像素风视觉无感）；需要精确值时用 std::sin（相机/物理等低频路径）
+namespace detail {
+struct SinTable {
+    float v[4097]; // 多一项便于插值
+    SinTable() {
+        for (int i = 0; i < 4097; ++i) v[i] = std::sin(i * kTau / 4096.0f);
+    }
+};
+inline const SinTable& GetSinTable() {
+    static const SinTable t;
+    return t;
+}
+} // namespace detail
+
+inline float FastSin(float rad) {
+    const float* t = detail::GetSinTable().v;
+    float x = rad * (4096.0f / kTau);
+    int i = (int)x;
+    float f = x - (float)i;
+    i &= 4095; // 2 的幂掩码对负角补码回绕正确
+    return t[i] + (t[i + 1] - t[i]) * f;
+}
+inline float FastCos(float rad) { return FastSin(rad + 1.5707963267948966f); }
+/// 同角 sin/cos 一次查表（共享索引/插值系数，比两次 FastSin 省 ~40%）
+inline void FastSinCos(float rad, float& s, float& c) {
+    const float* t = detail::GetSinTable().v;
+    float x = rad * (4096.0f / kTau);
+    int i = (int)x;
+    float f = x - (float)i;
+    i &= 4095;
+    int ci = (i + 1024) & 4095; // cos 相位 +π/2（1024/4096 圈）
+    s = t[i] + (t[i + 1] - t[i]) * f;
+    c = t[ci] + (t[ci + 1] - t[ci]) * f;
+}
+
 } // namespace lemon::math
 
 namespace lemon {

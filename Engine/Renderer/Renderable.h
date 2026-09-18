@@ -78,6 +78,7 @@ class AtlasRegistry;
 class RenderableManager {
 public:
     static constexpr uint32_t kInvalid = 0;
+    static constexpr uint32_t kMaxSpriteKeys = 64; // 键桶容量（精灵场景键数：图集×混合×层）
 
     uint32_t Create(const RenderableDesc& desc);
     void Destroy(uint32_t id);
@@ -125,7 +126,9 @@ private:
     bool hasViewport_ = false;
     uint64_t viewportVersion_ = 0;
 
-    std::vector<SpritePacket> packets_; // 复用（提取段零分配）
+    std::vector<SpritePacket> packets_;  // 复用（提取段零分配）
+    std::vector<SpritePacket> staging_; // 分桶搬运缓冲
+    std::vector<uint8_t> slotOf_;       // 单遍生成时的槽索引缓存
     uint64_t builtSimVersion_ = 0;
     uint64_t builtViewportVersion_ = 0;
     float builtAlpha_ = -1.0f;
