@@ -23,9 +23,21 @@ endif()
 set(LEMON_CMAKE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/cmake" CACHE INTERNAL "")
 
 option(LEMON_BUILD_SPIKES "Build M0 spike programs" ON)
+option(LEMON_BUILD_TESTS "Build engine unit tests" ON)
+option(LEMON_BUILD_SAMPLES "Build engine samples/benches" ON)
 
 include(${LEMON_CMAKE_DIR}/CPM.cmake)
 include(${LEMON_CMAKE_DIR}/Dependencies.cmake)
+
+add_subdirectory(Engine)
+
+if(LEMON_BUILD_TESTS)
+  add_subdirectory(tests)
+endif()
+
+if(LEMON_BUILD_SAMPLES)
+  add_subdirectory(Samples)
+endif()
 
 if(LEMON_BUILD_SPIKES)
   add_subdirectory(spike)
