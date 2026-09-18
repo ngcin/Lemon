@@ -7,7 +7,9 @@
 | VulkanMemoryAllocator | v3.4.0 | MIT (版权声明见头文件) | CPM 锁 tag | GPU 内存分配 | M0 |
 | EnTT | v3.15.0 | MIT | CPM 锁 tag | ECS（M0-W3 起） | M0 |
 | Vulkan headers + loader | 系统（brew / LunarG SDK） | Apache-2.0 / MIT | find_package(Vulkan) | 图形 API | M0 |
-| glslangValidator | 系统（brew glslang / SDK） | BSD-ish/GPL 工具链例外 | 构建期外部工具 | GLSL→SPIR-V（产物分发不受其许可影响） | M0 |
+| glslangValidator | 系统（brew glslang / SDK glslang） | BSD-ish/GPL 工具链例外 | 构建期外部工具 | GLSL→SPIR-V（产物分发不受其许可影响） | M0 |
+| nlohmann/json | v3.11.3 | MIT | CPM 锁 tag | JSON（.lscene 场景/配置/存档格式，M2 起） | M2 |
+| Luma（参照移植源） | 源树对照 | MIT | 结构移植重写（非逐行拷贝） | JobSystem 工作窃取结构（M2）；M1 已参照 RenderableManager | M2 |
 
 ## 保留的第三方版权声明
 
@@ -17,6 +19,10 @@
   发布物致谢页保留。
 - **EnTT (MIT)**：Copyright (c) 2017-2025 Michele Caini。
 - **CPM.cmake (MIT)**：Copyright (c) 2019-2024 Lars Melchior — 构建期工具，不进发布物。
+- **nlohmann/json (MIT)**：Copyright (c) 2013-2024 Niels Lohmann — 头文件库链入，
+  发布物致谢页保留。
+- **Luma (MIT)**：JobSystem 队列/窃取结构移植自 `Event/JobSystem.{h,cpp}`，源文件头
+  保留来源标注；发布物致谢页保留。
 
-> 设计文档中规划、尚未引入：ImGui（M4）、miniaudio（M5）、glm（M1）、Tracy（M2）、
-> nlohmann/json（M2）、steamworks（M7）。引入时在此追加行。
+> 设计文档中规划、尚未引入：ImGui（M4）、miniaudio（M5）、Tracy（视调优需要）、
+> steamworks（M7）。引入时在此追加行。

@@ -279,6 +279,667 @@ void TestBitmapFontLayout() {
 
 } // namespace
 
+// ---------------------------------------------------------------- M2 Core --
+#include "Core/FunctionRef.h"
+#include "Core/JobSystem.h"
+#include "Core/Pool.h"
+#include "Core/Random.h"
+#include "Core/RingQueue.h"
+
+#include <atomic>
+#include <numeric>
+
+namespace {
+
+void TestRng() {
+    // 同 seed 同 stream → 逐位一致（确定性回放的地基）
+    Rng a(12345, 7), b(12345, 7);
+    for (int i = 0; i < 1000; ++i) Expect(a.Next() == b.Next(), "rng same stream bit-exact");
+
+    // 不同子流 → 序列不同（系统间互不干扰）
+    Rng c(12345, 8);
+    Expect(c.Next() != a.Next(), "rng different stream diverges");
+
+    // Float01 值域 [0,1)
+    Rng r(42, 0);
+    for (int i = 0; i < 10000; ++i) {
+        float f = r.Float01();
+        Expect(f >= 0.0f && f < 1.0f, "float01 in [0,1)");
+    }
+
+    // 整数 Range：值域覆盖 + 闭区间（拒绝采样无偏差）
+    bool seen[6] = {};
+    for (int i = 0; i < 10000; ++i) seen[r.Range(5u, 10u) - 5] = true;
+    for (int i = 0; i < 6; ++i) Expect(seen[i], "range covers all values");
+
+    // UnitVec2 长度 ≈ 1（FastSinCos LUT 误差界内）
+    for (int i = 0; i < 100; ++i) {
+        Vec2 v = r.UnitVec2();
+        ExpectNear(Length(v), 1.0f, 2e-3f, "unit vec2 length");
+    }
+
+    // golden 值：固定 seed 首 4 输出（防实现漂移静默破坏已录制回放）
+    Rng g(0xDEADBEEFull, 1);
+    Expect(g.Next() == 0xc05d8ee3u, "rng golden #0");
+    Expect(g.Next() == 0x211721beu, "rng golden #1");
+    Expect(g.Next() == 0x3a5791a9u, "rng golden #2");
+    Expect(g.Next() == 0x29f0a1f7u, "rng golden #3");
+}
+
+void TestJobSystem() {
+    // 单线程诊断档：Schedule 就地执行
+    {
+        JobSystem jobs(1);
+        Expect(jobs.ThreadCount() == 1, "single-thread tier");
+        std::atomic<int> ran{0};
+        auto f = jobs.Schedule([&ran] { ran.fetch_add(1); });
+        Expect(ran.load() == 1, "single-thread executes inline");
+        JobSystem::Complete(f);
+    }
+
+    // 多线程 ParallelFor：区间完整覆盖、无重叠（每下标恰好一次）
+    {
+        JobSystem jobs(0); // 自动线程数
+        const uint32_t kN = 10000, kGrain = 256;
+        std::vector<std::atomic<uint32_t>> hits(kN);
+        for (auto& h : hits) h.store(0);
+        jobs.ParallelFor(kN, kGrain, [&](uint32_t begin, uint32_t end) {
+            for (uint32_t i = begin; i < end; ++i) hits[i].fetch_add(1);
+        });
+        uint32_t total = 0;
+        for (auto& h : hits) total += h.load();
+        Expect(total == kN, "parallel-for covers exactly once");
+
+        // 非整除 grain 的边界（10000/256 = 39.06 → 40 块，末块 80）
+        std::atomic<uint32_t> blocks{0}, minBlock{kN}, maxBlock{0};
+        jobs.ParallelFor(kN, 256, [&](uint32_t b, uint32_t e) {
+            blocks.fetch_add(1);
+            uint32_t len = e - b;
+            uint32_t cur = minBlock.load();
+            while (len < cur && !minBlock.compare_exchange_weak(cur, len)) {}
+            cur = maxBlock.load();
+            while (len > cur && !maxBlock.compare_exchange_weak(cur, len)) {}
+        });
+        Expect(blocks.load() == 40, "block count with remainder");
+        Expect(minBlock.load() == 16, "last short block size (10000-39*256)");
+        Expect(maxBlock.load() == 256, "full block size");
+    }
+
+    // 多任务 Schedule 乱序完成也不丢
+    {
+        JobSystem jobs(2);
+        std::atomic<int> sum{0};
+        std::vector<JobSystem::JobHandle> handles;
+        for (int i = 0; i < 500; ++i)
+            handles.emplace_back(jobs.Schedule([&sum] { sum.fetch_add(1); }));
+        for (auto& h : handles) JobSystem::Complete(h);
+        Expect(sum.load() == 500, "all scheduled tasks complete");
+    }
+}
+
+void TestPool() {
+    struct Bullet {
+        float x = 0, y = 0;
+        int gen = 0;
+    };
+    Pool<Bullet> pool;
+
+    uint32_t a = pool.Acquire();
+    pool[a].x = 5;
+    pool.Release(a);
+    uint32_t b = pool.Acquire(); // 应复用同槽位
+    Expect(b == a, "pool reuses released slot");
+    Expect(pool.ReuseHits() == 1, "reuse hit counted");
+    Expect(pool.LiveCount() == 1, "live count after reuse");
+
+    // 延迟归还：flush 前对象仍可访问，flush 后才进复用
+    uint32_t c = pool.Acquire();
+    pool[c].gen = 3;
+    pool.DeferredRelease(c);
+    Expect(pool.LiveCount() == 2, "deferred release keeps live until flush");
+    Expect(pool[c].gen == 3, "deferred object readable in-frame");
+    pool.FlushReleases();
+    Expect(pool.LiveCount() == 1, "flush commits deferred releases");
+    uint32_t d = pool.Acquire();
+    Expect(d == c, "flushed slot reusable");
+    Expect(pool.LiveCount() == 2, "live count after reacquire");
+}
+
+void TestRingQueue() {
+    RingQueue<int> q(8);
+    for (int i = 0; i < 8; ++i) q.Push(i);
+    Expect(q.Size() == 8, "queue fills");
+    Expect(q.Push(8) == true, "queue grows instead of dropping");
+    for (int i = 0; i < 4; ++i) q.Pop(); // pop 0,1,2,3
+    q.Push(9);
+    q.Push(10);
+    Expect(q.Size() == 7, "queue size after wrap");
+    for (int i = 0; i < 7; ++i) {
+        Expect(q.At(0) == i + 4, "fifo order across wrap"); // At 偏移随 Pop 前进，恒取队头
+        q.Pop();
+    }
+    Expect(q.Empty(), "queue empty");
+
+    // 自动扩容：数据保持 FIFO 完整
+    RingQueue<int> g(4);
+    for (int i = 0; i < 100; ++i) g.Push(i);
+    Expect(g.Size() == 100, "grown queue size");
+    for (int i = 0; i < 100; ++i) {
+        Expect(g.Front() == i, "grown queue fifo intact");
+        g.Pop();
+    }
+    Expect(g.PeakSize() == 100, "peak tracked");
+}
+
+} // namespace
+
+// ------------------------------------------------------- M2 ECS 骨架/组件 --
+#include "Components/BehaviorComponents.h"
+#include "Components/CoreComponents.h"
+#include "Components/GameplayComponents.h"
+#include "Components/RenderComponents.h"
+#include "ECS/ComponentRegistry.h"
+#include "ECS/Scene.h"
+#include "ECS/World.h"
+
+using namespace lemon::ecs;
+
+namespace {
+
+void TestSceneLifecycle() {
+    World world;
+    Scene& scene = world.CreateScene("Arena");
+    world.SetActiveScene(&scene);
+
+    // 创建 + 组件
+    Entity e = scene.Create();
+    Expect(scene.Alive(e), "entity alive");
+    auto& tf = scene.Emplace<Transform2D>(e, Transform2D{{10, 20}});
+    tf.rot = 0.5f;
+    Expect(scene.Has<Transform2D>(e), "has component");
+    Expect(scene.Get<Transform2D>(e).pos == Vec2(10, 20), "component roundtrip");
+    Expect(scene.TryGet<Velocity>(e) == nullptr, "tryget missing is null");
+
+    // 两阶段销毁：Destroy 后当帧仍可访问，Commit 后才消失
+    scene.Destroy(e);
+    Expect(scene.Alive(e), "deferred destroy keeps alive in-frame");
+    Expect(scene.PendingDestroyCount() == 1, "destroy queued");
+    scene.CommitDestroys();
+    Expect(!scene.Alive(e), "commit destroys entity");
+    Expect(scene.PendingDestroyCount() == 0, "queue drained");
+    Expect(scene.DestroyedTotal() == 1, "destroy counter");
+
+    // 重复入队幂等
+    Entity f = scene.Create();
+    scene.Destroy(f);
+    scene.Destroy(f);
+    scene.CommitDestroys();
+    Expect(scene.DestroyedTotal() == 2, "duplicate destroy idempotent");
+
+    // 实体 id 回收（EnTT version 位前进：旧句柄失活）
+    Entity g = scene.Create();
+    Expect(!scene.Alive(e), "stale handle invalid after recycle");
+    Expect(scene.Alive(g), "new handle valid");
+    Expect(scene.AliveCount() == 1, "alive count");
+}
+
+void TestWorldServices() {
+    WorldDesc d;
+    d.seed = 777;
+    d.threadCount = 1;
+    World world(d);
+    Expect(world.Jobs().ThreadCount() == 1, "world owns jobs");
+    Expect(world.ActiveScene() == nullptr, "no active scene initially");
+
+    // 系统子流：同 id 同实例、不同 id 序列不同、与手动 Rng 同 seed 一致
+    Rng& sys3 = world.SystemRng(3);
+    Rng ref(777, kRngStreamBase + 3);
+    Expect(sys3.Next() == ref.Next(), "system rng matches seed+stream");
+    Rng& sys3Again = world.SystemRng(3);
+    Expect(&sys3 == &sys3Again, "system rng cached");
+    Rng& sys4 = world.SystemRng(4);
+    Expect(sys4.Next() != sys3.Next(), "streams diverge");
+
+    // 事件队列：入队 FIFO、帧末派发清空（派发端在块 6 系统）
+    auto& q = world.Events();
+    EventPacket p{};
+    p.type = GameEvent::Hit;
+    p.dst = Entity{42};
+    p.payload[0] = 12.5f;
+    q.Push(p);
+    Expect(q.Size() == 1 && q.Front().payload[0] == 12.5f, "event queued");
+    q.Clear();
+    Expect(q.Empty(), "events drained");
+}
+
+void TestComponentRegistry() {
+    RegisterAllComponents();
+    auto& reg = ComponentRegistry::Instance();
+    Expect(reg.Count() == 27, "catalog count (5 core + 4 render + 12 behavior + 6 gameplay)");
+
+    // 按 name 可查、id 稳定
+    const ComponentMeta* tf = reg.Find("Transform2D");
+    Expect(tf != nullptr && tf->fieldCount == 3, "transform meta");
+    Expect(reg.Find("NoSuchComponent") == nullptr, "unknown name null");
+    Expect(reg.At(tf->id).name == std::string_view("Transform2D"), "id lookup stable");
+
+    // offset 元数据与真实布局一致（序列化正确性的前提）
+    const ComponentMeta* chase = reg.Find("Chase");
+    Expect(chase != nullptr && chase->sizeOf == sizeof(Chase), "chase size");
+    for (uint16_t i = 0; i < chase->fieldCount; ++i) {
+        const FieldMeta& f = chase->fields[i];
+        Expect(f.offset + 4 <= chase->sizeOf, "field offset within struct");
+    }
+    const FieldMeta& speedField = *[](const ComponentMeta& m) {
+        for (uint16_t i = 0; i < m.fieldCount; ++i)
+            if (std::string_view(m.fields[i].name) == "speed") return m.fields + i;
+        return m.fields;
+    }(*chase);
+    Chase sample;
+    sample.speed = 123.0f;
+    Expect(*(float*)((char*)&sample + speedField.offset) == 123.0f, "field offset deref");
+
+    // 全组件 POD 校验（状态哈希/序列化的前提）
+    Expect(std::is_trivially_copyable_v<Transform2D>, "transform trivial");
+    Expect(std::is_trivially_copyable_v<Meta>, "meta trivial");
+    Expect(std::is_trivially_copyable_v<Chase>, "chase trivial");
+    Expect(std::is_trivially_copyable_v<Projectile>, "projectile trivial");
+    Expect(std::is_trivially_copyable_v<StatusEffects>, "status trivial");
+    Expect(std::is_trivially_copyable_v<Inventory>, "inventory trivial");
+}
+
+} // namespace
+
+// --------------------------------------------------- M2 场景序列化(.lscene) --
+#include "Serialization/SceneArchive.h"
+
+namespace {
+
+void TestSceneArchive() {
+    RegisterAllComponents();
+    World world;
+    Scene& src = world.CreateScene("Arena01");
+
+    // 怪物：Transform + Chase + Health + Meta(tag)
+    Entity monster = src.Create();
+    src.Emplace<Transform2D>(monster, Transform2D{{128, -64}, 0.25f, {2, 2}});
+    Chase& chase = src.Emplace<Chase>(monster);
+    chase.speed = 88.0f;
+    chase.aggroRange = 400.0f;
+    chase.targetTeam = 0;
+    Health& hp = src.Emplace<Health>(monster, Health{200, 150, 0.5f});
+    Meta& meta = src.Emplace<Meta>(monster);
+    std::strcpy(meta.tag, "elite-01");
+
+    // 父子（EntityRef roundtrip：parent 指向先出现的 monster）
+    Entity child = src.Create();
+    src.Emplace<Transform2D>(child, Transform2D{{1, 2}});
+    Hierarchy& h = src.Emplace<Hierarchy>(child);
+    h.parent = monster;
+
+    std::string text = SceneArchive::Save(src);
+
+    // 载入到新场景
+    World world2;
+    Scene& dst = world2.CreateScene("reload");
+    Expect(SceneArchive::Load(dst, text), "scene load ok");
+
+    Expect(dst.AliveCount() == 2, "entity count roundtrip");
+    // 找回组件（实体句柄会变，按组件数据定位）
+    bool foundMonster = false, foundChild = false;
+    dst.Each([&](Entity e) {
+        if (auto* c = dst.TryGet<Chase>(e); c) {
+            foundMonster = true;
+            ExpectNear(c->speed, 88.0f, 1e-6f, "chase.speed roundtrip");
+            ExpectNear(c->aggroRange, 400.0f, 1e-6f, "chase.aggro roundtrip");
+            Expect(dst.Get<Health>(e).cur == 150.0f, "health.cur roundtrip");
+            Expect(std::string_view(dst.Get<Meta>(e).tag) == "elite-01", "meta.tag roundtrip");
+            const auto& tf = dst.Get<Transform2D>(e);
+            Expect(tf.pos == Vec2(128, -64) && std::fabs(tf.rot - 0.25f) < 1e-6f &&
+                       tf.scale == Vec2(2, 2),
+                   "transform roundtrip");
+        }
+        if (auto* h2 = dst.TryGet<Hierarchy>(e); h2) {
+            foundChild = true;
+            Expect(!h2->parent.IsNull(), "hierarchy parent remapped");
+            Expect(dst.Alive(h2->parent), "parent handle valid in new scene");
+            Expect(dst.Has<Chase>(h2->parent), "parent points to monster");
+        }
+    });
+    Expect(foundMonster && foundChild, "both entities located");
+
+    // 二次 roundtrip 稳定（组件数据不动点；场景名是宿主属性，不参与比较）
+    std::string text2 = SceneArchive::Save(dst);
+    World world3;
+    Scene& third = world3.CreateScene("reload");
+    Expect(SceneArchive::Load(third, text2), "second load ok");
+    Expect(SceneArchive::Save(third) == text2, "roundtrip is a fixed point");
+
+    // 容错：未知组件跳过、坏 json 拒绝
+    std::string withUnknown = R"({"schemaVersion":1,"name":"x","entities":[)"
+                              R"({"components":{"FutureComponent":{"a":1},"Chase":{"speed":5}}}]})";
+    World w4;
+    Scene& s4 = w4.CreateScene("fwd");
+    Expect(SceneArchive::Load(s4, withUnknown), "unknown component tolerated");
+    Expect(!SceneArchive::Load(s4, "{ not json"), "invalid json rejected");
+    Expect(!SceneArchive::Load(s4, R"({"name":"x","entities":[]})"), "missing version rejected");
+}
+
+} // namespace
+
+// ------------------------------------------------ M2 空间哈希 + Team -------
+#include "Physics2D/SpatialHash.h"
+
+using namespace lemon::physics2d;
+
+namespace {
+
+void TestTeamTable() {
+    TeamTable t = TeamTable::Default();
+    Expect(t.Relation(0, 1) == TeamRelation::Hostile, "player vs monsters hostile");
+    Expect(t.Relation(1, 0) == TeamRelation::Hostile, "relation symmetric");
+    Expect(t.Relation(1, 1) == TeamRelation::SoftCollide, "monsters self soft-collide");
+    Expect(t.Relation(0, 3) == TeamRelation::Ghost, "bullets ghost through player");
+    Expect(t.Relation(1, 3) == TeamRelation::Hostile, "bullets hit monsters");
+    // 未声明组合默认 Ghost（安全失败）
+    Expect(t.Relation(0, 7) == TeamRelation::Ghost, "undeclared pair defaults ghost");
+    // 运行时覆写
+    t.SetRelation(0, 7, TeamRelation::Hostile);
+    Expect(t.Hostile(0, 7) && t.Hostile(7, 0), "override applies both ways");
+}
+
+void TestSpatialHash() {
+    World world;
+    Scene& s = world.CreateScene("hash");
+
+    // 网格布置：4×4 间距 100px，team 交错（0/1）
+    Entity ents[16];
+    for (int i = 0; i < 16; ++i) {
+        ents[i] = s.Create();
+        s.Emplace<Transform2D>(ents[i], Transform2D{{(float)(i % 4) * 100.0f,
+                                                     (float)(i / 4) * 100.0f}});
+        s.Emplace<Meta>(ents[i]).team = (uint32_t)(i % 2);
+    }
+
+    SpatialHash hash;
+    hash.Configure(64.0f);
+    hash.Rebuild(s);
+    Expect(hash.ItemCount() == 16, "all items hashed");
+    Expect(hash.CellCount() > 0 && hash.CellCount() <= 16, "cell count sane");
+
+    // OverlapCircle：中心 (50,50) 半径 75 → 四角距离 70.7 全命中，其余 ≥ 112 不命中
+    {
+        int hits = 0;
+        QueryFilter f; // 全队
+        hash.OverlapCircle(s, {50, 50}, 75.0f, f, 0.0f,
+                           [&](Entity, const Transform2D&) {
+                               ++hits;
+                               return true;
+                           });
+        Expect(hits == 4, "circle overlap count");
+    }
+    // teamMask 过滤：只 team1（奇数下标 → (100,0) 和 (0,100)）
+    {
+        int hits = 0;
+        QueryFilter f;
+        f.teamMask = 1u << 1;
+        hash.OverlapCircle(s, {50, 50}, 75.0f, f, 0.0f,
+                           [&](Entity, const Transform2D&) {
+                               ++hits;
+                               return true;
+                           });
+        Expect(hits == 2, "team mask filters");
+    }
+    // exclude
+    {
+        QueryFilter f;
+        f.exclude = ents[0];
+        bool seen0 = false;
+        hash.OverlapCircle(s, {0, 0}, 10.0f, f, 0.0f,
+                           [&](Entity e, const Transform2D&) {
+                               seen0 |= (e == ents[0]);
+                               return true;
+                           });
+        Expect(!seen0, "exclude filters self");
+    }
+
+    // cell 边界跨格查询（实体在 (200,200) 恰在 cell 角）
+    {
+        int hits = 0;
+        hash.OverlapCircle(s, {200, 200}, 1.0f, QueryFilter{}, 0.0f,
+                           [&](Entity, const Transform2D&) {
+                               ++hits;
+                               return true;
+                           });
+        Expect(hits == 1, "boundary point found");
+    }
+
+    // OverlapBox
+    {
+        int hits = 0;
+        hash.OverlapBox(s, Rect::FromCenterHalf({50, 50}, 55, 55), QueryFilter{}, 0.0f,
+                        [&](Entity, const Transform2D&) {
+                            ++hits;
+                            return true;
+                        });
+        Expect(hits == 4, "box overlap count");
+    }
+
+    // Raycast：从 (-50, 0) 向 +x，最近命中 (0,0)
+    {
+        RayHit h = hash.Raycast(s, {-50, 0}, {1, 0}, 1000.0f, QueryFilter{}, 4.0f);
+        Expect(!h.entity.IsNull(), "raycast hit");
+        ExpectNear(h.point.x, 0.0f, 4.1f, "raycast near (0,0)");
+        // 排除首实体后命中 (100,0)
+        QueryFilter f;
+        f.exclude = h.entity;
+        RayHit h2 = hash.Raycast(s, {-50, 0}, {1, 0}, 1000.0f, f, 4.0f);
+        ExpectNear(h2.point.x, 100.0f, 4.1f, "raycast next along +x");
+    }
+
+    // 命中序确定性：cell 内 id 升序（两次重建后同序）
+    {
+        std::vector<uint64_t> order1, order2;
+        for (int round = 0; round < 2; ++round) {
+            hash.Rebuild(s);
+            if (round == 0) {
+                hash.OverlapCircle(s, {50, 50}, 60.0f, QueryFilter{}, 0.0f,
+                                   [&](Entity e, const Transform2D&) {
+                                       order1.push_back(e.id);
+                                       return true;
+                                   });
+            } else {
+                hash.OverlapCircle(s, {50, 50}, 60.0f, QueryFilter{}, 0.0f,
+                                   [&](Entity e, const Transform2D&) {
+                                       order2.push_back(e.id);
+                                       return true;
+                                   });
+            }
+        }
+        Expect(order1 == order2, "hit order stable across rebuilds");
+        Expect(std::is_sorted(order1.begin(), order1.end()), "hit order = id ascending");
+    }
+
+    // PointQuery（id 最小优先）
+    {
+        Entity e = hash.PointQuery(s, {100, 100}, QueryFilter{}, 10.0f);
+        Expect(!e.IsNull() && s.Has<Transform2D>(e), "point query finds");
+    }
+}
+
+} // namespace
+
+// ------------------------------------------- M2 系统管线（16 系统端到端）--
+#include "Systems/Systems.h"
+
+namespace {
+
+/// 最小预制体工厂：monster(prefab 1) / projectile(prefab 2)
+Entity TestSpawnFactory(Scene& s, uint32_t prefabId, Vec2 pos, uint32_t team) {
+    Entity e = s.Create();
+    s.Emplace<Transform2D>(e, Transform2D{pos});
+    s.Emplace<Meta>(e).team = team;
+    s.Emplace<Velocity>(e);
+    if (prefabId == 1) { // 怪
+        s.Emplace<Health>(e, Health{50, 50, 0});
+        s.Emplace<Chase>(e);
+    } else if (prefabId == 2) { // 投射物
+        s.Emplace<Projectile>(e, Projectile{300, 3, 15, 0, 0, 0});
+    } else {
+        return Entity::Null();
+    }
+    return e;
+}
+
+void TestSystemPipelineOrder() {
+    WorldDesc d;
+    d.threadCount = 1;
+    World world(d);
+    world.InstallDefaultSystems();
+    auto& p = world.Pipeline();
+
+    Expect(p.Systems().size() == 16, "16 systems installed");
+    // Essential 阶段只有 DestroyCommit；FixedTick 按表序
+    const char* expected[] = {"InputSnapshot", "Director",    "Spawn",
+                              "AI",            "Navigation",  "Separation",
+                              "Movement",      "SpatialHashRebuild", "Hitbox",
+                              "Trigger",       "Stat",        "Animator",
+                              "ProjectileLifetime", "CSharpBatch", "ScriptEventDispatch"};
+    uint32_t fi = 0;
+    for (const auto& s : p.Systems()) {
+        if (s->Stage() == SystemStage::Essential) {
+            Expect(std::string_view(s->Name()) == "DestroyCommit", "essential is destroy");
+        } else {
+            Expect(fi < 15 && std::string_view(s->Name()) == expected[fi],
+                   "fixedtick order");
+            ++fi;
+        }
+    }
+    Expect(fi == 15, "15 fixedtick systems");
+    Expect(p.Profiles().size() == 16, "profiles allocated");
+}
+
+void TestSimulationEndToEnd() {
+    WorldDesc d;
+    d.threadCount = 1; // 诊断档（逻辑验证单线程）
+    World world(d);
+    world.SetSpawnFn(TestSpawnFactory);
+    world.InstallDefaultSystems();
+
+    Scene& s = world.CreateScene("arena");
+    world.SetActiveScene(&s);
+    world.SetBounds(Rect::FromMinSize({-500, -500}, {1000, 1000}));
+
+    // 玩家（team 0）+ 追击怪（team 1, Chase→0）+ 射手怪（team 1, Shooter→0）
+    Entity player = s.Create();
+    s.Emplace<Transform2D>(player, Transform2D{{0, 0}});
+    s.Emplace<Meta>(player).team = 0;
+
+    Entity monster = TestSpawnFactory(s, 1, {100, 0}, 1);
+    Chase& chase = s.Get<Chase>(monster);
+    chase.speed = 100;
+    chase.aggroRange = 500;
+    chase.targetTeam = 0;
+
+    Entity shooter = TestSpawnFactory(s, 1, {-100, 0}, 1);
+    s.Remove<Chase>(shooter);
+    Shooter& sh = s.Emplace<Shooter>(shooter);
+    sh.interval = 0.2f;
+    sh.range = 500;
+    sh.targetTeam = 0;
+    sh.projectileId = 2;
+    sh.cooldown = 0.1f;
+
+    // 事件收集（帧末派发）
+    int spawnEvents = 0, hitEvents = 0, deathEvents = 0;
+    world.SetEventSink([&](World&, const EventPacket& e) {
+        if (e.type == GameEvent::Spawn) ++spawnEvents;
+        if (e.type == GameEvent::Hit) ++hitEvents;
+        if (e.type == GameEvent::Death) ++deathEvents;
+    });
+
+    const float dt = 1.0f / 60.0f;
+
+    // 帧 1：目标板当帧生效（AI 最近邻不再依赖哈希暖场），怪朝玩家 (-x) 移动
+    world.Step(dt);
+    Expect(s.Get<Velocity>(monster).v.x < 0.0f, "chase moves toward player (-x)");
+    float d0 = Length(s.Get<Transform2D>(monster).pos - Vec2(0, 0));
+
+    // 60 帧（1 秒）：怪贴近（keepRange 内停）；射手持续开火生成投射物
+    for (int i = 0; i < 60; ++i) world.Step(dt);
+    float d1 = Length(s.Get<Transform2D>(monster).pos - Vec2(0, 0));
+    Expect(d1 < d0, "chaser closed distance");
+    Expect(spawnEvents > 0, "shooter spawned projectiles (spawn events)");
+    // 投射物生成且带速度朝玩家
+    uint32_t projectiles = 0;
+    s.Each([&](Entity e) {
+        if (s.Has<Projectile>(e)) {
+            ++projectiles;
+        }
+    });
+    Expect(projectiles > 0, "projectiles alive");
+
+    // 命中链路：给玩家血量，投射物（team 3）hostile→0 命中 → Hit/Death 事件
+    s.Emplace<Health>(player, Health{30, 30, 0});
+    for (int i = 0; i < 120; ++i) world.Step(dt);
+    Expect(hitEvents > 0, "projectiles hit player");
+    Expect(s.Get<Health>(player).cur < 30.0f, "player took damage");
+    // 玩家死亡 → 销毁提交
+    if (s.Get<Health>(player).cur <= 0.0f) {
+        Expect(!s.Alive(player), "dead player destroyed");
+        Expect(deathEvents >= 1, "death events fired");
+    }
+
+    // 投射物寿命回收：跑足寿命周期，场上投射物数受控（生成率≈销毁率）
+    for (int i = 0; i < 300; ++i) world.Step(dt);
+    uint32_t projAfter = 0;
+    s.Each([&](Entity e) { projAfter += s.Has<Projectile>(e) ? 1 : 0; });
+    Expect(projAfter < 50, "lifetime reaps projectiles");
+
+    // 管线 profile 数据（F3 数据源）
+    const SystemProfile* ai = world.Pipeline().FindProfile("AI");
+    const SystemProfile* mv = world.Pipeline().FindProfile("Movement");
+    Expect(ai && ai->runs == world.TickIndex(), "AI ran every tick");
+    Expect(mv && mv->runs == world.TickIndex(), "Movement ran every tick");
+    Expect(ai->totalMs >= 0.0 && mv->lastMs >= 0.0f, "timings sane");
+}
+
+void TestSeparationForce() {
+    WorldDesc d;
+    d.threadCount = 1;
+    World world(d);
+    world.InstallDefaultSystems();
+    Scene& s = world.CreateScene("sep");
+    world.SetActiveScene(&s);
+
+    // 两只同队怪（soft-collide）贴近：分离力应把彼此推开
+    Entity a = s.Create(), b = s.Create();
+    for (Entity e : {a, b}) {
+        s.Emplace<Transform2D>(e, Transform2D{{0, 0}});
+        s.Emplace<Meta>(e).team = 1; // monsters: (1,1) soft-collide
+        s.Emplace<Velocity>(e);
+    }
+    s.Get<Transform2D>(a).pos = {0, 0};
+    s.Get<Transform2D>(b).pos = {10, 0};
+
+    const float dt = 1.0f / 60.0f;
+    world.Step(dt); // AI（无行为组件不动）→ Separation 读哈希（首帧空）
+    world.Step(dt); // 第二帧哈希已有数据 → 分离力生效
+    Vec2 va = s.Get<Velocity>(a).v, vb = s.Get<Velocity>(b).v;
+    Expect(va.x < 0.0f && vb.x > 0.0f, "separation pushes apart on x");
+    ExpectNear(va.x, -vb.x, 1e-4f, "separation symmetric");
+
+    // 不同队（无 soft-collide 关系）不分离
+    s.Get<Meta>(b).team = 2;
+    s.Get<Velocity>(a).v = {};
+    s.Get<Velocity>(b).v = {};
+    world.Step(dt);
+    world.Step(dt);
+    Expect(s.Get<Velocity>(a).v == Vec2::Zero(), "non-softcollide no force");
+}
+
+} // namespace
+
 int main() {
     TestVec2();
     TestMat3x2();
@@ -292,6 +953,19 @@ int main() {
     TestCamera2D();
     TestQuality();
     TestBitmapFontLayout();
+    TestRng();
+    TestJobSystem();
+    TestPool();
+    TestRingQueue();
+    TestSceneLifecycle();
+    TestWorldServices();
+    TestComponentRegistry();
+    TestSceneArchive();
+    TestTeamTable();
+    TestSpatialHash();
+    TestSystemPipelineOrder();
+    TestSimulationEndToEnd();
+    TestSeparationForce();
     LEMON_LOG("engine-tests: %d checks OK", g_checks);
     return 0;
 }

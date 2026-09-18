@@ -42,3 +42,12 @@ CPMAddPackage(
   GIT_TAG v3.15.0
   EXCLUDE_FROM_ALL YES
 )
+
+# ---------------------------------------------------------------------------
+# nlohmann/json — 唯一数据格式 JSON（01 选型 / 06 §3；M2 场景序列化起）
+CPMAddPackage(
+  NAME nlohmann_json
+  GITHUB_REPOSITORY nlohmann/json
+  GIT_TAG v3.11.3
+  OPTIONS "JSON_BuildTests OFF" "JSON_Install OFF"
+)
