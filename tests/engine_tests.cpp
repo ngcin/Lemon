@@ -8,7 +8,10 @@
 
 #include "Core/Math.h"
 #include "Renderer/Atlas.h"
+#include "Renderer/BitmapFont.h"
+#include "Renderer/Camera2D.h"
 #include "Renderer/Particles.h"
+#include "Renderer/Quality.h"
 #include "Renderer/Renderable.h"
 
 using namespace lemon;
@@ -210,6 +213,70 @@ void TestParticles() {
     Expect(switches2 == 1, "different blend splits contiguous runs");
 }
 
+void TestCamera2D() {
+    Camera2D cam;
+    cam.center = {100, 50};
+    cam.halfHeight = 100;
+    // 正交：视口中心→NDC 原点，Y 翻转
+    Mat3x2 vp = cam.ViewProj(1.6f); // 半宽 160
+    Vec2 c = vp.Apply(cam.center);
+    ExpectNear(c.x, 0.0f, 1e-6f, "cam center→origin");
+    ExpectNear(c.y, 0.0f, 1e-6f, "cam center→origin y");
+    ExpectNear(vp.Apply({260, 50}).x, 1.0f, 1e-6f, "cam right edge");
+    ExpectNear(vp.Apply({100, 150}).y, -1.0f, 1e-6f, "cam +y down → -1 NDC");
+
+    // 阻尼跟随收敛（多步后接近目标）
+    Vec2 target{500, -300};
+    for (int i = 0; i < 240; ++i) cam.Follow(target, 1.0f / 60.0f);
+    ExpectNear(cam.center.x, 500.0f, 0.5f, "follow converges x");
+    ExpectNear(cam.center.y, -300.0f, 0.5f, "follow converges y");
+
+    // 边界钳制：世界 1000×1000，视口 400×800（宽>半高钳制）
+    Camera2D b;
+    b.center = {0, 0};
+    b.halfHeight = 400;
+    b.worldBounds = {{0, 0}, {1000, 1000}};
+    b.hasBounds = true;
+    b.ClampToBounds(0.5f); // 半宽 200
+    ExpectNear(b.center.x, 200.0f, 1e-4f, "clamp x to min+halfW");
+    ExpectNear(b.center.y, 400.0f, 1e-4f, "clamp y (视口高=世界高→居中 500? 半高 400>500/2→居中)");
+    b.center = {1000, 1000};
+    b.ClampToBounds(0.5f);
+    ExpectNear(b.center.x, 800.0f, 1e-4f, "clamp x to max-halfW");
+
+    // 像素完美：zoom 吸整、snap 网格
+    Camera2D pp;
+    pp.center = {100.37f, 50.62f};
+    pp.zoom = 2.6f;
+    pp.pixelPerfect = true;
+    pp.ApplyPixelPerfect(360.0f);
+    Expect(pp.zoom == 3.0f, "zoom snaps to integer");
+    ExpectNear(pp.halfHeight, 120.0f, 1e-4f, "halfHeight = ref/zoom");
+}
+
+void TestQuality() {
+    QualityManager q(QualityTier::High);
+    Expect(q.Params().particleBudget == 100000, "high budget");
+    // 过载 60fps 帧时间 25ms 持续 2s → 降 Med
+    for (int i = 0; i < 130; ++i) q.Update(25.0, 1.0f / 60.0f);
+    Expect(q.Current() == QualityTier::Med, "downgrade after 2s overload");
+    Expect(q.Params().particleBudget == 50000, "med budget");
+    // 恢复良好帧率不自动升档
+    for (int i = 0; i < 600; ++i) q.Update(5.0, 1.0f / 60.0f);
+    Expect(q.Current() == QualityTier::Med, "no auto upgrade");
+    // 再过载 → Low 到底（含 EMA 爬升窗口的余量）
+    for (int i = 0; i < 200; ++i) q.Update(25.0, 1.0f / 60.0f);
+    Expect(q.Current() == QualityTier::Low, "downgrade to low");
+}
+
+void TestBitmapFontLayout() {
+    // 字宽 = 字符数 × cellW × scale（纯计算，无需 GPU）
+    BitmapFont font; // 未 Init 也可测宽度公式
+    ExpectNear(font.TextWidth("ABC", 1.0f), 18.0f, 1e-4f, "3 chars × 6px");
+    ExpectNear(font.TextWidth("hello", 2.0f), 60.0f, 1e-4f, "5 chars × 6px × 2");
+    ExpectNear(font.TextWidth("", 1.0f), 0.0f, 1e-4f, "empty text");
+}
+
 } // namespace
 
 int main() {
@@ -222,6 +289,9 @@ int main() {
     TestBatchKey();
     TestSortStability();
     TestParticles();
+    TestCamera2D();
+    TestQuality();
+    TestBitmapFontLayout();
     LEMON_LOG("engine-tests: %d checks OK", g_checks);
     return 0;
 }
