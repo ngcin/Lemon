@@ -127,6 +127,8 @@ int main(int argc, char** argv) {
     double extractSum = 0, bakeSum = 0, recordSum = 0, gpuSum = 0;
     uint32_t batchMin = 0xFFFFFFFFu, batchMax = 0;
     double batchSum = 0;
+    uint32_t recreateEvents = 0, skippedFrames = 0;
+    uint32_t minInstances = 0xFFFFFFFFu;
     uint64_t statFrames = 0;
     double emaFrameMs = 0;
     bool watchdogAbort = false, lossRecovered = false, running = true;
@@ -157,7 +159,8 @@ int main(int argc, char** argv) {
         float dt = (float)std::min(now - prevMs, 33.0) / 1000.0f;
         prevMs = now;
         quality.Update(dt * 1000.0, dt); // 帧时间(ms)驱动降档
-        ps.SetBudget(quality.Params().particleBudget);
+        // 质量分级在用户预算内降档(高级档不放大 --particles)
+        ps.SetBudget(std::min(quality.Params().particleBudget, particles));
 
         const uint32_t w = device->SwapchainWidth(), h = device->SwapchainHeight();
         const float aspect = (float)w / (float)h;
@@ -212,7 +215,8 @@ int main(int argc, char** argv) {
         // --- 渲染帧：提取 → 合批 → 录制 ---
         AcquireResult acq = device->AcquireNextImage();
         if (acq.deviceLost || acq.needsRecreate) {
-            if (acq.deviceLost || !device->RecreateSwapchain()) continue;
+            ++recreateEvents;
+            if (acq.deviceLost || !device->RecreateSwapchain()) { ++skippedFrames; continue; }
         }
         CommandList& cl = device->BeginFrame();
 
@@ -227,8 +231,9 @@ int main(int argc, char** argv) {
         // HUD（屏幕空间 = 世界像素坐标；相机 1:1）
         hudPackets.clear();
         FrameTiming ft = device->LastFrameTiming();
+        double liveFps = emaFrameMs > 0.01 ? 1000.0 / emaFrameMs : 0.0;
         std::snprintf(hud[0], sizeof(hud[0]), "LEMON M1 BENCH-MOW");
-        std::snprintf(hud[1], sizeof(hud[1]), "FPS %4.0f  FRAME %5.2fms", 0.0, 0.0);
+        std::snprintf(hud[1], sizeof(hud[1]), "FPS %4.0f  FRAME %5.2fms", liveFps, emaFrameMs);
         std::snprintf(hud[2], sizeof(hud[2]), "SPRITES %6u/%u  PARTICLES %6u", rm.LastStats().visible,
                       sprites, ps.AliveCount());
         std::snprintf(hud[3], sizeof(hud[3]), "BATCHES %3u  INSTANCES %6u  ATLASES 2",
@@ -251,8 +256,9 @@ int main(int argc, char** argv) {
 
         bool needRe = false, lost = false;
         device->EndFrameAndPresent(needRe, lost);
+        if (needRe) ++recreateEvents;
         if (lost || needRe) {
-            if (lost || !device->RecreateSwapchain()) continue;
+            if (lost || !device->RecreateSwapchain()) { ++skippedFrames; continue; }
         }
         batcher.AdvanceFrame();
 
@@ -276,6 +282,7 @@ int main(int argc, char** argv) {
             batchMin = std::min(batchMin, batcher.LastBatchCount());
             batchMax = std::max(batchMax, batcher.LastBatchCount());
             batchSum += batcher.LastBatchCount();
+            minInstances = std::min(minInstances, batcher.LastInstanceCount());
             ++statFrames;
         }
         ++frame;
@@ -292,12 +299,14 @@ int main(int argc, char** argv) {
             "  fps=%.1f (avg %.2fms min %.2f max %.2f stddev %.2f) present=%s\n"
             "  CPU render=%.3fms (extract %.3f + bake %.3f + record %.3f)  gpu=%.3fms\n"
             "  batches avg=%.1f [%u..%u] (sprites+particles+text, 2 atlases) quality=%s\n"
+            "  instances min=%u | swapchainRecreates=%u skippedFrames=%u\n"
             "  VERDICT: fps>=60 %s | batchStable %s | deviceLoss %s | cpuRender %.2fms "
             "(02§9 预算=压测A 语境:10k 精灵+100k 粒全可见实测 2.7ms PASS)\n",
             sprites, particles, (unsigned long long)frame, fps, avg, frameMin, frameMax,
             std::sqrt(var), device->PresentModeName(), cpuRender, extractSum / nf, bakeSum / nf,
             recordSum / nf, gpuSum / nf, batchSum / nf, batchMin, batchMax,
-            TierName(quality.Current()), fps >= 60.0 ? "PASS" : "FAIL",
+            TierName(quality.Current()), minInstances, recreateEvents, skippedFrames,
+            fps >= 60.0 ? "PASS" : "FAIL",
             batchMax - batchMin <= 2 ? "PASS" : "CHECK",
             deviceLossAt < 0 ? "n/a" : (lossRecovered ? "PASS" : "FAIL"), cpuRender);
     }

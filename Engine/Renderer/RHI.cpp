@@ -855,6 +855,9 @@ void Device::DestroyBuffer(Buffer b) {
     vmaDestroyBuffer(m->allocator, r.buf, r.alloc);
     r = {};
     m->bufferFree.push_back(b.id);
+    // 关键:句柄 id 会被空闲表复用——若不重置,扩容重建后 BindStorageBuffer
+    // 会因"id 相同"跳过描述符重写,描述符悬空指向已销毁缓冲(实测画面错乱)
+    if (m->boundStorageBufferId == b.id) m->boundStorageBufferId = 0;
 }
 
 Texture Device::CreateTexture(const TextureDesc& desc) {
