@@ -51,3 +51,25 @@ CPMAddPackage(
   GIT_TAG v3.11.3
   OPTIONS "JSON_BuildTests OFF" "JSON_Install OFF"
 )
+
+# ---------------------------------------------------------------------------
+# Dear ImGui — 编辑器 UI（docking 分支，ADR-005；M4-Editor-Plan §3.1 锁 tag）
+# 纪律：ImGui 头文件只准出现在 Editor/（M4-Editor-Plan §3.2）；包装目标 lemon-imgui
+# 定义在 Editor/CMakeLists.txt（含 SDL3/Vulkan backend 两个 TU），不进 lemon-engine。
+CPMAddPackage(
+  NAME imgui
+  GITHUB_REPOSITORY ocornut/imgui
+  GIT_TAG v1.92.9b-docking
+  EXCLUDE_FROM_ALL YES
+  DOWNLOAD_ONLY YES
+)
+
+# ---------------------------------------------------------------------------
+# stb — 图像解码（06 §2.2 PNG 导入器；公有领域）
+CPMAddPackage(
+  NAME stb
+  GITHUB_REPOSITORY nothings/stb
+  GIT_TAG 2c980bb59875b0d32144a71867fbdebb2f77cd20  # master 锁 commit（2026-09 实查）
+  EXCLUDE_FROM_ALL YES
+  DOWNLOAD_ONLY YES
+)

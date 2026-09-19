@@ -25,6 +25,11 @@ public:
     static std::unique_ptr<Window> Create(const WindowDesc& desc);
     ~Window();
 
+    /// 原始事件观察者（const void* = SDL_Event*）：Pump 循环内每事件回调一次，
+    /// 只读不消费（键状态跟踪不受影响）。编辑器 UI 层（IME 文本输入等）专用。
+    using EventObserver = void (*)(const void* sdlEvent, void* userData);
+    void SetEventObserver(EventObserver fn, void* userData = nullptr);
+
     /// 泵事件；返回 false = 收到退出请求（窗口关闭）
     bool PollEvents();
     /// 读取并清除"需要重建交换链"标志（resize/像素尺寸变化）

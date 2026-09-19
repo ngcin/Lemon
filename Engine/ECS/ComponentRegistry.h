@@ -41,6 +41,33 @@ struct FieldMeta {
 /// FieldMeta.flags 位：运行时态字段（目标缓存/计时相位等），序列化跳过
 static constexpr uint32_t kFieldRuntime = 1u;
 
+// ---- 编辑器元数据（M4.1 内核 #6；独立平行表，不占 FieldMeta.flags——布局探针
+// C# 侧只镜像运行时位，编辑器提示留在编辑域。Inspector 按此渲染控件）----
+enum class FieldHint : uint32_t {
+    None     = 0,
+    Degree   = 1u << 0,  // 弧度存储，Inspector 以角度显示/编辑
+    ColorHex = 1u << 1,  // UInt32 颜色（ColorEdit 控件）
+    Bool8    = 1u << 2,  // UInt8 布尔语义（Checkbox 控件）
+    Enum     = 1u << 3,  // 整数枚举（enumNames 名表，值 = 下标）
+    AssetRef = 1u << 4,  // 资产引用（GUID 槽控件；M4.4 接通）
+    Hide     = 1u << 5,  // 不进 Inspector（池内冗余字段）
+    Range    = 1u << 6,  // 数值夹取 [rangeMin, rangeMax]（Drag 控件）
+};
+inline constexpr FieldHint operator|(FieldHint a, FieldHint b) {
+    return (FieldHint)((uint32_t)a | (uint32_t)b);
+}
+inline constexpr bool HasHint(FieldHint h, FieldHint bit) {
+    return ((uint32_t)h & (uint32_t)bit) != 0;
+}
+
+struct FieldEditorMeta {
+    FieldHint hints = FieldHint::None;
+    float rangeMin = 0.0f, rangeMax = 0.0f;
+    const char* const* enumNames = nullptr; // Enum：名表（enumCount 项，枚举值 = 下标）
+    uint32_t enumCount = 0;
+    const char* tooltip = nullptr;          // 悬浮提示（nullptr = 无）
+};
+
 /// 定长数组段元数据（StatusEffects.active / Inventory.items / Equipment.relicIds
 /// 这类"POD 元素定长数组 + count"字段；M2 特判路径，M5 数组元数据并入字段表后移除）
 struct ArraySegMeta {
@@ -61,11 +88,14 @@ struct ComponentMeta {
     uint16_t fieldCount;
     uint32_t sizeOf;
     const FieldMeta* fields;
+    const FieldEditorMeta* editorMeta; // 编辑器元数据平行表（与 fields 等长；nullptr = 全默认）
     const ArraySegMeta* arraySeg; // 数组段（无则 nullptr）
     // 运行时构造钩子（SceneArchive 按元数据读写组件，不逐组件手写 codec）
     bool (*hasFn)(class Scene&, Entity);
     void* (*emplaceFn)(class Scene&, Entity);      // 不存在时构造，返回组件指针
     const void* (*readFn)(class Scene&, Entity);   // 只读取址，不存在返回 nullptr
+    // 可写取址（存在时返回指针，否则 nullptr；Inspector 编辑/M4.2 Undo 记录用）
+    void* (*getFn)(class Scene&, Entity) = nullptr;
     // 全池遍历（StateHash/提取层；C 回调+ctx 避免模板穿透元数据层）
     void (*forEachFn)(class Scene&, void (*)(Entity, const void*, void*), void* ctx);
     // 移除组件（M3 脚本结构命令缓冲用；nullptr = 不支持）

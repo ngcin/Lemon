@@ -21,6 +21,13 @@ inline constexpr const char* ToString(LogLevel l) {
     }
 }
 
+// ---- 汇聚通道（M4 编辑器 Console / smoke 断言共用；01 §7 消费端新立）----
+// 观察者在锁内被调用：实现方须无锁快速（编辑器侧只做入环拷贝）。
+using LogSink = void (*)(LogLevel level, const char* msg, void* userData);
+void SetLogSink(LogSink sink, void* userData); // nullptr = 移除
+/// 按级别累计计数（含验证层消息经 LogMsg(Error) 的通路；smoke 断言用）
+uint64_t LogCountOf(LogLevel level);
+
 } // namespace lemon
 
 #define LEMON_LOG(...) ::lemon::LogMsg(::lemon::LogLevel::Info, __VA_ARGS__)

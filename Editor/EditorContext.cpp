@@ -1,0 +1,324 @@
+// Lemon 编辑器 — EditorContext 实现（场景 IO / 实体操作 / 选择集）
+#include "EditorContext.h"
+
+#include <algorithm>
+#include <chrono>
+#include <cstring>
+#include <fstream>
+
+#include "Components/CoreComponents.h"
+#include "Components/RenderComponents.h"
+#include "Core/Guid.h"
+#include "Core/Log.h"
+#include "ECS/ComponentRegistry.h"
+#include "ECS/Hierarchy.h"
+#include "Serialization/SceneArchive.h"
+#include "Systems/Systems.h"
+
+namespace lemon::editor {
+using ecs::RegisterAllComponents;
+using ecs::SceneArchive;
+
+EditorContext::EditorContext() {
+    RegisterAllComponents(); // 编辑器宿主进程内的注册表初始化（幂等）
+    world_ = std::make_unique<ecs::World>(ecs::WorldDesc{.seed = 20260919ull});
+    // 编辑世界只装 Essential（销毁提交）；Play 世界 M4.3 独立构建全量管线
+    world_->Pipeline().AddSystem(std::make_unique<ecs::DestroyCommitSystem>());
+    world_->Pipeline().ResolveOrder();
+    scene_ = &world_->CreateScene("edit");
+    world_->SetActiveScene(scene_);
+}
+
+EditorContext::~EditorContext() = default;
+
+void EditorContext::NewScene() {
+    // 清空重建经 SceneArchive 空档（Load 语义 = 清空目标 Scene 后重建；World 不动）
+    static const char* kEmpty = R"({"schemaVersion":1,"name":"untitled","entities":[]})";
+    SceneArchive::Load(*scene_, kEmpty);
+    scenePath_.clear();
+    selection_.clear();
+    dirty = false;
+}
+
+bool EditorContext::OpenScene(const std::string& path) {
+    std::ifstream f(path, std::ios::binary | std::ios::ate);
+    if (!f) {
+        LEMON_WARN("打开场景失败：文件不存在 %s", path.c_str());
+        return false;
+    }
+    std::string text((size_t)f.tellg(), '\0');
+    f.seekg(0);
+    f.read(text.data(), (std::streamsize)text.size());
+    if (!SceneArchive::Load(*scene_, text)) {
+        LEMON_WARN("打开场景失败：解析失败 %s", path.c_str());
+        return false;
+    }
+    scenePath_ = path;
+    selection_.clear();
+    BackfillGuids();
+    dirty = false;
+    LEMON_LOG("场景已打开：%s（%u 实体）", path.c_str(), scene_->AliveCount());
+    return true;
+}
+
+bool EditorContext::SaveScene(std::string path) {
+    if (path.empty()) {
+        if (scenePath_.empty()) return false; // 无路径 = 需另存为
+        path = scenePath_;
+    }
+    PruneSelection(); // 序列化前清死引用选中项
+    std::string json = SceneArchive::Save(*scene_);
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    if (!f) {
+        LEMON_WARN("保存场景失败：无法写入 %s", path.c_str());
+        return false;
+    }
+    f.write(json.data(), (std::streamsize)json.size());
+    if (!f.good()) {
+        LEMON_WARN("保存场景失败：写入中断 %s", path.c_str());
+        return false;
+    }
+    scenePath_ = path;
+    dirty = false;
+    LEMON_LOG("场景已保存：%s（%zu 字节）", path.c_str(), json.size());
+    return true;
+}
+
+std::string EditorContext::SceneName() const {
+    if (scenePath_.empty()) return "untitled.scene";
+    size_t slash = scenePath_.find_last_of("/\\");
+    return slash == std::string::npos ? scenePath_ : scenePath_.substr(slash + 1);
+}
+
+ecs::Entity EditorContext::CreateEntity(const char* tag) {
+    ecs::Entity e = scene_->Create();
+    scene_->Emplace<ecs::Transform2D>(e);
+    ecs::Meta& m = scene_->Emplace<ecs::Meta>(e);
+    m.guid = GenerateGuid();
+    std::snprintf(m.tag, sizeof(m.tag), "%s", tag);
+    dirty = true;
+    return e;
+}
+
+ecs::Entity EditorContext::CreateSpriteEntity(const char* tag, uint32_t spriteId) {
+    ecs::Entity e = CreateEntity(tag);
+    ecs::SpriteRenderer& sr = scene_->Emplace<ecs::SpriteRenderer>(e);
+    sr.spriteId = spriteId;
+    sr.flags = 0x4; // bit2 enabled
+    return e;
+}
+
+ecs::Entity EditorContext::DuplicateEntity(ecs::Entity e) {
+    if (e.IsNull() || !scene_->Alive(e)) return ecs::Entity::Null();
+    auto& reg = ecs::ComponentRegistry::Instance();
+    ecs::Entity copy = scene_->Create();
+    std::vector<uint64_t> selfSet{e.id, copy.id}; // EntityRef 自引用判定集
+    for (uint16_t id = 0; id < reg.Count(); ++id) {
+        const ecs::ComponentMeta& meta = reg.At(id);
+        if (!meta.hasFn || !meta.readFn || !meta.emplaceFn) continue;
+        if (!meta.hasFn(*scene_, e)) continue;
+        void* dst = meta.emplaceFn(*scene_, copy);
+        if (const void* src = meta.readFn(*scene_, e)) {
+            if (meta.sizeOf > 0) std::memcpy(dst, src, meta.sizeOf);
+        }
+    }
+    // 副本特化：新 guid；Hierarchy 不复制（副本为根）；EntityRef 指向自身 → 置空
+    if (scene_->Has<ecs::Meta>(copy)) {
+        scene_->Get<ecs::Meta>(copy).guid = GenerateGuid();
+    }
+    scene_->Remove<ecs::Hierarchy>(copy);
+    for (uint16_t id = 0; id < reg.Count(); ++id) {
+        const ecs::ComponentMeta& meta = reg.At(id);
+        if (!meta.getFn) continue;
+        void* comp = meta.getFn(*scene_, copy);
+        if (!comp) continue;
+        for (uint16_t f = 0; f < meta.fieldCount; ++f) {
+            if (meta.fields[f].type != ecs::FieldType::EntityRef) continue;
+            uint64_t* ref = (uint64_t*)((char*)comp + meta.fields[f].offset);
+            if (std::find(selfSet.begin(), selfSet.end(), *ref) != selfSet.end())
+                *ref = 0;
+        }
+    }
+    dirty = true;
+    return copy;
+}
+
+void EditorContext::DestroyEntityTree(ecs::Entity e) {
+    if (e.IsNull() || !scene_->Alive(e)) return;
+    SceneDestroyEntityTree(*scene_, e);
+    PruneSelection();
+    dirty = true;
+}
+
+bool EditorContext::IsSelected(ecs::Entity e) const {
+    for (auto& s : selection_)
+        if (s == e) return true;
+    return false;
+}
+
+void EditorContext::Select(ecs::Entity e, bool additive) {
+    if (!additive) selection_.clear();
+    // 已选则去重（Ctrl 点选已选项 = 取消，Unity 心智）
+    for (auto it = selection_.begin(); it != selection_.end(); ++it) {
+        if (*it == e) {
+            if (additive) {
+                selection_.erase(it);
+                return;
+            }
+            selection_.clear();
+            selection_.push_back(e); // 单击已选主对象 = 保持主选中
+            return;
+        }
+    }
+    selection_.push_back(e);
+}
+
+void EditorContext::ClearSelection() { selection_.clear(); }
+
+void EditorContext::PruneSelection() {
+    std::vector<ecs::Entity> keep;
+    keep.reserve(selection_.size());
+    for (auto e : selection_)
+        if (scene_->Alive(e)) keep.push_back(e);
+    selection_.swap(keep);
+}
+
+// ------------------------------------------------------------- Play 沙盒 ----
+bool EditorContext::EnterPlay() {
+    if (Playing()) return false;
+    const auto t0 = std::chrono::steady_clock::now();
+    // §3.4-1：先固化快照（未保存改动进快照但不落盘，dirty 保持）
+    editSnapshot_ = SceneArchive::Save(*scene_);
+    // §3.4-3：playWorld ← Load(快照)；同 seed（确定性；编辑世界种子同源）
+    playWorld_ = std::make_unique<ecs::World>(world_->Desc());
+    playWorld_->InstallDefaultSystems(); // 16 系统全量管线（游戏语义）
+    playScene_ = &playWorld_->CreateScene("play");
+    playWorld_->SetActiveScene(playScene_);
+    if (!SceneArchive::Load(*playScene_, editSnapshot_)) {
+        LEMON_WARN("Play 沙盒装载失败（快照解析异常）");
+        playWorld_.reset();
+        playScene_ = nullptr;
+        return false;
+    }
+    // §3.4-4：清 Undo 并禁用；选中集快照后清空
+    undo_.Clear();
+    savedSelectionGuids_.clear();
+    for (ecs::Entity e : selection_)
+        if (const ecs::Meta* m = scene_->TryGet<ecs::Meta>(e); m && m->guid)
+            savedSelectionGuids_.push_back(m->guid);
+    selection_.clear();
+    lastEnterMs_ = std::chrono::duration<double, std::milli>(
+                       std::chrono::steady_clock::now() - t0)
+                       .count();
+    LEMON_LOG("进 Play（%.1fms）：快照 %zu 字节，%u 实体", lastEnterMs_, editSnapshot_.size(),
+              playScene_->AliveCount());
+    return true;
+}
+
+bool EditorContext::ExitPlay() {
+    if (!Playing()) return false;
+    const auto t0 = std::chrono::steady_clock::now();
+    // §3.4-1：弃 playWorld（两阶段销毁随 World 析构；renderable 由视口提取差集释放）
+    playWorld_.reset();
+    playScene_ = nullptr;
+    // §3.4-2：editScene ← Load(快照) 整体重建（零状态泄漏的结构保证）
+    if (!SceneArchive::Load(*scene_, editSnapshot_)) {
+        LEMON_WARN("Stop 恢复失败（快照解析异常）——编辑场景可能损坏");
+        lastExitVerified_ = false;
+        return false;
+    }
+    BackfillGuids();
+    // §3.4-3：恢复选中集（按 guid 找回）
+    selection_.clear();
+    for (uint64_t g : savedSelectionGuids_)
+        if (ecs::Entity e = FindByGuid(g); !e.IsNull()) selection_.push_back(e);
+    // 验收 #5：Stop 后序列化 == 进 Play 前快照（逐字节）
+    lastExitVerified_ = SceneArchive::Save(*scene_) == editSnapshot_;
+    lastExitMs_ = std::chrono::duration<double, std::milli>(
+                      std::chrono::steady_clock::now() - t0)
+                      .count();
+    LEMON_LOG("退 Play（%.1fms）：编辑场景重建 %s", lastExitMs_,
+              lastExitVerified_ ? "逐字节一致 ✔" : "!! 与快照不一致");
+    return lastExitVerified_;
+}
+
+void EditorContext::TickEditor(float dt) {
+    world_->Step(dt);
+    if (scene_->PendingDestroyCount() > 0) scene_->CommitDestroys();
+}
+
+void EditorContext::TickPlay(float dt) {
+    playWorld_->Step(dt);
+    if (playScene_->PendingDestroyCount() > 0) playScene_->CommitDestroys();
+}
+
+// ---------------------------------------------------------------- Undo ----
+std::vector<uint8_t> EditorContext::SnapshotComponent(ecs::Entity e, uint16_t compId) {
+    auto& reg = ecs::ComponentRegistry::Instance();
+    const ecs::ComponentMeta& meta = reg.At(compId);
+    void* comp = meta.getFn ? meta.getFn(ActiveScene(), e) : nullptr;
+    if (!comp || meta.sizeOf == 0) return {};
+    return std::vector<uint8_t>((uint8_t*)comp, (uint8_t*)comp + meta.sizeOf);
+}
+
+ecs::Entity EditorContext::FindByGuid(uint64_t guid) const {
+    ecs::Entity found = ecs::Entity::Null();
+    const_cast<EditorContext*>(this)->ActiveScene().Each([&](ecs::Entity e) {
+        const ecs::Meta* m = const_cast<EditorContext*>(this)->ActiveScene().TryGet<ecs::Meta>(e);
+        if (m && m->guid == guid) found = e;
+    });
+    return found;
+}
+
+void EditorContext::PushPropertyUndo(const char* name, uint64_t guid, uint16_t compId,
+                                     std::vector<uint8_t> before, std::vector<uint8_t> after) {
+    if (Playing()) return; // Play 中禁用（§2.4）
+    undo_.Push({name, [this, guid, compId, b = std::move(before), a = std::move(after)](bool u) {
+                    ecs::Entity e = FindByGuid(guid);
+                    if (e.IsNull()) {
+                        LEMON_WARN("Undo 目标实体不存在（guid %016llx 丢失）",
+                                   (unsigned long long)guid);
+                        return;
+                    }
+                    auto& reg = ecs::ComponentRegistry::Instance();
+                    const ecs::ComponentMeta& meta = reg.At(compId);
+                    void* comp = meta.getFn ? meta.getFn(ActiveScene(), e) : nullptr;
+                    if (!comp) return;
+                    const std::vector<uint8_t>& src = u ? b : a;
+                    if (src.size() != meta.sizeOf) {
+                        LEMON_WARN("Undo 组件尺寸漂移（%s）", meta.name);
+                        return;
+                    }
+                    std::memcpy(comp, src.data(), meta.sizeOf);
+                    dirty = true;
+                }});
+    dirty = true;
+}
+
+std::string EditorContext::SnapshotSceneJson() { return SceneArchive::Save(ActiveScene()); }
+
+void EditorContext::PushStructuralUndo(const char* name, const std::string& beforeJson) {
+    if (Playing()) return;
+    const std::string afterJson = SceneArchive::Save(ActiveScene());
+    undo_.Push({name, [this, b = beforeJson, a = afterJson](bool u) {
+                    const std::string& json = u ? b : a;
+                    if (!SceneArchive::Load(ActiveScene(), json)) {
+                        LEMON_WARN("结构 Undo 恢复失败");
+                        return;
+                    }
+                    BackfillGuids();
+                    PruneSelection();
+                    dirty = true;
+                }});
+    dirty = true;
+}
+
+void EditorContext::BackfillGuids() {
+    scene_->Each([this](ecs::Entity e) {
+        if (!scene_->Has<ecs::Meta>(e)) return;
+        ecs::Meta& m = scene_->Get<ecs::Meta>(e);
+        if (m.guid == 0) m.guid = GenerateGuid();
+    });
+}
+
+} // namespace lemon::editor

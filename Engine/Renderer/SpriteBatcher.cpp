@@ -9,8 +9,9 @@
 namespace lemon::renderer {
 
 void SpriteBatcher::Init(rhi::Device& device, uint32_t samplerLinearSlot,
-                         uint32_t samplerPointSlot) {
+                         uint32_t samplerPointSlot, rhi::Format colorFormat) {
     device_ = &device;
+    colorFormat_ = colorFormat;
     samplerSlots_[0] = samplerLinearSlot;
     samplerSlots_[1] = samplerPointSlot;
     CreateGeometry();
@@ -54,7 +55,7 @@ void SpriteBatcher::CreatePipelines() {
                                       rhi::BlendMode::Additive, rhi::BlendMode::Multiply};
     for (int i = 0; i < 4; ++i) {
         pipelines_[i] = device_->CreatePipeline(
-            {.vs = vs, .fs = fs, .blend = blends[i], .colorFormat = device_->SwapchainFormat()});
+            {.vs = vs, .fs = fs, .blend = blends[i], .colorFormat = colorFormat_});
     }
 }
 

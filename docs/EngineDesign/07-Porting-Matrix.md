@@ -124,7 +124,7 @@
 | **M1 渲染** | Luma RenderableManager（B）、批键（A）、粒子全套（B）、Nut RHI 切面（C）、Editor-RPG2D 降级守卫（C）、Prowl2D Camera2D 清单（C） |
 | **M2 ECS** | MoteurJV 组件目录（C ✅ 27 组件+注册表）、yami Team schema（C ✅ 内联默认表）/RLE codec（M6）/分区自适应（M6）、Luma JobSystem（B ✅ 值语义修正）+ 系统调度（C ✅）、F3 清单（C ✅ 统计层+--stats 文本）；新增第三方 nlohmann/json v3.11.3（.scene 序列化，THIRD_PARTY 已登记） |
 | **M3 脚本** | Luma CoreCLRHost 全量 + ScriptLoadContext（B）、yami 生命周期形状（C）、Prowl2D SceneDispatcher 调度 / 命名级 API 面 / MainThreadContext（C）、Prowl Roslyn（C，后期） |
-| **M4 编辑器** | Luma 面板框架与面板集（B）、MoteurJV Play 快照（C）、Prowl2D Undo 双轨 / PrefabLink + Inspector override（C）、Editor-RPG2D 模式栈/焦点仲裁/放行约定（A）、yami GUID+manifest（C） |
+| **M4 编辑器** | Luma 面板框架与面板集（B）、MoteurJV Play 快照（C）、Prowl2D Undo 双轨 / PrefabLink + Inspector override（C）、Editor-RPG2D 模式栈/焦点仲裁/放行约定（A）、yami GUID+manifest（C）；新增第三方 Dear ImGui v1.92.9b-docking（MIT，编辑器 UI，THIRD_PARTY 已登记，M4.0）+ stb（公有领域，PNG 导入/截屏，M4.0） |
 | **M5 VS 模板** | duality SpriteAnimator 思想（C）、yami 存档接口（C）、yami 默认素材底包（MIT 直用） |
 | **M6 TD 模板** | duality Tilemaps（B）、Editor-RPG2D 放置状态机/自动瓦片/chunk 烘焙（B） |
 | **M7 发布** | yami Deployment 清单（C）、Editor-RPG2D 序列化骨架（C） |

@@ -6,7 +6,9 @@
 #include <cstdint>
 #include <algorithm>
 
+#include "Core/Guid.h"
 #include "Core/Math.h"
+#include "ECS/Hierarchy.h"
 #include "Renderer/Atlas.h"
 #include "Renderer/BitmapFont.h"
 #include "Renderer/Camera2D.h"
@@ -1746,6 +1748,204 @@ void TestVerifyStateHashStability() {
 
 } // namespace
 
+// ---- M4.1：Hierarchy 链维护/防环/世界矩阵（内核 #1 + M2 复审 N6 遗留环检测测试）----
+#include "Components/CoreComponents.h"
+#include "ECS/ComponentRegistry.h"
+#include "ECS/Scene.h"
+
+void TestHierarchyChainLifecycle() {
+    using namespace lemon::ecs;
+    RegisterAllComponents();
+    Scene s("h");
+    auto mk = [&](Vec2 pos, float rot = 0, Vec2 scale = {1, 1}) {
+        Entity e = s.Create();
+        Transform2D t;
+        t.pos = pos;
+        t.rot = rot;
+        t.scale = scale;
+        s.Emplace<Transform2D>(e, t);
+        return e;
+    };
+
+    // 直链 root→a→b→c（深度 0/1/2/3）
+    Entity root = mk({100, 50});
+    Entity a = mk({10, 0});
+    Entity b = mk({5, 5}, lemon::math::kPi / 2); // 90°（Y 向下系顺时针）
+    Entity c = mk({20, 0}, 0, {2, 3});
+    Expect(SceneSetParent(s, a, root), "set parent a-root");
+    Expect(SceneSetParent(s, b, a), "set parent b-a");
+    Expect(SceneSetParent(s, c, b), "set parent c-b");
+    Expect(HierarchyDepth(s, root) == 0 && HierarchyDepth(s, c) == 3, "depths 0..3");
+
+    // 链完整性：firstChild/next/prev 三向
+    Expect(s.Get<Hierarchy>(root).firstChild == a, "root.firstChild = a");
+    Expect(s.Get<Hierarchy>(a).firstChild == b && s.Get<Hierarchy>(b).firstChild == c, "chain down");
+    Expect(s.Get<Hierarchy>(b).prev.IsNull() && s.Get<Hierarchy>(c).next.IsNull(), "edge links null");
+
+    // 防环：父挂到自身后代被拒（N6 遗留项落地）
+    Expect(!SceneSetParent(s, root, c), "cycle reject root→c(descendant)");
+    Expect(!SceneSetParent(s, a, b), "cycle reject a→b(child)");
+    Expect(!SceneSetParent(s, a, a), "self parent reject");
+    // 拒绝后结构不变
+    Expect(s.Get<Hierarchy>(a).parent == root, "a still child of root");
+
+    // 深度上限：c(3) 下再挂 6 层——第 6 层落深度 9 > 8 被拒；成功链最深恰为 8
+    Entity chain[6];
+    Entity cur = c;
+    bool lastOk = true;
+    for (int i = 0; i < 6; ++i) {
+        chain[i] = mk({0, 0});
+        lastOk = SceneSetParent(s, chain[i], cur);
+        if (lastOk) cur = chain[i];
+    }
+    Expect(!lastOk, "depth limit 8 enforced");
+    Expect(HierarchyDepth(s, cur) == (int)kMaxHierarchyDepth, "deepest = exactly 8");
+
+    // 世界矩阵合成 vs Mat3x2 参照（内核 #1 验收口径）
+    WorldTransform2D wt;
+    Expect(ComputeWorldTransform(s, c, wt), "world transform ok");
+    Mat3x2 ref = Mat3x2::FromTRS({100, 50}, 0, {1, 1}) *
+                 Mat3x2::FromTRS({10, 0}, 0, {1, 1}) *
+                 Mat3x2::FromTRS({5, 5}, lemon::math::kPi / 2, {1, 1}) *
+                 Mat3x2::FromTRS({20, 0}, 0, {2, 3});
+    Vec2 rp = ref.Apply({0, 0}); // 原点 = 世界位置
+    ExpectNear(wt.pos.x, rp.x, 1e-3f, "world pos x matches Mat3x2");
+    ExpectNear(wt.pos.y, rp.y, 1e-3f, "world pos y matches Mat3x2");
+    ExpectNear(wt.rot, lemon::math::kPi / 2, 1e-5f, "world rot additive");
+    Expect(wt.scale == Vec2(2, 3), "world scale multiplicative");
+    // 带父缩放/父旋转的局部偏移：换 b 的 scale 验证 scale ⊙ localPos
+    s.Get<Transform2D>(b).scale = {2, 2};
+    Expect(ComputeWorldTransform(s, c, wt), "recompute ok");
+    Mat3x2 ref2 = Mat3x2::FromTRS({100, 50}, 0, {1, 1}) *
+                  Mat3x2::FromTRS({10, 0}, 0, {1, 1}) *
+                  Mat3x2::FromTRS({5, 5}, lemon::math::kPi / 2, {2, 2}) *
+                  Mat3x2::FromTRS({20, 0}, 0, {2, 3});
+    Vec2 rp2 = ref2.Apply({0, 0});
+    ExpectNear(wt.pos.x, rp2.x, 1e-3f, "scaled parent pos x");
+    ExpectNear(wt.pos.y, rp2.y, 1e-3f, "scaled parent pos y");
+    s.Get<Transform2D>(b).scale = {1, 1};
+
+    // 摘根：b 摘出后 a.firstChild 置空、b 子树随行
+    Expect(SceneDetach(s, b), "detach b");
+    Expect(s.Get<Hierarchy>(a).firstChild.IsNull(), "a.firstChild cleared");
+    Expect(s.Get<Hierarchy>(b).firstChild == c, "b keeps child c");
+    Expect(HierarchyDepth(s, c) == 1, "c depth 1 after detach");
+
+    // 重挂：b→root（a 的兄弟）
+    Expect(SceneSetParent(s, b, root), "rehang b under root");
+    Expect(s.Get<Hierarchy>(root).firstChild == b, "new child at head");
+    Expect(s.Get<Hierarchy>(b).next == a && s.Get<Hierarchy>(a).prev == b, "sibling links");
+
+    // 子树销毁：root 树（a、b、c 及深链）全灭，旁观者存活
+    Entity outsider = mk({0, 0});
+    SceneDestroyEntityTree(s, root);
+    s.CommitDestroys();
+    Expect(!s.Alive(root) && !s.Alive(a) && !s.Alive(b) && !s.Alive(c), "tree destroyed");
+    Expect(s.Alive(outsider), "outsider survives");
+    bool chainGone = true;
+    for (int i = 0; i < 5; ++i) // chain[5] 被深度拒绝、不在树内 → 必须存活
+        if (s.Alive(chain[i])) chainGone = false;
+    Expect(chainGone, "in-tree chain destroyed");
+    Expect(s.Alive(chain[5]), "rejected node not in tree, survives");
+}
+
+// ---- M4.1：Meta.guid 序列化往返（内核 #5）----
+#include "Serialization/SceneArchive.h"
+
+void TestMetaGuidRoundtrip() {
+    using namespace lemon::ecs;
+    RegisterAllComponents();
+    Scene src("g1");
+    Entity e1 = src.Create();
+    src.Emplace<Transform2D>(e1);
+    Meta& m1 = src.Emplace<Meta>(e1);
+    m1.guid = lemon::GenerateGuid();
+    Entity e2 = src.Create();
+    src.Emplace<Transform2D>(e2);
+    Meta& m2 = src.Emplace<Meta>(e2);
+    m2.guid = lemon::GenerateGuid();
+    Expect(m1.guid != 0 && m2.guid != 0 && m1.guid != m2.guid, "guids generated distinct");
+
+    std::string text = SceneArchive::Save(src);
+    Scene dst("g2");
+    Expect(SceneArchive::Load(dst, text), "guid scene load");
+    // 按 guid 找回实体（编辑器选中找回语义）
+    bool found1 = false, found2 = false;
+    dst.Each([&](Entity e) {
+        if (const Meta* m = dst.TryGet<Meta>(e)) {
+            if (m->guid == m1.guid) found1 = true;
+            if (m->guid == m2.guid) found2 = true;
+        }
+    });
+    Expect(found1 && found2, "guids survive save/load");
+
+    // 无 guid 旧档：加载后 guid 默认 0（backfill 是编辑器职责，引擎不做隐式改写）
+    const char* legacy = R"({"schemaVersion":1,"name":"old","entities":[{"components":{"Transform2D":{"pos":[1,2],"rot":0.0,"scale":[1,1]},"Meta":{"prefabId":0,"team":0,"layer":0,"tag":"veteran"}}}]})";
+    Scene s3("g3");
+    Expect(SceneArchive::Load(s3, legacy), "legacy scene loads");
+    bool legacyZero = true;
+    s3.Each([&](Entity e) {
+        if (const Meta* m = s3.TryGet<Meta>(e))
+            if (m->guid != 0) legacyZero = false;
+    });
+    Expect(legacyZero, "legacy guid stays 0 (no implicit rewrite)");
+
+    // 生成器：连续 1000 个不撞、非全零
+    uint64_t first = lemon::GenerateGuid();
+    bool allDistinct = true;
+    for (int i = 0; i < 1000; ++i) {
+        uint64_t g = lemon::GenerateGuid();
+        if (g == 0 || g == first) allDistinct = false;
+    }
+    Expect(allDistinct, "guid generator 1000 distinct");
+}
+
+// ---- M4.1：编辑器元数据健全性（内核 #6；Inspector 控件渲染的前提）----
+void TestEditorMetaSanity() {
+    using namespace lemon::ecs;
+    RegisterAllComponents();
+    auto& reg = ComponentRegistry::Instance();
+    bool allOk = true;
+    for (uint16_t id = 0; id < reg.Count(); ++id) {
+        const ComponentMeta& meta = reg.At(id);
+        if (!meta.editorMeta) continue;
+        for (uint16_t f = 0; f < meta.fieldCount; ++f) {
+            const FieldEditorMeta& ed = meta.editorMeta[f];
+            const FieldMeta& fm = meta.fields[f];
+            if (HasHint(ed.hints, FieldHint::Range) && !(ed.rangeMin < ed.rangeMax)) {
+                LEMON_LOG("BAD RANGE: %s.%s [%f,%f]", meta.name, fm.name, ed.rangeMin, ed.rangeMax);
+                allOk = false;
+            }
+            if (HasHint(ed.hints, FieldHint::Enum) &&
+                (!ed.enumNames || ed.enumCount == 0 || ed.enumCount > 256)) {
+                LEMON_LOG("BAD ENUM: %s.%s", meta.name, fm.name);
+                allOk = false;
+            }
+            if (HasHint(ed.hints, FieldHint::ColorHex) && fm.type != FieldType::UInt32) {
+                LEMON_LOG("BAD COLOR TYPE: %s.%s", meta.name, fm.name);
+                allOk = false;
+            }
+            if (HasHint(ed.hints, FieldHint::Bool8) &&
+                !(fm.type == FieldType::UInt8 || fm.type == FieldType::Int8)) {
+                LEMON_LOG("BAD BOOL8 TYPE: %s.%s", meta.name, fm.name);
+                allOk = false;
+            }
+        }
+    }
+    // 既有特性抽查：Collectible.kind 枚举 3 项、SpriteRenderer.colorRGBA 颜色、rot 角度
+    const ComponentMeta& col = *reg.Find("Collectible");
+    Expect(col.editorMeta && HasHint(col.editorMeta[0].hints, FieldHint::Enum) &&
+               col.editorMeta[0].enumCount == 3,
+           "Collectible.kind enum meta");
+    const ComponentMeta& sr = *reg.Find("SpriteRenderer");
+    Expect(sr.editorMeta && HasHint(sr.editorMeta[1].hints, FieldHint::ColorHex),
+           "SpriteRenderer.colorRGBA color meta");
+    const ComponentMeta& tf = *reg.Find("Transform2D");
+    Expect(tf.editorMeta && HasHint(tf.editorMeta[1].hints, FieldHint::Degree),
+           "Transform2D.rot degree meta");
+    Expect(allOk, "editor metadata sanity");
+}
+
 int main() {
     TestVec2();
     TestMat3x2();
@@ -1801,6 +2001,9 @@ int main() {
     TestVerifyNullEntityRefRoundtrip();
     TestVerifyStateHashStability();
     TestNoDoubleDeathEvents();
+    TestHierarchyChainLifecycle();
+    TestMetaGuidRoundtrip();
+    TestEditorMetaSanity();
     LEMON_LOG("engine-tests: %d checks OK", g_checks);
     return 0;
 }

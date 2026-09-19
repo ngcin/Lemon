@@ -95,7 +95,8 @@ public static unsafe class LayoutTables
             F("prefabId", FieldTypeCode.UInt64, 0, O(p, &p->PrefabId)),
             F("team", FieldTypeCode.TeamRef, 0, O(p, &p->Team)),
             F("layer", FieldTypeCode.UInt16, 0, O(p, &p->Layer)),
-            F("tag", FieldTypeCode.Blob24, 0, O(p, p->Tag)) }); }
+            F("tag", FieldTypeCode.Blob24, 0, O(p, p->Tag)),
+            F("guid", FieldTypeCode.UInt64, 0, O(p, &p->Guid)) }); }
         Add<DestroyQueueTag>("DestroyQueueTag", (uint)sizeof(DestroyQueueTag), Array.Empty<FieldLayoutRow>());
 
         // ---- Render（id 5..8）----

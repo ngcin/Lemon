@@ -5,6 +5,74 @@
 
 ---
 
+## 2026-09-19 · M4.0–M4.3 编辑器四阶段（ImGui docking 壳 → 数据面板 → SceneView → Play 沙盒+Undo）
+
+按 M4-Editor-Plan.md §5 顺序实施，每阶段可运行验收 + 截图目检（`--screenshot` + RHI
+调试截屏通路：交换链加 TRANSFER_SRC，EndPass 后 blit 中转缓冲取回）。
+
+**M4.0 骨架**（ImGui v1.92.9b-docking + stb 锁 commit 入 CPM 缓存，THIRD_PARTY/07 登记）：
+
+- 边界纪律双豁免口落地：`rhi::VulkanInteropHandles`/`NativeCommandBuffer`（引擎侧）+
+  `Editor/App/ImGuiBackend.cpp`（编辑器侧唯一含 Vulkan 头 TU，07 例外登记）；
+  `tests/imgui_isolation.cmake` ctest 断言 Engine/ 树零 ImGui 引用。
+- 内核配套：Log 汇聚通道（sink+分级计数，#14）/ Window 事件观察者（IME 事件桥）/
+  RHI 调试截屏。v1.92 API 适配三坑：`ScaleAllSizes`、`IsGlyphInFont`（字体探针）、
+  新纹理后端不手工 `Fonts->Build()`。
+- 验收：冷启动 1741ms（首启含管线编译）→ 543ms（管线缓存二启），<2s ✔；CJK 走系统
+  STHeiti（TrueType 轮廓实查；内嵌 OFL 子集留打包期）；验证层零报错；默认布局截图
+  目检（左 Hierarchy/右 Inspector/中央标签页/底部 Console+Assets）。
+
+**M4.1 数据面板与场景 IO**：
+
+- 内核 #1 `ECS/Hierarchy.{h,cpp}`：SceneSetParent 双链手术/防环（后代 DFS+深度≤8）/
+  世界矩阵合成（Mat3x2 参照断言）；#5 Meta.guid（40→48B，C# 镜像同步，破 M3 前回放档）；
+  #6 FieldEditorMeta 平行表（Range/Degree/ColorHex/Bool8/Enum/Hide，探针协议不动）。
+- 面板：Hierarchy（树/拖拽父子/Ctrl 多选/右键/搜索）、Inspector（反射驱动 27 组件
+  全字段可写 + Add/Remove + 数组段只读 + 运行时字段灰显）、Console（实装）、Profiler
+  （Profiles/GPU 时间戳同源）；FilePicker 内置（无 OS 对话框依赖，可无头冒烟）。
+- 场景 IO：打开/保存/另存/Ctrl+S/脏标记/关闭确认模态；`--scene`/`--save-scene` CLI
+  roundtrip 验收（播种 5 实体含父子链 → 保存 1938B → 重开 5/5 守恒 PASS）。
+- 测试：+42 checks（Hierarchy 链生命周期/防环/世界矩阵 vs Mat3x2/guid 往返/编辑器
+  元数据健全性）= **12872×1 全绿**；script-tests（C# 布局镜像）PASS。
+
+**M4.2 SceneView 与编辑交互**：
+
+- 内核 #11：`TextureDesc.renderTarget` + `CommandList::BeginOffscreenPass`（EndPass 按
+  目标分流：交换链→PRESENT_SRC，离屏→SHADER_READ 供 UI 采样）；SpriteBatcher::Init
+  增 colorFormat 参数（离屏 RGBA8Unorm vs 交换链 BGRA8Srgb，验证层实抓格式 VUID）。
+- `Editor/Interaction/ViewportRenderer`：提取系统（#1 世界变换消费/#2 销毁禁用差集
+  释放/#4 场景代际失效）+ 程序化测试图集（8×64px 调色板 + ASCII 字体页，零外部素材）+
+  双视口离屏 + overlay 通道（细条模拟线/框，层 63 顶置）+ 实体名标签（zoom 反缩放）。
+- SceneView：pan（中键/空格）/zoom at cursor/F 框选聚焦/拾取（世界 AABB 旋转逆变换）/
+  Gizmo 三态（移动十字/旋转圈 32 段/四角缩放，吸附 8px/15°/0.25）；GameView letterbox
+  16:9。spriteId 1 起始坑（Atlas 句柄 0 无效，验证层前 assert 抓出）。
+- 验证层修 4 真错：离屏管线格式 / 时间戳超写（离屏 pass 不记）/ RT 重建在用销毁
+  （WaitIdle）/ 退出时序（ImGui 资源先于 idle 释放）。viewportVisible=4 + 截图目检
+  （sprite/标签/网格/选框/手柄/角标全到位）后 errors=0。
+
+**M4.3 Play 沙盒 + Undo 双轨 + 输入路由**：
+
+- `EditorContext` §3.3 全形态：edit/play 双 World、Active 视图（面板/提取统一切换）、
+  进出 Play 全 checklist（快照固化→Load 重建→清 Undo/存 guid 选中→计时）。
+- **验收 #4/#5 实测：进 Play 0.5ms / 退 Play 0.3ms（判据 500/300ms，千倍余量）；
+  Play 中编辑落 Play World（挪主选中实体）→ Stop 后序列化与进 Play 前快照
+  逐字节一致（`--play` 冒烟断言，byte-exact=YES）**——零状态泄漏结构保证成立。
+- Undo：属性轨（组件字节快照，guid 找回；Inspector 控件 IsItemActivated/Deactivated
+  合并 + Gizmo 拖拽整段一条）+ 结构轨（场景 JSON 双快照，SceneArchive 单通路）；
+  上限 100 FIFO；Play 禁用；Ctrl+Z/Y/P。
+- 输入路由 §3.6 子集：GameView 聚焦+悬停门控 → WASD/箭头/空格 → InputState →
+  Play World（WantTextInput 屏蔽）。
+- Pause=dt0（Essential 照跑：销毁提交不断）+ 单步按钮。
+
+**回归**：lemon-tests 12872 / script-tests / imgui-isolation / anim-smoke（300 帧
+验证层零错）/ bench-sprites 50k 1 batch —— 全绿。编辑器冒烟
+`--smoke --play --frames 180 --validate --screenshot` = 冷启 578ms、uiVtx、CJK、
+实体守恒、viewportVisible、**errors=0、play 往返 OK** 五重断言 PASS。
+
+**遗留（M4.4/M4.5 待做）**：资产管线（GUID/.meta/manifest/PNG 导入/stb_image）→
+AssetBrowser/Inspector 资产槽；C# ScriptBox 装配通路 + SDK 增量 + 热重载（ADR-010
+探针复测先行）；项目向导/自动备份/终验收录屏。
+
 ## 2026-09-19 · M2 修复轮（ISSUE-1..8 全部修复：5 文件 ~25 行，12829×3 全绿）
 
 用户批准后按清单修法逐项实施（清单 §7.2 有逐文件明细）：

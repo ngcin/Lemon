@@ -86,6 +86,7 @@ struct CommandList::Impl {
     void* dev = nullptr;         // Device::Impl*（定义顺序原因用 void*，仅本文件内转换）
     uint32_t frameSlot = 0;      // 时间戳槽基址 = frameSlot*2
     uint32_t imageIndex = 0;     // 当前交换链图像（BeginPass 取视图）
+    rhi::Texture offscreenTarget{}; // 非空 = 当前渲染块目标为离屏 RT（EndPass 走 SHADER_READ）
 };
 
 // ------------------------------------------------------------------ 资源表 --
@@ -178,6 +179,9 @@ struct Device::Impl {
     // CommandList（Device 持有，BeginFrame 刷新指向）
     CommandList cmdList;
     CommandList::Impl cmdListImpl;
+
+    // 调试截屏中转缓冲（惰性创建；随 buffers 表在设备丢失时一并销毁并置空）
+    Buffer captureBuffer;
 
     // ---------------------------------------------------------------- 引导
     void CreateInstance() {
@@ -570,7 +574,8 @@ struct Device::Impl {
         ci.imageColorSpace = format.colorSpace;
         ci.imageExtent = extent;
         ci.imageArrayLayers = 1;
-        ci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        ci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                        VK_IMAGE_USAGE_TRANSFER_SRC_BIT; // SRC 供调试截屏（编辑器冒烟/CI）
         ci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
         ci.preTransform = caps.currentTransform;
         ci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
@@ -650,6 +655,7 @@ struct Device::Impl {
         for (auto& r : buffers)
             if (r.buf) vmaDestroyBuffer(allocator, r.buf, r.alloc);
         buffers.clear(); bufferFree.clear();
+        captureBuffer = {};
         for (auto& r : textures) {
             if (r.view) vkDestroyImageView(device, r.view, nullptr);
             if (r.image) vmaDestroyImage(allocator, r.image, r.alloc);
@@ -878,6 +884,7 @@ Texture Device::CreateTexture(const TextureDesc& desc) {
     ci.tiling = VK_IMAGE_TILING_OPTIMAL;
     ci.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
                VK_IMAGE_USAGE_TRANSFER_SRC_BIT; // SRC 供 mip blit
+    if (desc.renderTarget) ci.usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT; // 视口离屏 RT（#11）
     VmaAllocationCreateInfo aci{};
     aci.usage = VMA_MEMORY_USAGE_AUTO;
     VK_CHECK(vmaCreateImage(m->allocator, &ci, &aci, &r.image, &r.alloc, nullptr));
@@ -1254,34 +1261,95 @@ void Device::SavePipelineCache() {
 
 const DeviceInfo& Device::Info() const { return m->info; }
 
-// ----------------------------------------------------------- CommandList --
-void CommandList::BeginPass(Format colorFormat, uint32_t w, uint32_t h, const float clearColor[4]) {
-    (void)colorFormat;
+VulkanInteropHandles Device::GetVulkanInterop() const {
+    VulkanInteropHandles out;
+    out.instance = (void*)m->instance;
+    out.physicalDevice = (void*)m->physical;
+    out.device = (void*)m->device;
+    out.queue = (void*)m->queue;
+    out.queueFamily = m->graphicsFamily;
+    out.apiVersion = std::min(m->physProps.apiVersion, (uint32_t)VK_API_VERSION_1_3);
+    out.swapchainImageCount = (uint32_t)m->swapImages.size();
+    return out;
+}
+
+void* Device::GetVulkanTextureViewInterop(Texture t) {
+    LEMON_ASSERT(t.IsValid(), "invalid texture for view interop");
+    return (void*)m->textures[t.id - 1].view;
+}
+
+// ------------------------------------------------------------- 调试截屏 --
+void* CommandList::NativeCommandBuffer() const { return (void*)m->cmd; }
+
+void CommandList::DebugRecordCapture() {
     auto* d = (Device::Impl*)m->dev;
-    VkImage image = d->swapImages[m->imageIndex];
+    LEMON_ASSERT(m->cmd, "DebugRecordCapture must be called between BeginFrame and EndFrameAndPresent");
 
-    // PRESENT_SRC → COLOR_ATTACHMENT（动态渲染需手动屏障）
-    {
-        VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-        b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        b.image = image;
-        b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        // oldLayout=UNDEFINED 是获取屏障的规范写法：首次使用(实际 UNDEFINED)与
-        // 后续(实际 PRESENT_SRC)都合法，内容本就要 clear
-        b.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        b.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        b.srcAccessMask = 0;
-        b.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        vkCmdPipelineBarrier(m->cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                             VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, nullptr, 0,
-                             nullptr, 1, &b);
+    const uint32_t w = d->swapExtent.width, h = d->swapExtent.height;
+    const uint64_t size = (uint64_t)w * h * 4;
+    if (!d->captureBuffer.IsValid() ||
+        d->buffers[d->captureBuffer.id - 1].desc.size < size) {
+        if (d->captureBuffer.IsValid()) d->ownerDevice->DestroyBuffer(d->captureBuffer);
+        d->captureBuffer = d->ownerDevice->CreateBuffer({.size = size,
+                                                        .usage = (uint32_t)BufferUsage::TransferDst,
+                                                        .hostMapped = true,
+                                                        .debugName = "debug-capture"});
     }
-    if (d->timestamps)
-        vkCmdWriteTimestamp(m->cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, d->tsPool, m->frameSlot * 2);
 
+    VkImage image = d->swapImages[m->imageIndex];
+    // EndPass 后图像在 PRESENT_SRC；借道 TRANSFER_SRC 拷出后归位
+    d->TransitionImage(m->cmd, image, 1, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                       VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                       VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                       VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+    VkBufferImageCopy copy{};
+    copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    copy.imageExtent = {w, h, 1};
+    vkCmdCopyImageToBuffer(m->cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           d->buffers[d->captureBuffer.id - 1].buf, 1, &copy);
+    d->TransitionImage(m->cmd, image, 1, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                       VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_ACCESS_TRANSFER_READ_BIT,
+                       VK_PIPELINE_STAGE_TRANSFER_BIT, 0, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
+}
+
+bool Device::DebugFetchCapture(std::vector<uint8_t>& rgbaOut, uint32_t& w, uint32_t& h) {
+    if (!m->captureBuffer.IsValid()) return false;
+    WaitIdle(); // 截屏非热路径：粗暴等待保证拷贝已完成
+    w = m->swapExtent.width;
+    h = m->swapExtent.height;
+    const uint64_t size = (uint64_t)w * h * 4;
+    rgbaOut.resize((size_t)size);
+    const uint8_t* src = (const uint8_t*)m->buffers[m->captureBuffer.id - 1].mapped;
+    const bool bgra = m->swapFormat == VK_FORMAT_B8G8R8A8_SRGB ||
+                      m->swapFormat == VK_FORMAT_B8G8R8A8_UNORM;
+    for (uint64_t i = 0; i < size; i += 4) {
+        rgbaOut[i + 0] = bgra ? src[i + 2] : src[i + 0];
+        rgbaOut[i + 1] = src[i + 1];
+        rgbaOut[i + 2] = bgra ? src[i + 0] : src[i + 2];
+        rgbaOut[i + 3] = 255; // 不透明合成，alpha 无意义
+    }
+    return true;
+}
+
+// ----------------------------------------------------------- CommandList --
+namespace {
+/// 通用动态渲染块开启（swapchain / 离屏共用；old=UNDEFINED 是获取屏障规范写法）
+void BeginDynamicRendering(VkCommandBuffer cmd, VkImageView view, uint32_t w, uint32_t h,
+                           const float clearColor[4], VkImage image,
+                           VkPipelineStageFlags dstStage) {
+    VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+    b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    b.image = image;
+    b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    b.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    b.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    b.srcAccessMask = 0;
+    b.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, dstStage, 0, 0, nullptr, 0,
+                         nullptr, 1, &b);
     VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
-    color.imageView = d->swapViews[m->imageIndex];
+    color.imageView = view;
     color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
     color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
     color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -1291,17 +1359,53 @@ void CommandList::BeginPass(Format colorFormat, uint32_t w, uint32_t h, const fl
     ri.layerCount = 1;
     ri.colorAttachmentCount = 1;
     ri.pColorAttachments = &color;
-    vkCmdBeginRendering(m->cmd, &ri);
+    vkCmdBeginRendering(cmd, &ri);
+}
+} // namespace
+
+void CommandList::BeginPass(Format colorFormat, uint32_t w, uint32_t h, const float clearColor[4]) {
+    (void)colorFormat;
+    auto* d = (Device::Impl*)m->dev;
+    m->offscreenTarget = {}; // 输出 RT 显式声明（#11）：本块目标 = 交换链
+    if (d->timestamps)
+        vkCmdWriteTimestamp(m->cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, d->tsPool, m->frameSlot * 2);
+    BeginDynamicRendering(m->cmd, d->swapViews[m->imageIndex], w, h, clearColor,
+                          d->swapImages[m->imageIndex], VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+}
+
+void CommandList::BeginOffscreenPass(Texture target, const float clearColor[4]) {
+    auto* d = (Device::Impl*)m->dev;
+    LEMON_ASSERT(target.IsValid(), "BeginOffscreenPass: invalid target");
+    auto& r = d->textures[target.id - 1];
+    LEMON_ASSERT(r.desc.renderTarget, "BeginOffscreenPass: texture not created as renderTarget");
+    m->offscreenTarget = target;
+    // 时间戳只记交换链 pass（查询池 = 2 槽/帧按单 pass 设计；离屏多 pass 会超写，
+    // M4.2 口径：GPU ms = UI pass，视口 GPU 成本经 --stats 单独量）
+    BeginDynamicRendering(m->cmd, r.view, r.desc.width, r.desc.height, clearColor, r.image,
+                          VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
 }
 
 void CommandList::EndPass() {
     vkCmdEndRendering(m->cmd);
     auto* d = (Device::Impl*)m->dev;
-    if (d->timestamps)
+    // 时间戳配对：仅交换链块（与 BeginPass 的写入约定一致；离屏块见其注释）
+    if (d->timestamps && !m->offscreenTarget.IsValid())
         vkCmdWriteTimestamp(m->cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, d->tsPool,
                             m->frameSlot * 2 + 1);
 
-    // COLOR_ATTACHMENT → PRESENT_SRC
+    if (m->offscreenTarget.IsValid()) {
+        // 离屏块：COLOR_ATTACHMENT → SHADER_READ_ONLY（UI 采样；下帧 Begin 再 UNDEFINED 重取）
+        auto& r = d->textures[m->offscreenTarget.id - 1];
+        d->TransitionImage(m->cmd, r.image, 1, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                           VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                           VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                           VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+        m->offscreenTarget = {};
+        return;
+    }
+
+    // 交换链：COLOR_ATTACHMENT → PRESENT_SRC
     VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;

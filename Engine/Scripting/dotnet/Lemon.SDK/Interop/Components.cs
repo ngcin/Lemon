@@ -40,12 +40,13 @@ public struct Hierarchy     // 32B
 }
 
 [StructLayout(LayoutKind.Sequential)]
-public unsafe struct Meta   // 40B
+public unsafe struct Meta   // 48B（M4.1 增 Guid，C++ CoreComponents.h 同步）
 {
     public ulong PrefabId;
     public uint Team;
     public ushort Layer;
     public fixed byte Tag[24]; // Blob24：短标签（NUL 结尾约定同 C++）
+    public ulong Guid;         // 持久实体 GUID（0 = 运行时生成实体）
 }
 
 [StructLayout(LayoutKind.Sequential)]

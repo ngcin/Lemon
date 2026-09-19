@@ -20,8 +20,11 @@ public:
     static constexpr uint32_t kRingFrames = 3;         // 02 §5：环形 SSBO 3 段
     static constexpr uint32_t kInitialCapacity = 4096; // 实例数/段（弹性扩容）
 
-    /// preheat：全部混合模式管线一次建齐（启动期；管线磁盘缓存加速二启）
-    void Init(rhi::Device& device, uint32_t samplerLinearSlot, uint32_t samplerPointSlot);
+    /// preheat：全部混合模式管线一次建齐（启动期；管线磁盘缓存加速二启）。
+    /// colorFormat = 目标附件格式（交换链 pass 用交换链格式；离屏视口用 RT 格式——
+    /// 动态渲染下管线唯一格式依赖，格式不符 = 验证层 VUID 拦截）
+    void Init(rhi::Device& device, uint32_t samplerLinearSlot, uint32_t samplerPointSlot,
+              rhi::Format colorFormat = rhi::Format::BGRA8UnormSrgb);
 
     /// Bake：有序包段（精灵 / 粒子 / 文本，各段内有序、段间层序递增）→ 实例 + 批表。
     /// 跨段同键不合并（批数上限误差 +1，语义无损）
@@ -56,6 +59,7 @@ private:
     };
 
     rhi::Device* device_ = nullptr;
+    rhi::Format colorFormat_ = rhi::Format::BGRA8UnormSrgb;
     uint32_t samplerSlots_[2] = {0, 1}; // Linear/Point → bindless 采样器槽
     rhi::Buffer cornerVB_, indexIB_;
     rhi::Buffer instanceRing_;

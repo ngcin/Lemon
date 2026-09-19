@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <vector>
 
 namespace lemon::rhi {
 
@@ -65,6 +66,7 @@ struct TextureDesc {
     uint32_t mipLevels = 1;
     Format format = Format::RGBA8Unorm;
     bool generateMips = false;
+    bool renderTarget = false;  // 附加 COLOR_ATTACHMENT 用途（编辑器视口离屏 RT，内核 #11）
     const char* debugName = "texture";
 };
 
@@ -97,11 +99,28 @@ struct DeviceInfo {
     bool timestampsSupported = false;
 };
 
+// ---- Vulkan 互操作句柄（07 例外登记：仅供编辑器 ImGui/外置后端 glue 使用）----
+// 纪律：除 Engine/Renderer 的 .cpp 与 Editor 的后端 glue TU 外，任何编译单元
+// 不得持有 Vulkan 类型；本结构经 void* 传递原始句柄，是 Vulkan 零泄漏纪律的
+// 显式豁免口（引擎语义层（视口渲染等）仍一律走自有句柄，不得使用本通道）。
+struct VulkanInteropHandles {
+    void* instance = nullptr;          // VkInstance
+    void* physicalDevice = nullptr;    // VkPhysicalDevice
+    void* device = nullptr;            // VkDevice
+    void* queue = nullptr;             // VkQueue（图形/呈现队列）
+    uint32_t queueFamily = 0;
+    uint32_t apiVersion = 0;           // 实例创建时使用的 apiVersion
+    uint32_t swapchainImageCount = 0;
+};
+
 // ------------------------------------------------------------ CommandList --
 // 由 Device 拥有（每帧在途 2 个）；BeginFrame() 取得本帧录制器，EndFrameAndPresent 提交。
 class CommandList {
 public:
     void BeginPass(Format colorFormat, uint32_t w, uint32_t h, const float clearColor[4]);
+    /// 离屏渲染块（内核 #11：视口 RT 显式声明规约）：渲到 renderTarget 纹理；
+    /// EndPass 时转 SHADER_READ_ONLY 供 UI 采样。与 BeginPass 互斥，一帧可交替多块。
+    void BeginOffscreenPass(Texture target, const float clearColor[4]);
     void EndPass();
     void BindPipeline(Pipeline p);
     void BindQuadGeometry(Buffer cornerVB, Buffer indexIB); // 路径 A 四边形几何（每帧一次）
@@ -110,6 +129,12 @@ public:
     void SetViewportScissor(uint32_t w, uint32_t h);
     void PushConstants(const void* data, uint32_t size);     // ≤ kMaxPushConstants，vert|frag
     void DrawQuadInstances(uint32_t instanceCount, uint32_t baseInstance);
+    /// 调试截屏：录制当帧交换链图像 → 中转缓冲（须在 EndPass 之后、EndFrameAndPresent
+    /// 之前调用；随后 Device::DebugFetchCapture 取回）。见 Device 段注释。
+    void DebugRecordCapture();
+    /// 本帧原始命令缓冲（void* = VkCommandBuffer）。与 VulkanInteropHandles 同一豁免口：
+    /// 仅编辑器后端 glue（在外部渲染块内追加录制）使用，引擎语义层不得调用。
+    void* NativeCommandBuffer() const;
 
 private:
     friend class Device;
@@ -164,6 +189,17 @@ public:
     void SavePipelineCache();                 // preheat 后 / 退出前调用
 
     const DeviceInfo& Info() const;
+
+    // --- Vulkan 互操作（编辑器 ImGui 后端专用；见 VulkanInteropHandles 注释）---
+    VulkanInteropHandles GetVulkanInterop() const;
+    /// 纹理原生视图（void* = VkImageView；ImGui_ImplVulkan_AddTexture 用，同一豁免口）
+    void* GetVulkanTextureViewInterop(Texture t);
+
+    // --- 调试截屏（编辑器冒烟/CI 视觉回归用；非热路径）---
+    // CommandList::DebugRecordCapture()（EndPass 后调用）录制"交换链图像 → 中转缓冲"拷贝；
+    // 随后本接口取回内容（内部 WaitIdle）。RGBA8 字节序，自左上角行优先；
+    // 交换链为 BGRA 时自动交换通道；alpha 恒写 255（不透明合成）。
+    bool DebugFetchCapture(std::vector<uint8_t>& rgbaOut, uint32_t& w, uint32_t& h);
 
 private:
     friend class CommandList; // 录制器需要访问 Device::Impl（同模块 .cpp 内）

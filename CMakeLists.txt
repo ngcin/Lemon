@@ -26,6 +26,7 @@ option(LEMON_BUILD_SPIKES "Build M0 spike programs" ON)
 option(LEMON_BUILD_TESTS "Build engine unit tests" ON)
 option(LEMON_BUILD_SAMPLES "Build engine samples/benches" ON)
 option(LEMON_BUILD_SCRIPTING "M3 C# 脚本层（需要 dotnet SDK 10；OFF 时引擎其余部分照常）" ON)
+option(LEMON_BUILD_EDITOR "M4 编辑器（ImGui docking；lemon-editor + lemon-imgui）" ON)
 
 include(${LEMON_CMAKE_DIR}/CPM.cmake)
 include(${LEMON_CMAKE_DIR}/Dependencies.cmake)
@@ -41,6 +42,10 @@ endif()
 
 if(LEMON_BUILD_SAMPLES)
   add_subdirectory(Samples)
+endif()
+
+if(LEMON_BUILD_EDITOR)
+  add_subdirectory(Editor)
 endif()
 
 if(LEMON_BUILD_SPIKES)

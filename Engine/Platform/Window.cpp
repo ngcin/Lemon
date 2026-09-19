@@ -12,6 +12,8 @@ struct Window::Impl {
     SDL_Window* window = nullptr;
     bool resized = false;
     bool keys[512] = {}; // 下标 = SDL_Scancode
+    EventObserver observer = nullptr;
+    void* observerData = nullptr;
 };
 
 std::unique_ptr<Window> Window::Create(const WindowDesc& desc) {
@@ -41,6 +43,7 @@ Window::~Window() {
 bool Window::PollEvents() {
     SDL_Event ev;
     while (SDL_PollEvent(&ev)) {
+        if (m->observer) m->observer((const void*)&ev, m->observerData);
         switch (ev.type) {
             case SDL_EVENT_QUIT:
                 return false;
@@ -63,6 +66,11 @@ bool Window::PollEvents() {
         }
     }
     return true;
+}
+
+void Window::SetEventObserver(EventObserver fn, void* userData) {
+    m->observer = fn;
+    m->observerData = userData;
 }
 
 bool Window::TakeResized() {
