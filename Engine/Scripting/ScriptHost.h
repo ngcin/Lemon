@@ -31,7 +31,7 @@ static_assert(sizeof(BatchBlock) == 24);
 static_assert(sizeof(BatchSystemFrame) == 40); // disabled 落在原尾垫（C# 同规则）
 
 /// 档① 脚本组件（普通 entt 组件；**不入 ComponentRegistry**——GCHandle/类型 id 属
-/// 运行时桥状态，入注册表会进 StateHash/序列化，破坏回放与 .lscene 语义）。
+/// 运行时桥状态，入注册表会进 StateHash/序列化，破坏回放与 .scene 语义）。
 struct ScriptBox {
     int32_t typeId = -1;     // Behaviours 注册序（C# 侧）
     uint32_t flags = 0;      // bit0 disabled（异常禁用）

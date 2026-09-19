@@ -2,7 +2,7 @@
 // 设计：
 //   * 每个登记组件在 ComponentCatalog.cpp 显式登记（可审计的单一列表，不玩
 //     静态 registrar——规避跨编译单元初始化顺序坑）；
-//   * 序列化按 name 匹配（.lscene 可读可 diff），运行时 Find 建 name→id 索引；
+//   * 序列化按 name 匹配（.scene 可读可 diff），运行时 Find 建 name→id 索引；
 //   * 字段元数据含偏移与类型，codec 按类型遍历读写 POD；范围/控件元数据
 //     （编辑器 Inspector 细化）在 M4 扩展，接口预留 flags 位。
 #pragma once

@@ -558,7 +558,7 @@ void TestVerifyWorldAutoRegistersCatalog() {
 
 } // namespace
 
-// --------------------------------------------------- M2 场景序列化(.lscene) --
+// --------------------------------------------------- M2 场景序列化(.scene) --
 #include "Serialization/SceneArchive.h"
 
 namespace {
@@ -1021,7 +1021,7 @@ void TestArchiveArraySegAndRuntimeFields() {
         [&](auto, Spawner& s2) { Expect(s2.cooldown == 0.0f, "cooldown reset (runtime)"); });
 }
 
-// 恶意/畸形 .lscene 不抛穿加载器（json 异常降级修复回归）
+// 恶意/畸形 .scene 不抛穿加载器（json 异常降级修复回归）
 void TestArchiveMalformedTolerance() {
     World w;
     Scene& s = w.CreateScene("bad");
