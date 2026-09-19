@@ -137,6 +137,15 @@ Json WriteField(const FieldMeta& f, const char* comp,
     return nullptr;
 }
 
+// [ISSUE-1] 版本字段类型校验：value() 对字符串/浮点等类型错会抛 type_error
+// 抛穿加载器（违反"坏档不得抛穿"不变量）——显式判型，非法一律按无效版本拒绝
+uint32_t ReadSchemaVersion(const Json& d) {
+    auto it = d.find("schemaVersion");
+    if (it == d.end() || !it->is_number_unsigned()) return 0;
+    uint64_t v = it->get<uint64_t>();
+    return v > 0xFFFFFFFFull ? 0xFFFFFFFFu : (uint32_t)v; // 超范围 → 按"未来版本"拒绝
+}
+
 } // namespace
 
 std::string SceneArchive::Save(Scene& scene) {
@@ -185,9 +194,9 @@ bool SceneArchive::Load(Scene& scene, const std::string& jsonText) {
         LEMON_WARN("scene parse failed (invalid json)");
         return false;
     }
-    uint32_t ver = doc.value("schemaVersion", 0u);
+    uint32_t ver = ReadSchemaVersion(doc);
     if (ver == 0) {
-        LEMON_WARN("scene missing schemaVersion");
+        LEMON_WARN("scene missing/invalid schemaVersion");
         return false;
     }
     std::string text = jsonText;
@@ -197,7 +206,11 @@ bool SceneArchive::Load(Scene& scene, const std::string& jsonText) {
             return false;
         }
         doc = Json::parse(text, nullptr, false);
-        ver = doc.value("schemaVersion", 0u);
+        ver = ReadSchemaVersion(doc);
+        if (ver == 0) {
+            LEMON_WARN("scene schemaVersion lost in migration");
+            return false;
+        }
     }
     if (ver > kSchemaVersion) {
         LEMON_WARN("scene schema %u newer than engine %u", ver, kSchemaVersion);
@@ -253,6 +266,16 @@ bool SceneArchive::Load(Scene& scene, const std::string& jsonText) {
                 } catch (const Json::exception& ex) {
                     LEMON_WARN("array seg '%s.%s' skipped: %s", m->name,
                                m->arraySeg->field, ex.what());
+                }
+            }
+            // [ISSUE-2] count 是普通序列化字段：档里只写 count（无数组键）时不经
+            // ReadArraySeg 截断 → 消费方（StatSystem 等）按 count 遍历即越界读写
+            if (m->arraySeg && m->arraySeg->countOffset != 0xFFFF) {
+                uint8_t& cnt = *(uint8_t*)(comp + m->arraySeg->countOffset);
+                if (cnt > m->arraySeg->maxCount) {
+                    LEMON_WARN("array count %u > capacity %u in '%s' clamped", cnt,
+                               m->arraySeg->maxCount, m->name);
+                    cnt = (uint8_t)m->arraySeg->maxCount;
                 }
             }
         }

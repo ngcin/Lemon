@@ -13,7 +13,10 @@ namespace lemon::ecs {
 
 ISystem& SystemPipeline::AddSystem(std::unique_ptr<ISystem> sys) {
     LEMON_ASSERT(sys != nullptr, "null system");
-    LEMON_ASSERT(FindProfile(sys->Name()) == nullptr, "duplicate system: %s", sys->Name());
+    // [ISSUE-3] 重名防线查 systems_（原查 profiles_，ResolveOrder 前恒空 → 空转）
+    for (const auto& existing : systems_)
+        LEMON_ASSERT(__builtin_strcmp(existing->Name(), sys->Name()) != 0,
+                     "duplicate system: %s", sys->Name());
     systems_.push_back(std::move(sys));
     return *systems_.back();
 }
@@ -62,6 +65,10 @@ void SystemPipeline::ResolveOrder() {
 }
 
 void SystemPipeline::RunStage(World& world, Scene& scene, SystemStage stage, float dt) {
+    // [ISSUE-3] 未 ResolveOrder（或 ResolveOrder 后再 AddSystem）时 profiles_ 与
+    // systems_ 长度不等 → 下文 profiles_[i] 越界 UB（Release 无容器断言）
+    LEMON_ASSERT(profiles_.size() == systems_.size(),
+                 "RunStage before ResolveOrder (or AddSystem after it)");
     using Clock = std::chrono::steady_clock;
     for (uint32_t i = 0; i < systems_.size(); ++i) {
         if (systems_[i]->Stage() != stage) continue;

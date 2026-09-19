@@ -104,10 +104,11 @@ void SpawnSystem::Tick(World& world, Scene& scene, float dt) {
 
     const World::SpawnFn& spawn = world.GetSpawnFn();
     if (!spawn) {
-        static bool warned = false;
-        if (!warned) {
+        // [ISSUE-4] 告警仅当场景确有 Spawner（原无条件触发：无 Spawner 的 World
+        // 首帧也刷屏）；标志为成员——多 World 实例各自告警一次
+        if (!warnedNoFactory_ && scene.Pool<Spawner>().size() > 0) {
             LEMON_WARN("Spawner present but no spawn factory registered");
-            warned = true;
+            warnedNoFactory_ = true;
         }
         return;
     }
@@ -193,7 +194,9 @@ void AISystem::Tick(World& world, Scene& scene, float dt) {
     {
         auto view = scene.View<Flee, Transform2D, Velocity>();
         for (auto [ent, fl, tf, vel] : view.each()) {
-            Entity threat = board_.NearestAny(tf.pos, fl.range, Entity::Null());
+            // [ISSUE-5] 排除自身：否则自己 d²=0 恒为"最近威胁" → away=零向量 →
+            // 速度被主动清零（Flee 实体完全冻结，且覆盖 Chase 写入的速度）
+            Entity threat = board_.NearestAny(tf.pos, fl.range, Scene::FromEntt(ent));
             if (threat.IsNull()) continue; // 不覆写（保留其他行为的 Velocity）
             Vec2 away = tf.pos - scene.Get<Transform2D>(threat).pos;
             vel.v = Normalize(away) * fl.speed;
@@ -241,7 +244,13 @@ void AISystem::Tick(World& world, Scene& scene, float dt) {
         for (auto [ent, pt, tf, vel] : view.each()) {
             Vec2 dest = pt.headingToB ? pt.b : pt.a;
             Vec2 toD = dest - tf.pos;
-            if (LengthSq(toD) < 4.0f) pt.headingToB = !pt.headingToB;
+            if (LengthSq(toD) < 4.0f) {
+                pt.headingToB = !pt.headingToB;
+                // [ISSUE-6] 折返同帧改向：重算 dest 再写速度（原速度滞后一帧，
+                // 端点过冲 ~1px 后才回头）
+                dest = pt.headingToB ? pt.b : pt.a;
+                toD = dest - tf.pos;
+            }
             vel.v = Normalize(toD) * 60.0f;
         }
     }
@@ -458,6 +467,9 @@ void TriggerSystem::Tick(World& world, Scene& scene, float dt) {
         scene.Spatial().OverlapCircle(
             scene, tf.pos, tg.radius, f, 4.0f,
             [&](Entity other, const Transform2D&) {
+                // [ISSUE-7] 触发器互不触发：否则共置触发器开局互发假 Enter、
+                // anyInside 恒真（M5 资产侧 triggerId 过滤落地前的短期守卫）
+                if (scene.Has<Trigger2D>(other)) return true;
                 const Meta* om = scene.TryGet<Meta>(other);
                 if (!om) return true;
                 if (world.Teams().Relation(selfTeam, om->team) == TeamRelation::Ghost)

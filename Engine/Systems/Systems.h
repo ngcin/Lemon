@@ -70,6 +70,7 @@ private:
     void Census(Scene& scene);
     std::vector<uint32_t> teamCounts_;
     uint32_t censusCountdown_ = 0; // 0 = 本 tick 普查（首 tick 必普查）
+    bool warnedNoFactory_ = false; // 无工厂告警一次（[ISSUE-4] 仅场景确有 Spawner 时）
 };
 
 /// #4 行为 AI：Chase/Patrol/Flee/Shooter → Velocity（并行；最近邻走目标板）

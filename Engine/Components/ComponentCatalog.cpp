@@ -90,9 +90,10 @@ constexpr FieldMeta kStats[] = {
 constexpr FieldMeta kStatusEffects[] = {FIELD(StatusEffects, count, UInt8)};
 constexpr FieldMeta kInventory[] = {FIELD(Inventory, count, UInt8),
                                     FIELD(Inventory, gold, UInt32)};
+// relicIds 只由数组段 kEquipmentSeg 驱动（[ISSUE-8] 曾同时登记普通字段 →
+// 同名键读档时字段循环对数组抛 type_error → 每次必发假告警）
 constexpr FieldMeta kEquipment[] = {
-    FIELD(Equipment, weaponId, UInt32), FIELD(Equipment, armorId, UInt32),
-    FIELD(Equipment, relicIds, UInt32)};
+    FIELD(Equipment, weaponId, UInt32), FIELD(Equipment, armorId, UInt32)};
 constexpr FieldMeta kXpProgress[] = {FIELD(XpProgress, xp, Float),
                                      FIELD(XpProgress, xpToNext, Float),
                                      FIELD(XpProgress, level, UInt32)};
