@@ -18,3 +18,10 @@ out/
 
 # 引擎运行时状态目录（管线缓存等）
 .lemon/
+
+# .NET / dotnet 构建产物（dotnet build 中间目录；产物 DLL/PDB 只落 build/）
+[Bb]in/
+[Oo]bj/
+*.nuget.g.props
+*.nuget.g.targets
+project.nuget.cache
