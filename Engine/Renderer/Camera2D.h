@@ -18,7 +18,7 @@ struct Camera2D {
 
     float HalfWidth(float aspect) const { return halfHeight * aspect; }
 
-    /// 世界→NDC 视图仿射（Y 翻转）；像素完美时中心先 snap 到缩放后像素网格
+    /// 世界→NDC 视图仿射（Y 向下直映射，同 Mat3x2::Ortho 2026-09-19 修订）；像素完美时中心先 snap 到缩放后像素网格
     Mat3x2 ViewProj(float aspect) const {
         Vec2 c = center;
         if (pixelPerfect) c = SnapTo(c, 1.0f / zoom);

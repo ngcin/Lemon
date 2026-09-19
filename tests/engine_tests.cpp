@@ -65,15 +65,16 @@ void TestMat3x2() {
     ExpectNear(ab.x, abRef.x, 1e-4f, "compose x");
     ExpectNear(ab.y, abRef.y, 1e-4f, "compose y");
 
-    // 正交投影：中心→原点，半宽→±1，Y 翻转
+    // 正交投影：中心→原点，半宽→±1，世界 Y 向下 = Vulkan NDC Y 向下（屏幕下方 = +1；
+    // 2026-09-19 修订：原按 GL 语义断言 -1，MoltenVK 上整体镜像——anim-smoke 截图实锤）
     Mat3x2 vp = Mat3x2::Ortho({100, 50}, 200, 100);
     Vec2 c = vp.Apply({100, 50});
     ExpectNear(c.x, 0.0f, 1e-6f, "ortho center x");
     ExpectNear(c.y, 0.0f, 1e-6f, "ortho center y");
     Vec2 right = vp.Apply({300, 50}); // +halfW
     ExpectNear(right.x, 1.0f, 1e-6f, "ortho +x edge");
-    Vec2 down = vp.Apply({100, 150}); // +halfH(世界 Y 向下) → NDC -1
-    ExpectNear(down.y, -1.0f, 1e-6f, "ortho y-flip");
+    Vec2 down = vp.Apply({100, 150}); // +halfH(世界 Y 向下) → NDC +1（Vulkan 屏幕下方）
+    ExpectNear(down.y, 1.0f, 1e-6f, "ortho y-down");
 }
 
 void TestRect() {
@@ -217,13 +218,13 @@ void TestCamera2D() {
     Camera2D cam;
     cam.center = {100, 50};
     cam.halfHeight = 100;
-    // 正交：视口中心→NDC 原点，Y 翻转
+    // 正交：视口中心→NDC 原点，世界 Y 向下 = Vulkan NDC Y 向下（2026-09-19 修订，同 Ortho）
     Mat3x2 vp = cam.ViewProj(1.6f); // 半宽 160
     Vec2 c = vp.Apply(cam.center);
     ExpectNear(c.x, 0.0f, 1e-6f, "cam center→origin");
     ExpectNear(c.y, 0.0f, 1e-6f, "cam center→origin y");
     ExpectNear(vp.Apply({260, 50}).x, 1.0f, 1e-6f, "cam right edge");
-    ExpectNear(vp.Apply({100, 150}).y, -1.0f, 1e-6f, "cam +y down → -1 NDC");
+    ExpectNear(vp.Apply({100, 150}).y, 1.0f, 1e-6f, "cam +y down → +1 NDC(Vulkan 下方)");
 
     // 阻尼跟随收敛（多步后接近目标）
     Vec2 target{500, -300};

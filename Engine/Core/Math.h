@@ -95,10 +95,13 @@ struct Mat3x2 {
         return {m[0] * p.x + m[2] * p.y + m[4], m[1] * p.x + m[3] * p.y + m[5]};
     }
 
-    /// 世界→NDC 正交投影（Y 翻转：世界 Y 向下 → NDC Y 向上）
+    /// 世界→NDC 正交投影。约定：世界 Y 向下（屏幕语义）→ Vulkan NDC Y 向下
+    ///（世界下方 = NDC +1 = 屏幕下方）。修订（2026-09-19，anim-smoke 截图实锤）：
+    /// 原实现按 GL 语义做 Y 翻转（世界下方→NDC -1=屏幕顶），在 Vulkan/MoltenVK 上
+    /// 整体镜像（文字倒印/布局上下颠倒）；对称内容的 bench 从未暴露。
     static Mat3x2 Ortho(Vec2 center, float halfW, float halfH) {
         float sx = 1.0f / halfW, sy = 1.0f / halfH;
-        return FromRows(sx, 0.0f, 0.0f, -sy, -center.x * sx, center.y * sy);
+        return FromRows(sx, 0.0f, 0.0f, sy, -center.x * sx, -center.y * sy);
     }
 };
 
