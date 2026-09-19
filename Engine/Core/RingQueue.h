@@ -53,6 +53,20 @@ public:
     /// 下标访问（0 = Front），供帧末批量派发遍历（消费不清底层存储，清空用 Clear）
     T& At(uint32_t i) { return buf_[(head_ + i) & mask_]; }
 
+    /// 首连续段（桥侧两段零拷贝派发用）：[ptr, ptr+n)，n ≤ Size()；回绕余量走 TailSpan
+    void HeadSpan(const T*& ptr, uint32_t& n) const {
+        uint32_t first = (uint32_t)buf_.size() - head_;
+        if (first > size_) first = size_;
+        ptr = buf_.data() + head_;
+        n = first;
+    }
+    /// 次连续段（HeadSpan 之后的回绕部分）；无回绕时 n = 0
+    void TailSpan(const T*& ptr, uint32_t& n) const {
+        uint32_t first = (uint32_t)buf_.size() - head_;
+        n = size_ > first ? size_ - first : 0;
+        ptr = buf_.data();
+    }
+
     uint32_t Size() const { return size_; }
     bool Empty() const { return size_ == 0; }
     void Clear() { head_ = 0; size_ = 0; }

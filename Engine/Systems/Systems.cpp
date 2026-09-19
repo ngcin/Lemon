@@ -576,14 +576,16 @@ void ProjectileLifetimeSystem::Tick(World& world, Scene& scene, float dt) {
 
 // ---------------------------------------------------- #14 C# 批量（M3）----
 void CSharpBatchSystem::Tick(World& world, Scene& scene, float dt) {
-    // M3：IForEachSystem 块级回调（04 §5）。占位。
-    (void)world; (void)scene; (void)dt;
+    // 桥后端（ScriptHost）构造块描述符（本线程）→ 域线程执行（ADR-010 D1）；未注入则空跑
+    if (auto* backend = world.ScriptBackend()) backend->TickBatch(world, scene, dt);
 }
 
 // ---------------------------------------------------- #15 事件派发 --------
 void ScriptEventDispatchSystem::Tick(World& world, Scene& scene, float dt) {
     (void)scene; (void)dt;
     auto& events = world.Events();
+    // C# 桥（M3-4）：头部拉脚本 pending 入队（当帧派发）+ 两段零拷贝转发 C# 订阅者
+    if (auto* backend = world.ScriptBackend()) backend->DispatchEvents(world, scene);
     const World::EventSink& sink = world.GetEventSink();
     const uint32_t count = events.Size();
     for (uint32_t i = 0; i < count; ++i) {
@@ -595,7 +597,10 @@ void ScriptEventDispatchSystem::Tick(World& world, Scene& scene, float dt) {
 
 // ---------------------------------------------------- #16 销毁提交 --------
 void DestroyCommitSystem::Tick(World& world, Scene& scene, float dt) {
-    (void)world; (void)dt;
+    (void)dt;
+    // M3-6：脚本结构命令帧首应用（建/删实体、增删组件、挂脚本；先于销毁提交——
+    // Destroy 命令本批内随后的 CommitDestroys 直接生效）
+    if (auto* backend = world.ScriptBackend()) backend->ApplyStructural(world, scene);
     scene.CommitDestroys(); // 两阶段销毁 + EnTT 实体回收（池语义）
 }
 

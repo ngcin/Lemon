@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Lemon.Entry：托管入口程序集（native→managed 边界 + DomainManager 常驻线程）。
+       注意：M3 无热重载（ADR-010），但用户脚本程序集仍经 Collectible ALC 加载，
+       本程序集引用 Lemon.SDK（默认 ALC）保持分层。 -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>enable</Nullable>
+    <AssemblyName>Lemon.Entry</AssemblyName>
+    <RootNamespace>Lemon.Entry</RootNamespace>
+    <GenerateRuntimeConfigurationFiles>false</GenerateRuntimeConfigurationFiles>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Lemon.SDK/Lemon.SDK.csproj" />
+  </ItemGroup>
+</Project>

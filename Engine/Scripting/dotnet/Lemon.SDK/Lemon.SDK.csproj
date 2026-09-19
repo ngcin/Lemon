@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Lemon.SDK：C# 脚本门面（04 §3）。经 Lemon.Entry 项目引用链入默认 ALC 常驻；
+       用户脚本程序集才走 Collectible ALC（分层自 M3 第一天定型，ADR-010）。 -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>enable</Nullable>
+    <AssemblyName>Lemon.SDK</AssemblyName>
+    <RootNamespace>Lemon</RootNamespace>
+    <!-- 类库不生成 runtimeconfig：宿主侧由 Lemon.Entry.runtimeconfig.json 驱动 -->
+    <GenerateRuntimeConfigurationFiles>false</GenerateRuntimeConfigurationFiles>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- 桥层（Lemon.Entry）需要 internal 注册表访问；用户程序集不可见 -->
+    <InternalsVisibleTo Include="Lemon.Entry" />
+  </ItemGroup>
+</Project>

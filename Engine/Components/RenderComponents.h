@@ -2,6 +2,7 @@
 #pragma once
 
 #include <cstdint>
+#include <type_traits>
 
 namespace lemon::ecs {
 
@@ -32,5 +33,11 @@ struct ParticleEmitterRef {
 struct SortingOverride {
     int16_t order = 0;
 };
+
+// ---- 布局冻结（M3 桥侧 blittable 前提：C# 镜像 struct 与此逐字节对齐，改动=破回放）----
+static_assert(std::is_trivially_copyable_v<SpriteRenderer> && sizeof(SpriteRenderer) == 12, "SpriteRenderer 布局冻结");
+static_assert(std::is_trivially_copyable_v<Animator2D> && sizeof(Animator2D) == 16, "Animator2D 布局冻结");
+static_assert(std::is_trivially_copyable_v<ParticleEmitterRef> && sizeof(ParticleEmitterRef) == 8, "ParticleEmitterRef 布局冻结");
+static_assert(std::is_trivially_copyable_v<SortingOverride> && sizeof(SortingOverride) == 2, "SortingOverride 布局冻结");
 
 } // namespace lemon::ecs

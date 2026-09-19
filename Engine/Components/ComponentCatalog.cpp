@@ -1,6 +1,7 @@
 // Lemon 引擎 — 组件目录登记表（03 文档 §3 全量；单一可审计列表）
 // 登记顺序即 id 顺序（只增不改序——序列化按 name 兼容，id 仅运行时索引）。
 #include <cstddef>
+#include <iterator>
 
 #include "Components/BehaviorComponents.h"
 #include "Components/CoreComponents.h"
@@ -141,6 +142,27 @@ const void* ReadComponent(Scene& s, Entity e) {
     return (const void*)s.TryGet<C>(e);
 }
 template <typename C>
+void RemoveComponent(Scene& s, Entity e) {
+    s.Remove<C>(e);
+}
+template <typename C>
+uint32_t CountComponent(Scene& s) {
+    return (uint32_t)s.View<C>().size();
+}
+template <typename C>
+void ForEachComponentRange(Scene& s, uint32_t begin, uint32_t end,
+                           void (*cb)(Entity, const void*, void*), void* ctx) {
+    auto view = s.View<C>();
+    if (end > view.size()) end = (uint32_t)view.size();
+    auto it = view.begin();
+    std::advance(it, begin);
+    for (uint32_t i = begin; i < end; ++i, ++it) {
+        auto ent = *it;
+        if constexpr (std::is_empty_v<C>) cb(Scene::FromEntt(ent), nullptr, ctx);
+        else cb(Scene::FromEntt(ent), (const void*)&view.template get<C>(ent), ctx);
+    }
+}
+template <typename C>
 void ForEachComponent(Scene& s, void (*cb)(Entity, const void*, void*), void* ctx) {
     auto view = s.View<C>();
     if constexpr (std::is_empty_v<C>) { // tag 组件：each() 只解构出实体
@@ -155,12 +177,14 @@ void ForEachComponent(Scene& s, void (*cb)(Entity, const void*, void*), void* ct
     reg.Register({#Name, 0, (uint16_t)(sizeof(fields) / sizeof(FieldMeta)),           \
                   (uint32_t)sizeof(Name), fields, nullptr, HasComponent<Name>,         \
                   EmplaceComponent<Name>, ReadComponent<Name>,                        \
-                  ForEachComponent<Name>});
+                  ForEachComponent<Name>, RemoveComponent<Name>,                    \
+                  CountComponent<Name>, ForEachComponentRange<Name>});
 #define REGISTER_SEG(Name, fields, seg)                                              \
     reg.Register({#Name, 0, (uint16_t)(sizeof(fields) / sizeof(FieldMeta)),           \
                   (uint32_t)sizeof(Name), fields, &seg, HasComponent<Name>,            \
                   EmplaceComponent<Name>, ReadComponent<Name>,                        \
-                  ForEachComponent<Name>});
+                  ForEachComponent<Name>, RemoveComponent<Name>,                    \
+                  CountComponent<Name>, ForEachComponentRange<Name>});
 
 } // namespace
 

@@ -10,6 +10,7 @@
 | glslangValidator | 系统（brew glslang / SDK glslang） | BSD-ish/GPL 工具链例外 | 构建期外部工具 | GLSL→SPIR-V（产物分发不受其许可影响） | M0 |
 | nlohmann/json | v3.11.3 | MIT | CPM 锁 tag | JSON（.lscene 场景/配置/存档格式，M2 起） | M2 |
 | Luma（参照移植源） | 源树对照 | MIT | 结构移植重写（非逐行拷贝） | JobSystem 工作窃取结构（M2）；M1 已参照 RenderableManager | M2 |
+| .NET hosting 头（hostfxr.h / coreclr_delegates.h） | 10.0.12 | MIT (.NET Foundation) | vendored（`Engine/Scripting/host/`，源自 dotnet/runtime） | hostfxr 引导（M3；CoreCLRHost.cpp 专用，不出 Scripting 目录） | M3 |
 
 ## 保留的第三方版权声明
 

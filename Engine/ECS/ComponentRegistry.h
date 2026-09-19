@@ -68,6 +68,13 @@ struct ComponentMeta {
     const void* (*readFn)(class Scene&, Entity);   // 只读取址，不存在返回 nullptr
     // 全池遍历（StateHash/提取层；C 回调+ctx 避免模板穿透元数据层）
     void (*forEachFn)(class Scene&, void (*)(Entity, const void*, void*), void* ctx);
+    // 移除组件（M3 脚本结构命令缓冲用；nullptr = 不支持）
+    void (*removeFn)(class Scene&, Entity) = nullptr;
+    // 池大小（M3 桥并行切段构造用；nullptr = 不支持）
+    uint32_t (*countFn)(class Scene&) = nullptr;
+    // 按池序分段遍历 [begin,end)（M3 桥并行构造；nullptr = 不支持）
+    void (*forEachRangeFn)(class Scene&, uint32_t, uint32_t,
+                           void (*)(Entity, const void*, void*), void*) = nullptr;
 };
 
 class ComponentRegistry {

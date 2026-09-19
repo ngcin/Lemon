@@ -1,0 +1,256 @@
+// Lemon.Entry — native→managed 边界（04 §1 Bootstrap 形态 + M3-1 布局护栏导出）
+// 纪律（M0 Go-NoGo 教训 6/7）：
+//   * 导出全部 [UnmanagedCallersOnly]，宿主按托管方法名解析（非 EntryPoint 名）；
+//   * 批量入口经托管委托缓存分发，禁 MethodHandle.GetFunctionPointer（pin ALC）；
+//   * 跨程序集委托/导出签名参数一律 IntPtr/基元类型（blittable 全等）。
+// 注意：net10.0 中 UnmanagedCallersOnlyAttribute 在 System.Runtime.InteropServices
+// （System.Runtime ref 里没有此类型——M3 实测坑）。
+using System;
+using System.Runtime.InteropServices;
+using Lemon.Interop;
+
+namespace Lemon.Entry;
+
+internal static unsafe class Exports
+{
+    private const int Magic = 0x1E0F; // 宿主侧哨兵（spike-03 同款约定）
+
+    [UnmanagedCallersOnly]
+    public static int Bootstrap() => Magic;
+
+    /// <summary>诊断：Scripting 注册表状态（count + 程序集身份 + ALC）。</summary>
+    [UnmanagedCallersOnly]
+    public static int lemon_diag_scripting(byte* outInfo, int cap)
+    {
+        string s = $"count={Lemon.Scripting.SystemCount} " +
+            $"asm={typeof(Lemon.Scripting).Assembly.GetHashCode():x8} " +
+            $"alc={System.Runtime.Loader.AssemblyLoadContext.GetLoadContext(typeof(Lemon.Scripting).Assembly)!.Name}\n";
+        for (int i = 0; i < s.Length && i < cap; i++) outInfo[i] = (byte)s[i];
+        if (s.Length < cap) outInfo[s.Length] = 0;
+        return Lemon.Scripting.SystemCount;
+    }
+
+    /// <summary>诊断：进程内 Lemon.SDK 副本数（>1 = 类型身份分裂）。</summary>
+    [UnmanagedCallersOnly]
+    public static int lemon_diag_sdk_copies(byte* outInfo, int cap)
+    {
+        var sb = new System.Text.StringBuilder();
+        int n = 0;
+        foreach (var a in AppDomain.CurrentDomain.GetAssemblies()) {
+            if (a.GetName().Name != "Lemon.SDK") continue;
+            ++n;
+            sb.Append(a.Location).Append(" @ ").Append(System.Runtime.Loader.AssemblyLoadContext
+                           .GetLoadContext(a)!.Name).Append('\n');
+        }
+        var s = sb.ToString();
+        for (int i = 0; i < s.Length && i < cap; i++) outInfo[i] = (byte)s[i];
+        if (s.Length < cap) outInfo[s.Length] = 0;
+        return n;
+    }
+
+    // ---- M3-2b DomainManager（域线程统一执行；ADR-010 D1）------------------------
+
+    /// <summary>加载用户脚本程序集（可回收 ALC，域线程执行）；1=成功。</summary>
+    [UnmanagedCallersOnly]
+    public static int lemon_dm_load(byte* pathUtf8)
+    {
+        int len = 0;
+        while (pathUtf8[len] != 0) len++;
+        return DomainManager.LoadScript(System.Text.Encoding.UTF8.GetString(pathUtf8, len)) ? 1 : 0;
+    }
+
+    /// <summary>卸载脚本域并确认回收（WeakReference + GC 轮询）；1=回收成功 0=超时（pin 活着）。</summary>
+    [UnmanagedCallersOnly]
+    public static int lemon_dm_unload() => DomainManager.UnloadScript() ? 1 : 0;
+
+    /// <summary>帧执行（域线程）；未加载返回 NaN 哨兵。</summary>
+    [UnmanagedCallersOnly]
+    public static double lemon_dm_tick(float dt) => DomainManager.Tick(dt);
+
+    // ---- M3-3 档② 批量系统 ------------------------------------------------------
+
+    /// <summary>已注册批量系统数（load 后由宿主拉取注册表）。</summary>
+    [UnmanagedCallersOnly]
+    public static int lemon_batch_count() => Batch.SystemCount();
+
+    /// <summary>系统 i 的查询组件 id 表（拷入调用方缓冲）；返回拷贝数。</summary>
+    [UnmanagedCallersOnly]
+    public static int lemon_batch_query(int systemIndex, byte* dst, int cap)
+        => Batch.CopyQuery(systemIndex, dst, cap);
+
+    /// <summary>批量帧执行（域线程）：frames/count 由 C++ 管线线程构造。</summary>
+    [UnmanagedCallersOnly]
+    public static void lemon_batch_tick(BatchSystemFrame* frames, int count)
+        => DomainManager.PostBatch(() => Batch.Tick(frames, count));
+
+    // ---- M3-4 事件队列桥 --------------------------------------------------------
+
+    /// <summary>C++ → C# 批量派发（域线程；#15 两段零拷贝转发）。</summary>
+    [UnmanagedCallersOnly]
+    public static unsafe void lemon_events_dispatch(Lemon.Interop.EventPacket* pkts, int n)
+        => DomainManager.PostBatchEvents(pkts, n); // 池化（GC 纪律）
+
+    /// <summary>拉取脚本 pending 事件（#15 头部；拷入调用方缓冲，返回条数）。</summary>
+    [UnmanagedCallersOnly]
+    public static unsafe int lemon_events_pull(Lemon.Interop.EventPacket* dst, int cap)
+        => Lemon.Events.PullPending(dst, cap);
+
+    /// <summary>诊断：某事件类型累计派发数（测试用）。</summary>
+    [UnmanagedCallersOnly]
+    public static int lemon_events_received(int type) => Lemon.Events.ReceivedCount((GameEvent)type);
+
+    // ---- M3-5/6 档① 脚本组件 + 结构命令缓冲 -------------------------------------
+
+    /// <summary>C++ native 函数表注册（低频语法糖通道；Initialize 期调用）。</summary>
+    [UnmanagedCallersOnly]
+    public static unsafe void lemon_api_register(NativeApi* api) => Lemon.Native.Register(api);
+
+    /// <summary>帧执行（域线程）：Start/Update → 档② 批量 → LateUpdate（一帧固定序）。</summary>
+    [UnmanagedCallersOnly]
+    public static unsafe void lemon_scripts_tick(BatchSystemFrame* frames, int count, float dt)
+        => DomainManager.PostBatchTick(frames, count, dt); // 池化（GC 纪律）
+
+    /// <summary>挂载脚本实例（帧首结构命令应用时调用；Awake/OnEnable 同步跑）。</summary>
+    [UnmanagedCallersOnly]
+    public static void lemon_scripts_attach(int typeId, Lemon.Interop.EntityHandle e)
+        => DomainManager.PostBatch(() => Lemon.Behaviours.Attach(typeId, e));
+
+    /// <summary>实体销毁通知（Destroy 命令应用时调用；OnDestroy + 托管实例移除）。</summary>
+    [UnmanagedCallersOnly]
+    public static void lemon_scripts_destroy(Lemon.Interop.EntityHandle e)
+        => DomainManager.PostBatch(() => Lemon.Behaviours.Detach(e));
+
+    [UnmanagedCallersOnly]
+    public static int lemon_behaviours_types() => Lemon.Behaviours.TypeCount;
+
+    [UnmanagedCallersOnly]
+    public static int lemon_behaviours_attached() => Lemon.Behaviours.AttachedCount;
+
+    /// <summary>托管累计分配字节数（验收：示例脚本每帧分配 = 0；04 §5 GC 纪律）。</summary>
+    [UnmanagedCallersOnly]
+    public static ulong lemon_gc_allocated() => (ulong)System.GC.GetTotalAllocatedBytes(false);
+
+    /// <summary>拉取脚本结构命令（帧首 Essential 应用）。</summary>
+    [UnmanagedCallersOnly]
+    public static unsafe int lemon_ops_pull(Lemon.SceneOp* dst, int cap)
+        => Lemon.SceneOps.PullPending(dst, cap);
+
+    /// <summary>直投结构命令（测试/工具通道；脚本侧用 SceneOps.*）。</summary>
+    [UnmanagedCallersOnly]
+    public static unsafe void lemon_ops_submit(byte type, byte compId, ulong e)
+        => Lemon.SceneOps.SubmitRaw(type, compId, e);
+
+    // ---- M3-2b 卸载 pin 诊断探针（长期保留：ADR-010 修订——.NET runtime 升级后
+    //      重跑 lemon-script-tests 即知 pin 行为是否修复）--------------------------
+    [UnmanagedCallersOnly]
+    public static int lemon_diag_min_cycle(byte* pathUtf8)
+    {
+        int len = 0;
+        while (pathUtf8[len] != 0) len++;
+        return DomainManager.MinCycle(System.Text.Encoding.UTF8.GetString(pathUtf8, len)) ? 1 : 0;
+    }
+
+    [UnmanagedCallersOnly]
+    public static int lemon_diag_load_minimal(byte* pathUtf8)
+    {
+        int len = 0;
+        while (pathUtf8[len] != 0) len++;
+        return DomainManager.LoadMinimal(System.Text.Encoding.UTF8.GetString(pathUtf8, len)) ? 1 : 0;
+    }
+
+    /// <summary>UCO 调用线程就地 load→unload（spike UnloadSelfTest 同形态；不经域线程）。</summary>
+    [UnmanagedCallersOnly]
+    public static int lemon_diag_min_cycle_uco(byte* pathUtf8)
+    {
+        int len = 0;
+        while (pathUtf8[len] != 0) len++;
+        string path = System.Text.Encoding.UTF8.GetString(pathUtf8, len);
+        var alc = new ScriptAlc();
+        var weak = new WeakReference(alc);
+        _ = alc.LoadFromAssemblyPath(path);
+        alc.Unload();
+        for (int i = 0; i < 30; i++) {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            if (!weak.IsAlive) return 1;
+            System.Threading.Thread.Sleep(10);
+        }
+        return 0;
+    }
+
+
+    // ---- M3-1 布局一致性护栏 ---------------------------------------------------
+
+    /// <summary>填充 C# 侧布局自报表；返回组件数（=27）；缓冲不足返回 -1。</summary>
+    [UnmanagedCallersOnly]
+    public static int lemon_sdk_layout(IntPtr pComps, int compCap, IntPtr pFields, int fieldCap,
+                                       IntPtr pSegs, int segCap)
+    {
+        var comps = LayoutTables.Comps;
+        var fields = LayoutTables.Fields;
+        var segs = LayoutTables.Segs;
+        if (compCap < comps.Length || fieldCap < fields.Length || segCap < segs.Length) return -1;
+        comps.AsSpan().CopyTo(new Span<CompLayoutRow>((void*)pComps, comps.Length));
+        fields.AsSpan().CopyTo(new Span<FieldLayoutRow>((void*)pFields, fields.Length));
+        segs.AsSpan().CopyTo(new Span<SegLayoutRow>((void*)pSegs, segs.Length));
+        return comps.Length;
+    }
+
+    /// <summary>整块 blit 拷贝（count 个 compId 组件；尺寸取自 C# 自报表——表已被 C++ 核对）。</summary>
+    [UnmanagedCallersOnly]
+    public static void lemon_blit_copy(IntPtr dst, IntPtr src, int compId, int count)
+    {
+        uint size = LayoutTables.Comps[compId].SizeOf;
+        Buffer.MemoryCopy((void*)src, (void*)dst, (ulong)size * (ulong)count,
+                          (ulong)size * (ulong)count);
+    }
+
+    /// <summary>typed roundtrip：经镜像 struct 写入约定值，C++ 侧核对落到确切字段。</summary>
+    [UnmanagedCallersOnly]
+    public static void lemon_roundtrip_typed(IntPtr pTransform, IntPtr pStatus)
+    {
+        var t = (Transform2D*)pTransform;
+        t->Pos = new Vec2(11f, 22f);
+        t->Rot = 0.5f;
+        t->Scale = new Vec2(3f, 4f);
+
+        var s = (StatusEffects*)pStatus;
+        s->Count = 2;
+        s->Slot(1) = new StatusInst { Id = 7, Stacks = 3, Remain = 1.25f, Source = 9 };
+    }
+
+    /// <summary>RNG golden：同 (seed,stream) 抽 n 个 uint，C++ 与 lemon::Rng 比对。</summary>
+    [UnmanagedCallersOnly]
+    public static void lemon_rng_fill(ulong seed, ulong stream, IntPtr outU32, int n)
+    {
+        var r = new Pcg32(seed, stream);
+        var dst = (uint*)outU32;
+        for (int i = 0; i < n; i++) dst[i] = r.Next();
+    }
+
+    /// <summary>RNG golden：Float01 序列（高 24 位位级确定）。</summary>
+    [UnmanagedCallersOnly]
+    public static void lemon_rng_float01(ulong seed, ulong stream, IntPtr outF, int n)
+    {
+        var r = new Pcg32(seed, stream);
+        var dst = (float*)outF;
+        for (int i = 0; i < n; i++) dst[i] = r.Float01();
+    }
+
+    /// <summary>EventPacket 布局自报（返回 sizeof；各字段偏移写入 out 指针）。</summary>
+    [UnmanagedCallersOnly]
+    public static int lemon_eventpacket_layout(ushort* offType, ushort* offUser, ushort* offSrc,
+                                               ushort* offDst, ushort* offPayload, ushort* offUserArg)
+    {
+        EventPacket t = default;
+        EventPacket* p = &t;
+        byte* b = (byte*)p;
+        *offType = (ushort)((byte*)&p->Type - b);
+        *offUser = (ushort)((byte*)&p->User - b);
+        *offSrc = (ushort)((byte*)&p->Src - b);
+        *offDst = (ushort)((byte*)&p->Dst - b);
+        *offPayload = (ushort)((byte*)p->Payload - b);
+        *offUserArg = (ushort)((byte*)&p->UserArg - b);
+        return sizeof(EventPacket);
+    }
+}

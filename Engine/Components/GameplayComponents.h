@@ -5,6 +5,7 @@
 #pragma once
 
 #include <cstdint>
+#include <type_traits>
 
 namespace lemon::ecs {
 
@@ -62,5 +63,16 @@ struct IncrementalState {   // 增量挂机（M6+，占位登记）
     double multiplier = 1.0;
     double cached = 0.0;
 };
+
+// ---- 布局冻结（M3 桥侧 blittable 前提：C# 镜像 struct 与此逐字节对齐，改动=破回放）----
+// StatusInst/ItemStack 是数组段元素（ArraySegMeta.elemFields 依赖其布局），一并冻结。
+static_assert(std::is_trivially_copyable_v<Stats> && sizeof(Stats) == 28, "Stats 布局冻结");
+static_assert(std::is_trivially_copyable_v<StatusInst> && sizeof(StatusInst) == 12, "StatusInst 布局冻结");
+static_assert(std::is_trivially_copyable_v<StatusEffects> && sizeof(StatusEffects) == 52, "StatusEffects 布局冻结");
+static_assert(std::is_trivially_copyable_v<ItemStack> && sizeof(ItemStack) == 8, "ItemStack 布局冻结");
+static_assert(std::is_trivially_copyable_v<Inventory> && sizeof(Inventory) == 136, "Inventory 布局冻结");
+static_assert(std::is_trivially_copyable_v<Equipment> && sizeof(Equipment) == 20, "Equipment 布局冻结");
+static_assert(std::is_trivially_copyable_v<XpProgress> && sizeof(XpProgress) == 16, "XpProgress 布局冻结");
+static_assert(std::is_trivially_copyable_v<IncrementalState> && sizeof(IncrementalState) == 24, "IncrementalState 布局冻结");
 
 } // namespace lemon::ecs

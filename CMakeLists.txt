@@ -25,11 +25,15 @@ set(LEMON_CMAKE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/cmake" CACHE INTERNAL "")
 option(LEMON_BUILD_SPIKES "Build M0 spike programs" ON)
 option(LEMON_BUILD_TESTS "Build engine unit tests" ON)
 option(LEMON_BUILD_SAMPLES "Build engine samples/benches" ON)
+option(LEMON_BUILD_SCRIPTING "M3 C# 脚本层（需要 dotnet SDK 10；OFF 时引擎其余部分照常）" ON)
 
 include(${LEMON_CMAKE_DIR}/CPM.cmake)
 include(${LEMON_CMAKE_DIR}/Dependencies.cmake)
 
 add_subdirectory(Engine)
+
+# ctest 入口（enable_testing 必须在顶层目录才对全树生效）
+enable_testing()
 
 if(LEMON_BUILD_TESTS)
   add_subdirectory(tests)

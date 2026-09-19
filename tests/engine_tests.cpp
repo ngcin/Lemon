@@ -548,6 +548,13 @@ void TestComponentRegistry() {
     Expect(std::is_trivially_copyable_v<Inventory>, "inventory trivial");
 }
 
+void TestVerifyWorldAutoRegistersCatalog() {
+    // ISSUE-9 回归：World 构造即登记组件目录——bench-sim 曾漏调 RegisterAllComponents，
+    // StateHash 遍历空注册表逐帧恒等，M2 回放验收恒真空转（M3-0 修复，2026-09-19）
+    World world;
+    Expect(ComponentRegistry::Instance().Count() == 27, "world ctor auto-registers catalog");
+}
+
 } // namespace
 
 // --------------------------------------------------- M2 场景序列化(.lscene) --
@@ -1758,6 +1765,7 @@ int main() {
     TestSceneLifecycle();
     TestWorldServices();
     TestComponentRegistry();
+    TestVerifyWorldAutoRegistersCatalog();
     TestSceneArchive();
     TestTeamTable();
     TestSpatialHash();

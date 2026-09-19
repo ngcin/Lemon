@@ -3,6 +3,7 @@
 #pragma once
 
 #include <cstdint>
+#include <type_traits>
 
 #include "Core/Math.h"
 #include "ECS/Entity.h"
@@ -93,5 +94,19 @@ struct Knockback {
     Vec2 impulse{};             // 当前击退速度（随 decay 衰减）
     float decay = 8.0f;
 };
+
+// ---- 布局冻结（M3 桥侧 blittable 前提：C# 镜像 struct 与此逐字节对齐，改动=破回放）----
+static_assert(std::is_trivially_copyable_v<Health> && sizeof(Health) == 12, "Health 布局冻结");
+static_assert(std::is_trivially_copyable_v<Mover> && sizeof(Mover) == 4, "Mover 布局冻结");
+static_assert(std::is_trivially_copyable_v<Patrol> && sizeof(Patrol) == 24, "Patrol 布局冻结");
+static_assert(std::is_trivially_copyable_v<Chase> && sizeof(Chase) == 24, "Chase 布局冻结");
+static_assert(std::is_trivially_copyable_v<Flee> && sizeof(Flee) == 8, "Flee 布局冻结");
+static_assert(std::is_trivially_copyable_v<Shooter> && sizeof(Shooter) == 32, "Shooter 布局冻结");
+static_assert(std::is_trivially_copyable_v<Projectile> && sizeof(Projectile) == 20, "Projectile 布局冻结");
+static_assert(std::is_trivially_copyable_v<Spawner> && sizeof(Spawner) == 28, "Spawner 布局冻结");
+static_assert(std::is_trivially_copyable_v<Hazard> && sizeof(Hazard) == 12, "Hazard 布局冻结");
+static_assert(std::is_trivially_copyable_v<Collectible> && sizeof(Collectible) == 8, "Collectible 布局冻结");
+static_assert(std::is_trivially_copyable_v<Trigger2D> && sizeof(Trigger2D) == 12, "Trigger2D 布局冻结");
+static_assert(std::is_trivially_copyable_v<Knockback> && sizeof(Knockback) == 12, "Knockback 布局冻结");
 
 } // namespace lemon::ecs

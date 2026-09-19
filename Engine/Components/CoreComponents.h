@@ -2,6 +2,8 @@
 // 全部纯数据（POD，trivially copyable——状态哈希/序列化的前提）；行为在系统。
 #pragma once
 
+#include <type_traits>
+
 #include "Core/Math.h"
 #include "ECS/Entity.h"
 
@@ -35,5 +37,12 @@ struct Meta {
 
 /// 帧末销毁标记（Destroy 入队时打标，提取/查询按需过滤）
 struct DestroyQueueTag {};
+
+// ---- 布局冻结（M3 桥侧 blittable 前提：C# 镜像 struct 与此逐字节对齐，改动=破回放）----
+static_assert(std::is_trivially_copyable_v<Transform2D> && sizeof(Transform2D) == 20, "Transform2D 布局冻结");
+static_assert(std::is_trivially_copyable_v<Velocity> && sizeof(Velocity) == 8, "Velocity 布局冻结");
+static_assert(std::is_trivially_copyable_v<Hierarchy> && sizeof(Hierarchy) == 32, "Hierarchy 布局冻结");
+static_assert(std::is_trivially_copyable_v<Meta> && sizeof(Meta) == 40, "Meta 布局冻结");
+static_assert(std::is_trivially_copyable_v<DestroyQueueTag> && sizeof(DestroyQueueTag) == 1, "DestroyQueueTag 布局冻结");
 
 } // namespace lemon::ecs

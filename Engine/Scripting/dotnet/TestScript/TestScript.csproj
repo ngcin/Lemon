@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- TestScript：用户脚本程序集样例（域生命周期 + 批量系统档②验收用）。
+       分层纪律：Lemon.Entry 故意不引用本工程——只经 Collectible ALC 从路径加载，
+       保证类型宇宙干净（换域重建前提，ADR-010）。引用 Lemon.SDK = 接口在常驻 ALC、
+       实现在可回收 ALC（跨 ALC 引用经实测与卸载 pin 无关）。 -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>enable</Nullable>
+    <AssemblyName>TestScript</AssemblyName>
+    <RootNamespace>TestScript</RootNamespace>
+    <GenerateRuntimeConfigurationFiles>false</GenerateRuntimeConfigurationFiles>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Lemon.SDK/Lemon.SDK.csproj" />
+  </ItemGroup>
+</Project>

@@ -4,3 +4,8 @@ target_link_libraries(lemon-tests PRIVATE lemon-engine)
 
 enable_testing()
 add_test(NAME engine-tests COMMAND lemon-tests)
+
+# M3 脚本桥测试（需要 dotnet）
+if(LEMON_BUILD_SCRIPTING)
+  add_subdirectory(script)
+endif()

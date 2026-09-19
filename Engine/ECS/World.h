@@ -20,6 +20,14 @@
 
 namespace lemon::ecs {
 
+/// 脚本桥后端（M3：Scripting/ScriptHost 实现；由宿主构造并注入 World，World 不拥有）
+struct IScriptBackend {
+    virtual ~IScriptBackend() = default;
+    virtual void TickBatch(World& world, Scene& scene, float dt) = 0;       // #14 调用
+    virtual void DispatchEvents(World& world, Scene& scene) = 0;            // #15 调用
+    virtual void ApplyStructural(World& world, Scene& scene) = 0;           // DestroyCommit 前调用
+};
+
 struct WorldDesc {
     uint64_t seed = 0x4C454D4F4Eull; // "LEMON"（确定性回放的根种子）
     int threadCount = 0;             // 0=自动；1=单线程诊断档（--threads 1）
@@ -76,6 +84,10 @@ public:
     const SpawnFn& GetSpawnFn() const { return spawnFn_; }
     const EventSink& GetEventSink() const { return eventSink_; }
 
+    // ---- 脚本桥后端（#14/#15 消费；宿主注入，非拥有）----
+    void SetScriptBackend(IScriptBackend* backend) { scriptBackend_ = backend; }
+    IScriptBackend* ScriptBackend() const { return scriptBackend_; }
+
     /// 安装 03 §4 的 16 系统默认管线（注册序 = 表序 = RNG 子流 id）
     void InstallDefaultSystems();
 
@@ -98,6 +110,7 @@ private:
     bool hasBounds_ = false;
     SpawnFn spawnFn_;
     EventSink eventSink_;
+    IScriptBackend* scriptBackend_ = nullptr;
     uint64_t tick_ = 0;
 };
 
