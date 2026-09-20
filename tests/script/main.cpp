@@ -505,6 +505,25 @@ int main() {
     TestEventBridge();
     TestBehaviourAndStructuralOps();
 
+    // M4.6 探针（编辑器切项目场景）：同进程二次 ScriptHost 生命周期。CoreCLR 运行时
+    // 进程单例——第二次 Initialize 的真实行为必须钉板（成功/失败都合法，崩 = 缺陷）。
+    // 编辑器侧对策 = 复用宿主走 A 线换装（InitScriptHostFrom 不再二次建宿主）。
+    {
+        lemon::scripting::ScriptHost second;
+        const bool init2 =
+            second.Initialize(nullptr, LEMON_SCRIPT_DIR "/Lemon.Entry.runtimeconfig.json",
+                              LEMON_SCRIPT_DIR "/Lemon.Entry.dll");
+        std::printf("script-tests: [diag] second-host init=%d（进程单例事实钉板）\n",
+                    init2 ? 1 : 0);
+        if (init2) {
+            const bool load2 = second.LoadUserAssembly(LEMON_SCRIPT_DIR "/TestScript.dll");
+            std::printf("script-tests: [diag] second-host load=%d（旧域在时幂等语义）\n",
+                        load2 ? 1 : 0);
+        }
+        auto gcFn = (unsigned long long (*)())GetExport("lemon_gc_allocated");
+        (void)gcFn;
+    } // 析构路径也不许崩（探针跑完 = 全程存活）
+
     std::printf("script-tests: %d checks OK (bootstrap + layout + domain + batch)\n", g_checks);
     return 0;
 }

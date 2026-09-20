@@ -673,9 +673,10 @@ bool EditorApp::OpenProjectPipeline(const std::string& projectRoot) {
             LEMON_ERROR("Game/ 编译失败（项目仍可编辑，无脚本）：dotnet build %s", csproj.c_str());
         }
     } else if (launch_->script.empty()) {
-        // 新项目无 Game/：清旧宿主，旧项目脚本类型不得跨项目残留
-        host_.reset();
+        // 新项目无 Game/：清旧宿主（顺序 = 先摘 ctx 再毁宿主，指针永不悬空），
+        // 旧项目脚本类型不得跨项目残留
         ctx_.SetScriptHost(nullptr);
+        host_.reset();
     }
     // 记最近项目用 DB 侧 root_（已绝对化）——入参可能是向导手敲的相对路径
     if (!launch_->smoke)
@@ -685,8 +686,25 @@ bool EditorApp::OpenProjectPipeline(const std::string& projectRoot) {
 
 bool EditorApp::InitScriptHostFrom(const std::string& dllAbs) {
 #ifdef LEMON_SCRIPT_DIR
-    if (!std::filesystem::exists(dllAbs)) {
+    namespace fs = std::filesystem;
+    if (!fs::exists(dllAbs)) {
         LEMON_WARN("脚本装配失败：程序集不存在 %s", dllAbs.c_str());
+        return false;
+    }
+    // 不变量先行：ctx 指针先清，宿主怎么动都不悬空（Profiler 每帧经 ctx.Scripts()
+    // 调 GcAllocated——悬空 = SIGSEGV，M4.6 实测）
+    ctx_.SetScriptHost(nullptr);
+    // 已有宿主（会话内切项目/二次装配）：CoreCLR 进程单例，二次 Initialize 必失败
+    // （script-tests 探针钉板 second-host init=0）——复用宿主走 A 线换装装配新项目
+    // 程序集。原实现 make_unique 先毁旧宿主 → ctx 悬空 + 二次初始化失败 = 闪退双因
+    if (host_) {
+        const auto info = host_->HotReloadAssembly(dllAbs.c_str());
+        if (info.ok) {
+            ctx_.SetScriptHost(host_.get());
+            LEMON_LOG("脚本域换装至：%s（复用宿主）", dllAbs.c_str());
+            return true;
+        }
+        LEMON_WARN("脚本域换装失败（%s）——转无脚本状态（修错后可再装配）", dllAbs.c_str());
         return false;
     }
     host_ = std::make_unique<scripting::ScriptHost>();
