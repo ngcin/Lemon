@@ -42,6 +42,8 @@ struct EditorLaunch {
     bool playTest = false;   // --play：冒烟内进/出 Play 往返（逐字节断言 + 计时，验收 #4/#5）
     std::string script;      // --script：用户脚本程序集（C# 装配通路；空 = 无脚本宿主）
     bool finalTest = false;  // --final：M4.5 终验（向导建项目→判据场景→Play/热重载量化）
+    bool noReopen = false;   // --no-reopen：跳过"自动重开上次项目"（M4.6 §4-4）
+    std::string smokeClose;  // --smoke-close clean|dirty：关闭状态机交互冒烟（M4.6 §4-9）
 };
 
 /// 工具标识（工具栏 W/E/R 三态 + 后续模式栈的地基）
@@ -91,6 +93,8 @@ public:
     void MenuNewProject();
     /// 会话内打开项目（选 project.lemon → 全管线切换 + 新建场景）
     void MenuOpenProject();
+    /// 切项目落地（管线 + 新场景；Play/脏场景守卫在调用方）——选择器/最近项目共用
+    bool OpenProjectInSession(const std::string& root);
     double LastHotReloadMs() const { return hotReloadMs_; }
     int HotReloadCount() const;
 
@@ -101,6 +105,7 @@ private:
     void BuildStatusBar();
     void BuildShortcuts();   // Ctrl+S/O/D、Delete（输入框聚焦时屏蔽）
     void BuildPickersAndModals();
+    void BuildNoProjectCard(); // 无项目引导（M4.6 §4-1：中央卡 + 两按钮直达）
     void SetupDefaultLayout();
     void SeedSmokeScene();   // 冒烟播种：父子链 + 常用组件（面板验收有内容）
     void SeedSmokeProject(); // 冒烟播种：临时项目 + 预置 PNG（固定 guid，M4.4 资产链验收）
@@ -113,7 +118,7 @@ private:
     /// 崩溃恢复提示模态（启动检测 autosave 新于盘档 → 恢复/忽略）
     void DrawRecoveryModal();
 
-    enum class PickerMode { Open, Save, Import, OpenProject };
+    enum class PickerMode { Open, Save, Import, OpenProject, WizardDir };
     enum class ConfirmContext { Exit, SceneOp };
 
     EditorLaunch launchCopy_;
@@ -168,6 +173,9 @@ private:
     bool quitConfirmArmed_ = false; // 模态已打开（防重复弹）
     bool escHeld_ = false;         // ESC 边沿检测（Play 中 = Stop）
     bool assetGpuCbRegistered_ = false; // 设备重建回调只注册一次（会话内切项目防叠加）
+    std::vector<std::string> recentProjects_; // 最近项目（~/.lemon/recent.json；M4.6）
+    std::string curTitle_;         // 窗口标题缓存（变更才调 SDL）
+    bool smokeCloseArmedEver_ = false; // --smoke-close dirty：确认框出现过
     ConfirmContext confirmContext_ = ConfirmContext::Exit;
     bool aboutOpen_ = false;
     uint32_t smokeSeeded_ = 0;     // 冒烟播种实体数（退出时守恒断言）

@@ -2,11 +2,16 @@
 // M4.0：壳 + 默认布局 + DPI/字体 + smoke；M4.1：EditorContext/场景 IO/快捷键/关闭确认。
 #include "App/EditorApp.h"
 
+#include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <vector>
+
+#include <nlohmann/json.hpp>
 
 #include "stb_image_write.h"
 
@@ -53,6 +58,44 @@ void ImGuiErrorSink(ImGuiContext*, void* user_data, const char* msg) {
     ++*static_cast<int*>(user_data);
     LEMON_WARN("ImGui 错误：%s", msg);
 }
+
+// ---- 最近项目（M4.6 §4-4；$HOME/.lemon/recent.json，用户级跨项目共享）----
+// 解析失败 = 静默清空重来（recent 是便利件不是账本，任何损坏不得阻断启动）。
+std::string RecentProjectsPath() {
+    const char* home = std::getenv("HOME");
+    return home ? std::string(home) + "/.lemon/recent.json" : std::string();
+}
+std::vector<std::string> LoadRecentProjects() {
+    std::vector<std::string> out;
+    const std::string p = RecentProjectsPath();
+    if (p.empty()) return out;
+    std::error_code ec;
+    std::ifstream f(p, std::ios::binary);
+    if (!f) return out;
+    std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    const nlohmann::json doc = nlohmann::json::parse(text, nullptr, false);
+    if (doc.is_discarded() || !doc.contains("projects")) return out;
+    for (const auto& e : doc.at("projects"))
+        if (e.is_string()) out.push_back(e.get<std::string>());
+    return out;
+}
+void SaveRecentProjects(const std::vector<std::string>& v) {
+    const std::string p = RecentProjectsPath();
+    if (p.empty()) return;
+    std::error_code ec;
+    std::filesystem::create_directories(std::filesystem::path(p).parent_path(), ec);
+    nlohmann::json doc;
+    doc["version"] = 1;
+    doc["projects"] = v;
+    std::ofstream of(p, std::ios::binary | std::ios::trunc);
+    of << doc.dump(2);
+}
+void PushRecentProject(const std::string& root, std::vector<std::string>& cur) {
+    cur.erase(std::remove(cur.begin(), cur.end(), root), cur.end());
+    cur.insert(cur.begin(), root);
+    if (cur.size() > 5) cur.resize(5);
+    SaveRecentProjects(cur);
+}
 } // namespace
 
 void EditorApp::SetupDefaultLayout() {
@@ -92,13 +135,37 @@ void EditorApp::BuildMenuBar() {
         ImGui::Separator();
         if (ImGui::MenuItem("新建项目...", nullptr, false, !ctx_.Playing())) MenuNewProject();
         if (ImGui::MenuItem("打开项目...", nullptr, false, !ctx_.Playing())) MenuOpenProject();
+        if (ImGui::BeginMenu("最近打开", !recentProjects_.empty() && !ctx_.Playing())) {
+            namespace fsr = std::filesystem;
+            for (const std::string& p : recentProjects_) {
+                ImGui::PushID(p.c_str());
+                std::error_code ec;
+                // 可点性 = 根下有 project.lemon（目录被删/手滑改名 → 灰显可辨）
+                const bool usable =
+                    fsr::is_regular_file(fsr::path(p) / "project.lemon", ec);
+                if (ImGui::MenuItem(fsr::path(p).filename().c_str(), p.c_str(), false,
+                                    usable && !ctx_.dirty)) {
+                    if (OpenProjectInSession(p)) LEMON_LOG("已打开最近项目：%s", p.c_str());
+                }
+                ImGui::PopID();
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("清除列表")) {
+                recentProjects_.clear();
+                SaveRecentProjects(recentProjects_);
+            }
+            ImGui::EndMenu();
+        }
         ImGui::Separator();
         if (ImGui::MenuItem("退出", nullptr, false, true)) RequestExit();
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Edit")) {
-        ImGui::MenuItem("Undo", "Ctrl+Z", false, false); // M4.2 属性轨
-        ImGui::MenuItem("Redo", "Ctrl+Y", false, false);
+        // M4.6 §4-8：接线真实可用性（快捷键 M4.2 起已通；Play 中禁用同快捷键）
+        if (ImGui::MenuItem("Undo", "Ctrl+Z", false, !ctx_.Playing() && ctx_.Undo().CanUndo()))
+            ctx_.Undo().Undo();
+        if (ImGui::MenuItem("Redo", "Ctrl+Y", false, !ctx_.Playing() && ctx_.Undo().CanRedo()))
+            ctx_.Undo().Redo();
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Assets")) {
@@ -183,6 +250,53 @@ void EditorApp::BuildStatusBar() {
         ImGui::TextUnformatted("| \xe2\x96\xb6 PLAY"); // ▶
         ImGui::PopStyleColor();
     }
+    if (ctx_.Assets().ProjectRoot().empty()) { // M4.6 §4-1：无项目显式可见
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.3f, 1.0f));
+        ImGui::TextUnformatted("| 未打开项目（文件 → 新建/打开项目）");
+        ImGui::PopStyleColor();
+    }
+}
+
+void EditorApp::BuildNoProjectCard() {
+    // 无项目引导（M4.6 §4-1，最小横幅形态——决议 R1）：中央卡两按钮直达
+    // 新建/打开；有项目/向导开着不出现。用户不再需要知道 --project 的存在。
+    if (!ctx_.Assets().ProjectRoot().empty() || wizOpen_ || picker_.IsOpen()) return;
+    ImGuiIO& io = ImGui::GetIO();
+    ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.45f),
+                            ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(400, 0), ImGuiCond_Always);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
+    const bool open = ImGui::Begin(
+        "未打开项目##noproject", nullptr,
+        ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar);
+    if (open) {
+        ImGui::Dummy(ImVec2(0, 6));
+        ImGui::TextUnformatted("  尚未打开项目");
+        ImGui::TextDisabled("  导入资产、脚本编译、场景保存都需要项目目录。");
+        ImGui::Dummy(ImVec2(0, 8));
+        if (ImGui::Button("新建项目…", ImVec2(-1, 0))) MenuNewProject();
+        if (ImGui::Button("打开项目…", ImVec2(-1, 0))) MenuOpenProject();
+        ImGui::Dummy(ImVec2(0, 4));
+        if (!recentProjects_.empty()) {
+            ImGui::TextDisabled("  最近：");
+            namespace fsr = std::filesystem;
+            for (const std::string& p : recentProjects_) {
+                ImGui::PushID(p.c_str());
+                std::error_code ec;
+                if (fsr::is_regular_file(fsr::path(p) / "project.lemon", ec) && !ctx_.dirty) {
+                    if (ImGui::SmallButton(fsr::path(p).filename().c_str())) {
+                        if (OpenProjectInSession(p)) LEMON_LOG("已打开最近项目：%s", p.c_str());
+                    }
+                }
+                ImGui::PopID();
+            }
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleVar();
 }
 
 void EditorApp::BuildShortcuts() {
@@ -264,6 +378,7 @@ void EditorApp::BuildUI() {
     for (auto& e : panels_.Entries())
         if (e.open) e.panel->OnGui(*this);
 
+    BuildNoProjectCard();
     BuildPickersAndModals();
 
     if (launchCopy_.demoWindow) ImGui::ShowDemoWindow(&launchCopy_.demoWindow);
@@ -293,20 +408,19 @@ void EditorApp::BuildPickersAndModals() {
                     LEMON_LOG("已导入：%s（guid %016llx）", e->relPath.c_str(),
                               (unsigned long long)e->guid);
                 }
-            } else { // OpenProject：选 project.lemon → 会话内切换（M4.6）
+            } else if (pickerMode_ == PickerMode::OpenProject) {
+                // M4.6 §4-2：目录选择模式——选项目根目录，校验 project.lemon 在内
                 namespace fs = std::filesystem;
-                const fs::path p(r.path);
-                const std::string root = p.parent_path().string();
-                if (p.filename() != "project.lemon" || !fs::is_regular_file(p)) {
-                    LEMON_WARN("打开项目失败：请选择项目根下的 project.lemon（得到 %s）",
+                std::error_code ec;
+                if (!fs::is_regular_file(fs::path(r.path) / "project.lemon", ec)) {
+                    LEMON_WARN("打开项目失败：%s 下没有 project.lemon（应选项目根目录）",
                                r.path.c_str());
-                } else if (OpenProjectPipeline(root)) {
-                    if (ctx_.dirty) LEMON_WARN("切项目：场景有未保存更改，已被丢弃");
-                    ctx_.NewScene(); // 切项目 = 新会话场景（旧场景引用旧项目资产/脚本）
-                    LEMON_LOG("已打开项目：%s", root.c_str());
                 } else {
-                    LEMON_WARN("打开项目失败：%s", root.c_str());
+                    OpenProjectInSession(r.path);
                 }
+            } else { // WizardDir：向导父目录浏览（M4.6 §4-3；回填后重开向导模态）
+                std::snprintf(wizParent_, sizeof(wizParent_), "%s", r.path.c_str());
+                wizOpen_ = true;
             }
         }
     }
@@ -357,6 +471,18 @@ void EditorApp::BuildPickersAndModals() {
         ImGui::InputText("项目名", wizName_, sizeof(wizName_));
         ImGui::SetNextItemWidth(320);
         ImGui::InputText("父目录（绝对路径）", wizParent_, sizeof(wizParent_));
+        ImGui::SameLine();
+        if (ImGui::Button("浏览…")) { // M4.6 §4-3：目录选择器（零手敲路径）
+            std::error_code ec;
+            std::string start =
+                wizParent_[0] && std::filesystem::is_directory(wizParent_, ec)
+                    ? std::string(wizParent_)
+                    : (std::getenv("HOME") ? std::getenv("HOME") : ".");
+            pickerMode_ = PickerMode::WizardDir;
+            wizOpen_ = false; // 模态不叠加：关向导开选择器，选定即回填重开
+            ImGui::CloseCurrentPopup();
+            picker_.OpenDir("选择父目录", start);
+        }
         ImGui::Separator();
         ImGui::BeginDisabled(!wizName_[0] || !wizParent_[0]);
         if (ImGui::Button("创建并打开", ImVec2(160, 0))) {
@@ -457,7 +583,20 @@ void EditorApp::MenuOpenProject() {
         else start = fs::current_path(ec).string();
     }
     pickerMode_ = PickerMode::OpenProject;
-    picker_.Open("打开项目（双击 project.lemon）", start, "", ".lemon");
+    picker_.OpenDir("打开项目（选择项目目录）", start); // M4.6 §4-2：选目录而非 project.lemon
+}
+
+bool EditorApp::OpenProjectInSession(const std::string& root) {
+    // 切项目落地（选择器/最近项目/引导卡共用）：管线 + 新会话场景。
+    // Play/脏场景守卫在调用方（菜单入口已拦；此函数为最后一道防线）。
+    if (ctx_.Playing()) {
+        LEMON_WARN("Play 中不能切换项目（先 Stop）");
+        return false;
+    }
+    if (!OpenProjectPipeline(root)) return false;
+    if (ctx_.dirty) LEMON_WARN("切项目：场景有未保存更改，已被丢弃");
+    ctx_.NewScene(); // 切项目 = 新会话场景（旧场景引用旧项目资产/脚本）
+    return true;
 }
 
 void EditorApp::RescanAssets() {
@@ -534,6 +673,7 @@ bool EditorApp::OpenProjectPipeline(const std::string& projectRoot) {
         host_.reset();
         ctx_.SetScriptHost(nullptr);
     }
+    if (!launch_->smoke) PushRecentProject(projectRoot, recentProjects_); // M4.6：冒烟/终验不记
     return true;
 }
 
@@ -727,6 +867,21 @@ int EditorApp::Run(const EditorLaunch& launch) {
         LEMON_LOG("final: 向导建项目 OK %s", root.c_str());
 #endif
     }
+    // 最近项目（M4.6 §4-4）：--project 缺省时自动重开上次（--no-reopen 跳过；
+    // 冒烟/终验不适用——确定性优先）。菜单最近列表同源本 vector。
+    recentProjects_ = LoadRecentProjects();
+    if (launch_->projectDir.empty() && !launch.noReopen && !launch.smoke &&
+        !launch.finalTest && !recentProjects_.empty()) {
+        const std::string& last = recentProjects_.front();
+        std::error_code ec;
+        if (std::filesystem::is_regular_file(std::filesystem::path(last) / "project.lemon",
+                                             ec)) {
+            launchCopy_ = *launch_;
+            launchCopy_.projectDir = last;
+            launch_ = &launchCopy_;
+            LEMON_LOG("自动重开上次项目：%s（--no-reopen 跳过）", last.c_str());
+        }
+    }
     if (!launch_->projectDir.empty()) {
         if (!OpenProjectPipeline(launch_->projectDir)) return 1;
     }
@@ -769,6 +924,11 @@ int EditorApp::Run(const EditorLaunch& launch) {
         return 0;
     }
 
+    // --smoke-close 看门狗：帧上限 = 失效时的兜底退出（否则挂死）；跑满 = FAIL
+    if (!launch.smokeClose.empty() && launch.frames <= 0) {
+        LEMON_ERROR("--smoke-close 需要 --frames N（看门狗）");
+        return 2;
+    }
     // ---- 主循环（anim-smoke 基线骨架；编辑 Step = Essential）----
     uint64_t frame = 0;
     double firstFrameMs = -1.0;
@@ -789,6 +949,16 @@ int EditorApp::Run(const EditorLaunch& launch) {
             if (!ctx_.ExitPlay()) LEMON_WARN("Stop 后快照校验失败（编辑场景已按快照重建）");
         }
         escHeld_ = esc;
+        // --smoke-close（M4.6 §4-9）：关闭状态机交互冒烟注入
+        //   clean：干净场景下请求退出 → 应"不弹确认且立即退出"（b7094a9 修复回归线）
+        //   dirty：置脏 → 请求退出 → 应弹确认（armed）→ 模拟"丢弃并退出"（forceExit）
+        if (launch.smokeClose == "clean") {
+            if (frame == 30) exitRequested_ = true;
+        } else if (launch.smokeClose == "dirty") {
+            if (frame == 30) ctx_.CreateSpriteEntity("close-probe"); // CreateEntity 置脏
+            if (frame == 45) exitRequested_ = true;
+            if (frame == 60 && quitConfirmArmed_) forceExit_ = true; // = 点"丢弃并退出"
+        }
         // 资产热替换（M4.4）：watcher 置脏 → 重扫 + 增量导入（改文件落盘即时可见）
         if (watcher_.Running() && watcher_.ConsumeDirty()) RescanAssets();
         // C# 热重载（M4.5 §3.7）：Game/ 源写 → 防抖 0.4s（编辑器连续保存不打断）→ 编译+换装
@@ -895,6 +1065,20 @@ int EditorApp::Run(const EditorLaunch& launch) {
         }
         ui_->BeginFrame(*window_);
         BuildUI();
+        if (quitConfirmArmed_) smokeCloseArmedEver_ = true; // dirty 模式断言原料
+        // 标题栏（M4.6 §4-5）：<场景>[●] — <项目> — Lemon（变更才调 SDL）
+        {
+            const std::string& root = ctx_.Assets().ProjectRoot();
+            const std::string title =
+                ctx_.SceneName() + (ctx_.dirty ? " ●" : "") + " — " +
+                (root.empty() ? std::string("未打开项目")
+                              : std::filesystem::path(root).filename().string()) +
+                " — Lemon";
+            if (title != curTitle_) {
+                curTitle_ = title;
+                window_->SetTitle(title.c_str());
+            }
+        }
 
         rhi::AcquireResult acq = device_->AcquireNextImage();
         if (acq.deviceLost || acq.needsRecreate) {
@@ -956,6 +1140,21 @@ int EditorApp::Run(const EditorLaunch& launch) {
 
     // ---- 冒烟自检（§6 #13：退出码即判据）----
     int exitCode = 0;
+    // --smoke-close 裁决（M4.6 §4-9）：独立于 --smoke——专用最小跑（无项目/无播种）
+    if (!launch.smokeClose.empty()) {
+        const bool exitedEarly = launch.frames > 0 && frame < (uint64_t)launch.frames;
+        bool ok = false;
+        if (launch.smokeClose == "clean") {
+            ok = exitedEarly && !smokeCloseArmedEver_; // 干净场景：不弹确认、立即退出
+            std::printf("[lemon] smoke-close clean: exitedEarly=%d confirmShown=%d => %s\n",
+                        exitedEarly ? 1 : 0, smokeCloseArmedEver_ ? 1 : 0, ok ? "OK" : "FAIL");
+        } else if (launch.smokeClose == "dirty") {
+            ok = exitedEarly && smokeCloseArmedEver_; // 脏场景：先弹确认再丢弃退出
+            std::printf("[lemon] smoke-close dirty: confirmShown=%d exitedEarly=%d => %s\n",
+                        smokeCloseArmedEver_ ? 1 : 0, exitedEarly ? 1 : 0, ok ? "OK" : "FAIL");
+        }
+        if (!ok) exitCode = 1;
+    }
     if (!launch.screenshot.empty()) {
         std::vector<uint8_t> px;
         uint32_t sw = 0, sh = 0;

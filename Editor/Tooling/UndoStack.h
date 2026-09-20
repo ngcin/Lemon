@@ -33,6 +33,8 @@ public:
     bool Redo();
     void Clear();
     bool Empty() const { return undo_.empty(); }
+    bool CanUndo() const { return !undo_.empty(); }   // Edit 菜单可用性（M4.6）
+    bool CanRedo() const { return !redo_.empty(); }
     size_t Size() const { return undo_.size(); }
     const std::deque<Record>& Records() const { return undo_; }
 

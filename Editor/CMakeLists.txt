@@ -29,8 +29,8 @@ add_library(lemon-editor-core STATIC
 target_include_directories(lemon-editor-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(lemon-editor-core PRIVATE ${stb_SOURCE_DIR})
 target_link_libraries(lemon-editor-core
-  PUBLIC lemon-engine
-  PRIVATE nlohmann_json::nlohmann_json)
+  # json 头路径随 PUBLIC 传给上层（M4.6：recent.json 在 App 层读写）
+  PUBLIC lemon-engine nlohmann_json::nlohmann_json)
 target_compile_features(lemon-editor-core PUBLIC cxx_std_20)
 
 # ---------------------------------------------------------------------------

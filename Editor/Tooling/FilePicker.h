@@ -21,6 +21,9 @@ public:
     /// requireExt 非空 = 保存时无后缀自动补（如 ".scene"）
     void Open(const char* title, const std::string& defaultDir,
               const std::string& defaultName = "", const char* requireExt = nullptr);
+    /// 目录选择模式（M4.6 §4-2）：只列目录 + "选择此目录"返回当前目录（action=Open）；
+    /// 向导父目录 / 打开项目起点用
+    void OpenDir(const char* title, const std::string& defaultDir);
     /// 每帧调用；弹窗打开期间返回 None 以外的动作恰好一次
     PickerResult Draw();
     bool IsOpen() const { return open_; }
@@ -30,6 +33,8 @@ private:
 
     bool open_ = false;
     bool firstFrame_ = true;
+    bool opening_ = false;  // Open 后首帧 OpenPopup（模态化：打开期间主 UI 不可点）
+    bool dirMode_ = false;  // 目录选择模式
     std::string title_;
     std::filesystem::path dir_;
     std::string fileName_;

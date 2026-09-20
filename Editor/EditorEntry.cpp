@@ -39,11 +39,16 @@ int main(int argc, char** argv) {
             launch.finalTest = launch.smoke = launch.playTest = true; // 终验（含冒烟+Play）
         else if (!std::strcmp(argv[i], "--script") && i + 1 < argc)
             launch.script = argv[++i];
+        else if (!std::strcmp(argv[i], "--no-reopen"))
+            launch.noReopen = true; // M4.6：跳过"自动重开上次项目"
+        else if (!std::strcmp(argv[i], "--smoke-close") && i + 1 < argc)
+            launch.smokeClose = argv[++i]; // clean|dirty：关闭状态机交互冒烟
         else {
             std::printf("unknown arg: %s\n", argv[i]);
             std::printf("usage: lemon-editor [--smoke] [--frames N] [--validate] [--demo] "
                         "[--screenshot out.png] [--project dir] [--scene f.scene] "
-                        "[--save-scene f.scene] [--play] [--script Game.dll] [--final]\n");
+                        "[--save-scene f.scene] [--play] [--script Game.dll] [--final] "
+                        "[--no-reopen] [--smoke-close clean|dirty]\n");
             return 2;
         }
     }

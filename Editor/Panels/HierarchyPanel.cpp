@@ -29,6 +29,36 @@ const char* DisplayName(ecs::Scene& s, ecs::Entity e) {
 
 } // namespace
 
+void HierarchyPanel::StartRename(ecs::Scene& s, ecs::Entity e) {
+    renaming_ = e;
+    renameFocus_ = true;
+    if (const ecs::Meta* m = s.TryGet<ecs::Meta>(e)) renameBuf_ = m->tag;
+    else renameBuf_.clear();
+}
+
+void HierarchyPanel::CommitRename(EditorApp& app, ecs::Entity e, bool apply) {
+    EditorContext& ctx = app.Ctx();
+    if (apply && !renameBuf_.empty()) {
+        ecs::Scene& s = ctx.ActiveScene();
+        if (ecs::Meta* m = s.TryGet<ecs::Meta>(e)) {
+            // tag[24] 截断保护 + 变更才落（避免空操作进 Undo/置脏）
+            char next[24] = {};
+            std::snprintf(next, sizeof(next), "%s", renameBuf_.c_str());
+            if (std::strcmp(next, m->tag) != 0) {
+                const ecs::ComponentMeta* cm = ecs::ComponentRegistry::Instance().Find("Meta");
+                std::vector<uint8_t> before =
+                    cm ? ctx.SnapshotComponent(e, cm->id) : std::vector<uint8_t>{};
+                std::memcpy(m->tag, next, sizeof(next));
+                ctx.dirty = true;
+                if (!ctx.Playing() && cm)
+                    ctx.PushPropertyUndo("重命名实体", m->guid, cm->id, std::move(before),
+                                         ctx.SnapshotComponent(e, cm->id));
+            }
+        }
+    }
+    renaming_ = ecs::Entity::Null();
+}
+
 void HierarchyPanel::OnGui(EditorApp& app) {
     if (!ImGui::Begin(Name(), nullptr, ImGuiWindowFlags_NoCollapse)) {
         ImGui::End();
@@ -36,6 +66,14 @@ void HierarchyPanel::OnGui(EditorApp& app) {
     }
     EditorContext& ctx = app.Ctx();
     ecs::Scene& scene = ctx.ActiveScene();
+
+    // 重命名态自愈：实体没了（删除/Undo/切场景）→ 静默退出编辑
+    if (!renaming_.IsNull() && !scene.Alive(renaming_)) renaming_ = ecs::Entity::Null();
+    // F2：主选中进入重命名（§4-7；输入框聚焦时 EditorApp 快捷层已屏蔽）
+    if (renaming_.IsNull() && ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) &&
+        ImGui::IsKeyPressed(ImGuiKey_F2, false)) {
+        if (!ctx.Primary().IsNull()) StartRename(scene, ctx.Primary());
+    }
 
     // 工具行：搜索 + 创建
     ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x - 118);
@@ -130,6 +168,24 @@ void HierarchyPanel::DrawNode(EditorApp& app, ecs::Entity e, bool hasHierarchy) 
         ImGui::TreeNodeEx((void*)(uintptr_t)e.id, flags, "%s", DisplayName(scene, e));
     if (ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Left))
         ctx.Select(e, ImGui::GetIO().KeyCtrl); // Ctrl 点选 = 增删选；主选中 = 末位
+    // 叶子节点双击 = 重命名（§4-7；父节点双击已被 展开/收起 占用——其用 F2/右键）
+    if (first.IsNull() && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0))
+        StartRename(scene, e);
+    // 重命名行（节点下一行内联输入：Enter 提交 / ESC 取消 / 点别处 = 提交）
+    if (!renaming_.IsNull() && e == renaming_) {
+        if (renameFocus_) {
+            ImGui::SetKeyboardFocusHere();
+            renameFocus_ = false;
+        }
+        ImGui::SetNextItemWidth(-1);
+        const bool committed = ImGui::InputText(
+            "##rename", &renameBuf_, ImGuiInputTextFlags_EnterReturnsTrue |
+                                        ImGuiInputTextFlags_AutoSelectAll);
+        if (ImGui::IsItemActive() && ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+            CommitRename(app, e, false);
+        else if (committed || ImGui::IsItemDeactivated())
+            CommitRename(app, e, true);
+    }
     if (ImGui::BeginDragDropSource()) {
         ImGui::SetDragDropPayload("LemonEntity", &e, sizeof(e));
         ImGui::TextUnformatted(DisplayName(scene, e));
@@ -149,6 +205,7 @@ void HierarchyPanel::DrawNode(EditorApp& app, ecs::Entity e, bool hasHierarchy) 
     }
     if (ImGui::BeginPopupContextItem("node_ctx")) {
         ctx.Select(e, false);
+        if (ImGui::MenuItem("重命名 (F2)")) StartRename(scene, e);
         if (ImGui::MenuItem("复制 (Ctrl+D)")) {
             ecs::Entity copy = ctx.DuplicateEntity(e);
             if (!copy.IsNull()) ctx.Select(copy, false);

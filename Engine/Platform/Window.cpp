@@ -81,6 +81,8 @@ bool Window::TakeResized() {
 
 void Window::RequestResize(int w, int h) { SDL_SetWindowSize(m->window, w, h); }
 
+void Window::SetTitle(const char* title) { SDL_SetWindowTitle(m->window, title); }
+
 void* Window::NativeHandle() const { return (void*)m->window; }
 
 void Window::GetPixelSize(int& w, int& h) const { SDL_GetWindowSizeInPixels(m->window, &w, &h); }

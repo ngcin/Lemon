@@ -27,11 +27,16 @@ public:
 
 private:
     void DrawNode(EditorApp& app, ecs::Entity e, bool hasHierarchy);
+    void StartRename(ecs::Scene& s, ecs::Entity e);  // M4.6 §4-7：F2/右键/叶子双击进入
+    void CommitRename(EditorApp& app, ecs::Entity e, bool apply);
     static bool PassFilter(ecs::Scene& s, ecs::Entity e, const char* filter);
     static bool SubtreeMatches(ecs::Scene& s, ecs::Entity e, const char* filter);
 
     std::string filter_;
     std::unordered_set<uint64_t> openedOnce_;
+    ecs::Entity renaming_{};    // 重命名中的实体（Null = 无）
+    bool renameFocus_ = false; // 重命名输入框首帧聚焦
+    std::string renameBuf_;
 };
 
 class InspectorPanel final : public IEditorPanel {

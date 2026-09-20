@@ -36,6 +36,8 @@ public:
     bool TakeResized();
     /// 程序化改窗口尺寸（测试用：压测 resize 重建路径）
     void RequestResize(int w, int h);
+    /// 改窗口标题（编辑器标题栏：<场景>[●] — <项目> — Lemon；M4.6）
+    void SetTitle(const char* title);
     void* NativeHandle() const;
     void GetPixelSize(int& w, int& h) const;
     bool IsKeyDown(Key k) const;
