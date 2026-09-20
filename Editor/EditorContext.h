@@ -39,6 +39,10 @@ public:
     int ResolveScriptTypeId(const char* className) const;
     /// 挂脚本（编辑侧 ScriptBox：className 持久键；typeId 即时解析（无 host = -1））
     void AttachScript(ecs::Entity e, uint64_t assetGuid, const char* className);
+    /// 热重载换装后重装配（M4.5）：Edit 世界刷新 ScriptBox.typeId；Play 世界原位
+    /// 换实例（AttachBehaviour → 新域 Awake/OnEnable + StateBag OnHotReloadIn）。
+    /// 返回 Play 世界重装配实例数（未在 Play = 0）。
+    int RefreshScriptsAfterReload();
 
     // ---- 场景 IO（M4-Editor-Plan §3.8）----
     /// 新建空场景（untitled；dirty=false）。清空当前 Scene 重建（World 不重建）。
@@ -49,6 +53,16 @@ public:
     bool SaveScene(std::string path = "");
     const std::string& ScenePath() const { return scenePath_; }
     std::string SceneName() const; // 文件名或 "untitled"
+
+    // ---- 自动备份与崩溃恢复（§3.8 M4.5：5 分钟快照 + 启动 mtime 比对提示）----
+    /// 每帧驱动：interval 秒且 dirty 且非 Play → 写 .lemon/autosave/<名>.scene（单份滚动）
+    void TickAutosave(double nowSec, double intervalSec = 300.0);
+    /// 立即快照（测试/手动触发共用；无项目根/空场景返回 false）
+    bool AutoSaveNow();
+    /// 恢复检测：autosave 新于磁盘 .scene（或 .scene 缺失而 autosave 在）→ 返回其路径
+    std::string DetectAutosaveRecovery() const;
+    /// 恢复 = 载入 autosave 内容但 scenePath 指向原 .scene、dirty 置位（用户决定落盘）
+    bool OpenSceneRecovery(const std::string& autosavePath);
 
     // ---- 实体操作（编辑器创建的实体恒带 guid + Meta + Transform2D）----
     ecs::Entity CreateEntity(const char* tag);
@@ -124,6 +138,7 @@ public:
 private:
     void BackfillGuids(); // 打开旧档（无 guid 字段）时补齐
     void ResolvePlayScripts(); // EnterPlay：ScriptBox.className → typeId → AttachBehaviour
+    std::string AutosavePathFor(const std::string& sceneStem) const; // .lemon/autosave/<stem>.scene
 
     std::unique_ptr<ecs::World> world_;
     ecs::Scene* scene_ = nullptr;
@@ -131,6 +146,7 @@ private:
     std::vector<ecs::Entity> selection_;
     AssetDatabase assets_;
     scripting::ScriptHost* scripts_ = nullptr;
+    double lastAutosaveSec_ = 0.0; // 上次快照时刻（steady 秒；编辑动作不清零节拍）
 
     // Play 沙盒态
     std::unique_ptr<ecs::World> playWorld_;

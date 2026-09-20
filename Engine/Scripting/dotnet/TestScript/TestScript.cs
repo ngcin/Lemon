@@ -39,6 +39,19 @@ public sealed class SpawnerBehaviour : Lemon.LemonBehaviour
         var at = new Lemon.Vec2(t.Pos.X + 40 + _tick * 2, t.Pos.Y - 20);
         Lemon.Instantiate.Spawn(_spriteId, at);
     }
+
+    // M4.5 热重载状态迁移验收：_tick 入包 → 换装后续跑（总刷怪数不翻倍）
+    protected override void OnHotReloadOut(Lemon.StateBag bag)
+    {
+        bag.Set("tick", _tick);
+        bag.Set("spriteId", _spriteId);
+    }
+
+    protected override void OnHotReloadIn(Lemon.StateBag bag)
+    {
+        if (bag.TryGet("tick", out int t)) _tick = t;
+        if (bag.TryGet("spriteId", out uint s)) _spriteId = s;
+    }
 }
 
 /// <summary>M4.4：Input 语义读取验收（GameView 聚焦时 WASD 播放进 Play World）。</summary>

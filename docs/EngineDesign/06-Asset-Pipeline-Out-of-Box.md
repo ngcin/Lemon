@@ -64,9 +64,17 @@ MyGame/                                   # 用户项目（升级永不触碰）
 > 独立纹理页（bindless 槽 2..，上限 kMaxTextureSlots=64）+ 一页一全幅 sprite；
 > 切片/手动划分与 MaxRects 图集打包随消费者落 M5+/M6。删除资产 = **墓碑**（号与
 > GPU 纹理保留到重启：登记号仍在 AtlasRegistry，销毁纹理会使引用中的 spriteId 采样
-> 悬空描述符）；体检红字覆盖孤儿 meta / GUID 冲突 / 缺失引用。prefab 资产落位
-> `Assets/Prefabs/`（本册 §1 根级 Prefabs/ 目录随 M4.5 项目向导统一）。
+> 悬空描述符）；体检红字覆盖孤儿 meta / GUID 冲突 / 缺失引用。
 > manifest 记账 spriteId 只增不减 → 已存场景引用不因增删资产漂移。
+> **M4.5 补记（2026-09-20）**：资产扫描根由 `Assets/` 扩为**项目根**（本册 §1 布局
+> 对齐）——根级 `Prefabs/` 入索引（prefab 导出/实例化读写改走项目根落位，M4.4 的
+> `Assets/Prefabs/` 落位偏差消除），`Game/Scenes/Data/Builds/obj/bin` 与点目录排除
+> （脚本工程/场景/数据/出包不是资产源；obj/bin 为 dotnet 构建噪声）；entry.relPath
+> 统一为项目根相对（`Assets/x.png`、`Prefabs/y.prefab`），M4.4 旧 manifest 键
+> （相对 Assets/）在 OpenProject 时同号迁移。新建项目向导（blank 模板）按 §1 布局
+> 落位全套目录 + project.lemon（engineVersion 锚点）+ 零配置 Game/ 脚本工程 +
+> 种子资产（spawn.png 固定 guid 与模板 SpawnerBehaviour 直连——"新建项目到刷怪
+> 场景零代码"的闭环）。
 
 ## 3. 场景与数据格式（JSON + 行程编码，可 diff 的紧凑格式）
 

@@ -41,6 +41,34 @@ public static class Behaviours
     private static readonly List<TypeSlot> s_ordered = new(); // (Order, 注册序) 预排序：tick 零分配
     private static int s_attached;
 
+    // 热重载待恢复包（M4.5；键 = (类名, 实体 id)）。独立于 Reset()——LoadScript 换域
+    // 清注册表时本表必须存活，直到新域 Attach 消费（或下次换装覆盖）。
+    private static readonly Dictionary<(string Class, ulong Entity), StateBag> s_hotBags = new();
+    private static int s_hotDropped; // In 阶段缺键/类型不匹配丢弃计数（诊断）
+
+    /// <summary>换装前捕获全部实例的可迁移状态（域线程；DomainManager.ReloadScript 调）。</summary>
+    internal static int CaptureForHotReload()
+    {
+        // 上轮未消费的包 = 实例已不存在或类被删 → 计丢弃并清场
+        s_hotDropped += s_hotBags.Count;
+        s_hotBags.Clear();
+        int n = 0;
+        foreach (var slot in Slots)
+            foreach (var b in slot.Instances) {
+                var bag = new StateBag();
+                try { b.OnHotReloadOut(bag); } // 异常不阻断换装：丢弃该实例状态
+                catch { continue; }
+                if (bag.Count > 0) {
+                    s_hotBags[(slot.Name, b.gameObject.Entity.Id)] = bag;
+                    ++n;
+                }
+            }
+        return n;
+    }
+
+    /// <summary>诊断：上次换装 In 阶段丢弃的字段数（类型不匹配/缺失）。</summary>
+    public static int HotReloadDroppedFields => s_hotDropped;
+
     private static void RebuildOrder()
     {
         s_ordered.Clear();
@@ -115,6 +143,14 @@ public static class Behaviours
         ++s_attached;
         SafeCall(slot, idx, b, LifecycleBits.Awake);
         SafeCall(slot, idx, b, LifecycleBits.OnEnable);
+        // 热重载恢复（M4.5）：同 (类名, 实体) 的待恢复包 → OnHotReloadIn。
+        // Start/Update 照常跑（需要保持的状态由脚本自己写进包；Awake/In 之后 Start 之前）。
+        if (s_hotBags.Remove((slot.Name, e.Id), out var bag)) {
+            try { b.OnHotReloadIn(bag); }
+            catch (Exception ex) {
+                Console.Error.WriteLine($"[lemon][error] behaviour '{slot.Name}' OnHotReloadIn: {ex.Message}");
+            }
+        }
     }
 
     /// <summary>卸载（Destroy 命令应用时由 Entry 调用；域线程）。实体销毁 → OnDestroy。</summary>

@@ -128,3 +128,31 @@ M3-7 逐层剥离出两个与脚本无关的分配来源（均 ~8.2KB 级不定�
 TC=0 = Tier1 全优化从头编译，120 帧预热后与分层稳态码质等价，性能判据不受影响。
 最终形态（TC=0 + 缓存）实测 15/15 进程硬 0（16 帧采样窗逐窗可诊断，无任何豁免口径）。
 **编辑器/游戏进程不设此环境变量**——分层编译照常，该记账属运行时正常行为。
+
+## 修订（2026-09-20，M4.5 动工前探针复测 + A 线交付）
+
+### D2 修订收口：A 线整域重建定案交付；B 线挂起待 runtime
+
+按本 ADR "M4 动工前以诊断探针复测为准"的既定程序，M4.5 动工前重跑
+`lemon-script-tests` 全部四条探针（runtime 10.0.12，macOS x64）：
+
+| 探针 | 结果 | 与 M3-2b 对照 |
+|---|---|---|
+| UCO 线程一次性 load→unload | **OK** | 一致（卸载能力存在） |
+| 域线程单命令 min-cycle | TIMEOUT | 一致 |
+| 裸 LoadFromAssemblyPath 跨命令 unload | TIMEOUT | 一致 |
+| 域线程 load→tick→unload | TIMEOUT | 一致 |
+| **pin 后再 load（换装核心前提）** | **OK** | 一致（新域可用、状态归零） |
+
+结论：runtime 行为与 M3-2b 矩阵完全一致，**A 线（整域重建）定案**。已按
+M4-Editor-Plan §3.7 交付：
+
+- `DomainManager.ReloadScript`（M4.5）：域线程捕获 StateBag + 丢引用 → UCO 线程
+  短轮询（3×GC+5ms，不赌 300ms 全轮询占换装预算）尽力卸载 → 未回收计泄漏（红字）→
+  新 ALC 装载。**实测编译+换装+重装配 1.22–1.24s ≤ 2s 判据**（Play/Edit 双态各一例）。
+- **B 线（ALC 换装）无需代码变更即可启用**：`ReloadScript` 的泄漏计数在 runtime
+  修复后自然归零（`LastCollected` 转 true 路径已接好）；届时重跑探针确认后
+  在本 ADR 记录 B 线启用即可。
+- StateBag 白名单（04 §6 回填）：基元值类型/枚举/`Lemon.Vec2`（SDK 常驻 ALC 身份）；
+  装箱值若携带旧域类型即 pin——用户自定义 struct 一律不可迁移。类型不匹配/缺失 =
+  丢弃（TryGet false），不抛异常不阻断换装。

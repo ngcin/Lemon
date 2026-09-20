@@ -162,6 +162,10 @@ bool ScriptHost::Initialize(const char* dotnetRoot, const char* runtimeConfigPat
     const char* kType = "Lemon.Entry.Exports, Lemon.Entry";
     dmLoad_ = (int (*)(const char*))host_.GetExport(kType, "lemon_dm_load");
     dmUnload_ = (int (*)())host_.GetExport(kType, "lemon_dm_unload");
+    // M4.5 换装族导出（旧宿主程序集无这些导出 = 空指针，热重载 API 返回失败态）
+    dmReload_ = (int (*)(const char*, int*, int*))host_.GetExport(kType, "lemon_dm_reload");
+    hrReloadsFn_ = (int (*)())host_.GetExport(kType, "lemon_hr_reloads");
+    hrLeaksFn_ = (int (*)())host_.GetExport(kType, "lemon_hr_leaks");
     batchCountFn_ = (int (*)())host_.GetExport(kType, "lemon_batch_count");
     batchQueryFn_ = (int (*)(int, uint8_t*, int))host_.GetExport(kType, "lemon_batch_query");
     batchTickFn_ = (void (*)(BatchSystemFrame*, int))host_.GetExport(kType, "lemon_batch_tick");
@@ -186,6 +190,24 @@ bool ScriptHost::LoadUserAssembly(const char* path) {
     batchPulled_ = false;     // 惰性：注册表此时可能尚未登记（World 未构造），首帧再拉
     behaviourNames_.clear();  // 换装程序集 → 类型名表重拉（M4.5 热重载同路径）
     return true;
+}
+
+ScriptHost::HotReloadInfo ScriptHost::HotReloadAssembly(const char* path) {
+    HotReloadInfo info;
+    if (!dmReload_) return info; // 旧 Entry 程序集（无 M4.5 导出）
+    int leaks = 0, collected = 0;
+    info.ok = dmReload_(path, &leaks, &collected) == 1;
+    info.leakCount = leaks;
+    info.lastCollected = collected != 0;
+    if (hrReloadsFn_) hrCount_ = hrReloadsFn_();
+    if (hrLeaksFn_) hrLeaks_ = hrLeaksFn_();
+    info.reloadCount = hrCount_;
+    if (info.ok) {
+        userLoaded_ = true;
+        batchPulled_ = false;     // 新域注册表（GameMain.Configure 已跑）
+        behaviourNames_.clear();  // 类型名表重拉
+    }
+    return info;
 }
 
 void ScriptHost::PullBatchRegistry() {

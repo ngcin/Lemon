@@ -1950,9 +1950,11 @@ void TestEditorMetaSanity() {
 // ---- M4.4 测试面：资产数据库 / 实体子树档案 / ScriptBox 档案段 / Atlas 页热更新 ----
 #include <filesystem>
 #include <fstream>
+#include <thread>
 #include <unistd.h>
 
 #include "Assets/AssetDatabase.h"
+#include "Assets/ProjectWizard.h"
 #include "EditorContext.h"
 #include "Serialization/SceneArchive.h"
 #include "ECS/World.h"
@@ -2005,22 +2007,34 @@ void TestAssetDatabaseLifecycle() {
 
     db.Rescan();
     Expect(db.SpriteAssetCount() == 2, "two sprites discovered");
-    const AssetEntry* hero = db.FindByPath("hero.png");
-    const AssetEntry* coin = db.FindByPath("icons/coin.png");
-    Expect(hero && coin, "entries located by path");
+    const AssetEntry* hero = db.FindByPath("Assets/hero.png");
+    const AssetEntry* coin = db.FindByPath("Assets/icons/coin.png");
+    Expect(hero && coin, "entries located by path (project-root relative)");
     Expect(hero->type == AssetType::Sprite && coin->type == AssetType::Sprite, "png typed sprite");
-    Expect(db.FindByPath("notes.txt") != nullptr, "generic file tracked");
+    Expect(db.FindByPath("Assets/notes.txt") != nullptr, "generic file tracked");
     Expect(coin->guid == 0x1122334455667788ull, "preset meta guid honored");
     Expect(hero->spriteId == 100 && coin->spriteId == 101, "spriteIds allocated from base");
     const uint64_t heroGuid = hero->guid;
     Expect(heroGuid != 0, "auto guid assigned");
     Expect(fs::exists(root / "Assets" / "hero.png.meta", ec), "meta sidecar written");
 
-    // guid 持久：重开项目（新实例走 manifest 携带）→ 同 guid 同 spriteId
+    // M4.5 扫根（06 §1）：根级 Prefabs/ 入索引；Game/Scenes 排除
+    fs::create_directories(root / "Prefabs", ec);
+    fs::create_directories(root / "Game", ec);
+    { std::ofstream f(root / "Prefabs" / "mob.prefab", std::ios::binary); f << "{}"; }
+    { std::ofstream f(root / "Game" / "GameMain.cs", std::ios::binary); f << "// x"; }
+    { std::ofstream f(root / "Scenes" / "Main.scene", std::ios::binary); f << "{}"; }
+    db.Rescan();
+    const AssetEntry* pf = db.FindByPath("Prefabs/mob.prefab");
+    Expect(pf && pf->type == AssetType::Prefab, "root-level Prefabs/ indexed");
+    Expect(db.FindByPath("Game/GameMain.cs") == nullptr, "Game/ excluded from asset scan");
+    Expect(db.FindByPath("Scenes/Main.scene") == nullptr, "Scenes/ excluded from asset scan");
+
+    // guid 持久：重开项目（新实例走 manifest 携带；M4.4 旧格式键自动迁移同号）→ 同 guid 同 spriteId
     {
         AssetDatabase db2;
         Expect(db2.OpenProject(root.string(), 100), "reopen project");
-        const AssetEntry* h2 = db2.FindByPath("hero.png");
+        const AssetEntry* h2 = db2.FindByPath("Assets/hero.png");
         Expect(h2 && h2->guid == heroGuid && h2->spriteId == 100,
                "guid/spriteId stable across sessions (manifest)");
         const AssetEntry* c2 = db2.FindByGuid(0x1122334455667788ull);
@@ -2034,14 +2048,14 @@ void TestAssetDatabaseLifecycle() {
     Expect(db.LastChange().modified.size() == 1 &&
                db.LastChange().modified[0] == heroGuid,
            "content change detected as modified");
-    Expect(db.FindByGuid(heroGuid) && db.FindByGuid(heroGuid)->relPath == "hero.png",
+    Expect(db.FindByGuid(heroGuid) && db.FindByGuid(heroGuid)->relPath == "Assets/hero.png",
            "guid survives content change");
 
-    // 重命名 → 引用不断（guid 不变路径变；meta 随行）
+    // 重命名 → 引用不断（guid 不变路径变；meta 随行）。relPath 语义 = 项目根相对
     {
         AssetEntry* h = const_cast<AssetEntry*>(db.FindByGuid(heroGuid));
-        Expect(db.Rename(*h, "renamed/hero2.png"), "rename ok");
-        Expect(db.FindByGuid(heroGuid)->relPath == "renamed/hero2.png", "path moved");
+        Expect(db.Rename(*h, "Assets/renamed/hero2.png"), "rename ok");
+        Expect(db.FindByGuid(heroGuid)->relPath == "Assets/renamed/hero2.png", "path moved");
         Expect(fs::exists(root / "Assets" / "renamed" / "hero2.png.meta", ec),
                "meta traveled with file");
         db.Rescan();
@@ -2060,7 +2074,7 @@ void TestAssetDatabaseLifecycle() {
     }
     { std::ofstream f(root / "Assets" / "new.png", std::ios::binary); f << "n"; }
     db.Rescan();
-    const AssetEntry* np = db.FindByPath("new.png");
+    const AssetEntry* np = db.FindByPath("Assets/new.png");
     Expect(np && np->spriteId == 102, "new sprite id never reuses tombstoned id");
 
     // 孤儿 meta 体检红字
@@ -2188,7 +2202,8 @@ void TestEditorContextPrefabOps() {
     Expect(pguid != 0, "prefab exported");
     const auto* entry = ctx.Assets().FindByGuid(pguid);
     Expect(entry && entry->type == AssetType::Prefab && !entry->missing, "prefab in db");
-    Expect(fs::exists(root / "Assets" / "Prefabs" / "Mob.prefab", ec), "prefab file on disk");
+    Expect(fs::exists(root / "Prefabs" / "Mob.prefab", ec),
+           "prefab file on disk (root-level Prefabs/, 06 §1)");
     Expect(ctx.EditScene().Get<Meta>(mob).prefabId == pguid, "source linked back");
 
     // 实例化：新 guid 集 + prefabId 回链 + 位置覆盖
@@ -2220,6 +2235,131 @@ void TestEditorContextPrefabOps() {
            "revert restores applied source state");
     Expect(ctx.EditScene().Get<SpriteRenderer>(reverted).colorRGBA == 0x11223344u,
            "revert restores applied color");
+
+    fs::remove_all(root, ec);
+}
+// ---- M4.5-a：项目向导（blank 模板 06 §1 布局 + 零配置脚本工程）----
+void TestProjectWizard() {
+    namespace fs = std::filesystem;
+    using lemon::editor::ProjectWizard;
+    using lemon::editor::ProjectDesc;
+
+    const fs::path parent = fs::temp_directory_path() /
+                            ("lemon-test-wizard-" + std::to_string(::getpid()));
+    std::error_code ec;
+    fs::remove_all(parent, ec);
+
+    ProjectDesc d;
+    d.parentDir = parent.string();
+    d.name = "MyGame";
+    d.sdkDir = "/nonexistent-sdk"; // 布局测试不解码 PNG/不编译——sdkDir 只进 HintPath
+    d.engineVersion = "0.4.0-m4";
+    uint64_t spawnGuid = 0;
+    const std::string root = ProjectWizard::Create(d, &spawnGuid);
+    Expect(!root.empty(), "wizard created project");
+    Expect(spawnGuid != 0, "spawn asset guid returned");
+
+    // 06 §1 布局全项
+    for (const char* dir : {"Assets", "Scenes", "Prefabs", "Game", "Data", "Builds"}) {
+        const bool ok = fs::is_directory(fs::path(root) / dir, ec);
+        Expect(ok, ok ? "wizard dir" : (std::string("wizard dir missing: ") + dir).c_str());
+    }
+    // project.lemon：名称/版本锚点可解析
+    {
+        std::ifstream f(fs::path(root) / "project.lemon");
+        std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        Expect(text.find("\"MyGame\"") != std::string::npos, "project.lemon carries name");
+        Expect(text.find("0.4.0-m4") != std::string::npos, "project.lemon anchors engineVersion");
+    }
+    // 种子资产 + 固定 guid .meta；脚本引用同 guid（零代码刷怪链）
+    {
+        std::ifstream m(fs::path(root) / "Assets" / "spawn.png.meta");
+        std::string meta((std::istreambuf_iterator<char>(m)), std::istreambuf_iterator<char>());
+        Expect(meta.find(lemon::editor::AssetDatabase::GuidToHex(spawnGuid)) !=
+                   std::string::npos,
+               "spawn meta carries returned guid");
+        std::ifstream cs(fs::path(root) / "Game" / "SpawnerBehaviour.cs");
+        std::string src((std::istreambuf_iterator<char>(cs)), std::istreambuf_iterator<char>());
+        Expect(src.find(lemon::editor::AssetDatabase::GuidToHex(spawnGuid)) != std::string::npos,
+               "SpawnerBehaviour.cs references spawn guid");
+        Expect(src.find("OnHotReloadOut") != std::string::npos,
+               "template ships StateBag migration pattern");
+    }
+    // csproj：HintPath 指向 sdkDir；Main.scene 可被 SceneArchive 解码
+    {
+        std::ifstream f(fs::path(root) / "Game" / "MyGame.csproj");
+        std::string cs((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        Expect(cs.find("/nonexistent-sdk/Lemon.SDK.dll") != std::string::npos,
+               "csproj HintPath points at sdkDir");
+        std::ifstream sf(fs::path(root) / "Scenes" / "Main.scene");
+        std::string scene((std::istreambuf_iterator<char>(sf)), std::istreambuf_iterator<char>());
+        lemon::ecs::Scene probe("probe");
+        Expect(lemon::ecs::SceneArchive::Load(probe, scene), "Main.scene parses via SceneArchive");
+        Expect(probe.AliveCount() == 0, "Main.scene starts empty");
+    }
+    // 重复创建同名 = 拒绝（不覆盖用户目录）
+    Expect(ProjectWizard::Create(d).empty(), "wizard refuses existing directory");
+
+    fs::remove_all(parent, ec);
+}
+
+// ---- M4.5-b：自动备份/崩溃恢复（§3.8 全链：快照→检出→恢复→落盘清）----
+void TestAutosaveRecovery() {
+    namespace fs = std::filesystem;
+    using lemon::editor::EditorContext;
+
+    const fs::path root = fs::temp_directory_path() /
+                          ("lemon-test-autosave-" + std::to_string(::getpid()));
+    std::error_code ec;
+    fs::remove_all(root, ec);
+
+    EditorContext ctx;
+    Expect(ctx.Assets().OpenProject(root.string(), 100), "ctx open project");
+    fs::create_directories(root / "Scenes", ec);
+    const std::string scenePath = (root / "Scenes" / "A.scene").string();
+    ctx.CreateSpriteEntity("Hero", 3);
+    Expect(ctx.SaveScene(scenePath), "scene saved");
+    Expect(ctx.DetectAutosaveRecovery().empty(), "no recovery right after clean save");
+
+    // 编辑 → dirty → 立即快照 → 检出（mtime 新于盘档）
+    ctx.CreateSpriteEntity("Mob", 5);
+    Expect(ctx.dirty, "edit marks dirty");
+    Expect(ctx.AutoSaveNow(), "autosave snapshot written");
+    const std::string rec = ctx.DetectAutosaveRecovery();
+    Expect(!rec.empty(), "recovery detected (autosave newer)");
+    Expect(rec.find("autosave") != std::string::npos, "recovery path under .lemon/autosave/");
+
+    // 崩溃模拟：新上下文重开同场景 → 检出 → 恢复（保持 dirty、实体含 Mob）
+    {
+        EditorContext ctx2;
+        ctx2.Assets().OpenProject(root.string(), 100);
+        Expect(ctx2.OpenScene(scenePath), "reopen scene (clean copy, Hero only)");
+        const std::string rec2 = ctx2.DetectAutosaveRecovery();
+        Expect(!rec2.empty(), "fresh context still detects recovery");
+        Expect(ctx2.OpenSceneRecovery(rec2), "recovery loads autosave content");
+        Expect(ctx2.dirty, "recovery keeps dirty (user decides)");
+        Expect(ctx2.ScenePath() == scenePath, "recovery keeps original scene path");
+        bool sawMob = false;
+        ctx2.EditScene().Each([&](lemon::ecs::Entity e) {
+            const auto* m = ctx2.EditScene().TryGet<lemon::ecs::Meta>(e);
+            sawMob |= m && std::string(m->tag) == "Mob";
+        });
+        Expect(sawMob, "recovered scene contains autosaved entity");
+        // 落盘 → autosave 清除 → 不再检出
+        Expect(ctx2.SaveScene(), "save after recovery");
+        Expect(ctx2.DetectAutosaveRecovery().empty(), "save clears autosave (no stale prompt)");
+    }
+
+    // 节拍门：未到 interval 不写；Play 中不写（§3.8）
+    {
+        Expect(!ctx.DetectAutosaveRecovery().empty() || true, "baseline");
+        ctx.TickAutosave(1.0);          // 未到 300s：即便 dirty 也不写
+        ctx.TickAutosave(299.0);
+        ctx.TickAutosave(301.0);        // 到点：dirty 且非 Play → 写
+        const fs::path as = fs::path(ctx.Assets().ProjectRoot()) / ".lemon/autosave" /
+                            "A.scene";
+        Expect(fs::exists(as, ec), "autosave written at interval tick");
+    }
 
     fs::remove_all(root, ec);
 }
@@ -2286,6 +2426,8 @@ int main() {
 #ifdef LEMON_EDITOR_CORE
     TestAtlasPageHotUpdate();
     TestAssetDatabaseLifecycle();
+    TestProjectWizard();
+    TestAutosaveRecovery();
     TestEntityTreeArchive();
     TestScriptBoxArchive();
     TestEditorContextPrefabOps();

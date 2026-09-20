@@ -7,6 +7,8 @@
 //   lemon-editor --project <dir>                   # 打开项目（M4.4：资产管线根目录）
 //   lemon-editor --project <dir> --smoke --play --frames 240 [--script <Game.dll>]
 //                  # 资产链/脚本刷怪冒烟（PNG 导入 + 热替换 + Instantiate.Spawn）
+//   lemon-editor --final [--project <父目录>] [--frames 260]
+//                  # M4.5 终验：向导建项目 → 判据场景 → Play/热重载/备份全量化
 #include <cstdio>
 #include <cstring>
 
@@ -33,13 +35,15 @@ int main(int argc, char** argv) {
             launch.saveScene = argv[++i];
         else if (!std::strcmp(argv[i], "--play"))
             launch.playTest = true;
+        else if (!std::strcmp(argv[i], "--final"))
+            launch.finalTest = launch.smoke = launch.playTest = true; // 终验（含冒烟+Play）
         else if (!std::strcmp(argv[i], "--script") && i + 1 < argc)
             launch.script = argv[++i];
         else {
             std::printf("unknown arg: %s\n", argv[i]);
             std::printf("usage: lemon-editor [--smoke] [--frames N] [--validate] [--demo] "
                         "[--screenshot out.png] [--project dir] [--scene f.scene] "
-                        "[--save-scene f.scene] [--play] [--script Game.dll]\n");
+                        "[--save-scene f.scene] [--play] [--script Game.dll] [--final]\n");
             return 2;
         }
     }

@@ -110,6 +110,7 @@ public:
 private:
     std::vector<float> frameMs_;
     bool showGpu_ = true;
+    uint64_t gcPrev_ = 0; // GcAllocated 差分基线（M4.5 GC 红字口径）
 };
 
 } // namespace lemon::editor

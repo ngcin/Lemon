@@ -278,6 +278,34 @@ void TestDomainManager() {
     double c = lemonDmTick(0.1f);
     std::printf("script-tests: [diag] reload first tick = %f\n", c);
     Expect(c == (double)0.1f, "dm reload state reset + working");
+
+    // ---- M4.5 换装探针（ADR-010 A 线；lemon_dm_reload = 热重载真实路径）----
+    // tick 换状态 → 整域换装（StateBag 捕获/丢引用/尽力卸载/新域装载）→ 新域可用 +
+    // 计数可见。本 runtime 预期 leak ≥ 1（域线程 pin；探针复测 2026-09-20 同 M3-2b）。
+    {
+        // 0.25f 二进制精确（0.1f+0.3f 会有双精度舍入差——比较口径必须两侧同算式）
+        double d1 = lemonDmTick(0.25f);
+        Expect(d1 == 0.1f + 0.25, "pre-reload tick 0.35 (exact binary)");
+        auto reloadFn = (int (*)(const char*, int*, int*))GetExport("lemon_dm_reload");
+        auto leaksFn = (int (*)())GetExport("lemon_hr_leaks");
+        auto reloadsFn = (int (*)())GetExport("lemon_hr_reloads");
+        Expect(reloadFn != nullptr, "lemon_dm_reload exported");
+        int leaks = -1, collected = -1;
+        Expect(reloadFn(LEMON_SCRIPT_DIR "/TestScript.dll", &leaks, &collected) == 1,
+               "dm reload (hot swap) ok");
+        double d2 = lemonDmTick(0.1f);
+        std::printf("script-tests: [diag] hot-reload: leak=%d collected=%d reloads=%d "
+                    "fresh-tick=%f\n",
+                    leaks, collected, reloadsFn ? reloadsFn() : -1, d2);
+        Expect(d2 == (double)0.1f, "hot-reload new domain fresh state");
+        Expect(leaks >= 0 && leaksFn && leaksFn() == leaks, "leak count visible + consistent");
+        Expect(reloadsFn && reloadsFn() >= 1, "reload count visible");
+        // 换装后新域 GameMain.Configure 已跑：behaviours 列表可拉（3 个类型）
+        auto listFn = (int (*)(char*, int))GetExport("lemon_behaviours_list");
+        char buf[4096];
+        int n = listFn ? listFn(buf, (int)sizeof buf) : -1;
+        Expect(n == 3, "behaviours list after hot reload (Counting/Spawner/InputMover)");
+    }
 }
 
 

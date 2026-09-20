@@ -63,6 +63,26 @@ internal static unsafe class Exports
     [UnmanagedCallersOnly]
     public static int lemon_dm_unload() => DomainManager.UnloadScript() ? 1 : 0;
 
+    /// <summary>M4.5 热重载换装（A 线整域重建）：StateBag 捕获 → 旧域尽力卸载 → 新域装载。
+    /// 返回 1 = 新域可用；*leakCount = 累计泄漏换装数；*lastCollected = 本次旧域是否回收。</summary>
+    [UnmanagedCallersOnly]
+    public static unsafe int lemon_dm_reload(byte* pathUtf8, int* leakCount, int* lastCollected)
+    {
+        int len = 0;
+        while (pathUtf8[len] != 0) len++;
+        bool ok = DomainManager.ReloadScript(System.Text.Encoding.UTF8.GetString(pathUtf8, len));
+        if (leakCount != null) *leakCount = DomainManager.LeakCount;
+        if (lastCollected != null) *lastCollected = DomainManager.LastCollected ? 1 : 0;
+        return ok ? 1 : 0;
+    }
+
+    /// <summary>换装次数 / 累计泄漏次数（Profiler 常驻显示；M4-Editor-Plan §3.7）。</summary>
+    [UnmanagedCallersOnly]
+    public static int lemon_hr_reloads() => DomainManager.ReloadCount;
+
+    [UnmanagedCallersOnly]
+    public static int lemon_hr_leaks() => DomainManager.LeakCount;
+
     /// <summary>帧执行（域线程）；未加载返回 NaN 哨兵。</summary>
     [UnmanagedCallersOnly]
     public static double lemon_dm_tick(float dt) => DomainManager.Tick(dt);

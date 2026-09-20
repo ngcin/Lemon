@@ -44,5 +44,10 @@ public abstract class LemonBehaviour
     protected internal virtual void Update() { }     // 60Hz 固定步长（≙ Unity FixedUpdate 语义）
     protected internal virtual void LateUpdate() { } // 同 tick 末尾
     protected internal virtual void OnDestroy() { }
+    // 热重载状态迁移（04 §6；M4.5 A 线整域重建）：换装前旧实例写包、新实例读包。
+    // 时机：Out = 卸载前（旧域最后一次调用）；In = 新实例 Awake/OnEnable 之后、
+    // 首次 Start/Update 之前。仅值类型可入包（StateBag 白名单），其余丢弃。
+    protected internal virtual void OnHotReloadOut(StateBag bag) { }
+    protected internal virtual void OnHotReloadIn(StateBag bag) { }
     // 触发器/事件回调（OnTriggerEnter/Exit/OnGameEvent）随 M4 事件桥扩展接入
 }

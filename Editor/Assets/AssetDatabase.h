@@ -20,7 +20,7 @@ enum class AssetType : uint8_t { Sprite, Prefab, Script, Generic };
 const char* AssetTypeName(AssetType t);
 struct AssetEntry {
     uint64_t guid = 0;
-    std::string relPath;   // 相对 Assets/（'/' 分隔，含扩展名）
+    std::string relPath;   // 相对项目根（'/' 分隔，含扩展名；06 §1：Assets/** 与根级 Prefabs/**）
     AssetType type = AssetType::Generic;
     uint32_t spriteId = 0; // Sprite：AtlasRegistry 稳定 id（0 = 非 sprite）
     uint64_t hash = 0;     // 内容 FNV-1a 64（重导入判定）
@@ -66,8 +66,8 @@ public:
     uint32_t SpriteAssetCount() const;
 
     const std::string& ProjectRoot() const { return root_; }
-    std::string AssetsRoot() const;
-    std::string AbsolutePath(const AssetEntry& e) const { return AssetsRoot() + "/" + e.relPath; }
+    std::string AssetsRoot() const;                     // root/Assets（导入落点）
+    std::string AbsolutePath(const AssetEntry& e) const { return root_ + "/" + e.relPath; }
     /// 16 位 hex（Inspector 槽显示 / C# Assets.SpriteOf 参数形态）
     static std::string GuidToHex(uint64_t guid);
     static uint64_t HexToGuid(const char* hex);

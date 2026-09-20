@@ -5,6 +5,7 @@
 // M3 无热重载（ADR-010 D2），但 Load/Unload 自第一天可用（卸载自检 = M3 验收项）。
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.Loader;
 using System.Runtime;
@@ -128,6 +129,50 @@ internal static unsafe class DomainManager
             Thread.Sleep(10);
         }
         return false;
+    }
+
+    // ---- M4.5 热重载（ADR-010 A 线整域重建；M4.5 探针复测 2026-09-20 仍 pin）----
+    // 泄漏记账：每次换装若旧 ALC 未回收（本 runtime 常态）计 1 次；runtime 修复后
+    // （lemon-script-tests 探针转 OK）此处自然归零，B 线无需代码变更即可启用。
+    private static int s_reloadCount;
+    private static int s_leakCount;
+    private static bool s_lastCollected; // 最近一次换装旧域是否确认回收（B 线探针同款）
+    private static readonly List<WeakReference> s_leakedAlcs = new(); // 诊断：泄漏 ALC 弱引用
+
+    public static int ReloadCount => s_reloadCount;
+    public static int LeakCount => s_leakCount;
+    public static bool LastCollected => s_lastCollected;
+
+    /// <summary>整域换装：捕获 StateBag → 丢引用 → 尽力卸载（短轮询，不阻塞预算）→
+    /// 新 ALC 装载。返回 true = 新域可用；leak 计数经 LeakCount 读。</summary>
+    public static bool ReloadScript(string assemblyPath)
+    {
+        // 1) 域线程：捕获状态 + 释放旧域全部强引用（实例/委托/注册表）
+        Post(() => {
+            Lemon.Behaviours.CaptureForHotReload();
+            Lemon.Behaviours.Reset(); // 旧实例即弃（类型来自旧域，保着只会 pin）
+            s_tickFn = null; s_asm = null; s_alc = null;
+        });
+        var weak = s_alcWeak;
+        s_alcWeak = null;
+        // 2) UCO 线程：尽力卸载。已知域线程执行模型下必 pin（ADR-010 修订）——
+        //    短轮询 3×(GC+5ms) 只为确认与记账，不赌 300ms 全轮询占掉换装预算。
+        bool collected = true;
+        if (weak != null) {
+            ((AssemblyLoadContext)weak.Target!).Unload();
+            collected = false;
+            for (int i = 0; i < 3; i++) {
+                GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
+                GC.WaitForPendingFinalizers();
+                if (!weak.IsAlive) { collected = true; break; }
+                Thread.Sleep(5);
+            }
+            if (!collected) { ++s_leakCount; s_leakedAlcs.Add(weak); }
+        }
+        s_lastCollected = collected;
+        ++s_reloadCount;
+        // 3) 新域装载（LoadScript：Reset + GameMain.Configure + 委装配）
+        return LoadScript(assemblyPath);
     }
 
     public static bool IsLoaded => s_alc != null;

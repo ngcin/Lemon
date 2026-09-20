@@ -72,6 +72,20 @@ public:
     /// 用户程序集装载（可回收 ALC + GameMain.Configure）+ 拉取批量系统注册表。
     bool LoadUserAssembly(const char* path);
 
+    // ---- M4.5 热重载（ADR-010 A 线整域重建；M4-Editor-Plan §3.7）----
+    struct HotReloadInfo {
+        bool ok = false;       // 新域可用
+        int reloadCount = 0;   // 累计换装次数
+        int leakCount = 0;     // 累计旧域未回收次数（已知 runtime 限制，红字告警口径）
+        bool lastCollected = false; // 本次旧域确认回收（runtime 修复 → B 线信号）
+    };
+    /// 整域换装：StateBag 捕获 → 旧域尽力卸载 → 新 ALC 装载。成功后类型名表/
+    /// 批量注册表惰性重拉；场景侧 ScriptBox 重装配由编辑器驱动（Edit 刷新 typeId、
+    /// Play 经 AttachBehaviour 原位换实例 + 状态恢复）。
+    HotReloadInfo HotReloadAssembly(const char* path);
+    int HotReloadCount() const { return hrCount_; }
+    int HotReloadLeakCount() const { return hrLeaks_; }
+
     bool IsUserLoaded() const { return userLoaded_; }
     uint32_t BatchSystemCount() const {
         return batchPulled_ ? (uint32_t)batch_.size()
@@ -110,6 +124,9 @@ private:
 
     int (*dmLoad_)(const char*) = nullptr;
     int (*dmUnload_)() = nullptr;
+    int (*dmReload_)(const char*, int*, int*) = nullptr; // M4.5（路径, *泄漏数, *本次回收）
+    int (*hrReloadsFn_)() = nullptr;
+    int (*hrLeaksFn_)() = nullptr;
     int (*batchCountFn_)() = nullptr;
     int (*batchQueryFn_)(int, uint8_t*, int) = nullptr;
     void (*batchTickFn_)(BatchSystemFrame*, int) = nullptr;
@@ -126,6 +143,8 @@ private:
     std::vector<ecs::EventPacket> pullBuf_; // 脚本 pending 拉取缓冲（复用）
     std::vector<SceneOpC> opBuf_;           // 结构命令拉取缓冲（复用）
     std::vector<std::string> behaviourNames_; // 惰性缓存（BehaviourTypeNames）
+    int hrCount_ = 0;                       // 换装计数（镜像托管侧；Profiler 显示）
+    int hrLeaks_ = 0;                       // 泄漏计数（红字告警口径，ADR-010 A 线）
     bool scriptsNeedTick_ = true;           // 档① 实例存在时即使无批量帧也要跑 tick
     bool batchPulled_ = false;              // 注册表惰性拉取标记（M3-7：装配可早于 World）
 

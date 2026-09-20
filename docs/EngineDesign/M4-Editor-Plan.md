@@ -13,7 +13,16 @@
 > NativeApi 表尾 4 项 + lemon_behaviours_list）；脚本刷怪链冒烟 playAlive 6→42、
 > engine-tests 12935 全绿。落位偏差：prefab 文件在 Assets/Prefabs/（根级 Prefabs/
 > 目录随 M4.5 项目向导）；编辑器资产钩子经 SetEditorAssetHooks 注入（纯运行时=0）。
-> **M4.5（热重载 ADR-010 探针复测、项目向导、自动备份、终验）待续**。
+> **M4.5 已完成（2026-09-20，M4 全部收官）**：热重载 A 线整域重建（动工前探针复测
+> 确认仍 pin——ADR-010 同日修订；StateBag 值类型白名单 + OnHotReloadOut/In 协议；
+> Play/Edit 双态换装实测 1.24s/1.22s ≤2s、泄漏计数红字、watcher 自动触发 + obj/bin
+> 排除 + 0.4s 防抖）；项目向导（blank 模板 06 §1 布局 + 零配置 Game/ 编译装配 +
+> 种子资产/spawn 脚本 guid 直连）；自动备份与崩溃恢复（5min 快照 .lemon/autosave/
+> + mtime 比对启动恢复提示 + 落盘即清）；资产扫描根改项目根（根级 Prefabs/ 入索引，
+> M4.4 落位偏差消除）；Profiler GC 每帧差分红字 + 换装泄漏常驻。**终验 `--final` 全
+> PASS**：向导→判据场景（零代码 14 实体）→Play fps 59（≥45）/进出 3.9/0.4ms/逐字节
+> 一致→Play 中热重载 StateBag 续跑 66/66 精确断言→Edit 态换装注册表可见→备份恢复链
+> →冷启 340ms；engine-tests 12972 / script-tests 1275 / ASan+UBSan 全绿。
 > 实现备注：属性轨记录粒度 = 组件级字节快照（字段级拆分列 M5 精化）；纹理后端豁免口
 > 与 ctest 隔离断言见 §3.2/§5 落地；构建分层 lemon-editor-core（无 ImGui 编辑器逻辑，
 > 单测面）见 Editor/CMakeLists.txt。
@@ -360,14 +369,23 @@ SDL 事件 ─→ ImGui（WantCaptureKeyboard/Mouse 为真 = GUI 占用）
 
 建议后续动工时回填（不阻塞本册）：
 
-- [ ] 04 §6：热重载 StateBag 字段粒度白名单与本册 §3.7 两分支引用；
+- [x] 04 §6：热重载 StateBag 字段粒度白名单与本册 §3.7 两分支引用（**M4.5 已落地**：
+      白名单 = 基元值类型/枚举/Lemon.Vec2（SDK 常驻 ALC 身份）；类型不匹配/缺失 = 丢弃
+      不抛异常；A 线整域重建交付（2026-09-20 探针复测仍 pin，ADR-010 修订记录），
+      B 线（ALC 换装）无需代码变更——探针转绿后 `ReloadScript` 的泄漏计数自然归零；
+      见 04 分册同日注记与 StateBag.cs 头注）；
 - [x] 04 §2.1：ScriptBox 脚本资产 GUID 序列化格式落定后回写（**M4.4 已落地**：
       `.scene` 实体 `"script":{"guid","class"}` 成员；ScriptBox 扩 scriptGuid +
       className[24]，typeId 注册序不持久、按 className 解析；见 04 分册同日注记）；
 - [x] 06 §2：M4 导入器范围（sprite 族先行）与本册 §1.2 对齐注记（**M4.4 已落地**：
       每 PNG 独立纹理页 + 一页一全幅 sprite；切片/图集打包 M5+/M6；删除 = 墓碑保号；
-      见 06 分册同日注记）；
+      见 06 分册同日注记）；**M4.5 补**：资产扫描根改为项目根（06 §1 布局），
+      根级 `Prefabs/` 入索引、`Game/Scenes/Data/Builds/obj/bin` 排除，
+      M4.4 旧 manifest 键（相对 Assets/）同号迁移；
 - [ ] 09 §8：多窗口补课顺延 M5 的记录 + 编辑器 `--smoke` 无头冒烟条目（验收 #13 之提案）；
 - [x] 00 §8：扩展名更名（`.scene`/`.prefab`/`.baked`，2026-09-19 随决议 #11 回填）与 `.lemon/autosave/` 命名记录；
-- [ ] ADR-010：M4.0 探针复测结论（A/B 线判定）写回；
+- [x] ADR-010：M4.0 探针复测结论（A/B 线判定）写回（**M4.5 动工前复测，2026-09-20**：
+      runtime 10.0.12 行为与 M3-2b 矩阵一致——UCO 一次性线程 OK / 域线程全形态 pin /
+      pin 后重载可用；**A 线整域重建定案交付**，换装实测 1.2–1.3s（含 dotnet build）、
+      每次泄漏计数 +1 红字告警；B 线挂起待 runtime 升级探针复跑；见 ADR 同日修订）；
 - [ ] ADR-009：Inspector 逐字段 override 若移 M5，记 ADR 修订。

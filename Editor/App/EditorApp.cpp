@@ -6,11 +6,13 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 
 #include "stb_image_write.h"
 
 #include "App/ImGuiBackend.h"
 #include "Assets/AssetDatabase.h"
+#include "Assets/ProjectWizard.h"
 #include "Interaction/ViewportRenderer.h"
 #include "Components/BehaviorComponents.h"
 #include "Components/CoreComponents.h"
@@ -79,6 +81,12 @@ void EditorApp::BuildMenuBar() {
             MenuSaveScene();
         if (ImGui::MenuItem("另存为...", nullptr, false, !playing_)) MenuSaveSceneAs();
         ImGui::Separator();
+        if (ImGui::MenuItem("新建项目...", nullptr, false, !playing_)) MenuNewProject();
+        if (ImGui::MenuItem("打开项目...", nullptr, false, !playing_)) {
+            pickerMode_ = PickerMode::Import; // 复用目录浏览起点（选 .lemon 上级）
+            LEMON_LOG("打开项目：用 --project <dir> 启动，或新建项目向导（M4 单项目会话）");
+        }
+        ImGui::Separator();
         if (ImGui::MenuItem("退出", nullptr, false, true)) RequestExit();
         ImGui::EndMenu();
     }
@@ -90,6 +98,9 @@ void EditorApp::BuildMenuBar() {
     if (ImGui::BeginMenu("Assets")) {
         if (ImGui::MenuItem("导入文件...", nullptr, false, true)) MenuImportAsset();
         if (ImGui::MenuItem("重扫资产库", nullptr, false, true)) RescanAssets();
+        ImGui::Separator();
+        if (ImGui::MenuItem("重新编译脚本（热重载）", nullptr, false, host_ != nullptr))
+            MenuRebuildScripts();
         ImGui::Separator();
         ImGui::TextDisabled("项目：%s", ctx_.Assets().ProjectRoot().c_str());
         ImGui::TextDisabled("资产 %u（sprite %u）｜体检红字 %u",
@@ -283,8 +294,7 @@ void EditorApp::BuildPickersAndModals() {
         ImGui::OpenPopup("未保存更改");
         quitConfirmOpen_ = false;
         quitConfirmArmed_ = true;
-    }
-    if (ImGui::BeginPopupModal("未保存更改", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    }    if (ImGui::BeginPopupModal("未保存更改", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::Text("场景 %s 有未保存更改。", ctx_.SceneName().c_str());
         ImGui::Separator();
         if (ImGui::Button("保存并退出", ImVec2(140, 0))) {
@@ -315,6 +325,47 @@ void EditorApp::BuildPickersAndModals() {
         }
         ImGui::EndPopup();
     }
+
+    // M4.5 新建项目向导（blank 模板；06 §1 布局 + 零配置 Game/ 编译装配）
+    if (wizOpen_) ImGui::OpenPopup("新建项目");
+    if (ImGui::BeginPopupModal("新建项目", &wizOpen_, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("blank 模板：Assets/Scenes/Prefabs/Game/Data + 种子资产 + "
+                               "可编译脚本工程（零配置直接 Play）");
+        ImGui::SetNextItemWidth(320);
+        ImGui::InputText("项目名", wizName_, sizeof(wizName_));
+        ImGui::SetNextItemWidth(320);
+        ImGui::InputText("父目录（绝对路径）", wizParent_, sizeof(wizParent_));
+        ImGui::Separator();
+        ImGui::BeginDisabled(!wizName_[0] || !wizParent_[0]);
+        if (ImGui::Button("创建并打开", ImVec2(160, 0))) {
+            ProjectDesc d;
+            d.parentDir = wizParent_;
+            d.name = wizName_;
+#ifdef LEMON_SCRIPT_DIR
+            d.sdkDir = LEMON_SCRIPT_DIR;
+            d.engineVersion = "0.4.0-m4";
+            if (const std::string root = ProjectWizard::Create(d); !root.empty()) {
+                ImGui::CloseCurrentPopup();
+                wizOpen_ = false;
+                if (OpenProjectPipeline(root)) {
+                    ctx_.OpenScene(root + "/Scenes/Main.scene");
+                    LEMON_LOG("新项目已打开：%s（保存场景后即可 Play）", root.c_str());
+                }
+            }
+#else
+            LEMON_WARN("新建项目需要 LEMON_BUILD_SCRIPTING=ON 构建");
+#endif
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button("取消", ImVec2(120, 0))) {
+            wizOpen_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    DrawRecoveryModal();
 }
 
 // ---- 场景 IO 动作 ----
@@ -379,6 +430,182 @@ void EditorApp::RescanAssets() {
                   cs.removed.size());
 }
 
+// ------------------------------------------------ 项目/脚本管线（M4.5）----
+bool EditorApp::FindGameProject(std::string& csproj, std::string& dll) {
+    namespace fs = std::filesystem;
+    const std::string& root = ctx_.Assets().ProjectRoot();
+    if (root.empty()) return false;
+    std::error_code ec;
+    for (auto it = fs::directory_iterator(root + "/Game", ec);
+         it != fs::directory_iterator(); it.increment(ec)) {
+        if (ec || !it->is_regular_file(ec)) continue;
+        if (it->path().extension() != ".csproj") continue;
+        csproj = it->path().string();
+        dll = root + "/.lemon/bin/" +
+              it->path().stem().string() + ".dll";
+        return true;
+    }
+    return false;
+}
+
+bool EditorApp::OpenProjectPipeline(const std::string& projectRoot) {
+    // spriteId 基址 = 程序化图集登记后首个可用号（跨会话稳定由 manifest 记账）
+    const uint32_t spriteIdBase = viewport_->Assets().Registry().SpriteCount() + 1;
+    if (!ctx_.Assets().OpenProject(projectRoot, spriteIdBase)) return false;
+    gpuAssets_.Init(*device_, ui_.get(), &viewport_->Assets().Registry(),
+                    ctx_.Assets(), /*firstSlot=*/2); // 0=调色板 1=字体页
+    for (const AssetEntry& e : ctx_.Assets().Entries())
+        if (!e.missing && e.type == AssetType::Sprite) gpuAssets_.ImportSprite(e);
+    // 设备丢失重建（"editor-viewport" 先 Reset+重建程序化页 → 此处按 DB 记账号接续）
+    device_->AddRecreateCallback("asset-gpu", [this](rhi::Device& d) {
+        gpuAssets_.RebuildAll(d);
+    });
+    watcher_.Start(ctx_.Assets().AssetsRoot());
+    scriptWatcher_.Start(ctx_.Assets().ProjectRoot() + "/Game"); // 热重载触发源（§3.7）
+    LEMON_LOG("资产管线就绪：项目 %s", projectRoot.c_str());
+
+    // 项目自带 Game/ 工程且未显式 --script → 编译 + 装配脚本宿主（向导零配置体验）
+    std::string csproj, dll;
+    if (launch_->script.empty() && FindGameProject(csproj, dll)) {
+        double buildMs = 0.0;
+        if (ProjectWizard::BuildGameProject(csproj, ctx_.Assets().ProjectRoot() + "/.lemon/bin",
+                                            &buildMs) == 0) {
+            InitScriptHostFrom(dll);
+            LEMON_LOG("Game/ 编译 %.0fms → %s", buildMs, dll.c_str());
+        } else {
+            LEMON_ERROR("Game/ 编译失败（项目仍可编辑，无脚本）：dotnet build %s", csproj.c_str());
+        }
+    }
+    return true;
+}
+
+bool EditorApp::InitScriptHostFrom(const std::string& dllAbs) {
+#ifdef LEMON_SCRIPT_DIR
+    if (!std::filesystem::exists(dllAbs)) {
+        LEMON_WARN("脚本装配失败：程序集不存在 %s", dllAbs.c_str());
+        return false;
+    }
+    host_ = std::make_unique<scripting::ScriptHost>();
+    // DomainManager 要求绝对路径（ALC LoadFromAssemblyPath 约束）
+    std::error_code eca;
+    std::string scriptAbs = std::filesystem::absolute(dllAbs, eca).generic_string();
+    if (host_->Initialize(nullptr, LEMON_SCRIPT_DIR "/Lemon.Entry.runtimeconfig.json",
+                          LEMON_SCRIPT_DIR "/Lemon.Entry.dll") &&
+        host_->LoadUserAssembly(scriptAbs.c_str())) {
+        ctx_.SetScriptHost(host_.get());
+        LEMON_LOG("脚本宿主就绪：%s（类型 %zu 个）", scriptAbs.c_str(),
+                  ctx_.ScriptTypeNames().size());
+        return true;
+    }
+    LEMON_WARN("脚本宿主初始化失败（%s）——无脚本继续", scriptAbs.c_str());
+    host_.reset();
+#endif
+    return false;
+}
+
+bool EditorApp::ScriptSourceChanged() {
+    // FileWatcher 只报"有变化"；这里过滤出真正需要重编译的源写（.cs/.csproj，
+    // 排除 obj/bin 生成物——dotnet build 会改写它们，否则自我触发死循环）
+    namespace fs = std::filesystem;
+    const std::string gameDir = ctx_.Assets().ProjectRoot() + "/Game";
+    std::error_code ec;
+    int64_t newest = 0;
+    for (auto it = fs::recursive_directory_iterator(gameDir,
+                                                    fs::directory_options::skip_permission_denied,
+                                                    ec);
+         it != fs::recursive_directory_iterator(); it.increment(ec)) {
+        if (ec) break;
+        const fs::directory_entry& de = *it;
+        const std::string name = de.path().filename().string();
+        if (de.is_directory(ec)) {
+            if (name == "obj" || name == "bin" || (!name.empty() && name[0] == '.'))
+                it.disable_recursion_pending();
+            continue;
+        }
+        if (name.size() < 3) continue;
+        const std::string ext = de.path().extension().string();
+        if (ext != ".cs" && ext != ".csproj") continue;
+        auto wt = fs::last_write_time(de.path(), ec);
+        if (ec) continue;
+        const int64_t s = (int64_t)wt.time_since_epoch().count();
+        if (s > newest) newest = s;
+    }
+    if (newest == 0 || newest <= lastHandledCsWrite_) return false;
+    lastHandledCsWrite_ = newest;
+    return true;
+}
+
+bool EditorApp::TryHotReloadScripts(const char* reason) {
+    if (!host_) {
+        LEMON_WARN("热重载跳过：无脚本宿主（%s）", reason);
+        return false;
+    }
+    std::string csproj, dll;
+    const bool hasProject = FindGameProject(csproj, dll);
+    // 无 Game/ 工程（--script 直载 dll 形态）：dll 可能已被外部重编——直接换装同一文件
+    if (!hasProject) {
+        dll = launch_->script;
+        if (dll.empty()) return false;
+    }
+    const auto t0 = std::chrono::steady_clock::now();
+    if (hasProject) {
+        const int rc = ProjectWizard::BuildGameProject(
+            csproj, ctx_.Assets().ProjectRoot() + "/.lemon/bin");
+        if (rc != 0) {
+            LEMON_ERROR("热重载编译失败（保持旧域运行）：dotnet build 退出码 %d（%s）", rc,
+                        reason);
+            return false;
+        }
+    }
+    const auto info = host_->HotReloadAssembly(dll.c_str());
+    const int reattached = ctx_.RefreshScriptsAfterReload();
+    hotReloadMs_ = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0)
+                       .count();
+    if (!info.ok) {
+        LEMON_ERROR("热重载换装失败：新域装载异常（旧域已弃，脚本停摆——修错后再触发）");
+        return false;
+    }
+    LEMON_LOG("热重载完成（%s）：编译+换装+重装配 %.0fms（Play 重装配 %d 实例；类型 %zu 个）",
+              reason, hotReloadMs_, reattached, ctx_.ScriptTypeNames().size());
+    if (info.leakCount > 0)
+        LEMON_WARN("热重载泄漏计数 %d（旧 ALC 未回收——本 runtime 已知限制，ADR-010 A 线；"
+                   "每次约百 KB 级，会话内可接受）",
+                   info.leakCount);
+    return true;
+}
+
+void EditorApp::MenuRebuildScripts() { TryHotReloadScripts("手动触发"); }
+
+void EditorApp::MenuNewProject() { wizOpen_ = true; }
+
+void EditorApp::DrawRecoveryModal() {
+    if (recoveryPath_.empty()) return;
+    if (!ImGui::IsPopupOpen("崩溃恢复") && !recoveryAnswered_) ImGui::OpenPopup("崩溃恢复");
+    if (!ImGui::BeginPopupModal("崩溃恢复", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    ImGui::Text("检测到较新的自动备份：\n%s", recoveryPath_.c_str());
+    ImGui::TextUnformatted("（上次会话可能未正常保存。恢复 = 打开备份内容并保持未保存状态）");
+    ImGui::Separator();
+    if (ImGui::Button("恢复", ImVec2(120, 0))) {
+        if (ctx_.OpenSceneRecovery(recoveryPath_))
+            LEMON_LOG("崩溃恢复：已载入备份（Ctrl+S 落盘）");
+        else
+            LEMON_WARN("崩溃恢复失败：备份解析失败");
+        recoveryPath_.clear();
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("忽略", ImVec2(120, 0))) {
+        recoveryPath_.clear();
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+
+int EditorApp::HotReloadCount() const {
+    return host_ ? host_->HotReloadCount() : 0;
+}
+
+
 int EditorApp::Run(const EditorLaunch& launch) {
     launchCopy_ = launch;
     launch_ = &launchCopy_;
@@ -411,53 +638,51 @@ int EditorApp::Run(const EditorLaunch& launch) {
     ownedPanels_ = CreateAllPanels();
     for (auto& p : ownedPanels_) panels_.Add(p.get());
 
-    // ---- M4.4 资产链：项目打开（--project）→ DB 扫描 → GPU 导入 → watcher ----
-    if (launch.smoke && !launch.projectDir.empty()) SeedSmokeProject();
-    if (!launch.projectDir.empty()) {
-        // spriteId 基址 = 程序化图集登记后首个可用号（跨会话稳定由 manifest 记账）
-        const uint32_t spriteIdBase = viewport_->Assets().Registry().SpriteCount() + 1;
-        if (!ctx_.Assets().OpenProject(launch.projectDir, spriteIdBase)) return 1;
-        gpuAssets_.Init(*device_, ui_.get(), &viewport_->Assets().Registry(),
-                        ctx_.Assets(), /*firstSlot=*/2); // 0=调色板 1=字体页
-        for (const AssetEntry& e : ctx_.Assets().Entries())
-            if (!e.missing && e.type == AssetType::Sprite) gpuAssets_.ImportSprite(e);
-        // 设备丢失重建（"editor-viewport" 先 Reset+重建程序化页 → 此处按 DB 记账号接续）
-        device_->AddRecreateCallback("asset-gpu", [this](rhi::Device& d) {
-            gpuAssets_.RebuildAll(d);
-        });
-        watcher_.Start(ctx_.Assets().AssetsRoot());
-        LEMON_LOG("资产管线就绪：项目 %s", launch.projectDir.c_str());
-    }
-
-    // ---- M4.4 脚本宿主（--script <用户程序集.dll>；空 = 编辑器无 C#）----
-    if (!launch.script.empty()) {
-#ifdef LEMON_SCRIPT_DIR
-        host_ = std::make_unique<scripting::ScriptHost>();
-        // DomainManager 要求绝对路径（ALC LoadFromAssemblyPath 约束）
-        std::error_code eca;
-        std::string scriptAbs =
-            std::filesystem::absolute(launch.script, eca).generic_string();
-        if (host_->Initialize(nullptr, LEMON_SCRIPT_DIR "/Lemon.Entry.runtimeconfig.json",
-                              LEMON_SCRIPT_DIR "/Lemon.Entry.dll") &&
-            host_->LoadUserAssembly(scriptAbs.c_str())) {
-            ctx_.SetScriptHost(host_.get());
-            LEMON_LOG("脚本宿主就绪：%s（类型 %zu 个）", scriptAbs.c_str(),
-                      ctx_.ScriptTypeNames().size());
-        } else {
-            LEMON_WARN("脚本宿主初始化失败（--script %s）——无脚本继续", scriptAbs.c_str());
-            host_.reset();
-        }
+    // ---- M4.4 资产链 / M4.5 项目向导与终验 ----
+    if (launch.smoke && !launch.projectDir.empty() && !launch.finalTest) SeedSmokeProject();
+    if (launch.finalTest) {
+        // 终验第一步：向导建项目（blank 模板；目录必须不存在 → --project 传父目录，
+        // 项目名固定 lemon-final，保证可重复跑）
+#ifndef LEMON_SCRIPT_DIR
+        LEMON_ERROR("终验需要 LEMON_BUILD_SCRIPTING=ON 构建");
+        return 1;
 #else
-        LEMON_WARN("--script 需要 LEMON_BUILD_SCRIPTING=ON 构建");
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        fs::path p(launch.projectDir.empty() ? "/tmp/lemon-m45" : launch.projectDir);
+        fs::remove_all(p / "lemon-final", ec); // 幂等：清上次终验残留
+        ProjectDesc desc;
+        desc.parentDir = p.string();
+        desc.name = "lemon-final";
+        desc.sdkDir = LEMON_SCRIPT_DIR;
+        desc.engineVersion = "0.4.0-m4";
+        const std::string root = ProjectWizard::Create(desc, &wizardSpawnGuid_);
+        if (root.empty()) {
+            LEMON_ERROR("终验失败：项目向导创建失败");
+            return 1;
+        }
+        launchCopy_.projectDir = root;
+        launch_ = &launchCopy_;
+        LEMON_LOG("final: 向导建项目 OK %s", root.c_str());
 #endif
     }
+    if (!launch_->projectDir.empty()) {
+        if (!OpenProjectPipeline(launch_->projectDir)) return 1;
+    }
+
+    // ---- 脚本宿主（--script <dll> 显式指定；项目 Game/ 已在管线内装配）----
+    if (!launch.script.empty()) InitScriptHostFrom(launch.script);
     g_app = this;
     scripting::SetEditorAssetHooks({HookSpriteOf, HookInstantiate});
 
-    // 启动场景：--scene 指定则打开；冒烟模式播种示例实体（面板有内容可验收）
+    // 启动场景：--scene 指定则打开；向导项目开 Main.scene；冒烟播种示例实体
     if (!launch.openScene.empty()) {
         if (!ctx_.OpenScene(launch.openScene)) return 1;
         if (launch.smoke) smokeSeeded_ = ctx_.ActiveScene().AliveCount(); // 守恒断言基数 = 载入数
+    } else if (launch.finalTest) {
+        if (!ctx_.OpenScene(launch_->projectDir + "/Scenes/Main.scene")) return 1;
+        SeedJudgementScene(wizardSpawnGuid_);
+        smokeSeeded_ = ctx_.ActiveScene().AliveCount();
     } else if (launch.smoke) {
         SeedSmokeScene();
     } else {
@@ -465,8 +690,13 @@ int EditorApp::Run(const EditorLaunch& launch) {
         LEMON_LOG("编辑器就绪（新建场景；Ctrl+O 打开 .scene）");
     }
 
+    // 启动恢复检测（§3.8）：场景打开后 autosave 新于盘档 → 提示（交互模态/终验自动恢复）
+    if (!launch.finalTest && !ctx_.Assets().ProjectRoot().empty())
+        recoveryPath_ = ctx_.DetectAutosaveRecovery();
+
     // --play：Play 往返验收（§6 #4/#5）：进 Play → 中段编辑落 Play World → Stop 逐字节断言
-    if (launch.playTest && launch.smoke) {
+    // --final 同样进 Play（终验 §6 #2/#6：Play 中热重载 + fps）
+    if ((launch.playTest || launch.finalTest) && launch.smoke) {
         if (!ctx_.EnterPlay()) return 1;
     }
 
@@ -482,12 +712,25 @@ int EditorApp::Run(const EditorLaunch& launch) {
     uint64_t frame = 0;
     double firstFrameMs = -1.0;
     bool running = true;
+    const double autosaveClock0 = ImGui::GetTime(); // steady 秒（TickAutosave 节拍源）
+    // 终验冷启动口径 = 编辑器主循环首帧（向导建项目 + Game 首次编译是创建期工作，
+    // 另由 final-wizard/编译日志计量——不混入 §6 #3 判定）
+    const auto tColdStart = launch.finalTest ? std::chrono::steady_clock::now() : tStart;
     while (running) {
         if (!window_->PollEvents() || window_->IsKeyDown(Key::Escape)) {
             if (!exitRequested_) exitRequested_ = true;
         }
         // 资产热替换（M4.4）：watcher 置脏 → 重扫 + 增量导入（改文件落盘即时可见）
         if (watcher_.Running() && watcher_.ConsumeDirty()) RescanAssets();
+        // C# 热重载（M4.5 §3.7）：Game/ 源写 → 防抖 0.4s（编辑器连续保存不打断）→ 编译+换装
+        if (scriptWatcher_.Running() && scriptWatcher_.ConsumeDirty() && !launch.finalTest) {
+            if (ImGui::GetTime() >= reloadDebounceUntil_) {
+                reloadDebounceUntil_ = ImGui::GetTime() + 0.4;
+                if (ScriptSourceChanged()) TryHotReloadScripts("源码变更");
+            }
+        }
+        // 自动备份（§3.8）：5 分钟节拍，dirty 且非 Play 才写
+        ctx_.TickAutosave(ImGui::GetTime() - autosaveClock0);
         if (launch.frames > 0 && (int)frame >= launch.frames) running = false;
         if (forceExit_) running = false;
         if (exitRequested_ && ctx_.dirty && !quitConfirmArmed_) {
@@ -505,7 +748,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
             LEMON_LOG("play-test: Play 中编辑已落 Play World（Stop 即丢）");
         }
         // 资产热替换验收（M4.4 §5）：中点把 PNG 换成 96×48 蓝（尺寸变化 = 页重建路径）
-        if (launch.smoke && !launch.projectDir.empty() &&
+        if (launch.smoke && !launch.projectDir.empty() && !launch.finalTest &&
             frame == (uint64_t)(launch.frames / 2)) {
             std::vector<uint8_t> px(96 * 48 * 4);
             for (int y = 0; y < 48; ++y)
@@ -518,6 +761,28 @@ int EditorApp::Run(const EditorLaunch& launch) {
                 std::filesystem::path(launch.projectDir) / "Assets" / "smoke.png";
             stbi_write_png(png.string().c_str(), 96, 48, 4, px.data(), 96 * 4);
             LEMON_LOG("asset-smoke: PNG 落盘改写（96×48 蓝）→ 等 watcher 重导入");
+        }
+        // 终验（§6 #1/#2/#6/#7）：Play 中热重载——改 .cs 落盘 → 编译换装 → 新逻辑 +
+        // StateBag 续跑（刷怪窗口 40→70；续跑总刷怪 66 = 换装前 16 + 换装后 50）
+        if (launch.finalTest && frame == 20) {
+            namespace fs = std::filesystem;
+            const fs::path sp = fs::path(launch_->projectDir) / "Game" / "SpawnerBehaviour.cs";
+            std::ifstream in(sp, std::ios::binary);
+            std::string src((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            const size_t at = src.find("_tick > 40");
+            finalPlayReloadOk_ = at != std::string::npos;
+            if (finalPlayReloadOk_) {
+                finalAliveAtReload_ = ctx_.ActiveScene().AliveCount();
+                src.replace(at, 10, "_tick > 70");
+                {
+                    std::ofstream out(sp, std::ios::trunc);
+                    out << src;
+                } // 先落盘再编译（流未 close 就 build 会读到半截文件——实测坑）
+                finalReloadFrame_ = frame;
+                finalPlayReloadOk_ = TryHotReloadScripts("final-play（Play 中）");
+                finalPlayReloadMs_ = hotReloadMs_;
+            }
+            if (!finalPlayReloadOk_) LEMON_ERROR("final: Play 中热重载失败");
         }
         if (ctx_.Playing()) {
             // 输入路由：GameView 聚焦且非文本输入 → 语义子集（WASD/箭头/空格）进 Play World
@@ -566,9 +831,16 @@ int EditorApp::Run(const EditorLaunch& launch) {
             if (lost || !device_->RecreateSwapchain()) continue;
         }
         viewport_->AdvanceFrame();
+        // 终验 fps 统计（§6 #6：判据场景 Play ≥45fps；预热 60 帧与换装窗口 90 帧剔除
+        // ——dotnet build 同步阻塞主线程属换装耗时，不计帧率口径）
+        if (launch.finalTest && ctx_.Playing() && frame > 60 &&
+            frame - finalReloadFrame_ > 90) {
+            const float f = ImGui::GetIO().Framerate;
+            if (f > 1.0f && f < finalPlayMinFps_) finalPlayMinFps_ = f;
+        }
         if (firstFrameMs < 0.0)
             firstFrameMs = std::chrono::duration<double, std::milli>(
-                               std::chrono::steady_clock::now() - tStart)
+                               std::chrono::steady_clock::now() - tColdStart)
                                .count();
         ++frame;
     }
@@ -631,7 +903,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
         }
         // M4.4 资产链验收：固定 guid 资产在库、已导入、热替换生效（96×48 蓝）
         bool assetsOk = true;
-        if (!launch.projectDir.empty()) {
+        if (!launch.projectDir.empty() && !launch.finalTest) {
             constexpr uint64_t kSmokeGuid = 0x5bd31a7c10e9f2c8ull;
             const AssetEntry* e = ctx_.Assets().FindByGuid(kSmokeGuid);
             uint32_t w = 0, h = 0;
@@ -647,12 +919,80 @@ int EditorApp::Run(const EditorLaunch& launch) {
         }
         // M4.4 脚本链验收：--script + --play → SpawnerBehaviour 每帧刷怪（36 只）
         bool scriptOk = true;
-        if (host_ && launch.playTest) {
+        if (host_ && launch.playTest && !launch.finalTest) {
             scriptOk = playAliveAtStop > smokeSeeded_ + 10;
             std::printf("[lemon] editor-smoke script-spawn: playAlive=%u seeded=%u => %s\n",
                         playAliveAtStop, smokeSeeded_, scriptOk ? "OK" : "FAIL");
         }
-        if (!drew || !cjkOk || errCount > 0 || !sceneOk || !playOk || !assetsOk || !scriptOk) {
+        // ---- M4.5 终验（§6 #1/#2/#3/#6/#7 全量化）----
+        bool finalOk = true;
+        if (launch.finalTest) {
+            // StateBag 续跑断言：换装于 tick=20（窗口 40→70）→ 总刷怪 = 16 + 50 = 66
+            // （若状态丢失 = 16 + 66 = 82 ≠ 66；若换装失败 = 36）
+            finalStateBagTotal_ = (int)playAliveAtStop - (int)smokeSeeded_;
+            const bool bagOk = finalStateBagTotal_ == 66;
+            // Edit 态热重载一例（§6 #2 双态各一）：加 EditProbeBehaviour → 注册表可见
+            {
+                namespace fs = std::filesystem;
+                const fs::path gp = fs::path(launch_->projectDir) / "Game";
+                std::ofstream probe(gp / "EditProbeBehaviour.cs", std::ios::trunc);
+                probe << "public sealed class EditProbeBehaviour : Lemon.LemonBehaviour { }\n";
+                std::ifstream in(gp / "GameMain.cs", std::ios::binary);
+                std::string src((std::istreambuf_iterator<char>(in)),
+                                std::istreambuf_iterator<char>());
+                // 在既有注册行前插一行（锚点替换——直接动 Configure 签名会破坏大括号配对）
+                const std::string anchor = "Lemon.Behaviours.Register<InputMoverBehaviour>();";
+                const size_t at = src.find(anchor);
+                if (at != std::string::npos)
+                    src.insert(at, "Lemon.Behaviours.Register<EditProbeBehaviour>();\n        ");
+                std::ofstream out(gp / "GameMain.cs", std::ios::trunc);
+                out << src;
+            } // 落盘作用域结束（先 close 再编译）
+            finalEditReloadOk_ = TryHotReloadScripts("final-edit（Edit 态）");
+            bool seen = false;
+            for (const std::string& n : ctx_.ScriptTypeNames()) seen |= n == "EditProbeBehaviour";
+            finalEditReloadOk_ = finalEditReloadOk_ && seen;
+            // 自动备份/崩溃恢复链（§3.8）：dirty → 快照 → 检出 → 恢复（保持 dirty）→ 落盘 → 清
+            bool autosaveOk = false;
+            {
+                ctx_.Select(ctx_.Primary(), false);
+                ctx_.dirty = true;
+                const bool wrote = ctx_.AutoSaveNow();
+                const std::string rec = ctx_.DetectAutosaveRecovery();
+                const bool opened = !rec.empty() && ctx_.OpenSceneRecovery(rec);
+                const bool keptDirty = ctx_.dirty;
+                const bool saved = ctx_.SaveScene();
+                const bool cleared = ctx_.DetectAutosaveRecovery().empty();
+                autosaveOk = wrote && opened && keptDirty && saved && cleared;
+            }
+            const int leaks = host_ ? host_->HotReloadLeakCount() : 0;
+            const int reloads = HotReloadCount();
+            const bool hrOk = finalPlayReloadOk_ && finalEditReloadOk_ &&
+                              finalPlayReloadMs_ <= 2000.0 && hotReloadMs_ <= 2000.0 &&
+                              leaks > 0 /* A 线已知泄漏（探针口径）*/;
+            const bool fpsOk = finalPlayMinFps_ >= 45.0;
+            const bool coldOk = firstFrameMs < 2000.0;
+            finalOk = bagOk && hrOk && fpsOk && coldOk && autosaveOk && playVerified;
+            std::printf("[lemon] final-wizard: dirs/project.lemon/Game/spawn.png => %s\n", "OK");
+            std::printf("[lemon] final-judgement: zero-code scene entities=%u visible=%u\n",
+                        smokeSeeded_, viewport_->LastSceneVisible());
+            std::printf("[lemon] final-hotreload: play=%.0fms edit=%.0fms(≤2000) "
+                        "stateBag=%d/66 reloads=%d leaks=%d(A线) => %s\n",
+                        finalPlayReloadMs_, hotReloadMs_, finalStateBagTotal_, reloads, leaks,
+                        hrOk ? "OK" : "FAIL");
+            std::printf("[lemon] final-play: minFps=%.0f(≥45) enter=%.1fms exit=%.1fms "
+                        "byte-exact=%s => %s\n",
+                        finalPlayMinFps_, playEnterMs, playExitMs,
+                        ctx_.LastExitVerified() ? "YES" : "NO", (fpsOk && playVerified) ? "OK" : "FAIL");
+            std::printf("[lemon] final-autosave: snapshot+recovery+save-clear => %s\n",
+                        autosaveOk ? "OK" : "FAIL");
+            std::printf("[lemon] final-coldstart: %.0fms(<2000) => %s\n", firstFrameMs,
+                        coldOk ? "OK" : "FAIL");
+            if (!finalOk) std::printf("[lemon] final FAIL 项：bag=%d hr=%d fps=%d cold=%d autosave=%d play=%d\n",
+                                      bagOk, hrOk, fpsOk, coldOk, autosaveOk, playVerified);
+        }
+        if (!drew || !cjkOk || errCount > 0 || !sceneOk || !playOk || !assetsOk || !scriptOk ||
+            !finalOk) {
             std::printf("[lemon] editor-smoke FAIL\n");
             exitCode = 1;
         } else {
@@ -664,6 +1004,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
     }
 
     watcher_.Stop();          // 先停 watcher 线程（此后无资产重扫）
+    scriptWatcher_.Stop();    // 与 Game/ 源监视同批收尾
     host_.reset();            // C# 宿主卸载（无脚本时为空操作）
     device_->WaitIdle(); // ImGui 后端资源（描述符池/采样器）可能被在途帧引用，先等闲
     ui_->Shutdown();
@@ -744,6 +1085,31 @@ void EditorApp::SeedSmokeProject() {
         f << "{\n  \"guid\": \"5bd31a7c10e9f2c8\",\n  \"type\": \"sprite\",\n  \"hash\": 0,\n"
              "  \"importedAt\": 0\n}\n";
     }
+}
+
+void EditorApp::SeedJudgementScene(uint64_t spawnGuid) {
+    // 终验判据场景（§6 #1）：纯编辑器操作等价物——"走地图 + 刷怪"零代码。
+    // 地图 = 背景精灵手摆（种子资产平铺）；角色 = InputMoverBehaviour（方向键走动）；
+    // 刷怪器 = SpawnerBehaviour（种子 sprite 周期 Spawn）。
+    using namespace lemon::ecs;
+    Scene& s = ctx_.ActiveScene();
+    // 地面：spawn.png 4×3 平铺（大比例 = 走地图背景）
+    for (int ty = 0; ty < 3; ++ty)
+        for (int tx = 0; tx < 4; ++tx) {
+            char tag[24];
+            std::snprintf(tag, sizeof(tag), "Ground%d_%d", ty, tx);
+            ecs::Entity g = ctx_.CreateSpriteEntityFromAsset(tag, spawnGuid,
+                                                             Vec2{160.0f + tx * 320.0f,
+                                                                  140.0f + ty * 240.0f});
+            if (!g.IsNull()) s.Get<Transform2D>(g).scale = Vec2{8.0f, 6.0f};
+        }
+    // 角色（走地图）
+    ecs::Entity player = ctx_.CreateSpriteEntityFromAsset("Player", spawnGuid, Vec2{640, 360});
+    if (ctx_.Scripts()) ctx_.AttachScript(player, 0, "InputMoverBehaviour");
+    // 刷怪器
+    ecs::Entity spawner = ctx_.CreateSpriteEntityFromAsset("Spawner", spawnGuid, Vec2{980, 220});
+    if (ctx_.Scripts()) ctx_.AttachScript(spawner, 0, "SpawnerBehaviour");
+    if (!player.IsNull()) ctx_.Select(player, false);
 }
 
 } // namespace lemon::editor

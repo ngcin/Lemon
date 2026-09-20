@@ -41,6 +41,7 @@ struct EditorLaunch {
     std::string saveScene;   // --save-scene：场景就绪后保存并退出（CLI roundtrip 验收）
     bool playTest = false;   // --play：冒烟内进/出 Play 往返（逐字节断言 + 计时，验收 #4/#5）
     std::string script;      // --script：用户脚本程序集（C# 装配通路；空 = 无脚本宿主）
+    bool finalTest = false;  // --final：M4.5 终验（向导建项目→判据场景→Play/热重载量化）
 };
 
 /// 工具标识（工具栏 W/E/R 三态 + 后续模式栈的地基）
@@ -77,6 +78,20 @@ public:
     void MenuImportAsset();  // 文件选择器（复制进 Assets/ + 导入）
     void RescanAssets();     // FileWatcher/手动重扫 → DB + GPU 增量导入
 
+    // ---- 项目/脚本动作（M4.5）----
+    /// 打开项目全管线（DB/GPU 导入/watcher/Game 编译 + 脚本宿主）；向导与 --project 共用
+    bool OpenProjectPipeline(const std::string& projectRoot);
+    /// 装配脚本宿主（dll 绝对路径；失败清 host 并告警）。--script 与项目 Game/ 共用
+    bool InitScriptHostFrom(const std::string& dllAbs);
+    /// 编译 Game/ + 整域换装 + 双世界重装配 + 计时/泄漏红字（M4-Editor-Plan §3.7）
+    bool TryHotReloadScripts(const char* reason);
+    /// 手动触发（菜单"重新编译脚本"）
+    void MenuRebuildScripts();
+    /// 新建项目向导模态（名字 + 父目录 → blank 模板 → 直接打开）
+    void MenuNewProject();
+    double LastHotReloadMs() const { return hotReloadMs_; }
+    int HotReloadCount() const;
+
 private:
     void BuildUI();          // 菜单栏/工具栏/dockspace/状态栏/面板/模态
     void BuildMenuBar();
@@ -87,6 +102,14 @@ private:
     void SetupDefaultLayout();
     void SeedSmokeScene();   // 冒烟播种：父子链 + 常用组件（面板验收有内容）
     void SeedSmokeProject(); // 冒烟播种：临时项目 + 预置 PNG（固定 guid，M4.4 资产链验收）
+    /// M4.5 终验判据场景（向导项目上零代码搭"走地图+刷怪"）：地图/角色/刷怪器
+    void SeedJudgementScene(uint64_t spawnGuid);
+    /// 换装判定辅助：Game/*.csproj 路径 + 输出 dll（项目根/.lemon/bin/<名>.dll）
+    bool FindGameProject(std::string& csproj, std::string& dll);
+    /// Game/ 源码变更检测（FileWatcher 置脏后过滤 .cs，排除 obj/bin）
+    bool ScriptSourceChanged();
+    /// 崩溃恢复提示模态（启动检测 autosave 新于盘档 → 恢复/忽略）
+    void DrawRecoveryModal();
 
     enum class PickerMode { Open, Save, Import };
     enum class ConfirmContext { Exit, SceneOp };
@@ -101,11 +124,33 @@ private:
     std::unique_ptr<rhi::Device> device_;
     std::unique_ptr<ImGuiBackend> ui_;
     std::unique_ptr<class ViewportRenderer> viewport_;
-    std::unique_ptr<scripting::ScriptHost> host_; // C# 宿主（--script；null = 无）
+    std::unique_ptr<scripting::ScriptHost> host_; // C# 宿主（--script/项目 Game；null = 无）
     AssetGpuCache gpuAssets_;
     FileWatcher watcher_;
+    FileWatcher scriptWatcher_;      // Game/ 源码（M4.5 热重载触发）
     std::vector<std::unique_ptr<IEditorPanel>> ownedPanels_;
     PanelRegistry panels_;
+
+    // 热重载状态（§3.7）
+    double hotReloadMs_ = 0.0;       // 最近一次 编译+换装+重装配 总耗时（≤2s 判定）
+    int64_t lastHandledCsWrite_ = 0; // 上次已处理的 .cs 新写时间戳（去重/防抖）
+    double reloadDebounceUntil_ = 0.0;
+
+    // 向导/恢复模态状态
+    char wizName_[64] = {};
+    char wizParent_[512] = ".";
+    bool wizOpen_ = false;
+    std::string recoveryPath_;       // 非空 = 检测到可恢复快照（DrawRecoveryModal 消费）
+    bool recoveryAnswered_ = false;  // 冒烟终验：已自动答复
+    uint64_t wizardSpawnGuid_ = 0;   // 终验：种子资产 guid（判据场景装配用）
+
+    // 终验计量（--final）
+    double finalPlayMinFps_ = 1e9;
+    double finalPlayReloadMs_ = 0.0;    // Play 中换装耗时（§6 #2 双态口径）
+    uint32_t finalAliveAtReload_ = 0;
+    uint64_t finalReloadFrame_ = ~0ull; // 换装帧（fps 统计剔除窗口）
+    bool finalPlayReloadOk_ = false, finalEditReloadOk_ = false;
+    int finalStateBagTotal_ = -1;
 
     // 退出/未保存确认状态机
     bool playing_ = false; // 冗余显示态（真值 = ctx_.Playing()）

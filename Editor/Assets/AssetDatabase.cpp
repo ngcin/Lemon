@@ -173,6 +173,18 @@ void AssetDatabase::SyncMeta(AssetEntry& e) const {
 }
 
 // ------------------------------------------------------------ Open/Scan ----
+namespace {
+// 扫描排除（06 §1 布局）：点开头（.lemon/.git 等）与 obj/bin 任何层级；顶层
+// Game/Scenes/Data/Builds 整树排除（脚本工程/场景/数据/出包目录不是资产源）。
+bool SkipDirAny(const std::string& name) {
+    return name.empty() || name[0] == '.' || name == "obj" || name == "bin";
+}
+bool SkipDirTop(const std::string& name) {
+    return SkipDirAny(name) || name == "Game" || name == "Scenes" ||
+           name == "Data" || name == "Builds";
+}
+} // namespace
+
 bool AssetDatabase::OpenProject(const std::string& projectRoot, uint32_t spriteIdBase) {
     root_ = projectRoot;
     spriteIdBase_ = spriteIdBase;
@@ -182,6 +194,7 @@ bool AssetDatabase::OpenProject(const std::string& projectRoot, uint32_t spriteI
 
     std::error_code ec;
     fs::create_directories(AssetsRoot(), ec);
+    fs::create_directories(root_ + "/Prefabs", ec); // 06 §1 根级 Prefabs/（M4.5 向导统一落位）
     if (!fs::is_directory(AssetsRoot())) {
         LEMON_ERROR("项目目录不可用：%s", root_.c_str());
         return false;
@@ -228,27 +241,32 @@ void AssetDatabase::Rescan() {
     entries_.clear();
 
     std::error_code ec;
-    if (!fs::is_directory(AssetsRoot())) {
-        LEMON_ERROR("Assets/ 目录消失：%s", AssetsRoot().c_str());
+    if (!fs::is_directory(root_)) {
+        LEMON_ERROR("项目目录消失：%s", root_.c_str());
         return;
     }
 
-    // 扫描（跳过 .meta 与点开头目录/文件）
+    // 扫描项目根（M4.5 起 06 §1 布局：Assets/** + 根级 Prefabs/** 均入索引；
+    // Game/Scenes/Data/Builds/obj/bin/点目录排除）
     std::vector<std::string> seenPaths;
     for (auto it = fs::recursive_directory_iterator(
-             AssetsRoot(), fs::directory_options::skip_permission_denied, ec);
+             root_, fs::directory_options::skip_permission_denied, ec);
          it != fs::recursive_directory_iterator(); it.increment(ec)) {
         if (ec) break;
         const fs::directory_entry& de = *it;
-        std::string name = de.path().filename().string();
-        if (name.empty() || name[0] == '.') {
-            if (de.is_directory(ec)) it.disable_recursion_pending();
+        const std::string name = de.path().filename().string();
+        if (de.is_directory(ec)) {
+            std::string relDir = fs::relative(de.path(), root_, ec).generic_string();
+            const bool top = !ec && relDir.find('/') == std::string::npos;
+            const bool skip = ec || (top ? SkipDirTop(name) : SkipDirAny(name));
+            if (skip) it.disable_recursion_pending();
             continue;
         }
+        if (name.empty() || name[0] == '.') continue;
         if (name.size() > 5 && name.compare(name.size() - 5, 5, ".meta") == 0) continue;
         if (!de.is_regular_file(ec)) continue;
 
-        std::string rel = fs::relative(de.path(), AssetsRoot(), ec).generic_string();
+        std::string rel = fs::relative(de.path(), root_, ec).generic_string();
         if (ec) continue;
         seenPaths.push_back(rel);
 
@@ -270,8 +288,12 @@ void AssetDatabase::Rescan() {
                 lastChange_.modified.push_back(e.guid);
             }
         } else {
-            // 新资产：manifest 记账优先（跨会话稳定），否则新号
-            if (auto mit = manifestCarry_.find(rel); mit != manifestCarry_.end()) {
+            // 新资产：manifest 记账优先（跨会话稳定），否则新号。
+            // M4.4 旧 manifest 键相对 Assets/（无前缀）——同键迁移保 spriteId 不漂。
+            auto mit = manifestCarry_.find(rel);
+            if (mit == manifestCarry_.end() && rel.rfind("Assets/", 0) == 0)
+                mit = manifestCarry_.find(rel.substr(7));
+            if (mit != manifestCarry_.end()) {
                 if (mit->second.first != 0 && !FindByGuid(mit->second.first)) e.guid = mit->second.first;
                 if (e.type == AssetType::Sprite) {
                     uint32_t id = mit->second.second;
@@ -312,15 +334,24 @@ void AssetDatabase::Rescan() {
         }
     }
 
-    // 孤儿 meta（文件没了 meta 还在）体检
-    for (auto it = fs::recursive_directory_iterator(AssetsRoot(), ec); it != fs::recursive_directory_iterator(); it.increment(ec)) {
+    // 孤儿 meta（文件没了 meta 还在）体检（同排除规则）
+    for (auto it = fs::recursive_directory_iterator(root_, ec);
+         it != fs::recursive_directory_iterator(); it.increment(ec)) {
         if (ec) break;
-        std::string name = it->path().filename().string();
+        const fs::directory_entry& de = *it;
+        const std::string name = de.path().filename().string();
+        if (de.is_directory(ec)) {
+            std::string relDir = fs::relative(de.path(), root_, ec).generic_string();
+            const bool top = !ec && relDir.find('/') == std::string::npos;
+            const bool skip = ec || (top ? SkipDirTop(name) : SkipDirAny(name));
+            if (skip) it.disable_recursion_pending();
+            continue;
+        }
         if (name.size() <= 5 || name.compare(name.size() - 5, 5, ".meta") != 0) continue;
-        std::string base = it->path().parent_path() / fs::path(name.substr(0, name.size() - 5));
+        std::string base = de.path().parent_path() / fs::path(name.substr(0, name.size() - 5));
         std::error_code ec2;
         if (!fs::exists(base, ec2)) {
-            LEMON_ERROR("孤儿 .meta（源文件已删）：%s", it->path().string().c_str());
+            LEMON_ERROR("孤儿 .meta（源文件已删）：%s", de.path().string().c_str());
             ++healthIssues_;
         }
     }
@@ -334,7 +365,7 @@ bool AssetDatabase::Rename(AssetEntry& e, const std::string& newRelPath) {
         return false;
     }
     const std::string oldAbs = AbsolutePath(e);
-    const std::string newAbs = AssetsRoot() + "/" + newRelPath;
+    const std::string newAbs = root_ + "/" + newRelPath;
     std::error_code ec1, ec2;
     fs::create_directories(fs::path(newAbs).parent_path(), ec2);
     fs::rename(oldAbs, newAbs, ec1);           // 源文件
@@ -365,6 +396,7 @@ bool AssetDatabase::Remove(AssetEntry& e) {
 }
 
 const AssetEntry* AssetDatabase::ImportFile(const std::string& absSrc, const std::string& relDest) {
+    // relDest 语义 = Assets/ 下的相对路径（导入落点恒在资产目录）
     std::error_code ec;
     fs::create_directories(fs::path(AssetsRoot() + "/" + relDest).parent_path(), ec);
     fs::copy_file(absSrc, AssetsRoot() + "/" + relDest, fs::copy_options::overwrite_existing, ec);
@@ -374,7 +406,7 @@ const AssetEntry* AssetDatabase::ImportFile(const std::string& absSrc, const std
     }
     Rescan();
     SaveManifest();
-    return FindByPath(relDest);
+    return FindByPath("Assets/" + relDest);
 }
 
 void AssetDatabase::SaveManifest() const {

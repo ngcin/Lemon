@@ -84,7 +84,67 @@ bool EditorContext::SaveScene(std::string path) {
     }
     scenePath_ = path;
     dirty = false;
+    // 正常落盘后清掉同场景 autosave（避免下次启动误报"有较新快照"）
+    std::error_code ec;
+    std::filesystem::remove(AutosavePathFor(SceneName()), ec);
     LEMON_LOG("场景已保存：%s（%zu 字节）", path.c_str(), json.size());
+    return true;
+}
+
+// ------------------------------------------------ 自动备份/崩溃恢复（§3.8）----
+std::string EditorContext::AutosavePathFor(const std::string& sceneName) const {
+    return assets_.ProjectRoot() + "/.lemon/autosave/" + sceneName;
+}
+
+void EditorContext::TickAutosave(double nowSec, double intervalSec) {
+    if (nowSec - lastAutosaveSec_ < intervalSec) return;
+    lastAutosaveSec_ = nowSec;
+    if (!dirty || Playing()) return;       // §3.8：dirty 且非 Play 才写
+    if (assets_.ProjectRoot().empty()) return; // 无项目根 = 无 .lemon/（临时场景）
+    if (scene_->AliveCount() == 0) return; // 空场景无快照价值
+    AutoSaveNow();
+}
+
+bool EditorContext::AutoSaveNow() {
+    if (assets_.ProjectRoot().empty()) return false;
+    std::error_code ec;
+    std::filesystem::path dst = AutosavePathFor(SceneName());
+    std::filesystem::create_directories(dst.parent_path(), ec);
+    PruneSelection();
+    std::string json = SceneArchive::Save(*scene_);
+    std::ofstream f(dst, std::ios::binary | std::ios::trunc);
+    if (!f) return false;
+    f.write(json.data(), (std::streamsize)json.size());
+    LEMON_LOG("自动备份：%s（%zu 字节）", dst.string().c_str(), json.size());
+    return true;
+}
+
+std::string EditorContext::DetectAutosaveRecovery() const {
+    if (assets_.ProjectRoot().empty()) return {};
+    const std::string as = AutosavePathFor(SceneName());
+    std::error_code ec;
+    if (!std::filesystem::exists(as, ec)) return {};
+    // untitled 场景：autosave 在即有可恢复内容（无对照盘档）
+    if (scenePath_.empty()) return as;
+    const auto asT = std::filesystem::last_write_time(as, ec);
+    if (ec) return {};
+    const auto scT = std::filesystem::last_write_time(scenePath_, ec);
+    if (ec || asT > scT) return as; // .scene 缺失（被删）也算可恢复
+    return {};
+}
+
+bool EditorContext::OpenSceneRecovery(const std::string& autosavePath) {
+    std::ifstream f(autosavePath, std::ios::binary | std::ios::ate);
+    if (!f) return false;
+    std::string text((size_t)f.tellg(), '\0');
+    f.seekg(0);
+    f.read(text.data(), (std::streamsize)text.size());
+    if (!SceneArchive::Load(*scene_, text)) return false;
+    // scenePath_ 保持指向原 .scene（untitled 则保持空）——落盘与否由用户决定
+    selection_.clear();
+    BackfillGuids();
+    dirty = true;
+    LEMON_LOG("已恢复自动备份（未落盘，Ctrl+S 保存 / 关闭确认丢弃）：%s", autosavePath.c_str());
     return true;
 }
 
@@ -171,6 +231,33 @@ void EditorContext::ResolvePlayScripts() {
     });
 }
 
+int EditorContext::RefreshScriptsAfterReload() {
+    if (!scripts_) return 0;
+    // Edit 世界：只刷 typeId（编辑器不 tick；EnterPlay 时本就按 className 解析）
+    scene_->Each([this](ecs::Entity e) {
+        if (scripting::ScriptBox* sb = scene_->TryGet<scripting::ScriptBox>(e))
+            sb->typeId = ResolveScriptTypeId(sb->className);
+    });
+    if (!playScene_) return 0;
+    // Play 世界：原位换实例——AttachBehaviour 走新域 scripts_attach（Behaviours.Attach
+    // → Awake/OnEnable → 同 (类名,实体) StateBag → OnHotReloadIn）
+    int n = 0;
+    playScene_->Each([this, &n](ecs::Entity e) {
+        scripting::ScriptBox* sb = playScene_->TryGet<scripting::ScriptBox>(e);
+        if (!sb || !sb->className[0]) return;
+        int id = ResolveScriptTypeId(sb->className);
+        if (id < 0) {
+            LEMON_WARN("热重载：脚本类型未注册（保持挂起）'%s'", sb->className);
+            return;
+        }
+        sb->typeId = id;
+        sb->flags &= ~1u;
+        scripts_->AttachBehaviour(*playScene_, e, id);
+        ++n;
+    });
+    return n;
+}
+
 // ------------------------------------------------------ Prefab（§3.9）----
 uint64_t EditorContext::MakePrefabFrom(ecs::Entity e) {
     if (e.IsNull() || !scene_->Alive(e)) return 0;
@@ -179,11 +266,11 @@ uint64_t EditorContext::MakePrefabFrom(ecs::Entity e) {
     std::string json = SceneArchive::SaveEntityTree(*scene_, e);
     if (json.empty()) return 0;
 
-    // 落盘 Assets/Prefabs/<tag>.prefab（重名自动 -2/-3…）
+    // 落盘根级 Prefabs/<tag>.prefab（06 §1；M4.5 起随向导统一根级目录）重名自动 -2/-3…
     std::string rel = "Prefabs/" + tag + ".prefab";
     for (int i = 2; assets_.FindByPath(rel); ++i)
         rel = "Prefabs/" + tag + "-" + std::to_string(i) + ".prefab";
-    std::string abs = assets_.AssetsRoot() + "/" + rel;
+    std::string abs = assets_.ProjectRoot() + "/" + rel;
     std::error_code ec;
     std::filesystem::create_directories(std::filesystem::path(abs).parent_path(), ec);
     std::ofstream f(abs, std::ios::binary | std::ios::trunc);
@@ -213,7 +300,7 @@ ecs::Entity EditorContext::InstantiatePrefabAsset(uint64_t prefabGuid, Vec2 pos)
                    (unsigned long long)prefabGuid);
         return ecs::Entity::Null();
     }
-    std::ifstream f(assets_.AssetsRoot() + "/" + entry->relPath, std::ios::binary);
+    std::ifstream f(assets_.AbsolutePath(*entry), std::ios::binary);
     if (!f) return ecs::Entity::Null();
     std::string json((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     ecs::Scene& s = ActiveScene(); // Play 中脚本 Instantiate.Prefab 落 Play World
@@ -236,8 +323,7 @@ bool EditorContext::ApplyPrefabInstance(ecs::Entity e) {
         return false;
     }
     std::string json = SceneArchive::SaveEntityTree(*scene_, e);
-    std::ofstream f(assets_.AssetsRoot() + "/" + entry->relPath, std::ios::binary |
-                                                             std::ios::trunc);
+    std::ofstream f(assets_.AbsolutePath(*entry), std::ios::binary | std::ios::trunc);
     if (!f) return false;
     f << json;
     LEMON_LOG("Prefab Apply：实例写回 %s", entry->relPath.c_str());
@@ -249,7 +335,7 @@ bool EditorContext::RevertPrefabInstance(ecs::Entity e) {
     const ecs::Meta* m = scene_->TryGet<ecs::Meta>(e);
     const AssetEntry* entry = m ? assets_.FindByGuid(m->prefabId) : nullptr;
     if (!entry || entry->missing) return false;
-    std::ifstream f(assets_.AssetsRoot() + "/" + entry->relPath, std::ios::binary);
+    std::ifstream f(assets_.AbsolutePath(*entry), std::ios::binary);
     if (!f) return false;
     std::string json((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
 

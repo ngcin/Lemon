@@ -5,6 +5,87 @@
 
 ---
 
+## 2026-09-20 · M4.5 热重载 + 项目向导 + 自动备份 + 终验（M4 收官）
+
+按 M4-Editor-Plan §5 M4.5 顺序实施。动工前先跑 ADR-010 既定探针复测（结论同
+M3-2b 矩阵：UCO 一次性线程 OK / 域线程全形态 pin / **pin 后重载可用**——A 线定案，
+结论写回 ADR-010 同日修订）。
+
+**热重载（A 线整域重建，§3.7）**：
+
+- C# 侧：`StateBag`（键→装箱值；白名单 = 基元/枚举/Vec2，SDK 常驻 ALC 身份——
+  用户 struct 装箱即 pin 旧域，一律拒绝）+ `LemonBehaviour.OnHotReloadOut/In`
+  虚方法 + `Behaviours.CaptureForHotReload`（待恢复包独立于 Reset，换装间存活；
+  Attach 时同 (类名,实体) 命中即恢复）+ `DomainManager.ReloadScript`（域线程捕获
+  →UCO 线程短轮询 3×GC+5ms 尽力卸载→泄漏计数→新 ALC）+ 导出 `lemon_dm_reload/
+  lemon_hr_reloads/lemon_hr_leaks`。
+- C++/编辑器：`ScriptHost::HotReloadAssembly`（导出惰性解析，旧 Entry 程序集 =
+  优雅降级）；Game/ 第二 FileWatcher（500ms 轮询）→ 0.4s 防抖 + `.cs/.csproj`
+  过滤 + obj/bin/点目录排除（**防 dotnet build 自写自触发的死循环**）→ 外置
+  `dotnet build` → 换装 → `RefreshScriptsAfterReload`（Edit 刷 typeId / Play 原位
+  重装配走新域 Awake/OnEnable/OnHotReloadIn）；Console 计时 + 泄漏红字、Profiler
+  换装/泄漏常驻显示、菜单"重新编译脚本"手动入口。
+- 实测：**Play 中换装 1244ms / Edit 态 1216ms（≤2s 判据，含增量编译）**；泄漏
+  每次 +1（A 线已知，~百 KB 级/次）；watcher 自动触发实测（sed 两次写被防抖吸收
+  一次，双触发幂等无碍）。
+
+**项目向导（blank 模板，06 §1/§7）**：
+
+- `ProjectWizard`（lemon-editor-core，可单测）：目录骨架（Assets/Scenes/Prefabs/
+  Game/Data/.lemon/Builds）+ project.lemon（name/engineVersion/guid）+ 项目
+  .gitignore + 种子资产 spawn.png（32×32 柠檬黄，固定 guid）+ Game/ csproj
+  （HintPath 绝对锚定 SDK，创建期固化）+ GameMain/InputMover/Spawner（**模板自带
+  StateBag 迁移范式**；kSpriteGuid = 种子资产 guid 直连）+ Scenes/Main.scene。
+- 编辑器：File→新建项目... 模态（名+父目录）→ 创建即 OpenProjectPipeline（编译
+  Game/ + 装配宿主 + 开双 watcher）→ 打开 Main.scene，零配置直接 Play。
+- 资产扫描根改**项目根**（06 §1 对齐）：根级 Prefabs/ 入索引（M4.4 落位偏差
+  消除），Game/Scenes/Data/Builds/obj/bin 排除；relPath 统一项目根相对；旧
+  manifest 键（相对 Assets/）同号迁移（spriteId 不漂）。
+
+**自动备份与崩溃恢复（§3.8）**：
+
+- `EditorContext`：TickAutosave（300s 节拍 + dirty + 非 Play + 非空场景门）/ 
+  AutoSaveNow → `.lemon/autosave/<场景名>.scene`（单份滚动）；DetectAutosaveRecovery
+  （mtime 新于盘档或盘档缺失）；OpenSceneRecovery（载入内容、scenePath 保持指原
+  .scene、dirty 置位——落盘与否用户决定）；正常 SaveScene 后清除快照（防陈旧提示）。
+- 启动恢复提示模态（恢复/忽略）；终验内全链断言（快照→检出→恢复保持 dirty→
+  落盘→清除）。
+
+**Profiler GC 红字（§6 #7）**：GcAllocated 每帧差分（首帧立基线）>0 红字 +
+"零分配 ✔"绿态；热重载换装/泄漏计数常驻（红字 = 泄漏 >0）。
+
+**验收（§6 判据项 + 回归）**：
+
+| 项 | 判据 | 实测 | 结果 |
+|---|---|---|---|
+| #1 出口总判据 | 新建项目→零代码→走地图+刷怪可 Play | `--final`：向导→判据场景 14 实体（地面平铺+角色 InputMover+刷怪器 Spawner）→Play 可跑 | PASS |
+| #2 热重载 | ≤2s（Edit/Play 各一）+ 泄漏可见 | Play 1244ms（StateBag 续跑 66/66 精确断言）/ Edit 1216ms（新类注册表可见）；leaks=2 红字 | PASS |
+| #3 冷启动 | <2s | 终验口径（主循环首帧，向导另计）340ms；M4.4 冒烟口径 986/557ms | PASS |
+| #6 Play 性能 | 判据场景 ≥45fps | 59fps（min，剔除预热 60 帧+换装窗口 90 帧） | PASS |
+| #7 GC 纪律 | 面板红字口径正确 | 每帧差分实现 + 终验脚本热路径零分配（errors=0） | PASS |
+| #13 工程回归 | 全绿 | engine-tests **12972**（+37：wizard/autosave/扫根断言）× Release+ASan/UBSan；script-tests **1275**（+7：dm_reload 换装探针）；ctest 3/3；M4.4 冒烟回归全 PASS | PASS |
+
+（#1 的录屏属人工项：步骤清单 = `--final` 冒烟的自动化等价序列，量化表如上。）
+
+**过程坑（4 则）**：
+
+1. **ofstream 未 close 就触发编译**：终验改写 .cs 后在同作用域内立即 dotnet
+   build——流缓冲未落盘，编译读到半截文件 rc=1（首轮 Play 换装失败根因）。
+   修复 = 写盘作用域收窄先 close。诊断时 build 输出 >/dev/null 不可见也延误定位。
+2. **ImGui::GetTime 在主循环外冻结**：OpenProjectPipeline 里用它测 Game 编译耗时
+   恒 0ms（g.Time 只在 NewFrame 推进）——换 steady_clock。
+3. **终验 projectDir 双轨**：向导把新根写进 launchCopy_ 而后续分支读入参 launch
+   → 空路径跳过整条管线（无宿主/无资产/0 实体的连锁假象）。统一读 launch_。
+4. **lemon-tests 链接 stb**：ProjectWizard 进 core 后引用 stbi_write_png，而
+   StbImpl.cpp 原在 lemon-editor 目标——静态库按需拉取对象，单测此前从未拉过
+   AssetGpuCache.o 所以没炸。StbImpl.cpp 移入 core（编辑器经 core 链接同一定义）。
+
+**M4 收官**：M4.0–M4.5 全部完成（总判据链全量化 PASS）。遗留 M5 项：B 线换装
+（探针转绿即启用，代码就绪）、逐字段 override（ADR-009 修订待记）、多窗口、
+`--smoke` ctest 条目（09 §8 顺延）。
+
+---
+
 ## 2026-09-19 · M4.0–M4.3 编辑器四阶段（ImGui docking 壳 → 数据面板 → SceneView → Play 沙盒+Undo）
 
 按 M4-Editor-Plan.md §5 顺序实施，每阶段可运行验收 + 截图目检（`--screenshot` + RHI

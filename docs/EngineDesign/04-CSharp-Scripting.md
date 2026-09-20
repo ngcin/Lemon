@@ -238,6 +238,20 @@ GC 纪律（引擎侧强制 + 面板验证）：
 
 时间预算：编译 + 换装 ≤ 2 s（中型项目），超时提示走整域重建。
 
+> **M4.5 落地注记（2026-09-20）**：本节按 ADR-010 A 线（整域重建）交付，实测
+> 编译+换装+重装配 **1.22–1.24s**（Play/Edit 双态各一例，含外置 dotnet build 增量
+> 编译）；旧 ALC 每次未回收计一次泄漏（红字告警 + Profiler 常驻计数，B 线探针转绿
+> 后自然归零）。**StateBag 字段粒度白名单**（实现 = `Lemon.SDK/StateBag.cs`）：
+> 可迁移 = 基元值类型 / 枚举 / `Lemon.Vec2`（SDK 常驻 ALC 身份，装箱值不携带旧域
+> 类型）；不可迁移 = 用户自定义 struct（类型定义在旧域，装箱即 pin）与一切托管对象
+> 引用。`TryGet` 类型不匹配/缺失 = 丢弃（false），不抛异常不阻断换装。时机：
+> `OnHotReloadOut` = 卸载前最后一次调用（旧域）；`OnHotReloadIn` = 新实例
+> Awake/OnEnable 之后、首次 Start/Update 之前。触发链：Game/ 源码 FileWatcher
+> （500ms 轮询 + 0.4s 防抖 + obj/bin 排除，防 build 自写自触发）→ dotnet build →
+> `lemon_dm_reload` → 编辑器按 className 重装配（Play 世界原位换实例 + StateBag
+> 恢复；Edit 世界刷新 typeId）。换装与上次帧间 pending 的 SceneOps 命令会被
+> Reset 清弃（可接受：换装瞬间的排队结构命令丢失，不坏档）。
+
 ## 7. 调试与错误报告
 
 - **断点调试**：CoreCLR 原生能力——编辑器以 debug 模式启动脚本域，Rider/VS 附加进程即可断点（Luma README 实证同路径）；SDK PDB 随引擎分发。
