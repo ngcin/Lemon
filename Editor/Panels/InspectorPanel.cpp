@@ -146,7 +146,11 @@ bool DrawSpriteSlot(EditorApp& app, uint8_t* p) {
     return false; // 写入已就地完成（combo 尾置 → 属性轨由 Deactivated 捕获）
 }
 
-/// 单字段控件（名字列已由调用方进入）。返回是否写入
+/// 单字段控件（名字列已由调用方进入）。返回是否写入。
+/// ID 纪律：所有控件标签恒 "##v"（不显示名字），唯一性靠 PushID(字段名)——
+/// 同组件内字段名唯一；组件级再由 DrawComponent PushID(组件名) 兜底跨组件同名字段。
+/// （M4.5 修复：曾经无作用域，SpriteRenderer 4 个输入同 ID 撞车 → ImGui 调试检查
+/// 标冲突后整组控件失去交互。）
 bool DrawField(EditorApp& app, const FieldMeta& f, const FieldEditorMeta& ed, void* comp) {
     EditorContext& ctx = app.Ctx();
     uint8_t* p = (uint8_t*)comp + f.offset;
@@ -157,21 +161,16 @@ bool DrawField(EditorApp& app, const FieldMeta& f, const FieldEditorMeta& ed, vo
     ImGui::TableNextColumn();
     ImGui::SetNextItemWidth(-1);
 
+    ImGui::PushID(f.name);
+    bool changed = false;
+
     if (ecs::HasHint(ed.hints, FieldHint::Hide)) {
         ImGui::TextDisabled("(internal)");
-        return false;
-    }
-
-    // 覆盖层控件优先（资产槽/枚举/颜色），命中即返回
-    if (ecs::HasHint(ed.hints, FieldHint::AssetRef) && f.type == FieldType::UInt32) {
-        DrawSpriteSlot(app, p);
-        return false;
-    }
-    if (ecs::HasHint(ed.hints, FieldHint::Enum)) {
-        if (DrawEnumControl(f, ed, p)) { ctx.dirty = true; return true; }
-        return false;
-    }
-    if (ecs::HasHint(ed.hints, FieldHint::ColorHex) && f.type == FieldType::UInt32) {
+    } else if (ecs::HasHint(ed.hints, FieldHint::AssetRef) && f.type == FieldType::UInt32) {
+        DrawSpriteSlot(app, p); // 写入就地完成（combo 尾置 → 属性轨由 Deactivated 捕获）
+    } else if (ecs::HasHint(ed.hints, FieldHint::Enum)) {
+        changed = DrawEnumControl(f, ed, p);
+    } else if (ecs::HasHint(ed.hints, FieldHint::ColorHex) && f.type == FieldType::UInt32) {
         uint32_t c = *(uint32_t*)p;
         float col[4] = {((c >> 0) & 0xFF) / 255.0f, ((c >> 8) & 0xFF) / 255.0f,
                         ((c >> 16) & 0xFF) / 255.0f, ((c >> 24) & 0xFF) / 255.0f};
@@ -179,121 +178,121 @@ bool DrawField(EditorApp& app, const FieldMeta& f, const FieldEditorMeta& ed, vo
                               ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar)) {
             *(uint32_t*)p = (uint32_t)(col[0] * 255) | ((uint32_t)(col[1] * 255) << 8) |
                             ((uint32_t)(col[2] * 255) << 16) | ((uint32_t)(col[3] * 255) << 24);
-            ctx.dirty = true;
-            return true;
+            changed = true;
         }
-        return false;
-    }
-
-    bool changed = false;
-    switch (f.type) {
-        case FieldType::Float: {
-            float v = *(float*)p;
-            if (ecs::HasHint(ed.hints, FieldHint::Degree)) {
-                float deg = v * 57.29577951f;
-                if (ImGui::DragFloat("##v", &deg, 0.5f)) {
-                    *(float*)p = deg / 57.29577951f;
+    } else {
+        switch (f.type) {
+            case FieldType::Float: {
+                float v = *(float*)p;
+                if (ecs::HasHint(ed.hints, FieldHint::Degree)) {
+                    float deg = v * 57.29577951f;
+                    if (ImGui::DragFloat("##v", &deg, 0.5f)) {
+                        *(float*)p = deg / 57.29577951f;
+                        changed = true;
+                    }
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("deg");
+                } else if (ImGui::DragFloat("##v", &v, 1.0f)) {
+                    if (ecs::HasHint(ed.hints, FieldHint::Range))
+                        v = Clampf(v, ed.rangeMin, ed.rangeMax);
+                    *(float*)p = v;
                     changed = true;
                 }
-                ImGui::SameLine();
-                ImGui::TextDisabled("deg");
-            } else if (ImGui::DragFloat("##v", &v, 1.0f)) {
-                if (ecs::HasHint(ed.hints, FieldHint::Range)) v = Clampf(v, ed.rangeMin, ed.rangeMax);
-                *(float*)p = v;
-                changed = true;
+                break;
             }
-            break;
-        }
-        case FieldType::Double: {
-            double v = *(double*)p;
-            if (ImGui::DragScalar("##v", ImGuiDataType_Double, &v, 0.1, nullptr, nullptr, "%.3f")) {
-                *(double*)p = v;
-                changed = true;
-            }
-            break;
-        }
-        case FieldType::Int32:
-            changed = ImGui::DragScalar("##v", ImGuiDataType_S32, p, 1);
-            break;
-        case FieldType::UInt32:
-            changed = ImGui::DragScalar("##v", ImGuiDataType_U32, p, 1, nullptr, nullptr, "%u");
-            break;
-        case FieldType::UInt64:
-            changed = ImGui::DragScalar("##v", ImGuiDataType_U64, p, 1, nullptr, nullptr, "%llu");
-            break;
-        case FieldType::Int16: {
-            int v = *(int16_t*)p;
-            if (ImGui::DragInt("##v", &v, 1)) { *(int16_t*)p = (int16_t)v; changed = true; }
-            break;
-        }
-        case FieldType::UInt16: {
-            int v = *(uint16_t*)p;
-            if (ImGui::DragInt("##v", &v, 1, 0, 65535)) { *(uint16_t*)p = (uint16_t)v; changed = true; }
-            break;
-        }
-        case FieldType::Int8:
-        case FieldType::UInt8: {
-            if (ecs::HasHint(ed.hints, FieldHint::Bool8)) {
-                bool b = *(uint8_t*)p != 0;
-                if (ImGui::Checkbox("##v", &b)) { *(uint8_t*)p = b ? 1 : 0; changed = true; }
-            } else {
-                int v = *(uint8_t*)p;
-                if (ImGui::DragInt("##v", &v, 1, 0, 255)) { *(uint8_t*)p = (uint8_t)v; changed = true; }
-            }
-            break;
-        }
-        case FieldType::Bool: {
-            bool b = *(bool*)p;
-            if (ImGui::Checkbox("##v", &b)) { *(bool*)p = b; changed = true; }
-            break;
-        }
-        case FieldType::Vec2: {
-            float v[2] = {((lemon::Vec2*)p)->x, ((lemon::Vec2*)p)->y};
-            if (ImGui::DragFloat2("##v", v, 1.0f)) {
-                ((lemon::Vec2*)p)->x = v[0];
-                ((lemon::Vec2*)p)->y = v[1];
-                changed = true;
-            }
-            break;
-        }
-        case FieldType::EntityRef: {
-            uint64_t ref = *(uint64_t*)p;
-            ImGui::Text("%s%llu", ref ? "" : "(null) ", (unsigned long long)ref);
-            if (ref && ImGui::BeginPopupContextItem("ref_ctx")) {
-                if (ImGui::MenuItem("选中该实体")) {
-                    ecs::Entity found{};
-                    ctx.ActiveScene().Each([&](ecs::Entity en) {
-                        if ((en.id & 0xFFFFFFFFull) == (ref & 0xFFFFFFFFull)) found = en;
-                    });
-                    if (!found.IsNull()) ctx.Select(found, false);
-                    else LEMON_WARN("EntityRef 目标不存在（已销毁？）%llu", (unsigned long long)ref);
+            case FieldType::Double: {
+                double v = *(double*)p;
+                if (ImGui::DragScalar("##v", ImGuiDataType_Double, &v, 0.1, nullptr, nullptr,
+                                      "%.3f")) {
+                    *(double*)p = v;
+                    changed = true;
                 }
-                ImGui::EndPopup();
+                break;
             }
-            break;
-        }
-        case FieldType::TeamRef: {
-            uint32_t t = *(uint32_t*)p;
-            if (ImGui::BeginCombo("##v", t < 8 ? TeamName(t) : "?")) {
-                for (uint32_t i = 0; i < 8; ++i)
-                    if (ImGui::Selectable(TeamName(i), i == t)) { *(uint32_t*)p = i; changed = true; }
-                ImGui::EndCombo();
+            case FieldType::Int32:
+                changed = ImGui::DragScalar("##v", ImGuiDataType_S32, p, 1);
+                break;
+            case FieldType::UInt32:
+                changed = ImGui::DragScalar("##v", ImGuiDataType_U32, p, 1, nullptr, nullptr, "%u");
+                break;
+            case FieldType::UInt64:
+                changed = ImGui::DragScalar("##v", ImGuiDataType_U64, p, 1, nullptr, nullptr, "%llu");
+                break;
+            case FieldType::Int16: {
+                int v = *(int16_t*)p;
+                if (ImGui::DragInt("##v", &v, 1)) { *(int16_t*)p = (int16_t)v; changed = true; }
+                break;
             }
-            break;
-        }
-        case FieldType::Blob24: {
-            char buf[25];
-            std::memcpy(buf, p, 24);
-            buf[24] = 0;
-            std::string s(buf);
-            if (ImGui::InputText("##v", &s)) {
-                std::memset(p, 0, 24);
-                std::memcpy(p, s.c_str(), std::min<size_t>(s.size(), 23));
-                changed = true;
+            case FieldType::UInt16: {
+                int v = *(uint16_t*)p;
+                if (ImGui::DragInt("##v", &v, 1, 0, 65535)) { *(uint16_t*)p = (uint16_t)v; changed = true; }
+                break;
             }
-            break;
+            case FieldType::Int8:
+            case FieldType::UInt8: {
+                if (ecs::HasHint(ed.hints, FieldHint::Bool8)) {
+                    bool b = *(uint8_t*)p != 0;
+                    if (ImGui::Checkbox("##v", &b)) { *(uint8_t*)p = b ? 1 : 0; changed = true; }
+                } else {
+                    int v = *(uint8_t*)p;
+                    if (ImGui::DragInt("##v", &v, 1, 0, 255)) { *(uint8_t*)p = (uint8_t)v; changed = true; }
+                }
+                break;
+            }
+            case FieldType::Bool: {
+                bool b = *(bool*)p;
+                if (ImGui::Checkbox("##v", &b)) { *(bool*)p = b; changed = true; }
+                break;
+            }
+            case FieldType::Vec2: {
+                float v[2] = {((lemon::Vec2*)p)->x, ((lemon::Vec2*)p)->y};
+                if (ImGui::DragFloat2("##v", v, 1.0f)) {
+                    ((lemon::Vec2*)p)->x = v[0];
+                    ((lemon::Vec2*)p)->y = v[1];
+                    changed = true;
+                }
+                break;
+            }
+            case FieldType::EntityRef: {
+                uint64_t ref = *(uint64_t*)p;
+                ImGui::Text("%s%llu", ref ? "" : "(null) ", (unsigned long long)ref);
+                if (ref && ImGui::BeginPopupContextItem("ref_ctx")) {
+                    if (ImGui::MenuItem("选中该实体")) {
+                        ecs::Entity found{};
+                        ctx.ActiveScene().Each([&](ecs::Entity en) {
+                            if ((en.id & 0xFFFFFFFFull) == (ref & 0xFFFFFFFFull)) found = en;
+                        });
+                        if (!found.IsNull()) ctx.Select(found, false);
+                        else LEMON_WARN("EntityRef 目标不存在（已销毁？）%llu", (unsigned long long)ref);
+                    }
+                    ImGui::EndPopup();
+                }
+                break;
+            }
+            case FieldType::TeamRef: {
+                uint32_t t = *(uint32_t*)p;
+                if (ImGui::BeginCombo("##v", t < 8 ? TeamName(t) : "?")) {
+                    for (uint32_t i = 0; i < 8; ++i)
+                        if (ImGui::Selectable(TeamName(i), i == t)) { *(uint32_t*)p = i; changed = true; }
+                    ImGui::EndCombo();
+                }
+                break;
+            }
+            case FieldType::Blob24: {
+                char buf[25];
+                std::memcpy(buf, p, 24);
+                buf[24] = 0;
+                std::string s(buf);
+                if (ImGui::InputText("##v", &s)) {
+                    std::memset(p, 0, 24);
+                    std::memcpy(p, s.c_str(), std::min<size_t>(s.size(), 23));
+                    changed = true;
+                }
+                break;
+            }
         }
     }
+    ImGui::PopID();
     if (changed) ctx.dirty = true;
     return changed;
 }
@@ -464,6 +463,9 @@ void InspectorPanel::DrawComponent(EditorApp& app, const ComponentMeta& meta, ec
 
     bool open = true;
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, 2));
+    // 组件级 ID 作用域：字段表/控件 ID = 窗口/组件/字段——跨组件同名字段不撞
+    // （Inspector ID 唯一性的外层保证；内层 = DrawField 的 PushID(f.name)）
+    ImGui::PushID(meta.name);
     if (ImGui::CollapsingHeader(meta.name, &open, ImGuiTreeNodeFlags_DefaultOpen)) {
         if (meta.fieldCount > 0 && ImGui::BeginTable("fields", 2, ImGuiTableFlags_SizingStretchProp)) {
             ImGui::TableSetupColumn("name", ImGuiTableColumnFlags_WidthFixed,
@@ -498,6 +500,7 @@ void InspectorPanel::DrawComponent(EditorApp& app, const ComponentMeta& meta, ec
         }
     }
     ImGui::PopStyleVar();
+    ImGui::PopID();
     if (!open && !ProtectedComponent(meta.name) && meta.removeFn) {
         const std::string before = ctx.SnapshotSceneJson();
         meta.removeFn(ctx.ActiveScene(), e);

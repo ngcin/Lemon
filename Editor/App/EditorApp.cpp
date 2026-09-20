@@ -44,6 +44,15 @@ uint64_t HookInstantiate(const char* hex, float x, float y) {
                                                         Vec2{x, y});
     return e.IsNull() ? 0 : e.id;
 }
+
+// ImGui 错误汇（1.92 内部回调口；DockBuilder 同源引用 imgui_internal）：ID 冲突/
+// 空标签等程序员错误在这里现形——冒烟断言清零（M4.5 修复 Inspector ##v 撞号后
+// 加的程序化防线：这类错只在交互时弹窗，无头冒烟原本测不到）。
+int g_imguiErrorCount = 0;
+void ImGuiErrorSink(ImGuiContext*, void* user_data, const char* msg) {
+    ++*static_cast<int*>(user_data);
+    LEMON_WARN("ImGui 错误：%s", msg);
+}
 } // namespace
 
 void EditorApp::SetupDefaultLayout() {
@@ -631,6 +640,9 @@ int EditorApp::Run(const EditorLaunch& launch) {
 
     ui_ = std::make_unique<ImGuiBackend>();
     if (!ui_->Init(*window_, *device_, ".lemon/editor")) return 1;
+    // ImGui 程序员错误（ID 冲突等）进编辑器日志 + 冒烟清零断言（见 anon-ns 注记）
+    ImGui::GetCurrentContext()->ErrorCallback = ImGuiErrorSink;
+    ImGui::GetCurrentContext()->ErrorCallbackUserData = &g_imguiErrorCount;
 
     viewport_ = std::make_unique<ViewportRenderer>();
     viewport_->Init(*device_, *ui_);
@@ -804,6 +816,20 @@ int EditorApp::Run(const EditorLaunch& launch) {
             ctx_.TickEditor(1.0f / 60.0f); // Essential（销毁提交）+ 空 FixedTick
         }
 
+        // 冒烟悬停扫掠（M4.5）：逐帧走窗口网格 → 会话内所有可见控件至少被悬停
+        // 一次——ImGui 的 ID 冲突检查挂 HoveredId 路径，不悬停就永远测不到。
+        // 经 SetMouseOverride 注入（SDL 后端每帧轮询真实鼠标，普通事件会被盖掉；
+        // 覆盖口在轮询后、NewFrame 排水前生效）。
+        if (launch.smoke) {
+            ImGuiIO& io = ImGui::GetIO();
+            if (io.DisplaySize.x > 1.0f && io.DisplaySize.y > 1.0f) {
+                constexpr uint64_t kCols = 40, kRows = 15;
+                const uint64_t idx = frame % (kCols * kRows);
+                ui_->SetMouseOverride(
+                    (float)(idx % kCols) / (float)(kCols - 1) * io.DisplaySize.x,
+                    (float)(idx / kCols) / (float)(kRows - 1) * io.DisplaySize.y);
+            }
+        }
         ui_->BeginFrame(*window_);
         BuildUI();
 
@@ -820,6 +846,16 @@ int EditorApp::Run(const EditorLaunch& launch) {
         cl.SetViewportScissor(w, h);
         ui_->Render(cl);
         cl.EndPass();
+
+        // ID 冲突信号轮询（M4.5）：冲突提示由 ImGui 直接画 tooltip、不走
+        // ErrorCallback——帧末读 DebugDrawIdConflictsId（悬停扫掠命中 >1 同 ID 项
+        // 时非零）。配合扫掠 = 无头冒烟可真实抓到这类交互期错误。
+        if (launch.smoke && !imguiIdConflictSeen_ &&
+            ImGui::GetCurrentContext()->DebugDrawIdConflictsId != 0) {
+            imguiIdConflictSeen_ = true;
+            ++g_imguiErrorCount;
+            LEMON_WARN("ImGui：可见控件 ID 冲突（悬停扫掠命中；循环内控件需 PushID 或 ##xx 唯一化）");
+        }
 
         const bool lastFrame =
             launch.frames > 0 && (int)frame == launch.frames - 1 && !launch.screenshot.empty();
@@ -880,6 +916,9 @@ int EditorApp::Run(const EditorLaunch& launch) {
         bool cjkOk = false;
         if (ImFont* f = ImGui::GetFont()) cjkOk = f->IsLoaded() && f->IsGlyphInFont(0x4E2D);
         const uint64_t errCount = LogCountOf(LogLevel::Error);
+        if (g_imguiErrorCount > 0)
+            std::printf("[lemon] editor-smoke imgui-errors=%d（ID 冲突/空标签等）=> FAIL\n",
+                        g_imguiErrorCount);
         // 场景健全：实体数守恒（播种数 = 现存数；冒烟中无销毁）+ 视口可见包 > 0
         const uint32_t alive = ctx_.ActiveScene().AliveCount();
         const uint32_t visible = viewport_->LastSceneVisible();
@@ -992,7 +1031,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
                                       bagOk, hrOk, fpsOk, coldOk, autosaveOk, playVerified);
         }
         if (!drew || !cjkOk || errCount > 0 || !sceneOk || !playOk || !assetsOk || !scriptOk ||
-            !finalOk) {
+            !finalOk || g_imguiErrorCount > 0) {
             std::printf("[lemon] editor-smoke FAIL\n");
             exitCode = 1;
         } else {

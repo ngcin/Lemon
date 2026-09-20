@@ -209,6 +209,10 @@ void ImGuiBackend::BeginFrame(Window& window) {
     if (density != m->scale) m->ApplyScale(density);
 
     ImGui_ImplSDL3_NewFrame();
+    if (mouseOverrideSet_) { // 冒烟扫掠：轮询后、排水前注入（顺序靠后生效）
+        mouseOverrideSet_ = false;
+        ImGui::GetIO().AddMousePosEvent(mouseOverrideX_, mouseOverrideY_);
+    }
     ImGui_ImplVulkan_NewFrame();
     ImGui::NewFrame();
 }

@@ -49,9 +49,20 @@ public:
     void* RegisterViewportTexture(uint32_t rhiTextureId);
     void UnregisterViewportTexture(void* imguiTexId);
 
+    /// 冒烟扫掠用（M4.5）：强制下一帧鼠标位置。注入时机 = SDL 后端轮询之后、
+    /// NewFrame 事件排水之前（事件序靠后者生效——普通 AddMousePosEvent 在轮询前
+    /// 注入会被真实位置盖掉）。一次性：BeginFrame 消费即清。仅测试/冒烟使用。
+    void SetMouseOverride(float x, float y) {
+        mouseOverrideX_ = x;
+        mouseOverrideY_ = y;
+        mouseOverrideSet_ = true;
+    }
+
 private:
     struct Impl;
     std::unique_ptr<Impl> m;
+    float mouseOverrideX_ = 0.0f, mouseOverrideY_ = 0.0f;
+    bool mouseOverrideSet_ = false;
 };
 
 } // namespace lemon::editor
