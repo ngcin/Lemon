@@ -3,6 +3,9 @@
 > 本册回答两个问题：**Lemon 怎么测**（方法/命令/判读）与**测出了什么**（最新结论）。
 > 完整的数字历史与事件流水在 `docs/DevLog.md`；本册记可复现的方法和当前基线。
 > 每个里程碑验收、每次新增专项测试后更新本册（§9 约定）。
+>
+> **编辑器使用级测试**（手测清单 70+ 项 + 一键自动化 `tools/editor-regression.sh`）
+> 见 [Editor-Manual-Test-Guide.md](./Editor-Manual-Test-Guide.md)。
 
 ## 0. 测试纪律（事故换来的，不可省略）
 
