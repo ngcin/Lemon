@@ -35,13 +35,15 @@ bool ProtectedComponent(const char* name) {
            std::strcmp(name, "DestroyQueueTag") == 0;
 }
 
-/// Team 下拉名（TeamTable 无名表——M4.4 teams.json 资产化后换真名）
+/// Team 下拉名（TeamTable 无名表——M4.4 teams.json 资产化后换真名）。
+/// 只返语义名，序号前缀由调用方拼——未命名档位多行同文会撞 ImGui ID
+/// （实测：4 个 "?" Selectable 同 ID → "4 visible items with conflicting ID"）。
 const char* TeamName(uint32_t t) {
     switch (t) {
-        case 0: return "0 player";
-        case 1: return "1 monsters";
-        case 2: return "2 neutral";
-        case 3: return "3 playerBullets";
+        case 0: return "player";
+        case 1: return "monsters";
+        case 2: return "neutral";
+        case 3: return "playerBullets";
         default: return "?";
     }
 }
@@ -113,10 +115,11 @@ bool DrawSpriteSlot(EditorApp& app, uint8_t* p) {
     if (ImGui::BeginCombo("##v", label)) {
         for (const auto& e : db.Entries()) {
             if (e.type != AssetType::Sprite) continue;
-            char item[80];
+            // 列表项用 relPath（唯一）：不同子目录同名文件用 FileName 会撞 ImGui ID
+            char item[160];
             std::snprintf(item, sizeof(item), "%s%s%s",
                           e.spriteId == id ? "√ " : "", e.missing ? "⚠ " : "",
-                          e.FileName().c_str());
+                          e.relPath.c_str());
             if (ImGui::Selectable(item, e.spriteId == id)) {
                 id = e.spriteId;
                 ctx.dirty = true;
@@ -271,9 +274,14 @@ bool DrawField(EditorApp& app, const FieldMeta& f, const FieldEditorMeta& ed, vo
             }
             case FieldType::TeamRef: {
                 uint32_t t = *(uint32_t*)p;
-                if (ImGui::BeginCombo("##v", t < 8 ? TeamName(t) : "?")) {
-                    for (uint32_t i = 0; i < 8; ++i)
-                        if (ImGui::Selectable(TeamName(i), i == t)) { *(uint32_t*)p = i; changed = true; }
+                char preview[32];
+                std::snprintf(preview, sizeof(preview), "%u %s", t, TeamName(t));
+                if (ImGui::BeginCombo("##v", preview)) {
+                    for (uint32_t i = 0; i < 8; ++i) {
+                        char item[32]; // 恒带序号前缀：未命名档位 "?" 多行必须互异（ID 纪律）
+                        std::snprintf(item, sizeof(item), "%u %s", i, TeamName(i));
+                        if (ImGui::Selectable(item, i == t)) { *(uint32_t*)p = i; changed = true; }
+                    }
                     ImGui::EndCombo();
                 }
                 break;
