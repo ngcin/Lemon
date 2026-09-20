@@ -22,6 +22,9 @@ out/
 # 编辑器冒烟截图（M4 验收脚本产物）
 .lemon-smoke/
 
+# 编辑器手测产生的临时工程（向导/Play 验证用，不入库）
+demo/
+
 # .NET / dotnet 构建产物（dotnet build 中间目录；产物 DLL/PDB 只落 build/）
 [Bb]in/
 [Oo]bj/
