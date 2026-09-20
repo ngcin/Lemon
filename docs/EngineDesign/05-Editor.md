@@ -3,6 +3,7 @@
 > 目标：Unity 式工作流（Hierarchy / Inspector / Scene 视口 / Play-Stop），但轻量、秒开、无工程化负担；与运行时**同源双入口**，单一数据事实源，杜绝 yami 的"编辑器预览与实机两套实现"漂移。
 > 骨架：Luma 编辑器面板框架（MIT 可移植）+ MoteurJV 的 Play 快照沙盒 + Prowl2D 的 Undo 属性级双轨/Prefab 模式（ADR-009）+ Editor-RPG2D 三件套交互小件（开放署名，可拷）。
 > **M4 实施详细规划已定稿（2026-09-19）：[M4-Editor-Plan.md](./M4-Editor-Plan.md)**（面板集冻结/界面规格/子阶段分解/验收矩阵/砍单序）。本册保持设计总册地位。
+> M4 收官后追加轮（2026-09-20 定稿）：**M4.6 可用性加固见 [M4.6-Editor-Usability-Plan.md](./M4.6-Editor-Usability-Plan.md)**（会话闭环 + 编辑效率 + 交互路径回归）。
 
 ---
 

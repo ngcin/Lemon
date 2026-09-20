@@ -26,6 +26,10 @@
 > 实现备注：属性轨记录粒度 = 组件级字节快照（字段级拆分列 M5 精化）；纹理后端豁免口
 > 与 ctest 隔离断言见 §3.2/§5 落地；构建分层 lemon-editor-core（无 ImGui 编辑器逻辑，
 > 单测面）见 Editor/CMakeLists.txt。
+> **M4.6 追加轮已规划（2026-09-20）**：M4 收官当日真人实测暴露 3 阻断级 bug（关闭
+> 按钮/无项目导入/打开项目未接线，已修 `b7094a9`），共同根因 = 交互路径无自动回归。
+> 可用性加固（会话闭环 + 编辑效率 + 交互冒烟）规划移
+> [M4.6-Editor-Usability-Plan.md](./M4.6-Editor-Usability-Plan.md)，本册判据链不变。
 > 前置状态：M3（2026-09-19 完成）+ M3.5 anim-smoke 全链基线。内核侧地基（反射注册表 / .scene v1（原 .lscene，同日更名）/ ClearViewport / Profiles / 脚本域）已就位，Editor/ 目录零代码。
 > 纪律：本册判据与 [08 路线图](./08-Development-Roadmap.md) §0 总表一致；次级取舍以"推荐 + 砍单候补"标注，砍前记 ADR（08 §4）。
 
