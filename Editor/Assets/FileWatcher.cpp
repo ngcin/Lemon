@@ -13,6 +13,8 @@ namespace fs = std::filesystem;
 void FileWatcher::Start(std::string rootDir) {
     if (running_.load()) return;
     root_ = std::move(rootDir);
+    primed_ = false; // 重启（切项目）重立基线
+    last_.clear();
     stop_ = false;
     running_ = true;
     thread_ = std::thread([this] { PollLoop(); });
@@ -43,8 +45,13 @@ void FileWatcher::PollLoop() {
             snap[it->path().string()] = {it->file_size(ec), (int64_t)lm.time_since_epoch().count()};
         }
 
-        if (snap != last_) {
-            if (!last_.empty() || !snap.empty()) dirty_ = true; // 首拍不算（启动基线）
+        // 首拍 = 基线不算变更（primed_ 语义；M4.6 修复：原先 "!snap.empty()" 条件写反，
+        // 有文件的目录首拍必置脏 → 每次打开项目误触发一次热重载/重扫）
+        if (!primed_) {
+            primed_ = true;
+            last_ = std::move(snap);
+        } else if (snap != last_) {
+            dirty_ = true;
             last_ = std::move(snap);
         }
 

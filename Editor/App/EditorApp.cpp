@@ -655,6 +655,10 @@ bool EditorApp::OpenProjectPipeline(const std::string& projectRoot) {
     }
     watcher_.Start(ctx_.Assets().AssetsRoot());
     scriptWatcher_.Start(ctx_.Assets().ProjectRoot() + "/Game"); // 热重载触发源（§3.7）
+    // 源码基线化（M4.6）：开项目时已存在的 .cs 不算"变更"——否则 lastHandledCsWrite_
+    // 从 0 起步，首次 watcher 事件（dotnet build 写 obj 触发）必引发一次无谓换装
+    // （每次泄漏一个旧域；用户实测闪退链的第一环就是它）
+    ScriptSourceChanged();
     LEMON_LOG("资产管线就绪：项目 %s", projectRoot.c_str());
 
     // 项目自带 Game/ 工程且未显式 --script → 编译 + 装配脚本宿主（向导零配置体验）
@@ -673,7 +677,9 @@ bool EditorApp::OpenProjectPipeline(const std::string& projectRoot) {
         host_.reset();
         ctx_.SetScriptHost(nullptr);
     }
-    if (!launch_->smoke) PushRecentProject(projectRoot, recentProjects_); // M4.6：冒烟/终验不记
+    // 记最近项目用 DB 侧 root_（已绝对化）——入参可能是向导手敲的相对路径
+    if (!launch_->smoke)
+        PushRecentProject(ctx_.Assets().ProjectRoot(), recentProjects_);
     return true;
 }
 

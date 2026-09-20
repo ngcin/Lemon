@@ -186,7 +186,10 @@ bool SkipDirTop(const std::string& name) {
 } // namespace
 
 bool AssetDatabase::OpenProject(const std::string& projectRoot, uint32_t spriteIdBase) {
-    root_ = projectRoot;
+    // 相对路径入（向导手敲 ./x 等）→ 入库即绝对化：LoadFromAssemblyPath 只收绝对路径，
+    // 且 meta/manifest/autosave 全链混用相对路径会随 cwd 漂移（M4.6 实测闪退根因之一）
+    std::error_code eca;
+    root_ = fs::absolute(projectRoot, eca).generic_string();
     spriteIdBase_ = spriteIdBase;
     nextSpriteId_ = spriteIdBase;
     entries_.clear();

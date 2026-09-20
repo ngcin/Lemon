@@ -30,6 +30,7 @@ private:
     std::atomic<bool> stop_{false};
     std::atomic<bool> dirty_{false};
     std::atomic<bool> running_{false};
+    bool primed_ = false; // 首拍基线已立（Start 前置 false；仅 PollLoop 线程读写）
     std::string root_;
     std::map<std::string, std::pair<uintmax_t, int64_t>> last_; // path → (size, mtime)
 };

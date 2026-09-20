@@ -90,45 +90,63 @@ internal static unsafe class DomainManager
     public static bool LoadScript(string assemblyPath)
     {
         bool ok = false;
+        string err = null;
         Post(() => {
-            if (s_alc != null) { ok = true; return; } // 已加载（幂等）
-            var alc = new ScriptAlc();
-            var asm = alc.LoadFromAssemblyPath(assemblyPath);
-            // 换域清注册表/事件订阅 + 装配入口约定：GameMain.Configure()（无则无脚本系统）
-            Lemon.Scripting.Reset();
-            Lemon.Events.Reset();
-            Lemon.Behaviours.Reset();
-            Lemon.SceneOps.Reset();
-            asm.GetType("GameMain")?.GetMethod("Configure", BindingFlags.Public | BindingFlags.Static)
-               ?.Invoke(null, null);
-            var tick = asm.GetType("TestScript")?.GetMethod("Tick", BindingFlags.Public | BindingFlags.Static);
-            if (tick != null)
-                s_tickFn = tick.CreateDelegate<TickFn>(); // 教训 7：托管委托缓存，禁 GetFunctionPointer
-            s_asm = asm;
-            s_alcWeak = new WeakReference(alc);
-            s_alc = alc;
-            ok = true;
+            try {
+                if (s_alc != null) { ok = true; return; } // 已加载（幂等）
+                var alc = new ScriptAlc();
+                var asm = alc.LoadFromAssemblyPath(assemblyPath);
+                // 换域清注册表/事件订阅 + 装配入口约定：GameMain.Configure()（无则无脚本系统）
+                Lemon.Scripting.Reset();
+                Lemon.Events.Reset();
+                Lemon.Behaviours.Reset();
+                Lemon.SceneOps.Reset();
+                asm.GetType("GameMain")?.GetMethod("Configure", BindingFlags.Public | BindingFlags.Static)
+                   ?.Invoke(null, null);
+                var tick = asm.GetType("TestScript")?.GetMethod("Tick", BindingFlags.Public | BindingFlags.Static);
+                if (tick != null)
+                    s_tickFn = tick.CreateDelegate<TickFn>(); // 教训 7：托管委托缓存，禁 GetFunctionPointer
+                s_asm = asm;
+                s_alcWeak = new WeakReference(alc);
+                s_alc = alc;
+                ok = true;
+            } catch (Exception e) {
+                // 域线程异常就地捕获（Post 会把 cmd.Error 原样重抛到 UCO 线程——
+                // UnmanagedCallersOnly 导出外无处理器 = coreclr abort 整个编辑器，
+                // M4.6 实测闪退。装配失败必须 = 干净的 false）
+                err = e.GetType().Name + ": " + e.Message;
+            }
         });
+        if (err != null) {
+            Console.Error.WriteLine("[lemon] 脚本装配失败（已拦，保进程）：" + err + " path=" + assemblyPath);
+            return false;
+        }
         return ok;
     }
 
     /// <summary>卸载并确认回收（UCO 调用线程就地：置空域线程持有的引用后 Unload+GC 轮询）。</summary>
     public static bool UnloadScript()
     {
-        // 先让域线程丢掉委托/程序集引用（后续 Tick 返回 NaN 哨兵）
-        Post(() => { s_tickFn = null; s_asm = null; s_alc = null; });
-        var weak = s_alcWeak;
-        s_alcWeak = null;
-        if (weak == null) return true;
-        ((AssemblyLoadContext)weak.Target!).Unload();
-        for (int i = 0; i < 30; i++) {
-            // compacting 强制 GC：尝试清掉执行线程残留的陈旧引用（M3-2b 诊断）
-            GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
-            GC.WaitForPendingFinalizers();
-            if (!weak.IsAlive) return true;
-            Thread.Sleep(10);
+        try {
+            // 先让域线程丢掉委托/程序集引用（后续 Tick 返回 NaN 哨兵）
+            Post(() => { s_tickFn = null; s_asm = null; s_alc = null; });
+            var weak = s_alcWeak;
+            s_alcWeak = null;
+            if (weak == null) return true;
+            if (weak.Target is not AssemblyLoadContext alc) return true; // 已被回收 = 无需卸载
+            alc.Unload();
+            for (int i = 0; i < 30; i++) {
+                // compacting 强制 GC：尝试清掉执行线程残留的陈旧引用（M3-2b 诊断）
+                GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
+                GC.WaitForPendingFinalizers();
+                if (!weak.IsAlive) return true;
+                Thread.Sleep(10);
+            }
+            return false;
+        } catch (Exception e) {
+            Console.Error.WriteLine("[lemon] 卸载失败（已拦，保进程）：" + e.GetType().Name + ": " + e.Message);
+            return false;
         }
-        return false;
     }
 
     // ---- M4.5 热重载（ADR-010 A 线整域重建；M4.5 探针复测 2026-09-20 仍 pin）----
@@ -144,35 +162,43 @@ internal static unsafe class DomainManager
     public static bool LastCollected => s_lastCollected;
 
     /// <summary>整域换装：捕获 StateBag → 丢引用 → 尽力卸载（短轮询，不阻塞预算）→
-    /// 新 ALC 装载。返回 true = 新域可用；leak 计数经 LeakCount 读。</summary>
+    /// 新 ALC 装载。返回 true = 新域可用；leak 计数经 LeakCount 读。
+    /// 任何异常就地拦截返回 false——本方法经 UnmanagedCallersOnly 导出直通 native，
+    /// 异常逃逸 = coreclr abort 整个编辑器（M4.6 实测闪退根因）。</summary>
     public static bool ReloadScript(string assemblyPath)
     {
-        // 1) 域线程：捕获状态 + 释放旧域全部强引用（实例/委托/注册表）
-        Post(() => {
-            Lemon.Behaviours.CaptureForHotReload();
-            Lemon.Behaviours.Reset(); // 旧实例即弃（类型来自旧域，保着只会 pin）
-            s_tickFn = null; s_asm = null; s_alc = null;
-        });
-        var weak = s_alcWeak;
-        s_alcWeak = null;
-        // 2) UCO 线程：尽力卸载。已知域线程执行模型下必 pin（ADR-010 修订）——
-        //    短轮询 3×(GC+5ms) 只为确认与记账，不赌 300ms 全轮询占掉换装预算。
-        bool collected = true;
-        if (weak != null) {
-            ((AssemblyLoadContext)weak.Target!).Unload();
-            collected = false;
-            for (int i = 0; i < 3; i++) {
-                GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
-                GC.WaitForPendingFinalizers();
-                if (!weak.IsAlive) { collected = true; break; }
-                Thread.Sleep(5);
+        try {
+            // 1) 域线程：捕获状态 + 释放旧域全部强引用（实例/委托/注册表）
+            Post(() => {
+                Lemon.Behaviours.CaptureForHotReload();
+                Lemon.Behaviours.Reset(); // 旧实例即弃（类型来自旧域，保着只会 pin）
+                s_tickFn = null; s_asm = null; s_alc = null;
+            });
+            var weak = s_alcWeak;
+            s_alcWeak = null;
+            // 2) UCO 线程：尽力卸载。已知域线程执行模型下必 pin（ADR-010 修订）——
+            //    短轮询 3×(GC+5ms) 只为确认与记账，不赌 300ms 全轮询占掉换装预算。
+            bool collected = true;
+            if (weak?.Target is AssemblyLoadContext oldAlc) { // Target 已回收 = 无需卸载
+                oldAlc.Unload();
+                collected = false;
+                for (int i = 0; i < 3; i++) {
+                    GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: true);
+                    GC.WaitForPendingFinalizers();
+                    if (!weak.IsAlive) { collected = true; break; }
+                    Thread.Sleep(5);
+                }
+                if (!collected) { ++s_leakCount; s_leakedAlcs.Add(weak); }
             }
-            if (!collected) { ++s_leakCount; s_leakedAlcs.Add(weak); }
+            s_lastCollected = collected;
+            ++s_reloadCount;
+            // 3) 新域装载（LoadScript：Reset + GameMain.Configure + 委装配）
+            return LoadScript(assemblyPath);
+        } catch (Exception e) {
+            Console.Error.WriteLine("[lemon] 热重载失败（已拦，保进程，旧域状态可能已弃）：" +
+                                    e.GetType().Name + ": " + e.Message + " path=" + assemblyPath);
+            return false;
         }
-        s_lastCollected = collected;
-        ++s_reloadCount;
-        // 3) 新域装载（LoadScript：Reset + GameMain.Configure + 委装配）
-        return LoadScript(assemblyPath);
     }
 
     public static bool IsLoaded => s_alc != null;

@@ -305,6 +305,14 @@ void TestDomainManager() {
         char buf[4096];
         int n = listFn ? listFn(buf, (int)sizeof buf) : -1;
         Expect(n == 3, "behaviours list after hot reload (Counting/Spawner/InputMover)");
+        // M4.6 回归（用户实测闪退根因）：相对路径进 dm_reload 曾抛 ArgumentException
+        // 逃逸 UnmanagedCallersOnly → coreclr abort。拦截层必须转 0 返回且进程存活
+        // （本断言能跑到 = 进程没死）。换装失败后旧域已弃——再换一次真路径恢复。
+        Expect(reloadFn("./not/absolute.dll", &leaks, &collected) == 0,
+               "dm reload relative path contained (no abort)");
+        Expect(reloadFn(LEMON_SCRIPT_DIR "/TestScript.dll", &leaks, &collected) == 1,
+               "dm reload recovers after contained failure");
+        Expect(lemonDmTick(0.1f) == (double)0.1f, "recovered domain ticks");
     }
 }
 

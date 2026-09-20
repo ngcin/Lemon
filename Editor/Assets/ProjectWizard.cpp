@@ -24,7 +24,9 @@ using ecs::SceneArchive;
 std::string ProjectWizard::Create(const ProjectDesc& d, uint64_t* outSpawnGuid) {
     if (d.name.empty() || d.parentDir.empty() || d.sdkDir.empty()) return {};
     std::error_code ec;
-    fs::path root = fs::path(d.parentDir) / d.name;
+    // 父目录绝对化（手敲 ./x 等相对路径）：返回 root 与全链路径保持绝对——
+    // LoadFromAssemblyPath 只收绝对路径（M4.6 实测闪退根因之一）
+    fs::path root = fs::absolute(d.parentDir, ec) / d.name;
     if (fs::exists(root, ec)) {
         LEMON_WARN("新建项目失败：目录已存在 %s", root.string().c_str());
         return {};

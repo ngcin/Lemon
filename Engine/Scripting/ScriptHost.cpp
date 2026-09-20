@@ -3,6 +3,8 @@
 
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <string>
 
 #include "Components/CoreComponents.h"
 #include "Components/RenderComponents.h"
@@ -195,8 +197,12 @@ bool ScriptHost::LoadUserAssembly(const char* path) {
 ScriptHost::HotReloadInfo ScriptHost::HotReloadAssembly(const char* path) {
     HotReloadInfo info;
     if (!dmReload_) return info; // 旧 Entry 程序集（无 M4.5 导出）
+    // 绝对化兜底（LoadFromAssemblyPath 只收绝对路径；相对路径 = ArgumentException
+    // 未捕获 → coreclr abort。InitScriptHostFrom 侧早有同款，M4.6 实测闪退后补齐此口）
+    std::error_code eca;
+    const std::string abs = std::filesystem::absolute(path, eca).generic_string();
     int leaks = 0, collected = 0;
-    info.ok = dmReload_(path, &leaks, &collected) == 1;
+    info.ok = dmReload_(abs.c_str(), &leaks, &collected) == 1;
     info.leakCount = leaks;
     info.lastCollected = collected != 0;
     if (hrReloadsFn_) hrCount_ = hrReloadsFn_();

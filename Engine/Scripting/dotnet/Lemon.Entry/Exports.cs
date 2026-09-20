@@ -49,31 +49,53 @@ internal static unsafe class Exports
     }
 
     // ---- M3-2b DomainManager（域线程统一执行；ADR-010 D1）------------------------
+    // 纪律（M4.6 实测闪退教训）：UnmanagedCallersOnly 导出里未捕获的托管异常 =
+    // coreclr 直接 abort 整个进程。所有可能有业务异常的导出一律 try/catch 转
+    // 0 返回值 + stderr（编辑器调用侧已有失败日志/红字路径）。
 
     /// <summary>加载用户脚本程序集（可回收 ALC，域线程执行）；1=成功。</summary>
     [UnmanagedCallersOnly]
     public static int lemon_dm_load(byte* pathUtf8)
     {
-        int len = 0;
-        while (pathUtf8[len] != 0) len++;
-        return DomainManager.LoadScript(System.Text.Encoding.UTF8.GetString(pathUtf8, len)) ? 1 : 0;
+        try {
+            int len = 0;
+            while (pathUtf8[len] != 0) len++;
+            return DomainManager.LoadScript(System.Text.Encoding.UTF8.GetString(pathUtf8, len)) ? 1 : 0;
+        } catch (Exception e) {
+            Console.Error.WriteLine("[lemon] dm_load 异常（已拦，保进程）：" + e.Message);
+            return 0;
+        }
     }
 
     /// <summary>卸载脚本域并确认回收（WeakReference + GC 轮询）；1=回收成功 0=超时（pin 活着）。</summary>
     [UnmanagedCallersOnly]
-    public static int lemon_dm_unload() => DomainManager.UnloadScript() ? 1 : 0;
+    public static int lemon_dm_unload()
+    {
+        try { return DomainManager.UnloadScript() ? 1 : 0; }
+        catch (Exception e) {
+            Console.Error.WriteLine("[lemon] dm_unload 异常（已拦，保进程）：" + e.Message);
+            return 0;
+        }
+    }
 
     /// <summary>M4.5 热重载换装（A 线整域重建）：StateBag 捕获 → 旧域尽力卸载 → 新域装载。
     /// 返回 1 = 新域可用；*leakCount = 累计泄漏换装数；*lastCollected = 本次旧域是否回收。</summary>
     [UnmanagedCallersOnly]
     public static unsafe int lemon_dm_reload(byte* pathUtf8, int* leakCount, int* lastCollected)
     {
-        int len = 0;
-        while (pathUtf8[len] != 0) len++;
-        bool ok = DomainManager.ReloadScript(System.Text.Encoding.UTF8.GetString(pathUtf8, len));
-        if (leakCount != null) *leakCount = DomainManager.LeakCount;
-        if (lastCollected != null) *lastCollected = DomainManager.LastCollected ? 1 : 0;
-        return ok ? 1 : 0;
+        try {
+            int len = 0;
+            while (pathUtf8[len] != 0) len++;
+            bool ok = DomainManager.ReloadScript(System.Text.Encoding.UTF8.GetString(pathUtf8, len));
+            if (leakCount != null) *leakCount = DomainManager.LeakCount;
+            if (lastCollected != null) *lastCollected = DomainManager.LastCollected ? 1 : 0;
+            return ok ? 1 : 0;
+        } catch (Exception e) {
+            Console.Error.WriteLine("[lemon] dm_reload 异常（已拦，保进程）：" + e.Message);
+            if (leakCount != null) *leakCount = DomainManager.LeakCount;
+            if (lastCollected != null) *lastCollected = 0;
+            return 0;
+        }
     }
 
     /// <summary>换装次数 / 累计泄漏次数（Profiler 常驻显示；M4-Editor-Plan §3.7）。</summary>
