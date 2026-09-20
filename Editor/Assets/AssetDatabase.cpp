@@ -396,6 +396,10 @@ bool AssetDatabase::Remove(AssetEntry& e) {
 }
 
 const AssetEntry* AssetDatabase::ImportFile(const std::string& absSrc, const std::string& relDest) {
+    if (!opened_) { // 无项目时 AssetsRoot()="/Assets"（根_)——拷贝必失败且报错误导
+        LEMON_ERROR("导入失败：未打开项目（AssetDatabase 未 OpenProject）");
+        return nullptr;
+    }
     // relDest 语义 = Assets/ 下的相对路径（导入落点恒在资产目录）
     std::error_code ec;
     fs::create_directories(fs::path(AssetsRoot() + "/" + relDest).parent_path(), ec);

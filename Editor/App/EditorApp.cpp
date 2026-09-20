@@ -90,11 +90,8 @@ void EditorApp::BuildMenuBar() {
             MenuSaveScene();
         if (ImGui::MenuItem("另存为...", nullptr, false, !playing_)) MenuSaveSceneAs();
         ImGui::Separator();
-        if (ImGui::MenuItem("新建项目...", nullptr, false, !playing_)) MenuNewProject();
-        if (ImGui::MenuItem("打开项目...", nullptr, false, !playing_)) {
-            pickerMode_ = PickerMode::Import; // 复用目录浏览起点（选 .lemon 上级）
-            LEMON_LOG("打开项目：用 --project <dir> 启动，或新建项目向导（M4 单项目会话）");
-        }
+        if (ImGui::MenuItem("新建项目...", nullptr, false, !ctx_.Playing())) MenuNewProject();
+        if (ImGui::MenuItem("打开项目...", nullptr, false, !ctx_.Playing())) MenuOpenProject();
         ImGui::Separator();
         if (ImGui::MenuItem("退出", nullptr, false, true)) RequestExit();
         ImGui::EndMenu();
@@ -221,6 +218,8 @@ void EditorApp::BuildShortcuts() {
 }
 
 void EditorApp::BuildUI() {
+    playing_ = ctx_.Playing(); // 冗余显示态每帧对齐真值（菜单/快捷键/横幅守卫共用；
+                               // 失同步曾致 Play 中 Ctrl+S 把 Play 世界存进编辑场景）
     BuildShortcuts();
 
     ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -286,13 +285,27 @@ void EditorApp::BuildPickersAndModals() {
                 if (!ctx_.OpenScene(r.path)) LEMON_WARN("打开失败：%s", r.path.c_str());
             } else if (pickerMode_ == PickerMode::Save) {
                 if (ctx_.SaveScene(r.path)) LEMON_LOG("已另存为：%s", r.path.c_str());
-            } else { // Import：复制进 Assets/ 根 + 登记导入（M4.4）
+            } else if (pickerMode_ == PickerMode::Import) { // 复制进 Assets/ 根 + 登记导入（M4.4）
                 std::filesystem::path src(r.path);
                 if (const AssetEntry* e = ctx_.Assets().ImportFile(
                         r.path, src.filename().string())) {
                     if (e->type == AssetType::Sprite) gpuAssets_.ImportSprite(*e);
                     LEMON_LOG("已导入：%s（guid %016llx）", e->relPath.c_str(),
                               (unsigned long long)e->guid);
+                }
+            } else { // OpenProject：选 project.lemon → 会话内切换（M4.6）
+                namespace fs = std::filesystem;
+                const fs::path p(r.path);
+                const std::string root = p.parent_path().string();
+                if (p.filename() != "project.lemon" || !fs::is_regular_file(p)) {
+                    LEMON_WARN("打开项目失败：请选择项目根下的 project.lemon（得到 %s）",
+                               r.path.c_str());
+                } else if (OpenProjectPipeline(root)) {
+                    if (ctx_.dirty) LEMON_WARN("切项目：场景有未保存更改，已被丢弃");
+                    ctx_.NewScene(); // 切项目 = 新会话场景（旧场景引用旧项目资产/脚本）
+                    LEMON_LOG("已打开项目：%s", root.c_str());
+                } else {
+                    LEMON_WARN("打开项目失败：%s", root.c_str());
                 }
             }
         }
@@ -418,8 +431,33 @@ bool EditorApp::ConfirmUnsaved() {
 
 // ---------------------------------------------------------------- 资产 ----
 void EditorApp::MenuImportAsset() {
+    // 无项目守卫：AssetsRoot() = "/Assets"（根_),拷贝必然失败且报错误导（M4.6 实测坑）
+    if (ctx_.Assets().ProjectRoot().empty()) {
+        LEMON_ERROR("导入失败：未打开项目。文件 → 新建项目... 或 打开项目...（也可 --project <dir> 启动）");
+        return;
+    }
     pickerMode_ = PickerMode::Import;
     picker_.Open("导入资产", ctx_.Assets().AssetsRoot(), "", ""); // 任意扩展名
+}
+
+void EditorApp::MenuOpenProject() {
+    if (ctx_.Playing()) {
+        LEMON_WARN("Play 中不能切换项目（先 Stop）");
+        return;
+    }
+    if (ctx_.dirty && !ConfirmUnsaved()) return; // 脏场景先确认（与打开场景同款异步环）
+    // 起点目录：已开项目 → 其父目录（同级切换常见）；否则 HOME
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    std::string start;
+    const std::string& cur = ctx_.Assets().ProjectRoot();
+    if (!cur.empty()) start = fs::path(cur).parent_path().string();
+    if (start.empty() || !fs::is_directory(start, ec)) {
+        if (const char* home = std::getenv("HOME")) start = home;
+        else start = fs::current_path(ec).string();
+    }
+    pickerMode_ = PickerMode::OpenProject;
+    picker_.Open("打开项目（双击 project.lemon）", start, "", ".lemon");
 }
 
 void EditorApp::RescanAssets() {
@@ -458,6 +496,9 @@ bool EditorApp::FindGameProject(std::string& csproj, std::string& dll) {
 }
 
 bool EditorApp::OpenProjectPipeline(const std::string& projectRoot) {
+    // 会话内切换支持（M4.6）：Start 对已运行 watcher 是 no-op，必须先停旧根
+    watcher_.Stop();
+    scriptWatcher_.Stop();
     // spriteId 基址 = 程序化图集登记后首个可用号（跨会话稳定由 manifest 记账）
     const uint32_t spriteIdBase = viewport_->Assets().Registry().SpriteCount() + 1;
     if (!ctx_.Assets().OpenProject(projectRoot, spriteIdBase)) return false;
@@ -465,10 +506,14 @@ bool EditorApp::OpenProjectPipeline(const std::string& projectRoot) {
                     ctx_.Assets(), /*firstSlot=*/2); // 0=调色板 1=字体页
     for (const AssetEntry& e : ctx_.Assets().Entries())
         if (!e.missing && e.type == AssetType::Sprite) gpuAssets_.ImportSprite(e);
-    // 设备丢失重建（"editor-viewport" 先 Reset+重建程序化页 → 此处按 DB 记账号接续）
-    device_->AddRecreateCallback("asset-gpu", [this](rhi::Device& d) {
-        gpuAssets_.RebuildAll(d);
-    });
+    // 设备丢失重建（"editor-viewport" 先 Reset+重建程序化页 → 此处按 DB 记账号接续）；
+    // 只注册一次——会话内切项目重复注册会叠加回调（RebuildAll 被调两遍）
+    if (!assetGpuCbRegistered_) {
+        assetGpuCbRegistered_ = true;
+        device_->AddRecreateCallback("asset-gpu", [this](rhi::Device& d) {
+            gpuAssets_.RebuildAll(d);
+        });
+    }
     watcher_.Start(ctx_.Assets().AssetsRoot());
     scriptWatcher_.Start(ctx_.Assets().ProjectRoot() + "/Game"); // 热重载触发源（§3.7）
     LEMON_LOG("资产管线就绪：项目 %s", projectRoot.c_str());
@@ -484,6 +529,10 @@ bool EditorApp::OpenProjectPipeline(const std::string& projectRoot) {
         } else {
             LEMON_ERROR("Game/ 编译失败（项目仍可编辑，无脚本）：dotnet build %s", csproj.c_str());
         }
+    } else if (launch_->script.empty()) {
+        // 新项目无 Game/：清旧宿主，旧项目脚本类型不得跨项目残留
+        host_.reset();
+        ctx_.SetScriptHost(nullptr);
     }
     return true;
 }
@@ -729,9 +778,17 @@ int EditorApp::Run(const EditorLaunch& launch) {
     // 另由 final-wizard/编译日志计量——不混入 §6 #3 判定）
     const auto tColdStart = launch.finalTest ? std::chrono::steady_clock::now() : tStart;
     while (running) {
-        if (!window_->PollEvents() || window_->IsKeyDown(Key::Escape)) {
+        // 窗口关闭按钮 → 请求退出（消费在下方统一裁决：干净场景直接退，脏场景确认）
+        if (!window_->PollEvents()) {
             if (!exitRequested_) exitRequested_ = true;
         }
+        // ESC 边沿：Play 中 = Stop（编辑器惯例）。Edit 态 ESC 不再触发退出——
+        // 误按一下就整体退出对编辑器太危险（原 anim-smoke 骨架遗留行为，M4.6 移除）
+        const bool esc = window_->IsKeyDown(Key::Escape);
+        if (esc && !escHeld_ && ctx_.Playing()) {
+            if (!ctx_.ExitPlay()) LEMON_WARN("Stop 后快照校验失败（编辑场景已按快照重建）");
+        }
+        escHeld_ = esc;
         // 资产热替换（M4.4）：watcher 置脏 → 重扫 + 增量导入（改文件落盘即时可见）
         if (watcher_.Running() && watcher_.ConsumeDirty()) RescanAssets();
         // C# 热重载（M4.5 §3.7）：Game/ 源写 → 防抖 0.4s（编辑器连续保存不打断）→ 编译+换装
@@ -745,9 +802,15 @@ int EditorApp::Run(const EditorLaunch& launch) {
         ctx_.TickAutosave(ImGui::GetTime() - autosaveClock0);
         if (launch.frames > 0 && (int)frame >= launch.frames) running = false;
         if (forceExit_) running = false;
-        if (exitRequested_ && ctx_.dirty && !quitConfirmArmed_) {
-            quitConfirmOpen_ = true; // 退出前确认（一次）
-            exitRequested_ = false;
+        // 退出裁决：干净场景立即退出；脏场景弹一次确认（M4.6 修复——原先干净场景下
+        // exitRequested_ 无任何消费路径，点关闭按钮毫无反应，直到场景变脏那帧才弹框）
+        if (exitRequested_) {
+            if (ctx_.dirty && !quitConfirmArmed_) {
+                quitConfirmOpen_ = true; // 退出前确认（一次）
+                exitRequested_ = false;
+            } else if (!ctx_.dirty) {
+                running = false;
+            }
         }
         if (!running) break;
         if (window_->TakeResized() && !device_->RecreateSwapchain()) continue;

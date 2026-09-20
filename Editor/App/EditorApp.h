@@ -89,6 +89,8 @@ public:
     void MenuRebuildScripts();
     /// 新建项目向导模态（名字 + 父目录 → blank 模板 → 直接打开）
     void MenuNewProject();
+    /// 会话内打开项目（选 project.lemon → 全管线切换 + 新建场景）
+    void MenuOpenProject();
     double LastHotReloadMs() const { return hotReloadMs_; }
     int HotReloadCount() const;
 
@@ -111,7 +113,7 @@ private:
     /// 崩溃恢复提示模态（启动检测 autosave 新于盘档 → 恢复/忽略）
     void DrawRecoveryModal();
 
-    enum class PickerMode { Open, Save, Import };
+    enum class PickerMode { Open, Save, Import, OpenProject };
     enum class ConfirmContext { Exit, SceneOp };
 
     EditorLaunch launchCopy_;
@@ -164,6 +166,8 @@ private:
     bool forceExit_ = false;       // 确认模态放行退出
     bool quitConfirmOpen_ = false; // 本帧打开模态
     bool quitConfirmArmed_ = false; // 模态已打开（防重复弹）
+    bool escHeld_ = false;         // ESC 边沿检测（Play 中 = Stop）
+    bool assetGpuCbRegistered_ = false; // 设备重建回调只注册一次（会话内切项目防叠加）
     ConfirmContext confirmContext_ = ConfirmContext::Exit;
     bool aboutOpen_ = false;
     uint32_t smokeSeeded_ = 0;     // 冒烟播种实体数（退出时守恒断言）
