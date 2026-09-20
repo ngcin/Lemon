@@ -4,7 +4,9 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
+#include <iterator>
 
 #include "Components/CoreComponents.h"
 #include "Components/RenderComponents.h"
@@ -13,6 +15,8 @@
 #include "ECS/ComponentRegistry.h"
 #include "ECS/Hierarchy.h"
 #include "Serialization/SceneArchive.h"
+#include "Scripting/ScriptBox.h"
+#include "Scripting/ScriptHost.h"
 #include "Systems/Systems.h"
 
 namespace lemon::editor {
@@ -108,6 +112,174 @@ ecs::Entity EditorContext::CreateSpriteEntity(const char* tag, uint32_t spriteId
     return e;
 }
 
+ecs::Entity EditorContext::CreateSpriteEntityFromAsset(const char* tag, uint64_t assetGuid,
+                                                       Vec2 pos) {
+    const AssetEntry* entry = assets_.FindByGuid(assetGuid);
+    if (!entry || entry->missing || entry->type != AssetType::Sprite || entry->spriteId == 0) {
+        LEMON_WARN("创建精灵失败：资产不存在或非 sprite（guid %016llx）",
+                   (unsigned long long)assetGuid);
+        return ecs::Entity::Null();
+    }
+    ecs::Entity e = CreateSpriteEntity(tag, entry->spriteId);
+    scene_->Get<ecs::Transform2D>(e).pos = pos;
+    return e;
+}
+
+// ------------------------------------------------------ 脚本装配（#7）----
+const std::vector<std::string>& EditorContext::ScriptTypeNames() const {
+    static const std::vector<std::string> kEmpty;
+    return scripts_ ? scripts_->BehaviourTypeNames() : kEmpty;
+}
+
+int EditorContext::ResolveScriptTypeId(const char* className) const {
+    if (!scripts_ || !className || !className[0]) return -1;
+    const auto& names = scripts_->BehaviourTypeNames();
+    for (size_t i = 0; i < names.size(); ++i)
+        if (names[i] == className) return (int)i;
+    return -1;
+}
+
+void EditorContext::AttachScript(ecs::Entity e, uint64_t assetGuid, const char* className) {
+    if (e.IsNull() || !scene_->Alive(e)) return;
+    scripting::ScriptBox& sb = scene_->Has<scripting::ScriptBox>(e)
+                                   ? scene_->Get<scripting::ScriptBox>(e)
+                                   : scene_->Emplace<scripting::ScriptBox>(e);
+    sb.scriptGuid = assetGuid;
+    std::memset(sb.className, 0, sizeof(sb.className));
+    std::snprintf(sb.className, sizeof(sb.className), "%s", className ? className : "");
+    sb.typeId = ResolveScriptTypeId(sb.className);
+    sb.flags &= ~1u;
+    dirty = true;
+}
+
+uint32_t EditorContext::SpriteIdOfGuidHex(const char* hex) const {
+    const AssetEntry* e = assets_.FindByGuid(AssetDatabase::HexToGuid(hex));
+    return e && !e->missing ? e->spriteId : 0;
+}
+
+void EditorContext::ResolvePlayScripts() {
+    if (!scripts_ || !playScene_) return;
+    playScene_->Each([this](ecs::Entity e) {
+        scripting::ScriptBox* sb = playScene_->TryGet<scripting::ScriptBox>(e);
+        if (!sb || sb->typeId >= 0) return;
+        int id = ResolveScriptTypeId(sb->className);
+        if (id < 0) {
+            LEMON_WARN("Play 装配：脚本类型未注册（跳过）'%s'", sb->className);
+            return;
+        }
+        scripts_->AttachBehaviour(*playScene_, e, id);
+    });
+}
+
+// ------------------------------------------------------ Prefab（§3.9）----
+uint64_t EditorContext::MakePrefabFrom(ecs::Entity e) {
+    if (e.IsNull() || !scene_->Alive(e)) return 0;
+    const ecs::Meta* m = scene_->TryGet<ecs::Meta>(e);
+    const std::string tag = m && m->tag[0] ? m->tag : "entity";
+    std::string json = SceneArchive::SaveEntityTree(*scene_, e);
+    if (json.empty()) return 0;
+
+    // 落盘 Assets/Prefabs/<tag>.prefab（重名自动 -2/-3…）
+    std::string rel = "Prefabs/" + tag + ".prefab";
+    for (int i = 2; assets_.FindByPath(rel); ++i)
+        rel = "Prefabs/" + tag + "-" + std::to_string(i) + ".prefab";
+    std::string abs = assets_.AssetsRoot() + "/" + rel;
+    std::error_code ec;
+    std::filesystem::create_directories(std::filesystem::path(abs).parent_path(), ec);
+    std::ofstream f(abs, std::ios::binary | std::ios::trunc);
+    if (!f) {
+        LEMON_WARN("Prefab 导出失败：无法写入 %s", abs.c_str());
+        return 0;
+    }
+    f << json;
+    assets_.Rescan();
+    assets_.SaveManifest();
+    const AssetEntry* entry = assets_.FindByPath(rel);
+    if (!entry) {
+        LEMON_WARN("Prefab 导出后登记失败：%s", rel.c_str());
+        return 0;
+    }
+    scene_->Get<ecs::Meta>(e).prefabId = entry->guid; // 回链（§3.9）
+    dirty = true;
+    LEMON_LOG("Prefab 化：%s → %s（guid %016llx）", tag.c_str(), rel.c_str(),
+              (unsigned long long)entry->guid);
+    return entry->guid;
+}
+
+ecs::Entity EditorContext::InstantiatePrefabAsset(uint64_t prefabGuid, Vec2 pos) {
+    const AssetEntry* entry = assets_.FindByGuid(prefabGuid);
+    if (!entry || entry->missing || entry->type != AssetType::Prefab) {
+        LEMON_WARN("Prefab 实例化失败：资产不存在（guid %016llx）",
+                   (unsigned long long)prefabGuid);
+        return ecs::Entity::Null();
+    }
+    std::ifstream f(assets_.AssetsRoot() + "/" + entry->relPath, std::ios::binary);
+    if (!f) return ecs::Entity::Null();
+    std::string json((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    ecs::Scene& s = ActiveScene(); // Play 中脚本 Instantiate.Prefab 落 Play World
+    ecs::Entity root = SceneArchive::LoadEntityTree(s, json);
+    if (root.IsNull()) return root;
+    if (s.Has<ecs::Transform2D>(root)) s.Get<ecs::Transform2D>(root).pos = pos;
+    if (ecs::Meta* m = s.TryGet<ecs::Meta>(root)) m->prefabId = prefabGuid;
+    dirty = !Playing(); // Play 中 = 落 Play World，不动编辑侧脏标记（决议 #5）
+    LEMON_LOG("Prefab 实例化：%s（%u 实体）", entry->relPath.c_str(), s.AliveCount());
+    return root;
+}
+
+bool EditorContext::ApplyPrefabInstance(ecs::Entity e) {
+    if (e.IsNull() || !scene_->Alive(e)) return false;
+    const ecs::Meta* m = scene_->TryGet<ecs::Meta>(e);
+    const AssetEntry* entry = m ? assets_.FindByGuid(m->prefabId) : nullptr;
+    if (!entry || entry->missing) {
+        LEMON_WARN("Apply 失败：prefab 资产缺失（guid %016llx）",
+                   (unsigned long long)(m ? m->prefabId : 0));
+        return false;
+    }
+    std::string json = SceneArchive::SaveEntityTree(*scene_, e);
+    std::ofstream f(assets_.AssetsRoot() + "/" + entry->relPath, std::ios::binary |
+                                                             std::ios::trunc);
+    if (!f) return false;
+    f << json;
+    LEMON_LOG("Prefab Apply：实例写回 %s", entry->relPath.c_str());
+    return true;
+}
+
+bool EditorContext::RevertPrefabInstance(ecs::Entity e) {
+    if (e.IsNull() || !scene_->Alive(e)) return false;
+    const ecs::Meta* m = scene_->TryGet<ecs::Meta>(e);
+    const AssetEntry* entry = m ? assets_.FindByGuid(m->prefabId) : nullptr;
+    if (!entry || entry->missing) return false;
+    std::ifstream f(assets_.AssetsRoot() + "/" + entry->relPath, std::ios::binary);
+    if (!f) return false;
+    std::string json((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+
+    const ecs::Hierarchy* h = scene_->TryGet<ecs::Hierarchy>(e);
+    const ecs::Entity parent = h ? h->parent : ecs::Entity::Null();
+    const uint64_t keepGuid = m ? m->guid : 0; // Revert 保持实例自身 guid（选中集/引用找回）
+    SceneDestroyEntityTree(*scene_, e);
+    ecs::Entity root = SceneArchive::LoadEntityTree(*scene_, json);
+    if (root.IsNull()) return false;
+    if (ecs::Meta* rm = scene_->TryGet<ecs::Meta>(root)) {
+        rm->prefabId = m->prefabId;
+        if (keepGuid) rm->guid = keepGuid;
+    }
+    if (!parent.IsNull()) SceneSetParent(*scene_, root, parent);
+    PruneSelection();
+    Select(root, false);
+    dirty = true;
+    LEMON_LOG("Prefab Revert：实例回到源资产态 %s", entry->relPath.c_str());
+    return true;
+}
+
+void EditorContext::BreakPrefabInstance(ecs::Entity e) {
+    if (e.IsNull() || !scene_->Alive(e)) return;
+    if (ecs::Meta* m = scene_->TryGet<ecs::Meta>(e); m && m->prefabId) {
+        m->prefabId = 0;
+        dirty = true;
+        LEMON_LOG("Prefab Break：断链成普通实体");
+    }
+}
+
 ecs::Entity EditorContext::DuplicateEntity(ecs::Entity e) {
     if (e.IsNull() || !scene_->Alive(e)) return ecs::Entity::Null();
     auto& reg = ecs::ComponentRegistry::Instance();
@@ -199,6 +371,11 @@ bool EditorContext::EnterPlay() {
         playWorld_.reset();
         playScene_ = nullptr;
         return false;
+    }
+    // M4.4 装配通路（#7）：脚本后端接入 + 场景 ScriptBox 按 className 解析挂载
+    if (scripts_) {
+        playWorld_->SetScriptBackend(scripts_);
+        ResolvePlayScripts();
     }
     // §3.4-4：清 Undo 并禁用；选中集快照后清空
     undo_.Clear();

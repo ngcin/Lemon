@@ -7,10 +7,15 @@
 #include <string>
 #include <vector>
 
+#include "Assets/AssetDatabase.h"
 #include "ECS/Entity.h"
 #include "ECS/Scene.h"
 #include "ECS/World.h"
 #include "Tooling/UndoStack.h"
+
+namespace lemon::scripting {
+class ScriptHost;
+}
 
 namespace lemon::editor {
 
@@ -22,6 +27,18 @@ public:
     ecs::World& World() { return *world_; }
     /// 编辑数据（.scene 内容）；IO 一律走它
     ecs::Scene& EditScene() { return *scene_; }
+
+    // ---- 资产库（M4.4；DB 归此处，GPU 缓存/导入器在 EditorApp——设备态不入 ctx）----
+    AssetDatabase& Assets() { return assets_; }
+
+    // ---- C# 脚本装配通路（M4.4 内核 #7；host 由 EditorApp 装配后注入）----
+    void SetScriptHost(scripting::ScriptHost* host) { scripts_ = host; }
+    scripting::ScriptHost* Scripts() const { return scripts_; }
+    /// 已注册脚本类型名（无 host/未加载 = 空）
+    const std::vector<std::string>& ScriptTypeNames() const;
+    int ResolveScriptTypeId(const char* className) const;
+    /// 挂脚本（编辑侧 ScriptBox：className 持久键；typeId 即时解析（无 host = -1））
+    void AttachScript(ecs::Entity e, uint64_t assetGuid, const char* className);
 
     // ---- 场景 IO（M4-Editor-Plan §3.8）----
     /// 新建空场景（untitled；dirty=false）。清空当前 Scene 重建（World 不重建）。
@@ -36,11 +53,25 @@ public:
     // ---- 实体操作（编辑器创建的实体恒带 guid + Meta + Transform2D）----
     ecs::Entity CreateEntity(const char* tag);
     ecs::Entity CreateSpriteEntity(const char* tag, uint32_t spriteId = 4); // 默认柠檬黄
+    /// 资产落地版：sprite 资产 GUID → spriteId（找不到/悬空 = Null + 红字）
+    ecs::Entity CreateSpriteEntityFromAsset(const char* tag, uint64_t assetGuid, Vec2 pos);
     /// 深拷贝组件（注册表驱动 POD 复制）；副本 = 新根 + 新 guid；
     /// EntityRef 字段指向自身集合内的 → 置空（跨副本引用不猜）。子树不复制（M4.2 伴生）。
     ecs::Entity DuplicateEntity(ecs::Entity e);
     /// 删除实体树（含后代），清选择集中成员，dirty 置位
     void DestroyEntityTree(ecs::Entity e);
+
+    // ---- Prefab 最小集（M4-Editor-Plan §3.9；.prefab = 实体子树 JSON，06 §4）----
+    /// 选中实体导出为 Assets/Prefabs/<tag>.prefab + 挂 prefabId 回链；返回资产 GUID（0=败）
+    uint64_t MakePrefabFrom(ecs::Entity e);
+    /// .prefab 实例化（新 guid 集合 + prefabId 回链；pos 覆盖 root 本地位置）
+    ecs::Entity InstantiatePrefabAsset(uint64_t prefabGuid, Vec2 pos);
+    /// 实例改动写回源资产
+    bool ApplyPrefabInstance(ecs::Entity e);
+    /// 回到源资产态（整体：destroy + 重建于原父之下）
+    bool RevertPrefabInstance(ecs::Entity e);
+    /// 断链成普通实体（仅 root prefabId 清零）
+    void BreakPrefabInstance(ecs::Entity e);
 
     // ---- 选择集（末位 = 主选中；M4-Editor-Plan §3.3 双记 guid 在 Undo 接入时补）----
     std::vector<ecs::Entity>& Selection() { return selection_; }
@@ -86,13 +117,20 @@ public:
 
     bool dirty = false; // 场景脏标记（Ctrl+S/关闭确认/状态栏 ●）
 
+    // ---- C# native 钩子入参形态（EditorApp 装进 SetEditorAssetHooks；M4.4 #8）----
+    /// GUID hex（C# Assets.SpriteOf 参数）→ spriteId（0 = 无/悬空）
+    uint32_t SpriteIdOfGuidHex(const char* hex) const;
+
 private:
     void BackfillGuids(); // 打开旧档（无 guid 字段）时补齐
+    void ResolvePlayScripts(); // EnterPlay：ScriptBox.className → typeId → AttachBehaviour
 
     std::unique_ptr<ecs::World> world_;
     ecs::Scene* scene_ = nullptr;
     std::string scenePath_;
     std::vector<ecs::Entity> selection_;
+    AssetDatabase assets_;
+    scripting::ScriptHost* scripts_ = nullptr;
 
     // Play 沙盒态
     std::unique_ptr<ecs::World> playWorld_;

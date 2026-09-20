@@ -3,6 +3,10 @@
 #   * ImGui 头文件只准出现在本目录（lemon-engine 零 ImGui 引用；tests/imgui_isolation.cmake 断言）
 #   * App/ImGuiBackend.cpp 是本目录唯一含 Vulkan 头的 TU（后端 glue 豁免，07 例外登记）
 #   * Vulkan 类型不出现在 Editor 其他文件；引擎资源一律经 rhi:: 自有句柄
+# 分层（M4.4）：
+#   * lemon-editor-core —— 无 ImGui/无窗口的编辑器逻辑（EditorContext/AssetDatabase/
+#     FileWatcher/AssetGpuCache/Undo），lemon-tests 链接它做纯逻辑单测
+#   * lemon-editor —— 面板/App 壳（ImGui），链接 core + lemon-imgui
 
 if(NOT imgui_SOURCE_DIR)
   message(FATAL_ERROR "imgui dependency missing (cmake/Dependencies.cmake)")
@@ -10,6 +14,22 @@ endif()
 if(NOT stb_SOURCE_DIR)
   message(FATAL_ERROR "stb dependency missing (cmake/Dependencies.cmake)")
 endif()
+
+# ---------------------------------------------------------------------------
+# lemon-editor-core —— 编辑器逻辑层（ImGui-free；AssetGpuCache 仅经 ImGuiBackend.h
+# 纯净头调用注册接口，实现链接在 lemon-editor）
+add_library(lemon-editor-core STATIC
+  EditorContext.cpp
+  Assets/AssetDatabase.cpp
+  Assets/AssetGpuCache.cpp
+  Assets/FileWatcher.cpp
+  Tooling/UndoStack.cpp)
+target_include_directories(lemon-editor-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(lemon-editor-core PRIVATE ${stb_SOURCE_DIR})
+target_link_libraries(lemon-editor-core
+  PUBLIC lemon-engine
+  PRIVATE nlohmann_json::nlohmann_json)
+target_compile_features(lemon-editor-core PUBLIC cxx_std_20)
 
 # ---------------------------------------------------------------------------
 # lemon-imgui — Dear ImGui 官方源包装（docking 分支 v1.92.9b-docking）
@@ -37,19 +57,24 @@ add_executable(lemon-editor
   EditorEntry.cpp
   App/EditorApp.cpp
   App/ImGuiBackend.cpp
-  EditorContext.cpp
   Panels/Panels.cpp
+  Panels/AssetBrowserPanel.cpp
   Panels/HierarchyPanel.cpp
   Panels/InspectorPanel.cpp
   Panels/ProfilerPanel.cpp
   Panels/ViewportPanels.cpp
   Interaction/ViewportRenderer.cpp
   Tooling/FilePicker.cpp
-  Tooling/StbImpl.cpp
-  Tooling/UndoStack.cpp)
+  Tooling/StbImpl.cpp)
 target_include_directories(lemon-editor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${stb_SOURCE_DIR})
-target_link_libraries(lemon-editor PRIVATE lemon-engine lemon-imgui)
+target_link_libraries(lemon-editor PRIVATE lemon-editor-core lemon-imgui)
 target_compile_features(lemon-editor PRIVATE cxx_std_20)
+
+# M4.4 脚本宿主：--script 需要 LEMON.Entry 产物路径宏（无脚本层构建 = 该参数降级告警）
+if(LEMON_BUILD_SCRIPTING)
+  target_link_libraries(lemon-editor PRIVATE lemon-csharp)
+  add_dependencies(lemon-editor lemon-dotnet-asm)
+endif()
 
 if(APPLE)
   # 开窗口目标必带（同 anim-smoke；DevLog P1）：brew 验证层 JSON 裸名 dlopen 靠此命中

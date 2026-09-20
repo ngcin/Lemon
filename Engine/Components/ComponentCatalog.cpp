@@ -26,6 +26,7 @@ namespace {
 #define ED_RANGE(lo, hi) { FieldHint::Range, lo, hi }
 #define ED_HIDE { FieldHint::Hide }
 #define ED_TIP(tip) { FieldHint::None, 0, 0, nullptr, 0, tip }
+#define ED_ASSET(tip) { FieldHint::AssetRef, 0, 0, nullptr, 0, tip }
 
 // ---- Core（id 0..4）----
 constexpr FieldMeta kTransform2D[] = {
@@ -54,7 +55,7 @@ constexpr FieldMeta kSpriteRenderer[] = {
     FIELD(SpriteRenderer, sortOrder, Int16), FIELD(SpriteRenderer, sortingLayer, UInt8),
     FIELD(SpriteRenderer, flags, UInt8)};
 constexpr FieldEditorMeta kEdSpriteRenderer[] = {
-    ED_TIP("图集精灵 id（M4.4 起换资产 GUID 槽）"), ED_COLOR, ED, ED,
+    ED_ASSET("精灵资产槽（AssetBrowser 拖入 / 下拉选择；M4.4 接通）"), ED_COLOR, ED, ED,
     ED_TIP("bit2 enabled / bit0 flipX / bit1 flipY")};
 constexpr FieldMeta kAnimator2D[] = {
     FIELD(Animator2D, clipId, UInt32), FIELD(Animator2D, time, Float),
@@ -167,6 +168,7 @@ constexpr FieldMeta kIncrementalState[] = {
 #undef ED_RANGE
 #undef ED_HIDE
 #undef ED_TIP
+#undef ED_ASSET
 
 // ---- 定长数组段（元素字段表 + 段登记；序列化/状态哈希共用，见 ArraySegMeta）----
 constexpr FieldMeta kStatusInst[] = {

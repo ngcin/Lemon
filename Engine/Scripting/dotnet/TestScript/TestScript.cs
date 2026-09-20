@@ -14,6 +14,43 @@ public static class GameMain
             Lemon.Events.Push(Lemon.Interop.GameEvent.Custom, 42, m.Src, m.Dst));
         // M3-5：档① 注册
         Lemon.Behaviours.Register<CountingBehaviour>();
+        // M4.4 SDK 增量验收（编辑器 --script 冒烟专用；此处仅注册不装配，
+        // 对既有 script-tests 断言零影响）
+        Lemon.Behaviours.Register<SpawnerBehaviour>();
+        Lemon.Behaviours.Register<InputMoverBehaviour>();
+    }
+}
+
+/// <summary>M4.4：Instantiate.Spawn + Assets.SpriteOf（GUID→导入 sprite）刷怪验收。
+/// 编辑器冒烟播种实体的 ScriptBox.className = "SpawnerBehaviour"。</summary>
+public sealed class SpawnerBehaviour : Lemon.LemonBehaviour
+{
+    private const string kSpriteGuid = "5bd31a7c10e9f2c8"; // 冒烟项目预置 .meta 固定 GUID
+    private int _tick;
+    private uint _spriteId;
+
+    protected override void Start()
+        => _spriteId = Lemon.Assets.SpriteOf(kSpriteGuid);
+
+    protected override void Update()
+    {
+        if (++_tick < 5 || _tick > 40) return; // 第 5..40 帧每帧 1 只（冒烟断言 36 只）
+        var t = gameObject.GetComponent<Lemon.Interop.Transform2D>();
+        var at = new Lemon.Vec2(t.Pos.X + 40 + _tick * 2, t.Pos.Y - 20);
+        Lemon.Instantiate.Spawn(_spriteId, at);
+    }
+}
+
+/// <summary>M4.4：Input 语义读取验收（GameView 聚焦时 WASD 播放进 Play World）。</summary>
+public sealed class InputMoverBehaviour : Lemon.LemonBehaviour
+{
+    public const float Speed = 240f;
+
+    protected override void Update()
+    {
+        var v = gameObject.GetComponent<Lemon.Interop.Transform2D>();
+        v.Pos = v.Pos + Lemon.Input.Axis * (Speed * (1f / 60f));
+        gameObject.SetComponent(v);
     }
 }
 

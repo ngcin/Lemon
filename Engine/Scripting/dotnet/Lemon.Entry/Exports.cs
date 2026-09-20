@@ -123,6 +123,24 @@ internal static unsafe class Exports
     [UnmanagedCallersOnly]
     public static int lemon_behaviours_types() => Lemon.Behaviours.TypeCount;
 
+    /// <summary>注册脚本类型名表（M4.4 编辑器装配通路）：'\n' 分隔写入 dst，'\0' 结尾。
+    /// 返回类型数；cap 不足返回 -1（调用方换大缓冲重试）。</summary>
+    [UnmanagedCallersOnly]
+    public static unsafe int lemon_behaviours_list(byte* dst, int cap)
+    {
+        var names = Lemon.Behaviours.RegisteredNames;
+        int total = 0;
+        foreach (var n in names) total += n.Length + 1; // 名 + '\n'
+        if (total >= cap) return -1;
+        int p = 0;
+        foreach (var n in names) {
+            for (int i = 0; i < n.Length; i++) dst[p++] = (byte)n[i];
+            dst[p++] = (byte)'\n';
+        }
+        dst[total > 0 ? total - 1 : 0] = 0; // 末 '\n' 换成 '\0'（空表 = 首字节 \0）
+        return names.Length;
+    }
+
     [UnmanagedCallersOnly]
     public static int lemon_behaviours_attached() => Lemon.Behaviours.AttachedCount;
 

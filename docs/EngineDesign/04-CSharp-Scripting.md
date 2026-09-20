@@ -68,7 +68,13 @@ public abstract class LemonBehaviour        // ≈ Unity / Prowl2D 的 MonoBehav
 }
 ```
 
-- C++ 侧每个含脚本的实体挂一个 `ScriptBox {int32_t typeId; GCHandle token;}` 组件；`ScriptRegistry` 维护 typeId → C# 工厂。**ScriptBox 不入 ComponentRegistry**（M3 落地决策：桥运行时态入注册表会进 StateHash/序列化，破坏回放与 .scene 语义——作为普通组件挂 Scene 层，`.scene` 脚本序列化记资产 GUID 留 M4）。
+- C++ 侧每个含脚本的实体挂一个 `ScriptBox {int32_t typeId; GCHandle token;}` 组件；`ScriptRegistry` 维护 typeId → C# 工厂。**ScriptBox 不入 ComponentRegistry**（M3 落地决策：桥运行时态入注册表会进 StateHash/序列化，破坏回放与 .scene 语义——作为普通组件挂 Scene 层）。
+  > **M4.4 落地（脚本序列化格式定稿）**：ScriptBox 扩为 `{typeId, flags, scriptGuid,
+  > className[24]}`（Scripting/ScriptBox.h，从 ScriptHost.h 拆出轻量包含）；`.scene`
+  > 实体附加 `"script": {"guid": <u64>, "class": "<TypeName>"}` 成员——**typeId 注册序
+  > 不持久**（代码增删即漂移），className 是持久键，装载后由宿主按名解析（编辑器
+  > `lemon_behaviours_list` 导出类型名表；`--script` 装配，EnterPlay 统一 Attach）。
+  > scriptGuid 供资产侧追踪/热重载目标（0 = 未关联 .cs 资产，仅类名装配）。
 - **调度（SceneDispatcher 位掩码方案，Prowl2D 已验证，ADR-009）**：
   - 注册期反射**一次**算出每类型 override 集 → 位掩码（Awake/Update/… 各占一位）；**未 override 的生命周期零成本**（整类实例直接跳过）；
   - dense 数组：活动 ScriptBox 按 typeId 分桶连续存放（挂载即池），同类型委托连续调用（icache 友好）；增删只入队，**每帧至多一次重排**；

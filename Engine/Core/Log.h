@@ -32,6 +32,7 @@ uint64_t LogCountOf(LogLevel level);
 
 #define LEMON_LOG(...) ::lemon::LogMsg(::lemon::LogLevel::Info, __VA_ARGS__)
 #define LEMON_WARN(...) ::lemon::LogMsg(::lemon::LogLevel::Warn, __VA_ARGS__)
+#define LEMON_ERROR(...) ::lemon::LogMsg(::lemon::LogLevel::Error, __VA_ARGS__)
 
 // 不可达/引擎内部不变量破坏：立即终止（不 recover，错误应在开发期暴露）
 #define LEMON_ASSERT(cond, ...)                                              \

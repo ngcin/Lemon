@@ -137,6 +137,21 @@ void SceneViewPanel::OnGui(EditorApp& app) {
             std::memcpy(&dropped, pay->Data, sizeof(dropped));
             if (SceneSetParent(ctx.ActiveScene(), dropped, Entity::Null())) ctx.dirty = true;
         }
+        // 资产拖入（M4.4）：sprite = 光标处建实体；prefab = 光标处实例化
+        if (const ImGuiPayload* pay = ImGui::AcceptDragDropPayload("LemonAsset")) {
+            AssetDragPayload d{};
+            std::memcpy(&d, pay->Data, sizeof(d));
+            const std::string before = ctx.SnapshotSceneJson();
+            Entity ne = Entity::Null();
+            if (d.kind == 0)
+                ne = ctx.CreateSpriteEntityFromAsset("Sprite", d.guid, mouseWorld);
+            else if (d.kind == 1)
+                ne = ctx.InstantiatePrefabAsset(d.guid, mouseWorld);
+            if (!ne.IsNull()) {
+                ctx.Select(ne, false);
+                if (!ctx.Playing()) ctx.PushStructuralUndo("资产拖入视口", before);
+            }
+        }
         ImGui::EndDragDropTarget();
     }
     // 视口角标

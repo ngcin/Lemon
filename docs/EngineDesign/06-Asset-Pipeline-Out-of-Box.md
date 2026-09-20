@@ -60,6 +60,14 @@ MyGame/                                   # 用户项目（升级永不触碰）
 
 - **热重载**：`FileWatcher`（线程轮询，Luma 同款）触发增量导入 → 按依赖图通知（纹理变更 → 重建图集页 → 受影响场景视口刷新标记）。运行中 Play 的资产热替换（贴图/参数即时生效，音效不中断）。
 
+> **M4.4 落地范围注记（与 05/M4-Editor-Plan §1.2 对齐）**：sprite 族先行——每 PNG
+> 独立纹理页（bindless 槽 2..，上限 kMaxTextureSlots=64）+ 一页一全幅 sprite；
+> 切片/手动划分与 MaxRects 图集打包随消费者落 M5+/M6。删除资产 = **墓碑**（号与
+> GPU 纹理保留到重启：登记号仍在 AtlasRegistry，销毁纹理会使引用中的 spriteId 采样
+> 悬空描述符）；体检红字覆盖孤儿 meta / GUID 冲突 / 缺失引用。prefab 资产落位
+> `Assets/Prefabs/`（本册 §1 根级 Prefabs/ 目录随 M4.5 项目向导统一）。
+> manifest 记账 spriteId 只增不减 → 已存场景引用不因增删资产漂移。
+
 ## 3. 场景与数据格式（JSON + 行程编码，可 diff 的紧凑格式）
 
 - 场景 `.scene` = JSON（schema 版本化）：

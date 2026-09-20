@@ -4,6 +4,8 @@
 #include <cstdio>
 #include <cstring>
 
+#include "Components/CoreComponents.h"
+#include "Components/RenderComponents.h"
 #include "ECS/ComponentRegistry.h"
 
 namespace lemon::scripting {
@@ -40,7 +42,63 @@ int NativeWrite(uint64_t e, uint8_t id, const void* src, uint32_t size) {
     std::memcpy(p, src, m.sizeOf);
     return (int)m.sizeOf;
 }
-const NativeApiVtable kNativeApi{NativeIsAlive, NativeHas, NativeRead, NativeWrite};
+
+// ---- M4.4 SDK 增量（M4-Editor-Plan §4-8）----
+// 编辑器资产钩子（进程级；编辑器宿主装配期注入，纯运行时为空）
+EditorAssetHooks g_editorAssets{nullptr, nullptr};
+} // namespace
+
+void SetEditorAssetHooks(const EditorAssetHooks& hooks) { g_editorAssets = hooks; }
+
+namespace {
+
+void NativeGetInput(uint64_t* buttons, float* ax, float* ay) {
+    // 域线程 tick 期间 g_world 有效（与 isAlive 等同一窗口约定）
+    if (g_world) {
+        const ecs::InputState& in = g_world->Input();
+        if (buttons) *buttons = in.buttons;
+        if (ax) *ax = in.ax;
+        if (ay) *ay = in.ay;
+    } else {
+        if (buttons) *buttons = 0;
+        if (ax) *ax = 0;
+        if (ay) *ay = 0;
+    }
+}
+
+uint32_t NativeSpriteOfGuid(const char* guidHex) {
+    return g_editorAssets.spriteOfGuid ? g_editorAssets.spriteOfGuid(guidHex) : 0;
+}
+
+uint64_t NativeSpawnSprite(uint32_t spriteId, float x, float y) {
+    // 就地建实体（当帧 C# 批量块已构造完毕，新实体下帧可见——与 SceneOps 命令缓冲
+    // 的跨帧生效语义一致；省去占位句柄两段式）。Meta.guid=0 = 运行时生成实体。
+    if (!g_scene) return 0;
+    ecs::Entity e = g_scene->Create();
+    auto& tf = g_scene->Emplace<ecs::Transform2D>(e);
+    tf.pos = {x, y};
+    if (spriteId != 0) {
+        auto& sr = g_scene->Emplace<ecs::SpriteRenderer>(e);
+        sr.spriteId = spriteId;
+        sr.flags = 0x4; // enabled
+    }
+    auto& m = g_scene->Emplace<ecs::Meta>(e);
+    std::snprintf(m.tag, sizeof(m.tag), "spawned");
+    return e.id;
+}
+
+uint64_t NativeInstantiatePrefab(const char* guidHex, float x, float y) {
+    return g_editorAssets.instantiatePrefab ? g_editorAssets.instantiatePrefab(guidHex, x, y) : 0;
+}
+
+const NativeApiVtable kNativeApi{NativeIsAlive,
+                                 NativeHas,
+                                 NativeRead,
+                                 NativeWrite,
+                                 NativeGetInput,
+                                 NativeSpriteOfGuid,
+                                 NativeSpawnSprite,
+                                 NativeInstantiatePrefab};
 } // namespace
 
 namespace {
@@ -125,7 +183,8 @@ bool ScriptHost::Initialize(const char* dotnetRoot, const char* runtimeConfigPat
 bool ScriptHost::LoadUserAssembly(const char* path) {
     if (!dmLoad_ || dmLoad_(path) != 1) return false;
     userLoaded_ = true;
-    batchPulled_ = false; // 惰性：注册表此时可能尚未登记（World 未构造），首帧再拉
+    batchPulled_ = false;     // 惰性：注册表此时可能尚未登记（World 未构造），首帧再拉
+    behaviourNames_.clear();  // 换装程序集 → 类型名表重拉（M4.5 热重载同路径）
     return true;
 }
 
@@ -223,8 +282,36 @@ void ScriptHost::TickBatch(ecs::World& world, ecs::Scene& scene, float dt) {
 }
 
 void ScriptHost::AttachBehaviour(ecs::Scene& scene, ecs::Entity e, int typeId) {
-    scene.Emplace<ScriptBox>(e, ScriptBox{(int32_t)typeId, 0});
+    // get-or-create：场景档（.scene script 段）已带 ScriptBox（typeId=-1 待解析）时
+    // 原位覆写，不二次 Emplace（entt 对已有组件再 emplace = 池损坏）
+    if (ScriptBox* sb = scene.TryGet<ScriptBox>(e)) {
+        sb->typeId = typeId;
+        sb->flags &= ~1u;
+    } else {
+        scene.Emplace<ScriptBox>(e, ScriptBox{(int32_t)typeId, 0, 0, {}});
+    }
     if (scriptsAttachFn_) scriptsAttachFn_(typeId, e.id);
+}
+
+const std::vector<std::string>& ScriptHost::BehaviourTypeNames() {
+    if (!behaviourNames_.empty() || !userLoaded_) return behaviourNames_;
+    if (!behavioursListFn_) {
+        behavioursListFn_ =
+            (int (*)(char*, int))host_.GetExport("Lemon.Entry.Exports, Lemon.Entry",
+                                                 "lemon_behaviours_list");
+        if (!behavioursListFn_) return behaviourNames_;
+    }
+    char buf[4096];
+    int n = behavioursListFn_(buf, (int)sizeof(buf));
+    (void)n;
+    for (const char* p = buf; *p;) { // '\n' 分隔、'\0' 结尾
+        const char* nl = std::strchr(p, '\n');
+        size_t len = nl ? (size_t)(nl - p) : std::strlen(p);
+        behaviourNames_.emplace_back(p, len);
+        if (!nl) break;
+        p = nl + 1;
+    }
+    return behaviourNames_;
 }
 
 uint64_t ScriptHost::GcAllocated() const {

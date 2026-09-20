@@ -161,6 +161,11 @@ void HierarchyPanel::DrawNode(EditorApp& app, ecs::Entity e, bool hasHierarchy) 
             }
         }
         ImGui::Separator();
+        if (ImGui::MenuItem("Prefab 化（导出 + 回链）", nullptr, false, !ctx.Playing())) {
+            const std::string before = ctx.SnapshotSceneJson();
+            if (ctx.MakePrefabFrom(e)) ctx.PushStructuralUndo("Prefab 化", before);
+        }
+        ImGui::Separator();
         if (ImGui::MenuItem("删除 (Del)")) {
             const std::string before = ctx.SnapshotSceneJson();
             ctx.DestroyEntityTree(e);

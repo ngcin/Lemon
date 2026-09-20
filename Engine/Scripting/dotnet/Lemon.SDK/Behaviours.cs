@@ -79,6 +79,27 @@ public static class Behaviours
 
     public static int TypeCount => Slots.Count;
 
+    /// <summary>类型名表（M4.4 编辑器装配通路：Inspector 列表/className 解析）。</summary>
+    public static string[] RegisteredNames
+    {
+        get {
+            var names = new string[Slots.Count];
+            for (int i = 0; i < Slots.Count; i++) names[i] = Slots[i].Name;
+            return names;
+        }
+    }
+
+    /// <summary>类名 → typeId（注册序；不存在 = -1）。</summary>
+    public static int TypeIdOf(string name)
+    {
+        for (int i = 0; i < Slots.Count; i++)
+            if (Slots[i].Name == name) return i;
+        return -1;
+    }
+
+    /// <summary>类型 → typeId（泛型版；未注册 = -1）。</summary>
+    public static int TypeIdOf<T>() where T : LemonBehaviour, new() => TypeIdOf(typeof(T).Name);
+
     /// <summary>挂载（结构命令 AttachScript 应用时由 Entry 调用；域线程）。</summary>
     internal static void Attach(int typeId, EntityHandle e)
     {

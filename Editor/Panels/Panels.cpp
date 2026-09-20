@@ -58,27 +58,6 @@ private:
     bool autoScroll_ = true;
 };
 
-// ------------------------------------------------------------- 占位面板 ----
-// Scene/Game → M4.2；Assets → M4.4。窗口名是默认布局 DockBuilder 的落位键，先行占位。
-class PlaceholderPanel final : public IEditorPanel {
-public:
-    PlaceholderPanel(const char* name, const char* stage) : name_(name), stage_(stage) {}
-    const char* Name() const override { return name_; }
-    void OnGui(EditorApp&) override {
-        if (!ImGui::Begin(name_, nullptr, ImGuiWindowFlags_NoCollapse)) {
-            ImGui::End();
-            return;
-        }
-        ImGui::TextUnformatted(stage_);
-        ImGui::TextUnformatted("（M4-Editor-Plan §5 子阶段填充中）");
-        ImGui::End();
-    }
-
-private:
-    const char* name_;
-    const char* stage_;
-};
-
 } // namespace
 
 std::vector<std::unique_ptr<IEditorPanel>> CreateAllPanels() {
@@ -87,7 +66,7 @@ std::vector<std::unique_ptr<IEditorPanel>> CreateAllPanels() {
     out.push_back(std::make_unique<InspectorPanel>());
     out.push_back(std::make_unique<SceneViewPanel>());
     out.push_back(std::make_unique<GameViewPanel>());
-    out.push_back(std::make_unique<PlaceholderPanel>("Assets", "资产浏览器（M4.4：GUID/.meta/manifest）"));
+    out.push_back(std::make_unique<AssetBrowserPanel>());
     out.push_back(std::make_unique<ConsolePanel>());
     out.push_back(std::make_unique<ProfilerPanel>());
     return out;

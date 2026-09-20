@@ -4,11 +4,13 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "ECS/Scene.h"
 #include "ECS/World.h"
 #include "Scripting/CoreCLRHost.h"
+#include "Scripting/ScriptBox.h"
 
 namespace lemon::scripting {
 
@@ -30,20 +32,27 @@ struct BatchSystemFrame {
 static_assert(sizeof(BatchBlock) == 24);
 static_assert(sizeof(BatchSystemFrame) == 40); // disabled 落在原尾垫（C# 同规则）
 
-/// 档① 脚本组件（普通 entt 组件；**不入 ComponentRegistry**——GCHandle/类型 id 属
-/// 运行时桥状态，入注册表会进 StateHash/序列化，破坏回放与 .scene 语义）。
-struct ScriptBox {
-    int32_t typeId = -1;     // Behaviours 注册序（C# 侧）
-    uint32_t flags = 0;      // bit0 disabled（异常禁用）
-};
-
 /// native 函数表（低频语法糖通道；与 Lemon.SDK/NativeApi.cs 逐字节一致）
 struct NativeApiVtable {
     int (*isAlive)(uint64_t);
     int (*hasComponent)(uint64_t, uint8_t);
     int (*readComponent)(uint64_t, uint8_t, void*, uint32_t);
     int (*writeComponent)(uint64_t, uint8_t, const void*, uint32_t);
+    // ---- M4.4 SDK 最小增量（M4-Editor-Plan §4-8；表尾追加 = 旧宿主零扰动）----
+    void (*getInput)(uint64_t* buttons, float* ax, float* ay);      // 当前 InputState 快照
+    uint32_t (*spriteOfGuid)(const char*);                          // 资产 GUID → spriteId（0=无）
+    uint64_t (*spawnSprite)(uint32_t, float, float);                // Instantiate.Spawn → 实体句柄
+    uint64_t (*instantiatePrefab)(const char*, float, float);       // Prefab 实例化 → 句柄（0=失败）
 };
+
+/// 编辑器资产钩子（M4.4：编辑器宿主装配期经 SetEditorAssetHooks 注入；
+/// 纯运行时（打包游戏）不装 = 相关 native 入口返回 0，脚本侧无编辑器依赖）
+struct EditorAssetHooks {
+    uint32_t (*spriteOfGuid)(const char* guidHex);
+    uint64_t (*instantiatePrefab)(const char* guidHex, float x, float y);
+};
+/// 进程级单份（宿主装配期一次；thread-safe 之前 = 引导期约定）
+void SetEditorAssetHooks(const EditorAssetHooks& hooks);
 
 /// 结构命令（与 Lemon.SDK/SceneOps.cs SceneOp 一致，16B）
 struct SceneOpC {
@@ -71,6 +80,10 @@ public:
 
     /// 挂载脚本组件（宿主装配期用；bench/编辑器入口）——ScriptBox + 托管实例/Awake。
     void AttachBehaviour(ecs::Scene& scene, ecs::Entity e, int typeId);
+
+    /// 已注册脚本类型名表（M4.4 编辑器装配通路：Inspector 列表/className→typeId 解析；
+    /// 未加载用户程序集返回空）。惰性拉取缓存。
+    const std::vector<std::string>& BehaviourTypeNames();
 
     /// 托管累计分配字节数（GC 纪律验收；两次读数差 = 期间分配）。
     uint64_t GcAllocated() const;
@@ -106,11 +119,13 @@ private:
     void (*scriptsAttachFn_)(int, uint64_t) = nullptr;
     void (*scriptsDestroyFn_)(uint64_t) = nullptr;
     int (*opsPullFn_)(SceneOpC*, int) = nullptr;
+    int (*behavioursListFn_)(char*, int) = nullptr; // 惰性解析一次（BehaviourTypeNames 用）
     mutable unsigned long long (*gcAllocFn_)() = nullptr; // 惰性解析一次（GetExport 每调
     // 一次会在托管侧分配——M3-7 GC 验收实测坑）
 
     std::vector<ecs::EventPacket> pullBuf_; // 脚本 pending 拉取缓冲（复用）
     std::vector<SceneOpC> opBuf_;           // 结构命令拉取缓冲（复用）
+    std::vector<std::string> behaviourNames_; // 惰性缓存（BehaviourTypeNames）
     bool scriptsNeedTick_ = true;           // 档① 实例存在时即使无批量帧也要跑 tick
     bool batchPulled_ = false;              // 注册表惰性拉取标记（M3-7：装配可早于 World）
 

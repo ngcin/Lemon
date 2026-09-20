@@ -5,7 +5,8 @@ using System.Runtime.InteropServices;
 
 namespace Lemon;
 
-/// <summary>与 C++ lemon::scripting::NativeApi 逐字节一致（两侧同步改）。</summary>
+/// <summary>与 C++ lemon::scripting::NativeApiVtable 逐字节一致（两侧同步改；
+/// M4.4 表尾追加 4 项——旧宿主（未注册新项）时为 null，SDK 侧判空调用）。</summary>
 [StructLayout(LayoutKind.Sequential)]
 public unsafe struct NativeApi
 {
@@ -13,6 +14,10 @@ public unsafe struct NativeApi
     public delegate* unmanaged<ulong, byte, int> HasComponent;
     public delegate* unmanaged<ulong, byte, void*, uint, int> ReadComponent;   // 拷贝，返回字节数
     public delegate* unmanaged<ulong, byte, void*, uint, int> WriteComponent;  // 写回，返回字节数
+    public delegate* unmanaged<ulong*, float*, float*, void> GetInput;         // M4.4：InputState 快照
+    public delegate* unmanaged<byte*, uint> SpriteOfGuid;                      // M4.4：资产 GUID → spriteId
+    public delegate* unmanaged<uint, float, float, ulong> SpawnSprite;         // M4.4：Instantiate.Spawn
+    public delegate* unmanaged<byte*, float, float, ulong> InstantiatePrefab;  // M4.4：Prefab 实例化
 }
 
 internal static unsafe class Native
@@ -41,5 +46,38 @@ internal static unsafe class Native
         T* buf = stackalloc T[1];
         buf[0] = comp;
         return Api.WriteComponent(e, ComponentTable.Id<T>(), buf, (uint)sizeof(T)) == sizeof(T);
+    }
+
+    // ---- M4.4 SDK 增量（宿主未注册新表项时安全降级：零输入/0/句柄 0）----
+
+    internal static (ulong buttons, float ax, float ay) Input()
+    {
+        if (Api.GetInput == null) return (0, 0, 0);
+        ulong b; float ax = 0, ay = 0;
+        Api.GetInput(&b, &ax, &ay);
+        return (b, ax, ay);
+    }
+
+    internal static uint SpriteOfGuid(string guidHex)
+    {
+        if (Api.SpriteOfGuid == null || guidHex == null) return 0;
+        byte* p = stackalloc byte[64];
+        int n = System.Math.Min(guidHex.Length, 63);
+        for (int i = 0; i < n; i++) p[i] = (byte)guidHex[i];
+        p[n] = 0;
+        return Api.SpriteOfGuid(p);
+    }
+
+    internal static ulong Spawn(uint spriteId, float x, float y)
+        => Api.SpawnSprite != null ? Api.SpawnSprite(spriteId, x, y) : 0;
+
+    internal static ulong InstantiatePrefabGuid(string guidHex, float x, float y)
+    {
+        if (Api.InstantiatePrefab == null || guidHex == null) return 0;
+        byte* p = stackalloc byte[64];
+        int n = System.Math.Min(guidHex.Length, 63);
+        for (int i = 0; i < n; i++) p[i] = (byte)guidHex[i];
+        p[n] = 0;
+        return Api.InstantiatePrefab(p, x, y);
     }
 }

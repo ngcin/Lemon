@@ -43,6 +43,7 @@ public:
     const AtlasRegistry& Registry() const { return atlas_; }
     BitmapFont& Font() { return font_; }
     uint32_t WhiteSprite() const { return whiteId_; } // overlay 染色底纹（Build 时登记）
+    rhi::Texture Page() const { return page_; }       // 调色板页（AssetBrowser 图标源）
 
 private:
     AtlasRegistry atlas_;
@@ -92,6 +93,8 @@ public:
 
     uint32_t LastSceneVisible() const { return lastSceneVisible_; }
     ProceduralAtlas& Assets() { return assets_; }
+    /// 调色板页的 ImGui 纹理（AssetBrowser 非资产图标：色块 uv 子区）。null = 未注册
+    void* PaletteIconTex() const { return paletteIconTex_; }
     /// 编辑相机世界→屏幕（用于鼠标坐标换算；面板持有 RT 尺寸）
     Vec2 WorldToScreen(const Camera2D& cam, Vec2 world, uint32_t rtW, uint32_t rtH) const;
     Vec2 ScreenToWorld(const Camera2D& cam, Vec2 screen, uint32_t rtW, uint32_t rtH) const;
@@ -122,6 +125,7 @@ private:
     };
     RT rts_[2];
     uint32_t lastSceneVisible_ = 0;
+    void* paletteIconTex_ = nullptr; // 调色板页 ImTextureID（图标源；设备丢失重注册）
 };
 
 } // namespace lemon::editor

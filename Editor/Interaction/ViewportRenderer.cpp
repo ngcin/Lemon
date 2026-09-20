@@ -65,6 +65,7 @@ void ViewportRenderer::Init(rhi::Device& device, ImGuiBackend& ui) {
     device_ = &device;
     ui_ = &ui;
     assets_.Build(device);
+    paletteIconTex_ = ui.RegisterViewportTexture(assets_.Page().id); // 图标源（M4.4）
     const rhi::Format rtFormat = rhi::Format::RGBA8Unorm; // 与 EnsureRenderTarget 一致
     sceneBatcher_.Init(device, 0, 1, rtFormat);
     gameBatcher_.Init(device, 0, 1, rtFormat);
@@ -82,7 +83,11 @@ void ViewportRenderer::Init(rhi::Device& device, ImGuiBackend& ui) {
 }
 
 void ViewportRenderer::OnDeviceRecreated(rhi::Device& device) {
-    assets_.Build(device);            // 图集/字体页/采样器重建重绑
+    // 旧页登记清空（纹理已随设备丢失销毁；不 Reset 则 RegisterAtlas 槽位重用断言）
+    assets_.Registry().Reset();
+    assets_.Build(device); // 程序化页/字体页按原序重建 → spriteId 1..N 复原；
+    // 导入页由 EditorApp 的 asset-gpu 回调按 DB 记账号升序重导入接续编号
+    if (ui_) paletteIconTex_ = ui_->RegisterViewportTexture(assets_.Page().id);
     const rhi::Format rtFormat = rhi::Format::RGBA8Unorm;
     sceneBatcher_.Init(device, 0, 1, rtFormat); // 管线经磁盘缓存重建；实例环形缓冲重建
     gameBatcher_.Init(device, 0, 1, rtFormat);
@@ -124,10 +129,14 @@ void ViewportRenderer::ExtractScene(EditorContext& ctx) {
     rm_.BeginSimTick();
     std::vector<uint64_t> seen;
     seen.reserve(entityToRenderable_.size() + 16);
+    const uint32_t spriteIdCap = assets_.Registry().SpriteCount();
     for (auto [ent, tf, sr] : s.View<ecs::Transform2D, ecs::SpriteRenderer>().each()) {
         (void)tf;
         Entity e = Scene::FromEntt(ent);
         if (!(sr.flags & kSrEnabled)) continue;
+        // 悬空引用（资产已删/未导入）：不建 renderable（Inspector 槽红显 + 体检红字；
+        // GetSprite 越界断言的编辑器侧防线）
+        if (sr.spriteId == 0 || sr.spriteId > spriteIdCap) continue;
         seen.push_back(e.id);
 
         // 世界变换（内核 #1 消费端；链异常回退本地，保持可渲染）

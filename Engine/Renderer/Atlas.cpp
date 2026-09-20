@@ -32,6 +32,28 @@ void AtlasRegistry::RegisterAtlas(uint32_t atlasIndex, rhi::Texture tex, uint32_
     atlases_.push_back({atlasIndex, tex, width, height});
 }
 
+void AtlasRegistry::UpdateAtlasPage(uint32_t atlasIndex, rhi::Texture tex, uint32_t width,
+                                    uint32_t height) {
+    for (auto& a : atlases_) {
+        if (a.atlasIndex != atlasIndex) continue;
+        a.tex = tex;
+        a.width = width;
+        a.height = height;
+        for (auto& s : sprites_) {
+            if (s.atlasIndex != atlasIndex) continue;
+            if (s.u0 == 0.0f && s.v0 == 0.0f && s.u1 == 1.0f && s.v1 == 1.0f) {
+                s.widthPx = (uint16_t)width; // 全幅 sprite：uv 不变，像素尺寸刷新
+                s.heightPx = (uint16_t)height;
+            } else {
+                LEMON_WARN("atlas %u 尺寸变化但含切片 sprite（M5 图集打包器接管重切）",
+                           atlasIndex);
+            }
+        }
+        return;
+    }
+    LEMON_ASSERT(false, "unknown atlasIndex");
+}
+
 uint32_t AtlasRegistry::AddSprite(uint32_t atlasIndex, uint32_t px, uint32_t py, uint32_t w,
                                   uint32_t h) {
     for (auto& a : atlases_) {

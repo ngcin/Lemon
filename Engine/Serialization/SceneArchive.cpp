@@ -7,9 +7,13 @@
 
 #include <nlohmann/json.hpp>
 
+#include "Core/Guid.h"
 #include "Core/Log.h"
 #include "Core/Math.h"
+#include "Components/CoreComponents.h"
 #include "ECS/ComponentRegistry.h"
+#include "ECS/Hierarchy.h"
+#include "Scripting/ScriptBox.h"
 
 namespace lemon::ecs {
 namespace {
@@ -146,11 +150,115 @@ uint32_t ReadSchemaVersion(const Json& d) {
     return v > 0xFFFFFFFFull ? 0xFFFFFFFFu : (uint32_t)v; // 超范围 → 按"未来版本"拒绝
 }
 
+// ---- 实体读写共享体（Save/Load 与实体树 IO 复用；M4.4 Prefab 最小集）----
+
+/// 单实体 → JSON（components + 可选 script 段）。entityIds = 本档案实体编号表
+/// （跨表 EntityRef 写 null——子树导出时树外引用自然悬空）。
+Json WriteEntity(Scene& scene, Entity e,
+                 const std::unordered_map<Entity, uint32_t>& entityIds) {
+    auto& reg = ComponentRegistry::Instance();
+    Json comps = Json::object();
+    for (uint16_t id = 0; id < reg.Count(); ++id) {
+        const ComponentMeta& m = reg.At(id);
+        const char* comp = (const char*)m.readFn(scene, e);
+        if (!comp) continue;
+        Json obj = Json::object();
+        for (uint16_t f = 0; f < m.fieldCount; ++f) {
+            if (m.fields[f].flags & kFieldRuntime) continue; // 运行时态不入档
+            obj[m.fields[f].name] = WriteField(m.fields[f], comp, entityIds);
+        }
+        if (m.arraySeg) // 定长数组段（active/items/relicIds 等）
+            obj[m.arraySeg->field] = WriteArraySeg(*m.arraySeg, comp);
+        comps[m.name] = std::move(obj);
+    }
+    Json ent{{"components", std::move(comps)}};
+    if (const scripting::ScriptBox* sb = scene.TryGet<scripting::ScriptBox>(e)) {
+        // M4.4 装配通路（#7）：typeId 注册序不持久（代码增删即漂移），
+        // className 是持久键；guid 供资产侧追踪/热重载目标。
+        ent["script"] = Json{{"guid", sb->scriptGuid}, {"class", std::string(sb->className)}};
+    }
+    return ent;
+}
+
+/// JSON → 单实体组件集（清掉该实体已有可重建组件后按档重建；remap = 档内编号 → 实体）。
+/// 用户可编辑文本档：类型错/结构坏不得抛穿（json 异常就地降级）。
+void ReadEntity(Scene& scene, const Json& ent, Entity e, const Entity* remap,
+                size_t remapCount) {
+    auto& reg = ComponentRegistry::Instance();
+    if (!ent.is_object() || !ent.contains("components")) return;
+    const Json& comps = ent.at("components");
+    if (!comps.is_object()) return;
+    for (auto it = comps.begin(); it != comps.end(); ++it) {
+        const ComponentMeta* m = reg.Find(it.key().c_str());
+        if (!m) {
+            LEMON_WARN("unknown component '%s' skipped (newer scene?)", it.key().c_str());
+            continue;
+        }
+        if (!it.value().is_object()) continue;
+        char* comp = (char*)m->emplaceFn(scene, e);
+        const Json& obj = it.value();
+        for (uint16_t f = 0; f < m->fieldCount; ++f) {
+            if (!obj.contains(m->fields[f].name)) continue;
+            try {
+                ReadField(obj.at(m->fields[f].name), m->fields[f], comp, remap, remapCount);
+            } catch (const Json::exception& ex) {
+                LEMON_WARN("field '%s.%s' type mismatch skipped: %s", m->name,
+                           m->fields[f].name, ex.what());
+            }
+        }
+        if (m->arraySeg && obj.contains(m->arraySeg->field)) {
+            try {
+                ReadArraySeg(obj.at(m->arraySeg->field), *m->arraySeg, comp);
+            } catch (const Json::exception& ex) {
+                LEMON_WARN("array seg '%s.%s' skipped: %s", m->name, m->arraySeg->field,
+                           ex.what());
+            }
+        }
+        // [ISSUE-2] count 是普通序列化字段：档里只写 count（无数组键）时不经
+        // ReadArraySeg 截断 → 消费方（StatSystem 等）按 count 遍历即越界读写
+        if (m->arraySeg && m->arraySeg->countOffset != 0xFFFF) {
+            uint8_t& cnt = *(uint8_t*)(comp + m->arraySeg->countOffset);
+            if (cnt > m->arraySeg->maxCount) {
+                LEMON_WARN("array count %u > capacity %u in '%s' clamped", cnt,
+                           m->arraySeg->maxCount, m->name);
+                cnt = (uint8_t)m->arraySeg->maxCount;
+            }
+        }
+    }
+    if (ent.contains("script") && ent.at("script").is_object()) {
+        const Json& sj = ent.at("script");
+        scripting::ScriptBox& sb = scene.Emplace<scripting::ScriptBox>(e);
+        sb.typeId = -1; // 待宿主按 className 解析（编辑器装载后统一映射）
+        try {
+            if (sj.contains("guid")) sb.scriptGuid = sj.at("guid").get<uint64_t>();
+            if (sj.contains("class")) {
+                std::string cls = sj.at("class").get<std::string>();
+                size_t n = cls.size() < 23 ? cls.size() : 23; // 末字节保 \0
+                std::memcpy(sb.className, cls.data(), n);
+            }
+        } catch (const Json::exception& ex) {
+            LEMON_WARN("script member malformed skipped: %s", ex.what());
+        }
+    }
+}
+
+/// root 子树收集（父先于子；Hierarchy 链序；深度上限防脏档环）
+void CollectSubtree(Scene& scene, Entity e, std::vector<Entity>& out, int depth = 0) {
+    if (depth > (int)kMaxHierarchyDepth + 1) return;
+    out.push_back(e);
+    const Hierarchy* h = scene.TryGet<Hierarchy>(e);
+    if (!h) return;
+    for (Entity c = h->firstChild; !c.IsNull() && scene.Alive(c);) {
+        const Hierarchy* ch = scene.TryGet<Hierarchy>(c);
+        Entity next = ch ? ch->next : Entity::Null();
+        CollectSubtree(scene, c, out, depth + 1);
+        c = next;
+    }
+}
+
 } // namespace
 
 std::string SceneArchive::Save(Scene& scene) {
-    auto& reg = ComponentRegistry::Instance();
-
     Json doc;
     doc["schemaVersion"] = kSchemaVersion;
     doc["name"] = scene.Name();
@@ -167,25 +275,48 @@ std::string SceneArchive::Save(Scene& scene) {
     for (Entity e : ordered) entityIds.emplace(e, (uint32_t)entityIds.size());
 
     Json entities = Json::array();
-    for (Entity e : ordered) {
-        Json comps = Json::object();
-        for (uint16_t id = 0; id < reg.Count(); ++id) {
-            const ComponentMeta& m = reg.At(id);
-            const char* comp = (const char*)m.readFn(scene, e);
-            if (!comp) continue;
-            Json obj = Json::object();
-            for (uint16_t f = 0; f < m.fieldCount; ++f) {
-                if (m.fields[f].flags & kFieldRuntime) continue; // 运行时态不入档
-                obj[m.fields[f].name] = WriteField(m.fields[f], comp, entityIds);
-            }
-            if (m.arraySeg) // 定长数组段（active/items/relicIds 等）
-                obj[m.arraySeg->field] = WriteArraySeg(*m.arraySeg, comp);
-            comps[m.name] = std::move(obj);
-        }
-        entities.push_back(Json{{"components", std::move(comps)}});
-    }
+    for (Entity e : ordered) entities.push_back(WriteEntity(scene, e, entityIds));
     doc["entities"] = std::move(entities);
     return doc.dump();
+}
+
+std::string SceneArchive::SaveEntityTree(Scene& scene, Entity root) {
+    if (!scene.Alive(root)) return {};
+    std::vector<Entity> subtree;
+    CollectSubtree(scene, root, subtree);
+
+    std::unordered_map<Entity, uint32_t> entityIds;
+    for (Entity e : subtree) entityIds.emplace(e, (uint32_t)entityIds.size());
+
+    Json doc;
+    doc["schemaVersion"] = kSchemaVersion;
+    doc["name"] = "prefab";
+    Json entities = Json::array();
+    for (Entity e : subtree) entities.push_back(WriteEntity(scene, e, entityIds));
+    doc["entities"] = std::move(entities);
+    return doc.dump();
+}
+
+ecs::Entity SceneArchive::LoadEntityTree(Scene& scene, const std::string& jsonText) {
+    Json doc = Json::parse(jsonText, nullptr, false);
+    if (doc.is_discarded() || !doc.contains("entities") || !doc.at("entities").is_array()) {
+        LEMON_WARN("prefab parse failed (invalid json)");
+        return Entity::Null();
+    }
+    const Json& entities = doc.at("entities");
+    if (entities.empty()) return Entity::Null();
+
+    // 两遍：先建全部实体（EntityRef 目标可能在本实体之后）
+    std::vector<Entity> remap;
+    remap.reserve(entities.size());
+    for (size_t i = 0; i < entities.size(); ++i) remap.push_back(scene.Create());
+    for (size_t i = 0; i < entities.size(); ++i)
+        ReadEntity(scene, entities[i], remap[i], remap.data(), remap.size());
+
+    // 实例化语义：guid 全部换新（Prefab 源 guid 留在资产文件里）
+    for (Entity e : remap)
+        if (Meta* m = scene.TryGet<Meta>(e); m) m->guid = GenerateGuid();
+    return remap[0];
 }
 
 bool SceneArchive::Load(Scene& scene, const std::string& jsonText) {
@@ -225,7 +356,6 @@ bool SceneArchive::Load(Scene& scene, const std::string& jsonText) {
     scene.Each([&](Entity e) { scene.Destroy(e); });
     scene.CommitDestroys();
 
-    auto& reg = ComponentRegistry::Instance();
     const Json& entities = doc.at("entities");
 
     // 两遍：先建全部实体（EntityRef 目标可能在本实体之后）
@@ -233,53 +363,9 @@ bool SceneArchive::Load(Scene& scene, const std::string& jsonText) {
     remap.reserve(entities.size());
     for (size_t i = 0; i < entities.size(); ++i) remap.push_back(scene.Create());
 
-    // 用户可编辑的文本档：字段类型错/结构坏不得抛穿加载器（json 异常就地降级）
     size_t i = 0;
-    for (const Json& ent : entities) {
-        Entity e = remap[i++];
-        if (!ent.is_object() || !ent.contains("components")) continue;
-        const Json& comps = ent.at("components");
-        if (!comps.is_object()) continue;
-        for (auto it = comps.begin(); it != comps.end(); ++it) {
-            const ComponentMeta* m = reg.Find(it.key().c_str());
-            if (!m) {
-                LEMON_WARN("unknown component '%s' skipped (newer scene?)",
-                           it.key().c_str());
-                continue;
-            }
-            if (!it.value().is_object()) continue;
-            char* comp = (char*)m->emplaceFn(scene, e);
-            const Json& obj = it.value();
-            for (uint16_t f = 0; f < m->fieldCount; ++f) {
-                if (!obj.contains(m->fields[f].name)) continue;
-                try {
-                    ReadField(obj.at(m->fields[f].name), m->fields[f], comp,
-                              remap.data(), remap.size());
-                } catch (const Json::exception& ex) {
-                    LEMON_WARN("field '%s.%s' type mismatch skipped: %s", m->name,
-                               m->fields[f].name, ex.what());
-                }
-            }
-            if (m->arraySeg && obj.contains(m->arraySeg->field)) {
-                try {
-                    ReadArraySeg(obj.at(m->arraySeg->field), *m->arraySeg, comp);
-                } catch (const Json::exception& ex) {
-                    LEMON_WARN("array seg '%s.%s' skipped: %s", m->name,
-                               m->arraySeg->field, ex.what());
-                }
-            }
-            // [ISSUE-2] count 是普通序列化字段：档里只写 count（无数组键）时不经
-            // ReadArraySeg 截断 → 消费方（StatSystem 等）按 count 遍历即越界读写
-            if (m->arraySeg && m->arraySeg->countOffset != 0xFFFF) {
-                uint8_t& cnt = *(uint8_t*)(comp + m->arraySeg->countOffset);
-                if (cnt > m->arraySeg->maxCount) {
-                    LEMON_WARN("array count %u > capacity %u in '%s' clamped", cnt,
-                               m->arraySeg->maxCount, m->name);
-                    cnt = (uint8_t)m->arraySeg->maxCount;
-                }
-            }
-        }
-    }
+    for (const Json& ent : entities)
+        ReadEntity(scene, ent, remap[i++], remap.data(), remap.size());
     return true;
 }
 

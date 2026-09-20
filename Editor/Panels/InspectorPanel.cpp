@@ -6,11 +6,13 @@
 #include <cstring>
 
 #include "App/EditorApp.h"
+#include "Assets/AssetDatabase.h"
 #include "Components/CoreComponents.h"
 #include "Core/Log.h"
 #include "ECS/ComponentRegistry.h"
 #include "EditorContext.h"
 #include "Panels/BuiltInPanels.h"
+#include "Scripting/ScriptBox.h"
 #include "imgui.h"
 #include "misc/cpp/imgui_stdlib.h"
 
@@ -79,8 +81,74 @@ bool DrawEnumControl(const FieldMeta& f, const FieldEditorMeta& ed, uint8_t* p) 
     return false;
 }
 
+/// sprite 资产槽（FieldHint::AssetRef + UInt32 spriteId；M4.4 接通）。
+/// 值 = AtlasRegistry spriteId；UI 反查资产（guid 名/缩略图）。拖 AssetBrowser
+/// sprite 进来 = 设引用；下拉全列；右键清空。最后绘制的控件是 combo →
+/// DrawComponent 的 IsItemDeactivated 属性轨照常捕获。
+bool DrawSpriteSlot(EditorApp& app, uint8_t* p) {
+    EditorContext& ctx = app.Ctx();
+    AssetDatabase& db = ctx.Assets();
+    uint32_t& id = *(uint32_t*)p;
+    const AssetEntry* entry = db.FindBySpriteId(id);
+
+    // 缩略图（悬空 = 红框占位）
+    if (void* thumb = entry && !entry->missing ? app.AssetGpu().Thumbnail(entry->guid) : nullptr) {
+        ImGui::Image(thumb, ImVec2(28, 28));
+    } else {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.18f, 0.18f, 1.0f));
+        ImGui::Button(entry ? "×" : "·", ImVec2(28, 28));
+        ImGui::PopStyleColor();
+    }
+    ImGui::SameLine();
+
+    char label[64];
+    if (entry)
+        std::snprintf(label, sizeof(label), "%s%s", entry->missing ? "⚠ " : "",
+                      entry->FileName().c_str());
+    else if (id != 0)
+        std::snprintf(label, sizeof(label), "内置 #%u", id);
+    else
+        std::snprintf(label, sizeof(label), "(无)");
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::BeginCombo("##v", label)) {
+        for (const auto& e : db.Entries()) {
+            if (e.type != AssetType::Sprite) continue;
+            char item[80];
+            std::snprintf(item, sizeof(item), "%s%s%s",
+                          e.spriteId == id ? "√ " : "", e.missing ? "⚠ " : "",
+                          e.FileName().c_str());
+            if (ImGui::Selectable(item, e.spriteId == id)) {
+                id = e.spriteId;
+                ctx.dirty = true;
+            }
+        }
+        ImGui::EndCombo();
+    }
+    // 资产拖入（AssetBrowser sprite；kind 0）
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* pay = ImGui::AcceptDragDropPayload("LemonAsset")) {
+            AssetDragPayload d{};
+            std::memcpy(&d, pay->Data, sizeof(d));
+            if (d.kind == 0 && d.spriteId != 0) {
+                id = d.spriteId;
+                ctx.dirty = true;
+            }
+        }
+        ImGui::EndDragDropTarget();
+    }
+    if (ImGui::BeginPopupContextItem("slot_ctx")) {
+        if (ImGui::MenuItem("清空引用")) {
+            id = 0;
+            ctx.dirty = true;
+        }
+        ImGui::EndPopup();
+    }
+    return false; // 写入已就地完成（combo 尾置 → 属性轨由 Deactivated 捕获）
+}
+
 /// 单字段控件（名字列已由调用方进入）。返回是否写入
-bool DrawField(EditorContext& ctx, const FieldMeta& f, const FieldEditorMeta& ed, void* comp) {
+bool DrawField(EditorApp& app, const FieldMeta& f, const FieldEditorMeta& ed, void* comp) {
+    EditorContext& ctx = app.Ctx();
     uint8_t* p = (uint8_t*)comp + f.offset;
     ImGui::TableNextRow();
     ImGui::TableNextColumn();
@@ -94,7 +162,11 @@ bool DrawField(EditorContext& ctx, const FieldMeta& f, const FieldEditorMeta& ed
         return false;
     }
 
-    // 覆盖层控件优先（枚举/颜色），命中即返回
+    // 覆盖层控件优先（资产槽/枚举/颜色），命中即返回
+    if (ecs::HasHint(ed.hints, FieldHint::AssetRef) && f.type == FieldType::UInt32) {
+        DrawSpriteSlot(app, p);
+        return false;
+    }
     if (ecs::HasHint(ed.hints, FieldHint::Enum)) {
         if (DrawEnumControl(f, ed, p)) { ctx.dirty = true; return true; }
         return false;
@@ -256,6 +328,37 @@ void InspectorPanel::OnGui(EditorApp& app) {
         }
         ImGui::TextDisabled("id %llu  guid %016llx", (unsigned long long)e.id,
                             (unsigned long long)m->guid);
+
+        // Prefab 头栏（M4-Editor-Plan §3.9 最小集：Apply/Revert/Break；逐字段
+        // override 高亮 = 砍单候补 #1，M5）
+        if (m->prefabId) {
+            const AssetEntry* pf = ctx.Assets().FindByGuid(m->prefabId);
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.3f, 1.0f));
+            ImGui::Text("Prefab 实例：%s", pf ? pf->FileName().c_str() : "⚠ 源资产缺失");
+            ImGui::PopStyleColor();
+            if (ImGui::Button("Apply")) { // 实例写回源（含子树）
+                ctx.ApplyPrefabInstance(e);
+                ctx.dirty = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Revert")) { // 整体回到源资产态（destroy + 重建）
+                const std::string before = ctx.SnapshotSceneJson();
+                const bool ok = ctx.RevertPrefabInstance(e);
+                if (!ok) LEMON_WARN("Revert 失败（源资产缺失？）");
+                else if (!ctx.Playing()) ctx.PushStructuralUndo("Prefab Revert", before);
+                // 实体已重建，旧句柄失效 → 本帧不再绘制其余控件
+                ImGui::Separator();
+                ImGui::End();
+                return;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Break")) { // 断链成普通实体
+                const std::string before = ctx.SnapshotSceneJson();
+                ctx.BreakPrefabInstance(e);
+                if (!ctx.Playing()) ctx.PushStructuralUndo("Prefab Break", before);
+            }
+            ImGui::Separator();
+        }
     }
     ImGui::Separator();
 
@@ -264,6 +367,64 @@ void InspectorPanel::OnGui(EditorApp& app) {
         const ComponentMeta& meta = reg.At(id);
         if (!meta.hasFn || !meta.hasFn(ctx.ActiveScene(), e)) continue;
         DrawComponent(app, meta, e);
+    }
+
+    // ---- ScriptBox 段（M4.4 装配通路 #7：不入注册表 → 这里手绘）----
+    if (scripting::ScriptBox* sb = ctx.ActiveScene().TryGet<scripting::ScriptBox>(e)) {
+        if (ImGui::CollapsingHeader("Script", ImGuiTreeNodeFlags_DefaultOpen)) {
+            const auto& names = ctx.ScriptTypeNames();
+            char cur[40];
+            std::snprintf(cur, sizeof(cur), "%s%s", sb->className[0] ? "" : "(未选) ",
+                          sb->className);
+            ImGui::SetNextItemWidth(-1);
+            if (ImGui::BeginCombo("##script", cur)) {
+                for (const std::string& n : names)
+                    if (ImGui::Selectable(n.c_str(), n == sb->className))
+                        ctx.AttachScript(e, sb->scriptGuid, n.c_str());
+                ImGui::EndCombo();
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("脚本类型（C# Behaviours 注册表；热重载 M4.5）\n"
+                                  "资产 guid %s",
+                                  sb->scriptGuid
+                                      ? AssetDatabase::GuidToHex(sb->scriptGuid).c_str()
+                                      : "(无 .cs 资产关联)");
+            ImGui::TextDisabled("typeId %d  %s", sb->typeId,
+                                sb->typeId >= 0 ? "已解析" : "未解析（Play 时按名装配）");
+            if (ImGui::Button("移除脚本")) {
+                const std::string before = ctx.SnapshotSceneJson();
+                ctx.ActiveScene().Remove<scripting::ScriptBox>(e);
+                ctx.dirty = true;
+                if (!ctx.Playing()) ctx.PushStructuralUndo("移除脚本", before);
+            }
+        }
+    }
+
+    ImGui::Spacing();
+    if (!ctx.ActiveScene().Has<scripting::ScriptBox>(e) && ImGui::Button("Add Script"))
+        ImGui::OpenPopup("add_script");
+    if (ImGui::BeginPopup("add_script")) {
+        const auto& names = ctx.ScriptTypeNames();
+        if (names.empty()) ImGui::TextDisabled("（无脚本宿主：--script <dll> 或项目 Game/）");
+        for (const std::string& n : names) {
+            if (!ImGui::MenuItem(n.c_str())) continue;
+            // 关联同名 .cs 资产（文件 stem == 类名；找不到 = guid 0，仅类名装配）
+            uint64_t guid = 0;
+            for (const auto& a : ctx.Assets().Entries()) {
+                if (a.type != AssetType::Script || a.missing) continue;
+                std::string stem = a.FileName();
+                if (size_t dot = stem.find_last_of('.'); dot != std::string::npos)
+                    stem.resize(dot);
+                if (stem == n) {
+                    guid = a.guid;
+                    break;
+                }
+            }
+            const std::string before = ctx.SnapshotSceneJson();
+            ctx.AttachScript(e, guid, n.c_str());
+            if (!ctx.Playing()) ctx.PushStructuralUndo("挂脚本", before);
+        }
+        ImGui::EndPopup();
     }
 
     ImGui::Spacing();
@@ -313,10 +474,10 @@ void InspectorPanel::DrawComponent(EditorApp& app, const ComponentMeta& meta, ec
                 const FieldEditorMeta& ed = EdOf(meta, i);
                 if (f.flags & ecs::kFieldRuntime) { // 运行时字段：只读灰显
                     ImGui::BeginDisabled();
-                    DrawField(ctx, f, ed, comp); // 禁用态控件 changed 恒 false，不会置 dirty
+                    DrawField(app, f, ed, comp); // 禁用态控件 changed 恒 false，不会置 dirty
                     ImGui::EndDisabled();
                 } else {
-                    DrawField(ctx, f, ed, comp);
+                    DrawField(app, f, ed, comp);
                 }
                 anyActive |= ImGui::IsItemActive();
                 anyDeactivated |= ImGui::IsItemDeactivated();

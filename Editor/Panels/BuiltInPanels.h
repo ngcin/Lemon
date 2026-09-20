@@ -2,10 +2,12 @@
 #pragma once
 
 #include <cmath>
+#include <cstdint>
 #include <string>
 #include <unordered_set>
 #include <vector>
 
+#include "Assets/AssetDatabase.h"
 #include "Components/CoreComponents.h"
 #include "ECS/ComponentRegistry.h"
 #include "ECS/Entity.h"
@@ -76,6 +78,28 @@ class GameViewPanel final : public IEditorPanel {
 public:
     const char* Name() const override { return "Game"; }
     void OnGui(EditorApp& app) override;
+};
+
+/// AssetBrowser（M4.4）：Assets/ 目录树 + 缩略图网格 + 拖拽（进 SceneView/Inspector
+/// sprite 槽）+ 右键导入/重命名/删除（guid 稳定 → 引用不断，06 §2）
+struct AssetDragPayload {         // "LemonAsset" 拖拽载荷（面板间约定）
+    uint64_t guid;
+    uint32_t spriteId;
+    uint8_t kind;                 // 0=sprite 1=prefab 2=script
+};
+
+class AssetBrowserPanel final : public IEditorPanel {
+public:
+    const char* Name() const override { return "Assets"; }
+    void OnGui(EditorApp& app) override;
+
+private:
+    void DrawItem(EditorApp& app, const AssetEntry& e);
+
+    std::string currentDir_ = ""; // "" = Assets/ 根
+    std::string filter_;
+    uint64_t renamingGuid_ = 0;   // 0 = 无重命名进行中
+    std::string renameBuf_;
 };
 
 class ProfilerPanel final : public IEditorPanel {

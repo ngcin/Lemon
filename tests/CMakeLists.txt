@@ -1,6 +1,11 @@
 # 引擎纯逻辑单测（无窗口/无 Vulkan，可进 CI 冒烟）
+# M4.4 起：lemon-editor-core（EditorContext/AssetDatabase 等无 ImGui 编辑器逻辑）入测
 add_executable(lemon-tests engine_tests.cpp)
 target_link_libraries(lemon-tests PRIVATE lemon-engine)
+if(LEMON_BUILD_EDITOR)
+  target_link_libraries(lemon-tests PRIVATE lemon-editor-core)
+  target_compile_definitions(lemon-tests PRIVATE LEMON_EDITOR_CORE=1)
+endif()
 
 enable_testing()
 add_test(NAME engine-tests COMMAND lemon-tests)

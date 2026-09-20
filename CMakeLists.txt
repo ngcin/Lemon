@@ -33,6 +33,11 @@ include(${LEMON_CMAKE_DIR}/Dependencies.cmake)
 
 add_subdirectory(Engine)
 
+# 编辑器先于 tests：lemon-tests 链接 lemon-editor-core（M4.4 纯逻辑单测面）
+if(LEMON_BUILD_EDITOR)
+  add_subdirectory(Editor)
+endif()
+
 # ctest 入口（enable_testing 必须在顶层目录才对全树生效）
 enable_testing()
 
@@ -42,10 +47,6 @@ endif()
 
 if(LEMON_BUILD_SAMPLES)
   add_subdirectory(Samples)
-endif()
-
-if(LEMON_BUILD_EDITOR)
-  add_subdirectory(Editor)
 endif()
 
 if(LEMON_BUILD_SPIKES)

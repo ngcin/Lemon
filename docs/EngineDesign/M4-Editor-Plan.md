@@ -6,9 +6,17 @@
 > DevLog 同日条目）：冷启 1741→543ms；场景 IO roundtrip CLI 化；SceneView 双视口
 > 离屏 + Gizmo/拾取/网格（验证层 4 真错修复后零报错）；**Play 进/出 0.5/0.3ms +
 > Stop 逐字节一致断言 PASS（验收 #4/#5）**；Undo 双轨 + 输入路由子集落地。
-> M4.4（资产管线/AssetBrowser/Prefab/SDK 增量）与 M4.5（热重载 ADR-010 探针复测、
-> 项目向导、自动备份、终验）待续。实现备注：属性轨记录粒度 = 组件级字节快照
-> （字段级拆分列 M5 精化）；纹理后端豁免口与 ctest 隔离断言见 §3.2/§5 落地。
+> **M4.4 已完成**（同日第二 entry）：资产管线（GUID/.meta/manifest/体检红字）、
+> PNG 导入 + FileWatcher 热替换（双分支实测）、AssetBrowser 全交互、Inspector
+> sprite 槽/Prefab 头栏/ScriptBox 段、Prefab 最小集（SaveEntityTree/LoadEntityTree
+> + Apply/Revert/Break）、C# SDK 增量（Input/Assets.SpriteOf/Instantiate +
+> NativeApi 表尾 4 项 + lemon_behaviours_list）；脚本刷怪链冒烟 playAlive 6→42、
+> engine-tests 12935 全绿。落位偏差：prefab 文件在 Assets/Prefabs/（根级 Prefabs/
+> 目录随 M4.5 项目向导）；编辑器资产钩子经 SetEditorAssetHooks 注入（纯运行时=0）。
+> **M4.5（热重载 ADR-010 探针复测、项目向导、自动备份、终验）待续**。
+> 实现备注：属性轨记录粒度 = 组件级字节快照（字段级拆分列 M5 精化）；纹理后端豁免口
+> 与 ctest 隔离断言见 §3.2/§5 落地；构建分层 lemon-editor-core（无 ImGui 编辑器逻辑，
+> 单测面）见 Editor/CMakeLists.txt。
 > 前置状态：M3（2026-09-19 完成）+ M3.5 anim-smoke 全链基线。内核侧地基（反射注册表 / .scene v1（原 .lscene，同日更名）/ ClearViewport / Profiles / 脚本域）已就位，Editor/ 目录零代码。
 > 纪律：本册判据与 [08 路线图](./08-Development-Roadmap.md) §0 总表一致；次级取舍以"推荐 + 砍单候补"标注，砍前记 ADR（08 §4）。
 
@@ -353,8 +361,12 @@ SDL 事件 ─→ ImGui（WantCaptureKeyboard/Mouse 为真 = GUI 占用）
 建议后续动工时回填（不阻塞本册）：
 
 - [ ] 04 §6：热重载 StateBag 字段粒度白名单与本册 §3.7 两分支引用；
-- [ ] 04 §2.1：ScriptBox 脚本资产 GUID 序列化格式落定后回写；
-- [ ] 06 §2：M4 导入器范围（sprite 族先行）与本册 §1.2 对齐注记；
+- [x] 04 §2.1：ScriptBox 脚本资产 GUID 序列化格式落定后回写（**M4.4 已落地**：
+      `.scene` 实体 `"script":{"guid","class"}` 成员；ScriptBox 扩 scriptGuid +
+      className[24]，typeId 注册序不持久、按 className 解析；见 04 分册同日注记）；
+- [x] 06 §2：M4 导入器范围（sprite 族先行）与本册 §1.2 对齐注记（**M4.4 已落地**：
+      每 PNG 独立纹理页 + 一页一全幅 sprite；切片/图集打包 M5+/M6；删除 = 墓碑保号；
+      见 06 分册同日注记）；
 - [ ] 09 §8：多窗口补课顺延 M5 的记录 + 编辑器 `--smoke` 无头冒烟条目（验收 #13 之提案）；
 - [x] 00 §8：扩展名更名（`.scene`/`.prefab`/`.baked`，2026-09-19 随决议 #11 回填）与 `.lemon/autosave/` 命名记录；
 - [ ] ADR-010：M4.0 探针复测结论（A/B 线判定）写回；

@@ -1946,6 +1946,285 @@ void TestEditorMetaSanity() {
     Expect(allOk, "editor metadata sanity");
 }
 
+#ifdef LEMON_EDITOR_CORE
+// ---- M4.4 测试面：资产数据库 / 实体子树档案 / ScriptBox 档案段 / Atlas 页热更新 ----
+#include <filesystem>
+#include <fstream>
+#include <unistd.h>
+
+#include "Assets/AssetDatabase.h"
+#include "EditorContext.h"
+#include "Serialization/SceneArchive.h"
+#include "ECS/World.h"
+#include "Scripting/ScriptBox.h"
+
+// ---- M4.4-a：Atlas 页热更新（AssetGpuCache 热重导入的登记侧语义）----
+void TestAtlasPageHotUpdate() {
+    AtlasRegistry reg;
+    rhi::Texture fake{2}; // 纯登记测试：句柄只是整数，无 GPU 语义
+    reg.RegisterAtlas(2, fake, 64, 64);
+    uint32_t id = reg.AddSprite(2, 0, 0, 64, 64);
+    Expect(id == 1, "first sprite id is 1");
+    const SpriteInfo& s0 = reg.GetSprite(id);
+    Expect(s0.widthPx == 64 && s0.heightPx == 64 && s0.u1 == 1.0f && s0.v1 == 1.0f,
+           "full-page sprite uv/dims");
+    reg.UpdateAtlasPage(2, rhi::Texture{3}, 96, 48);
+    const SpriteInfo& s1 = reg.GetSprite(id);
+    Expect(s1.widthPx == 96 && s1.heightPx == 48, "hot update refreshes pixel dims");
+    Expect(s1.u0 == 0.0f && s1.v0 == 0.0f && s1.u1 == 1.0f && s1.v1 == 1.0f,
+           "full-page uv stays 0..1 after resize");
+    Expect(s1.atlasIndex == 2, "atlas slot preserved");
+}
+
+// ---- M4.4-a：AssetDatabase 生命周期（GUID 稳定/manifest 记账/墓碑/体检）----
+void TestAssetDatabaseLifecycle() {
+    namespace fs = std::filesystem;
+    using lemon::editor::AssetDatabase;
+    using lemon::editor::AssetEntry;
+    using lemon::editor::AssetType;
+
+    const fs::path root = fs::temp_directory_path() /
+                          ("lemon-test-assets-" + std::to_string(::getpid()));
+    std::error_code ec;
+    fs::remove_all(root, ec);
+
+    AssetDatabase db;
+    Expect(db.OpenProject(root.string(), /*spriteIdBase=*/100), "open project");
+    Expect(db.SpriteAssetCount() == 0, "empty project starts clean");
+    Expect(db.HealthIssues() == 0, "empty project no health issues");
+
+    // 手工放两个资产（内容任意——DB 只哈希不解码）+ 一个预置 .meta 固定 guid
+    fs::create_directories(root / "Assets" / "icons", ec);
+    { std::ofstream f(root / "Assets" / "hero.png", std::ios::binary); f << "png-bytes-1"; }
+    { std::ofstream f(root / "Assets" / "icons" / "coin.png", std::ios::binary); f << "png-B"; }
+    { std::ofstream f(root / "Assets" / "notes.txt", std::ios::binary); f << "x"; }
+    {
+        std::ofstream f(root / "Assets" / "icons" / "coin.png.meta", std::ios::trunc);
+        f << "{\"guid\":\"1122334455667788\",\"type\":\"sprite\"}";
+    }
+
+    db.Rescan();
+    Expect(db.SpriteAssetCount() == 2, "two sprites discovered");
+    const AssetEntry* hero = db.FindByPath("hero.png");
+    const AssetEntry* coin = db.FindByPath("icons/coin.png");
+    Expect(hero && coin, "entries located by path");
+    Expect(hero->type == AssetType::Sprite && coin->type == AssetType::Sprite, "png typed sprite");
+    Expect(db.FindByPath("notes.txt") != nullptr, "generic file tracked");
+    Expect(coin->guid == 0x1122334455667788ull, "preset meta guid honored");
+    Expect(hero->spriteId == 100 && coin->spriteId == 101, "spriteIds allocated from base");
+    const uint64_t heroGuid = hero->guid;
+    Expect(heroGuid != 0, "auto guid assigned");
+    Expect(fs::exists(root / "Assets" / "hero.png.meta", ec), "meta sidecar written");
+
+    // guid 持久：重开项目（新实例走 manifest 携带）→ 同 guid 同 spriteId
+    {
+        AssetDatabase db2;
+        Expect(db2.OpenProject(root.string(), 100), "reopen project");
+        const AssetEntry* h2 = db2.FindByPath("hero.png");
+        Expect(h2 && h2->guid == heroGuid && h2->spriteId == 100,
+               "guid/spriteId stable across sessions (manifest)");
+        const AssetEntry* c2 = db2.FindByGuid(0x1122334455667788ull);
+        Expect(c2 && c2->spriteId == 101, "preset guid stable across sessions");
+    }
+
+    // 内容变化 → modified（guid 不变）
+    { std::ofstream f(root / "Assets" / "hero.png", std::ios::binary | std::ios::trunc);
+      f << "png-bytes-CHANGED-longer"; }
+    db.Rescan();
+    Expect(db.LastChange().modified.size() == 1 &&
+               db.LastChange().modified[0] == heroGuid,
+           "content change detected as modified");
+    Expect(db.FindByGuid(heroGuid) && db.FindByGuid(heroGuid)->relPath == "hero.png",
+           "guid survives content change");
+
+    // 重命名 → 引用不断（guid 不变路径变；meta 随行）
+    {
+        AssetEntry* h = const_cast<AssetEntry*>(db.FindByGuid(heroGuid));
+        Expect(db.Rename(*h, "renamed/hero2.png"), "rename ok");
+        Expect(db.FindByGuid(heroGuid)->relPath == "renamed/hero2.png", "path moved");
+        Expect(fs::exists(root / "Assets" / "renamed" / "hero2.png.meta", ec),
+               "meta traveled with file");
+        db.Rescan();
+        Expect(db.FindByGuid(heroGuid) && !db.FindByGuid(heroGuid)->missing,
+               "renamed asset rescans alive (guid intact)");
+    }
+
+    // 删除文件 → 墓碑（号不回收；体检红字）；新文件不重用旧号
+    fs::remove(root / "Assets" / "icons" / "coin.png", ec);
+    fs::remove(root / "Assets" / "icons" / "coin.png.meta", ec);
+    db.Rescan();
+    {
+        const AssetEntry* c3 = db.FindByGuid(0x1122334455667788ull);
+        Expect(c3 && c3->missing, "deleted asset is a tombstone (guid kept)");
+        Expect(db.LastChange().removed.size() == 1, "removal reported");
+    }
+    { std::ofstream f(root / "Assets" / "new.png", std::ios::binary); f << "n"; }
+    db.Rescan();
+    const AssetEntry* np = db.FindByPath("new.png");
+    Expect(np && np->spriteId == 102, "new sprite id never reuses tombstoned id");
+
+    // 孤儿 meta 体检红字
+    { std::ofstream f(root / "Assets" / "orphan.png.meta", std::ios::trunc); f << "{}"; }
+    db.Rescan();
+    Expect(db.HealthIssues() >= 1, "orphan meta reported as health issue");
+
+    fs::remove_all(root, ec);
+}
+
+// ---- M4.4-d：实体子树 IO（Prefab 最小集的档案层）----
+void TestEntityTreeArchive() {
+    using namespace lemon::ecs;
+    RegisterAllComponents();
+    World w;
+    Scene& s = w.CreateScene("src");
+
+    Entity parent = s.Create();
+    s.Emplace<Transform2D>(parent, Transform2D{{10, 20}, 0.5f, {2, 1}});
+    Meta& pm = s.Emplace<Meta>(parent);
+    std::strcpy(pm.tag, "boss");
+    pm.guid = 0xAAAABBBBCCCCDDDDull;
+    Entity child = s.Create();
+    s.Emplace<Transform2D>(child, Transform2D{{1, 2}});
+    s.Emplace<SpriteRenderer>(child, SpriteRenderer{7, 0xFF00FF00u, 3, 2, 0x4});
+    SceneSetParent(s, child, parent);
+    Entity outsider = s.Create();
+    s.Emplace<Transform2D>(outsider, Transform2D{{9, 9}});
+    Chase& ch = s.Emplace<Chase>(parent);
+    ch.target = outsider; // 跨树引用 → 导出应置 null
+
+    const std::string json = SceneArchive::SaveEntityTree(s, parent);
+    Expect(!json.empty(), "tree save produced json");
+    Expect(json.find("boss") != std::string::npos, "tree json carries tag");
+    Expect(json.find("outsider") == std::string::npos, "tree excludes outside entity");
+
+    World w2;
+    Scene& d = w2.CreateScene("dst");
+    const uint32_t before = d.AliveCount();
+    Entity root = SceneArchive::LoadEntityTree(d, json);
+    Expect(!root.IsNull() && d.AliveCount() == before + 2, "tree instantiated 2 entities");
+    Expect(d.Has<Chase>(root) && d.Get<Chase>(root).target.IsNull(),
+           "cross-tree EntityRef nulled on instantiate");
+    Expect(d.Get<Meta>(root).guid != 0xAAAABBBBCCCCDDDDull && d.Get<Meta>(root).guid != 0,
+           "instance gets fresh guid");
+    const Hierarchy* h = d.TryGet<Hierarchy>(d.Get<Hierarchy>(root).firstChild);
+    Expect(h && h->parent == root, "child hierarchy remapped to new root");
+    // 子实体组件 Spot check
+    Entity c2 = d.Get<Hierarchy>(root).firstChild;
+    Expect(d.Get<SpriteRenderer>(c2).spriteId == 7 &&
+               d.Get<SpriteRenderer>(c2).colorRGBA == 0xFF00FF00u,
+           "child sprite data roundtrip");
+    // 树内二次导出/导入 = 内容保持（guid 每次实例化换新是语义，不做文本级比对）
+    const std::string json2 = SceneArchive::SaveEntityTree(d, root);
+    World w3;
+    Scene& d3 = w3.CreateScene("again");
+    Entity root3 = SceneArchive::LoadEntityTree(d3, json2);
+    Expect(!root3.IsNull() && d3.AliveCount() == 2, "double roundtrip entity count");
+    Expect(d3.Get<SpriteRenderer>(d3.Get<Hierarchy>(root3).firstChild).colorRGBA ==
+               0xFF00FF00u,
+           "double roundtrip keeps data");
+}
+
+// ---- M4.4-e：ScriptBox 档案段（装配通路 #7）----
+void TestScriptBoxArchive() {
+    using namespace lemon::ecs;
+    RegisterAllComponents();
+    World w;
+    Scene& s = w.CreateScene("a");
+    Entity e = s.Create();
+    s.Emplace<Transform2D>(e);
+    auto& sb = s.Emplace<scripting::ScriptBox>(e);
+    sb.scriptGuid = 0x1234ABCDEF012345ull;
+    std::strcpy(sb.className, "SpawnerBehaviour");
+
+    const std::string text = SceneArchive::Save(s);
+    Expect(text.find("\"script\"") != std::string::npos, "script member serialized");
+    Expect(text.find("SpawnerBehaviour") != std::string::npos, "className persisted");
+
+    World w2;
+    Scene& d = w2.CreateScene("b");
+    Expect(SceneArchive::Load(d, text), "load with script member");
+    bool found = false;
+    d.Each([&](Entity en) {
+        if (auto* b = d.TryGet<scripting::ScriptBox>(en); b) {
+            found = true;
+            Expect(b->scriptGuid == 0x1234ABCDEF012345ull, "script guid roundtrip");
+            Expect(std::string_view(b->className) == "SpawnerBehaviour",
+                   "className roundtrip");
+            Expect(b->typeId == -1, "typeId stays unresolved after load");
+        }
+    });
+    Expect(found, "ScriptBox re-emplaced on load");
+    // 无脚本实体的场景不受影响 + 二次往返不动点（script 段键序稳定；
+    // 场景名是宿主属性——两次用同名场景排除干扰）
+    const std::string text2 = SceneArchive::Save(d);
+    World w3;
+    Scene& d3 = w3.CreateScene("b"); // 与 d 同名
+    SceneArchive::Load(d3, text2);
+    Expect(SceneArchive::Save(d3) == text2, "script member roundtrip fixed point");
+}
+// ---- M4.4-d：EditorContext Prefab 操作端到端（导出/实例化/Break/Apply/Revert）----
+void TestEditorContextPrefabOps() {
+    namespace fs = std::filesystem;
+    using namespace lemon::ecs;
+    using lemon::editor::EditorContext;
+    using lemon::editor::AssetType;
+
+    const fs::path root = fs::temp_directory_path() /
+                          ("lemon-test-prefab-" + std::to_string(::getpid()));
+    std::error_code ec;
+    fs::remove_all(root, ec);
+
+    EditorContext ctx;
+    Expect(ctx.Assets().OpenProject(root.string(), 100), "ctx open project");
+
+    // 源实体：父 + 子（组件各一）
+    Entity mob = ctx.CreateSpriteEntity("Mob", 3);
+    ctx.EditScene().Get<Transform2D>(mob).pos = {100, 100};
+    Entity hat = ctx.CreateSpriteEntity("Hat", 5);
+    SceneSetParent(ctx.EditScene(), hat, mob);
+    ctx.EditScene().Get<Transform2D>(hat).pos = {0, -20};
+
+    const uint64_t pguid = ctx.MakePrefabFrom(mob);
+    Expect(pguid != 0, "prefab exported");
+    const auto* entry = ctx.Assets().FindByGuid(pguid);
+    Expect(entry && entry->type == AssetType::Prefab && !entry->missing, "prefab in db");
+    Expect(fs::exists(root / "Assets" / "Prefabs" / "Mob.prefab", ec), "prefab file on disk");
+    Expect(ctx.EditScene().Get<Meta>(mob).prefabId == pguid, "source linked back");
+
+    // 实例化：新 guid 集 + prefabId 回链 + 位置覆盖
+    const uint32_t before = ctx.EditScene().AliveCount();
+    Entity inst = ctx.InstantiatePrefabAsset(pguid, {7, 9});
+    Expect(!inst.IsNull() && ctx.EditScene().AliveCount() == before + 2, "instance tree created");
+    Expect(ctx.EditScene().Get<Meta>(inst).prefabId == pguid, "instance linked");
+    Expect(ctx.EditScene().Get<Meta>(inst).guid != ctx.EditScene().Get<Meta>(mob).guid,
+           "instance has fresh guid");
+    Expect(ctx.EditScene().Get<Transform2D>(inst).pos == Vec2(7, 9), "instance pos overridden");
+    Expect(ctx.EditScene().Has<SpriteRenderer>(inst), "instance components copied");
+
+    // Apply：实例改动写回源；Revert：新实例回到源态
+    ctx.EditScene().Get<Transform2D>(inst).pos = {500, 250};
+    ctx.EditScene().Get<SpriteRenderer>(inst).colorRGBA = 0x11223344u;
+    Expect(ctx.ApplyPrefabInstance(inst), "apply writes back");
+    // Break：断链（Apply 之后）
+    ctx.BreakPrefabInstance(inst);
+    Expect(ctx.EditScene().Get<Meta>(inst).prefabId == 0, "break clears link");
+    // Revert 一个仍链接着的实例（重新实例化一个）
+    Entity inst2 = ctx.InstantiatePrefabAsset(pguid, {0, 0});
+    const uint64_t keepGuid = ctx.EditScene().Get<Meta>(inst2).guid;
+    ctx.EditScene().Get<Transform2D>(inst2).pos = {999, 999}; // 偏离源
+    Expect(ctx.RevertPrefabInstance(inst2), "revert ok");
+    Entity reverted = ctx.Primary(); // Revert 选中重建后的根
+    Expect(!reverted.IsNull() && ctx.EditScene().Get<Meta>(reverted).guid == keepGuid,
+           "revert keeps instance guid");
+    Expect(ctx.EditScene().Get<Transform2D>(reverted).pos == Vec2(500, 250),
+           "revert restores applied source state");
+    Expect(ctx.EditScene().Get<SpriteRenderer>(reverted).colorRGBA == 0x11223344u,
+           "revert restores applied color");
+
+    fs::remove_all(root, ec);
+}
+#endif // LEMON_EDITOR_CORE
+
 int main() {
     TestVec2();
     TestMat3x2();
@@ -2004,6 +2283,13 @@ int main() {
     TestHierarchyChainLifecycle();
     TestMetaGuidRoundtrip();
     TestEditorMetaSanity();
+#ifdef LEMON_EDITOR_CORE
+    TestAtlasPageHotUpdate();
+    TestAssetDatabaseLifecycle();
+    TestEntityTreeArchive();
+    TestScriptBoxArchive();
+    TestEditorContextPrefabOps();
+#endif
     LEMON_LOG("engine-tests: %d checks OK", g_checks);
     return 0;
 }

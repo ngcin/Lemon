@@ -5,10 +5,12 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 
 #include "stb_image_write.h"
 
 #include "App/ImGuiBackend.h"
+#include "Assets/AssetDatabase.h"
 #include "Interaction/ViewportRenderer.h"
 #include "Components/BehaviorComponents.h"
 #include "Components/CoreComponents.h"
@@ -19,6 +21,7 @@
 #include "EditorContext.h"
 #include "Platform/Window.h"
 #include "Renderer/RHI.h"
+#include "Scripting/ScriptHost.h"
 #include "imgui.h"
 #include "imgui_internal.h" // DockBuilder（docking 分支布局编程 API）
 
@@ -26,6 +29,20 @@ namespace lemon::editor {
 
 EditorApp::EditorApp() = default;
 EditorApp::~EditorApp() = default;
+
+namespace {
+// C# native 资产钩子（M4.4 #8；进程一份——EditorApp 即进程单例）
+EditorApp* g_app = nullptr;
+uint32_t HookSpriteOf(const char* hex) {
+    return g_app ? g_app->Ctx().SpriteIdOfGuidHex(hex) : 0;
+}
+uint64_t HookInstantiate(const char* hex, float x, float y) {
+    if (!g_app) return 0;
+    ecs::Entity e = g_app->Ctx().InstantiatePrefabAsset(AssetDatabase::HexToGuid(hex),
+                                                        Vec2{x, y});
+    return e.IsNull() ? 0 : e.id;
+}
+} // namespace
 
 void EditorApp::SetupDefaultLayout() {
     // Unity 式默认布局（§2.1 线框）：左 Hierarchy 20% / 右 Inspector 25% /
@@ -71,7 +88,13 @@ void EditorApp::BuildMenuBar() {
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Assets")) {
-        ImGui::MenuItem("(导入器 M4.4)", nullptr, false, false);
+        if (ImGui::MenuItem("导入文件...", nullptr, false, true)) MenuImportAsset();
+        if (ImGui::MenuItem("重扫资产库", nullptr, false, true)) RescanAssets();
+        ImGui::Separator();
+        ImGui::TextDisabled("项目：%s", ctx_.Assets().ProjectRoot().c_str());
+        ImGui::TextDisabled("资产 %u（sprite %u）｜体检红字 %u",
+                            (uint32_t)ctx_.Assets().Entries().size(),
+                            ctx_.Assets().SpriteAssetCount(), ctx_.Assets().HealthIssues());
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("GameObject")) {
@@ -134,9 +157,9 @@ void EditorApp::BuildStatusBar() {
     window_->GetPixelSize(pw, ph);
     ImGui::Text("%s%s", ctx_.SceneName().c_str(), ctx_.dirty ? " ●" : "");
     ImGui::SameLine();
-    ImGui::TextDisabled("| DPI %.1fx | %dx%d px | %.0f fps | 选中 %zu | 中文渲染正常",
+    ImGui::TextDisabled("| DPI %.1fx | %dx%d px | %.0f fps | 选中 %zu | 资产 %u | 中文渲染正常",
                         ui_->DisplayScale(), pw, ph, ImGui::GetIO().Framerate,
-                        ctx_.Selection().size());
+                        ctx_.Selection().size(), ctx_.Assets().SpriteAssetCount());
     if (playing_) {
         ImGui::SameLine();
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.65f, 0.15f, 1.0f));
@@ -236,13 +259,21 @@ void EditorApp::BuildUI() {
 }
 
 void EditorApp::BuildPickersAndModals() {
-    // 文件选择器（打开/另存共用；动作一次性返回）
+    // 文件选择器（打开/另存/导入共用；动作一次性返回）
     if (PickerResult r = picker_.Draw(); r.action != PickerAction::None) {
         if (r.action == PickerAction::Open || r.action == PickerAction::Save) {
             if (pickerMode_ == PickerMode::Open) {
                 if (!ctx_.OpenScene(r.path)) LEMON_WARN("打开失败：%s", r.path.c_str());
-            } else {
+            } else if (pickerMode_ == PickerMode::Save) {
                 if (ctx_.SaveScene(r.path)) LEMON_LOG("已另存为：%s", r.path.c_str());
+            } else { // Import：复制进 Assets/ 根 + 登记导入（M4.4）
+                std::filesystem::path src(r.path);
+                if (const AssetEntry* e = ctx_.Assets().ImportFile(
+                        r.path, src.filename().string())) {
+                    if (e->type == AssetType::Sprite) gpuAssets_.ImportSprite(*e);
+                    LEMON_LOG("已导入：%s（guid %016llx）", e->relPath.c_str(),
+                              (unsigned long long)e->guid);
+                }
             }
         }
     }
@@ -325,6 +356,29 @@ bool EditorApp::ConfirmUnsaved() {
     return false; // 异步：取消则不继续（保存/丢弃后的续操作 M4.2 补齐闭环）
 }
 
+// ---------------------------------------------------------------- 资产 ----
+void EditorApp::MenuImportAsset() {
+    pickerMode_ = PickerMode::Import;
+    picker_.Open("导入资产", ctx_.Assets().AssetsRoot(), "", ""); // 任意扩展名
+}
+
+void EditorApp::RescanAssets() {
+    AssetDatabase& db = ctx_.Assets();
+    db.Rescan();
+    const AssetDatabase::ChangeSet& cs = db.LastChange();
+    for (uint64_t g : cs.added)
+        if (const AssetEntry* e = db.FindByGuid(g); e && e->type == AssetType::Sprite)
+            gpuAssets_.ImportSprite(*e);
+    for (uint64_t g : cs.modified)
+        if (const AssetEntry* e = db.FindByGuid(g); e && e->type == AssetType::Sprite)
+            gpuAssets_.ImportSprite(*e);
+    for (uint64_t g : cs.removed) gpuAssets_.Evict(g); // 幽灵页（号保留；M6 图集回收）
+    db.SaveManifest();
+    if (!cs.Empty())
+        LEMON_LOG("资产重扫：+%zu ~%zu -%zu", cs.added.size(), cs.modified.size(),
+                  cs.removed.size());
+}
+
 int EditorApp::Run(const EditorLaunch& launch) {
     launchCopy_ = launch;
     launch_ = &launchCopy_;
@@ -356,6 +410,49 @@ int EditorApp::Run(const EditorLaunch& launch) {
 
     ownedPanels_ = CreateAllPanels();
     for (auto& p : ownedPanels_) panels_.Add(p.get());
+
+    // ---- M4.4 资产链：项目打开（--project）→ DB 扫描 → GPU 导入 → watcher ----
+    if (launch.smoke && !launch.projectDir.empty()) SeedSmokeProject();
+    if (!launch.projectDir.empty()) {
+        // spriteId 基址 = 程序化图集登记后首个可用号（跨会话稳定由 manifest 记账）
+        const uint32_t spriteIdBase = viewport_->Assets().Registry().SpriteCount() + 1;
+        if (!ctx_.Assets().OpenProject(launch.projectDir, spriteIdBase)) return 1;
+        gpuAssets_.Init(*device_, ui_.get(), &viewport_->Assets().Registry(),
+                        ctx_.Assets(), /*firstSlot=*/2); // 0=调色板 1=字体页
+        for (const AssetEntry& e : ctx_.Assets().Entries())
+            if (!e.missing && e.type == AssetType::Sprite) gpuAssets_.ImportSprite(e);
+        // 设备丢失重建（"editor-viewport" 先 Reset+重建程序化页 → 此处按 DB 记账号接续）
+        device_->AddRecreateCallback("asset-gpu", [this](rhi::Device& d) {
+            gpuAssets_.RebuildAll(d);
+        });
+        watcher_.Start(ctx_.Assets().AssetsRoot());
+        LEMON_LOG("资产管线就绪：项目 %s", launch.projectDir.c_str());
+    }
+
+    // ---- M4.4 脚本宿主（--script <用户程序集.dll>；空 = 编辑器无 C#）----
+    if (!launch.script.empty()) {
+#ifdef LEMON_SCRIPT_DIR
+        host_ = std::make_unique<scripting::ScriptHost>();
+        // DomainManager 要求绝对路径（ALC LoadFromAssemblyPath 约束）
+        std::error_code eca;
+        std::string scriptAbs =
+            std::filesystem::absolute(launch.script, eca).generic_string();
+        if (host_->Initialize(nullptr, LEMON_SCRIPT_DIR "/Lemon.Entry.runtimeconfig.json",
+                              LEMON_SCRIPT_DIR "/Lemon.Entry.dll") &&
+            host_->LoadUserAssembly(scriptAbs.c_str())) {
+            ctx_.SetScriptHost(host_.get());
+            LEMON_LOG("脚本宿主就绪：%s（类型 %zu 个）", scriptAbs.c_str(),
+                      ctx_.ScriptTypeNames().size());
+        } else {
+            LEMON_WARN("脚本宿主初始化失败（--script %s）——无脚本继续", scriptAbs.c_str());
+            host_.reset();
+        }
+#else
+        LEMON_WARN("--script 需要 LEMON_BUILD_SCRIPTING=ON 构建");
+#endif
+    }
+    g_app = this;
+    scripting::SetEditorAssetHooks({HookSpriteOf, HookInstantiate});
 
     // 启动场景：--scene 指定则打开；冒烟模式播种示例实体（面板有内容可验收）
     if (!launch.openScene.empty()) {
@@ -389,6 +486,8 @@ int EditorApp::Run(const EditorLaunch& launch) {
         if (!window_->PollEvents() || window_->IsKeyDown(Key::Escape)) {
             if (!exitRequested_) exitRequested_ = true;
         }
+        // 资产热替换（M4.4）：watcher 置脏 → 重扫 + 增量导入（改文件落盘即时可见）
+        if (watcher_.Running() && watcher_.ConsumeDirty()) RescanAssets();
         if (launch.frames > 0 && (int)frame >= launch.frames) running = false;
         if (forceExit_) running = false;
         if (exitRequested_ && ctx_.dirty && !quitConfirmArmed_) {
@@ -404,6 +503,21 @@ int EditorApp::Run(const EditorLaunch& launch) {
             if (!p.IsNull() && ctx_.ActiveScene().Has<ecs::Transform2D>(p))
                 ctx_.ActiveScene().Get<ecs::Transform2D>(p).pos = Vec2{1234.0f, 567.0f};
             LEMON_LOG("play-test: Play 中编辑已落 Play World（Stop 即丢）");
+        }
+        // 资产热替换验收（M4.4 §5）：中点把 PNG 换成 96×48 蓝（尺寸变化 = 页重建路径）
+        if (launch.smoke && !launch.projectDir.empty() &&
+            frame == (uint64_t)(launch.frames / 2)) {
+            std::vector<uint8_t> px(96 * 48 * 4);
+            for (int y = 0; y < 48; ++y)
+                for (int x = 0; x < 96; ++x) {
+                    uint8_t* q = &px[((size_t)y * 96 + x) * 4];
+                    q[0] = 60; q[1] = 120; q[2] = 240; q[3] = 255;
+                }
+            std::error_code ecw;
+            std::filesystem::path png =
+                std::filesystem::path(launch.projectDir) / "Assets" / "smoke.png";
+            stbi_write_png(png.string().c_str(), 96, 48, 4, px.data(), 96 * 4);
+            LEMON_LOG("asset-smoke: PNG 落盘改写（96×48 蓝）→ 等 watcher 重导入");
         }
         if (ctx_.Playing()) {
             // 输入路由：GameView 聚焦且非文本输入 → 语义子集（WASD/箭头/空格）进 Play World
@@ -461,7 +575,9 @@ int EditorApp::Run(const EditorLaunch& launch) {
 
     bool playVerified = true;
     double playEnterMs = 0, playExitMs = 0;
+    uint32_t playAliveAtStop = 0;
     if (ctx_.Playing()) { // --play：跑满帧数后 Stop（恢复编辑世界）
+        playAliveAtStop = ctx_.ActiveScene().AliveCount();
         playEnterMs = ctx_.LastEnterPlayMs();
         playVerified = ctx_.ExitPlay();
         playExitMs = ctx_.LastExitPlayMs();
@@ -513,7 +629,30 @@ int EditorApp::Run(const EditorLaunch& launch) {
                         playEnterMs, playExitMs, ctx_.LastExitVerified() ? "YES" : "NO",
                         playOk ? "OK" : "FAIL");
         }
-        if (!drew || !cjkOk || errCount > 0 || !sceneOk || !playOk) {
+        // M4.4 资产链验收：固定 guid 资产在库、已导入、热替换生效（96×48 蓝）
+        bool assetsOk = true;
+        if (!launch.projectDir.empty()) {
+            constexpr uint64_t kSmokeGuid = 0x5bd31a7c10e9f2c8ull;
+            const AssetEntry* e = ctx_.Assets().FindByGuid(kSmokeGuid);
+            uint32_t w = 0, h = 0;
+            const bool info = e ? gpuAssets_.PageInfo(kSmokeGuid, w, h) : false;
+            const bool thumb = e && gpuAssets_.Thumbnail(kSmokeGuid) != nullptr;
+            const bool hotOk = !launch.smoke || (w == 96 && h == 48); // 中点改写后应已重导入
+            assetsOk = e && !e->missing && e->spriteId != 0 && info && thumb && hotOk;
+            std::printf("[lemon] editor-smoke assets: entry=%s spriteId=%u page=%ux%u "
+                        "thumb=%s hotreload=%s => %s\n",
+                        e ? "YES" : "NO", e ? e->spriteId : 0, w, h, thumb ? "YES" : "NO",
+                        (w == 96 && h == 48) ? "YES" : (launch.playTest ? "NO" : "n/a"),
+                        assetsOk ? "OK" : "FAIL");
+        }
+        // M4.4 脚本链验收：--script + --play → SpawnerBehaviour 每帧刷怪（36 只）
+        bool scriptOk = true;
+        if (host_ && launch.playTest) {
+            scriptOk = playAliveAtStop > smokeSeeded_ + 10;
+            std::printf("[lemon] editor-smoke script-spawn: playAlive=%u seeded=%u => %s\n",
+                        playAliveAtStop, smokeSeeded_, scriptOk ? "OK" : "FAIL");
+        }
+        if (!drew || !cjkOk || errCount > 0 || !sceneOk || !playOk || !assetsOk || !scriptOk) {
             std::printf("[lemon] editor-smoke FAIL\n");
             exitCode = 1;
         } else {
@@ -524,6 +663,8 @@ int EditorApp::Run(const EditorLaunch& launch) {
                     (unsigned long long)frame, firstFrameMs);
     }
 
+    watcher_.Stop();          // 先停 watcher 线程（此后无资产重扫）
+    host_.reset();            // C# 宿主卸载（无脚本时为空操作）
     device_->WaitIdle(); // ImGui 后端资源（描述符池/采样器）可能被在途帧引用，先等闲
     ui_->Shutdown();
     SetLogSink(nullptr, nullptr);
@@ -565,8 +706,44 @@ void EditorApp::SeedSmokeScene() {
     ecs::Entity trigger = ctx_.CreateEntity("Gate");
     s.Emplace<Trigger2D>(trigger).radius = 128.0f;
     s.Get<Transform2D>(trigger).pos = Vec2{950, 180};
+    // M4.4 资产链：导入 PNG → 场景实体（CreateSpriteEntityFromAsset 与拖拽/双击同通路）
+    if (!launch_->projectDir.empty()) {
+        ecs::Entity fromAsset =
+            ctx_.CreateSpriteEntityFromAsset("FromAsset", 0x5bd31a7c10e9f2c8ull, Vec2{420, 200});
+        if (!fromAsset.IsNull()) s.Get<Transform2D>(fromAsset).scale = Vec2{0.5f, 0.5f};
+    }
+    // M4.4 装配通路：--script 时挂 SpawnerBehaviour（Play 中刷怪断言用）
+    if (ctx_.Scripts()) ctx_.AttachScript(root, 0, "SpawnerBehaviour");
     smokeSeeded_ = (uint32_t)s.AliveCount();
     ctx_.Select(root, false); // Inspector 有主选中
+}
+
+void EditorApp::SeedSmokeProject() {
+    // 冒烟项目播种：Assets/smoke.png（64×64 红，四角亮标记）+ 固定 guid .meta
+    // （TestScript.SpawnerBehaviour.kSpriteGuid 引用同一常量——资产链端到端可断言）
+    std::error_code ec;
+    std::filesystem::path root(launchCopy_.projectDir);
+    std::filesystem::create_directories(root / "Assets", ec);
+    std::filesystem::path png = root / "Assets" / "smoke.png";
+    if (!std::filesystem::exists(png, ec)) {
+        std::vector<uint8_t> px(64 * 64 * 4);
+        for (int y = 0; y < 64; ++y)
+            for (int x = 0; x < 64; ++x) {
+                uint8_t* q = &px[((size_t)y * 64 + x) * 4];
+                const bool mark = (x < 8 || x >= 56) && (y < 8 || y >= 56);
+                q[0] = mark ? 255 : 200;
+                q[1] = mark ? 255 : 40;
+                q[2] = 40;
+                q[3] = 255;
+            }
+        stbi_write_png(png.string().c_str(), 64, 64, 4, px.data(), 64 * 4);
+    }
+    std::filesystem::path meta = png.string() + ".meta";
+    if (!std::filesystem::exists(meta, ec)) {
+        std::ofstream f(meta, std::ios::trunc);
+        f << "{\n  \"guid\": \"5bd31a7c10e9f2c8\",\n  \"type\": \"sprite\",\n  \"hash\": 0,\n"
+             "  \"importedAt\": 0\n}\n";
+    }
 }
 
 } // namespace lemon::editor

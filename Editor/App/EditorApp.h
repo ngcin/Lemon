@@ -7,6 +7,8 @@
 #include <string>
 #include <vector>
 
+#include "Assets/AssetGpuCache.h"
+#include "Assets/FileWatcher.h"
 #include "EditorContext.h"
 #include "Panels/Panel.h"
 #include "Tooling/EditorLog.h"
@@ -17,6 +19,9 @@ class Window;
 namespace rhi {
 class Device;
 class CommandList;
+}
+namespace scripting {
+class ScriptHost;
 }
 }
 
@@ -31,10 +36,11 @@ struct EditorLaunch {
     bool smoke = false;      // 退出前自检断言 + 汇总打印（M4-Editor-Plan §6 #13 提案）
     bool demoWindow = false; // 叠加 Dear ImGui Demo（冒烟画面丰富度/手动排障）
     std::string screenshot;  // 非空 = 末帧截屏写 PNG（stb_image_write）
-    std::string projectDir;  // --project（M4.1 起生效；M4.0 仅显示）
+    std::string projectDir;  // --project（M4.4 生效：AssetDatabase 根；空 = cwd 当项目）
     std::string openScene;   // --scene：启动即打开的 .scene（冒烟/CLI 用）
     std::string saveScene;   // --save-scene：场景就绪后保存并退出（CLI roundtrip 验收）
     bool playTest = false;   // --play：冒烟内进/出 Play 往返（逐字节断言 + 计时，验收 #4/#5）
+    std::string script;      // --script：用户脚本程序集（C# 装配通路；空 = 无脚本宿主）
 };
 
 /// 工具标识（工具栏 W/E/R 三态 + 后续模式栈的地基）
@@ -52,6 +58,7 @@ public:
     ImGuiBackend& Ui() { return *ui_; }
     rhi::Device& Device() { return *device_; }
     ViewportRenderer& Viewport() { return *viewport_; }
+    AssetGpuCache& AssetGpu() { return gpuAssets_; }
     bool Playing() const { return playing_; } // Play 沙盒 M4.3 接入
     EditTool Tool() const { return tool_; }
     bool GridSnap() const { return gridSnap_; }
@@ -66,6 +73,10 @@ public:
     void MenuSaveSceneAs();
     bool ConfirmUnsaved();   // dirty 时弹确认框；返回 false = 用户取消
 
+    // ---- 资产动作（M4.4）----
+    void MenuImportAsset();  // 文件选择器（复制进 Assets/ + 导入）
+    void RescanAssets();     // FileWatcher/手动重扫 → DB + GPU 增量导入
+
 private:
     void BuildUI();          // 菜单栏/工具栏/dockspace/状态栏/面板/模态
     void BuildMenuBar();
@@ -75,8 +86,9 @@ private:
     void BuildPickersAndModals();
     void SetupDefaultLayout();
     void SeedSmokeScene();   // 冒烟播种：父子链 + 常用组件（面板验收有内容）
+    void SeedSmokeProject(); // 冒烟播种：临时项目 + 预置 PNG（固定 guid，M4.4 资产链验收）
 
-    enum class PickerMode { Open, Save };
+    enum class PickerMode { Open, Save, Import };
     enum class ConfirmContext { Exit, SceneOp };
 
     EditorLaunch launchCopy_;
@@ -89,6 +101,9 @@ private:
     std::unique_ptr<rhi::Device> device_;
     std::unique_ptr<ImGuiBackend> ui_;
     std::unique_ptr<class ViewportRenderer> viewport_;
+    std::unique_ptr<scripting::ScriptHost> host_; // C# 宿主（--script；null = 无）
+    AssetGpuCache gpuAssets_;
+    FileWatcher watcher_;
     std::vector<std::unique_ptr<IEditorPanel>> ownedPanels_;
     PanelRegistry panels_;
 
