@@ -1,6 +1,7 @@
 #include "Platform/Window.h"
 
 #include <cstring>
+#include <utility>
 
 #include <SDL3/SDL.h>
 
@@ -14,6 +15,7 @@ struct Window::Impl {
     bool keys[512] = {}; // 下标 = SDL_Scancode
     EventObserver observer = nullptr;
     void* observerData = nullptr;
+    std::vector<std::string> drops; // SDL drop 文件（M4.6 §5-3；PollEvents 攒、TakeDroppedFiles 排水）
 };
 
 std::unique_ptr<Window> Window::Create(const WindowDesc& desc) {
@@ -61,6 +63,9 @@ bool Window::PollEvents() {
                 if (sc >= 0 && sc < 512) m->keys[sc] = false;
                 break;
             }
+            case SDL_EVENT_DROP_FILE: // OS 拖入窗口（路径在事件回调外失效 → 即拷即存）
+                if (ev.drop.data && ev.drop.data[0]) m->drops.emplace_back(ev.drop.data);
+                break;
             default:
                 break;
         }
@@ -82,6 +87,12 @@ bool Window::TakeResized() {
 void Window::RequestResize(int w, int h) { SDL_SetWindowSize(m->window, w, h); }
 
 void Window::SetTitle(const char* title) { SDL_SetWindowTitle(m->window, title); }
+
+std::vector<std::string> Window::TakeDroppedFiles() {
+    std::vector<std::string> out = std::move(m->drops);
+    m->drops.clear();
+    return out;
+}
 
 void* Window::NativeHandle() const { return (void*)m->window; }
 

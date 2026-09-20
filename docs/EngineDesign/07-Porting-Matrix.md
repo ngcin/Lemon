@@ -134,6 +134,18 @@
 
 A/B 级（真拷代码）合计约 **45–55 人天**；C 级 schema/思想项不计移植工时（已含在各里程碑设计工作量中）。对照自研等价物估算（RenderableManager/粒子/CoreCLRHost/JobSystem 四大件自研 ≈ 60+ 人天且风险高），移植策略为项目节省约 1.5–2 个月日历时间与大量试错成本。
 
+## 3.5 OS 平台差异验证点（macOS 先行；Windows 移植时逐项过）
+
+引擎经 SDL3 语义层隔离 OS 差异，但"接口隔离"≠"行为一致"——下列功能 macOS 已实测，
+Windows 首次移植时需人工复验（M4.6 §7 登记；新 OS 级功能在此追加）：
+
+| 功能 | 语义层接口 | macOS 状态 | Windows 验证点 |
+|---|---|---|---|
+| 窗口标题动态改写 | `Window::SetTitle` | ✅ M4.6 标题栏 | 中文/●脏标记编码正常 |
+| 外部文件拖入导入 | `Window::TakeDroppedFiles`（SDL_EVENT_DROP_FILE） | ✅ M4.6b（Finder 拖 PNG） | 资源管理器拖入路径形态（盘符/反斜杠）经 `std::filesystem` 归一 |
+| 关闭按钮/退出确认 | `Window::PollEvents` 返回 false → 状态机 | ✅ M4.6（--smoke-close） | 无差异预期；跑同款冒烟即可 |
+| 文件选择器手输路径 | FilePicker（编辑器内实现，无 OS 对话框） | ✅ M4.6b | `C:\` 盘符路径回车直达 |
+
 ## 4. 登记模板（新增移植项用）
 
 ```markdown

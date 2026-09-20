@@ -26,9 +26,11 @@
 #include "ECS/Hierarchy.h"
 #include "Core/Log.h"
 #include "EditorContext.h"
+#include "Panels/BuiltInPanels.h"
 #include "Platform/Window.h"
 #include "Renderer/RHI.h"
 #include "Scripting/ScriptHost.h"
+#include "Serialization/SceneArchive.h"
 #include "imgui.h"
 #include "imgui_internal.h" // DockBuilder（docking 分支布局编程 API）
 
@@ -172,6 +174,15 @@ void EditorApp::BuildMenuBar() {
         if (ImGui::MenuItem("导入文件...", nullptr, false, true)) MenuImportAsset();
         if (ImGui::MenuItem("重扫资产库", nullptr, false, true)) RescanAssets();
         ImGui::Separator();
+        { // 新建脚本（M4.6 §5-4）：模板 .cs → Game/ + 注册行 → 热重载排队
+            std::string csproj, dll;
+            const bool can =
+                !ctx_.Assets().ProjectRoot().empty() && FindGameProject(csproj, dll);
+            if (ImGui::MenuItem("新建脚本...", nullptr, false, can)) newScriptOpen_ = true;
+            if (!can && ImGui::IsItemHovered())
+                ImGui::SetTooltip("需要已打开项目且 Game/ 有脚本工程");
+        }
+        ImGui::Separator();
         if (ImGui::MenuItem("重新编译脚本（热重载）", nullptr, false, host_ != nullptr))
             MenuRebuildScripts();
         ImGui::Separator();
@@ -256,6 +267,16 @@ void EditorApp::BuildStatusBar() {
         ImGui::TextUnformatted("| 未打开项目（文件 → 新建/打开项目）");
         ImGui::PopStyleColor();
     }
+    // 编译状态（M4.6 §5-5）：排队中橙字（构建阻塞期间屏幕留此帧）；完成后回显耗时
+    if (compileQueued_) {
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.65f, 0.15f, 1.0f));
+        ImGui::TextUnformatted("| 编译中…（dotnet build）");
+        ImGui::PopStyleColor();
+    } else if (lastBuildMs_ >= 0.0) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("| 上次编译 %.0fms", lastBuildMs_);
+    }
 }
 
 void EditorApp::BuildNoProjectCard() {
@@ -312,6 +333,11 @@ void EditorApp::BuildShortcuts() {
                 if (!copy.IsNull()) ctx_.Select(copy, false);
             }
         }
+        // M4.6 §5-1：复制/粘贴（Edit 态专属——Undo 结构轨在 Play 禁用）；Ctrl+D 保留
+        if (!ctx_.Playing() && ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_C))
+            CopySelection();
+        if (!ctx_.Playing() && ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_V))
+            PasteClipboard();
         if (ImGui::IsKeyPressed(ImGuiKey_Delete, false)) {
             for (ecs::Entity e : ctx_.Selection()) ctx_.DestroyEntityTree(e);
             ctx_.ClearSelection();
@@ -393,6 +419,14 @@ void EditorApp::BuildUI() {
 }
 
 void EditorApp::BuildPickersAndModals() {
+    // 快捷目录（M4.6 §5-7）：Home + 当前项目根（打开期间每帧刷新——切项目后随动）
+    if (picker_.IsOpen()) {
+        std::vector<std::pair<std::string, std::string>> qd;
+        if (const char* home = std::getenv("HOME")) qd.push_back({"Home", home});
+        const std::string& root = ctx_.Assets().ProjectRoot();
+        if (!root.empty()) qd.push_back({"项目", root});
+        picker_.SetQuickDirs(std::move(qd));
+    }
     // 文件选择器（打开/另存/导入共用；动作一次性返回）
     if (PickerResult r = picker_.Draw(); r.action != PickerAction::None) {
         if (r.action == PickerAction::Open || r.action == PickerAction::Save) {
@@ -513,6 +547,36 @@ void EditorApp::BuildPickersAndModals() {
         ImGui::EndPopup();
     }
 
+    // 新建脚本（M4.6 §5-4）：类名 → 模板 .cs 落 Game/ + GameMain 注册行 → 热重载排队
+    // → watcher 自动接手（新类型编译后即可挂到实体）
+    if (newScriptOpen_) ImGui::OpenPopup("新建脚本");
+    if (ImGui::BeginPopupModal("新建脚本", &newScriptOpen_, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("模板 .cs 落 Game/，并在 GameMain.cs 自动注册；\n"
+                               "创建后自动热重载，新类型立即可挂到实体。");
+        ImGui::SetNextItemWidth(280);
+        ImGui::InputText("类名", newScriptName_, sizeof(newScriptName_));
+        ImGui::BeginDisabled(!newScriptName_[0]);
+        if (ImGui::Button("创建并编译", ImVec2(160, 0))) {
+            const std::string gameDir = ctx_.Assets().ProjectRoot() + "/Game";
+            if (ProjectWizard::AddBehaviourScript(gameDir, newScriptName_)) {
+                LEMON_LOG("新脚本已建：Game/%s.cs（注册行已插，热重载排队）", newScriptName_);
+                ScriptSourceChanged(); // 吸收基线（编译走队列；watcher 不再二次重编）
+                QueueScriptRebuild("新建脚本");
+                newScriptOpen_ = false;
+                ImGui::CloseCurrentPopup();
+            } else {
+                LEMON_WARN("新建脚本失败：类名非法或 Game/%s.cs 已存在", newScriptName_);
+            }
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button("取消", ImVec2(120, 0))) {
+            newScriptOpen_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
     DrawRecoveryModal();
 }
 
@@ -617,6 +681,115 @@ void EditorApp::RescanAssets() {
 }
 
 // ------------------------------------------------ 项目/脚本管线（M4.5）----
+// ---- M4.6b 日常编辑效率（§5）----
+void EditorApp::CopySelection() {
+    // §5-1：拷贝"选中子树的根"（祖先也在选中集内的跳过——整树由祖先携带）。
+    // 树 JSON 经 SceneArchive（父子结构/组件全量；guid 由粘贴侧换新）
+    entityClip_.clear();
+    entityClipRootPos_.clear();
+    ecs::Scene& s = ctx_.ActiveScene();
+    for (ecs::Entity e : ctx_.Selection()) {
+        if (e.IsNull() || !s.Alive(e)) continue;
+        bool ancestorSelected = false;
+        for (ecs::Entity a = e;;) {
+            const ecs::Hierarchy* h = s.TryGet<ecs::Hierarchy>(a);
+            if (!h || h->parent.IsNull() || !s.Alive(h->parent)) break;
+            a = h->parent;
+            if (ctx_.IsSelected(a)) {
+                ancestorSelected = true;
+                break;
+            }
+        }
+        if (ancestorSelected) continue;
+        entityClip_.push_back(ecs::SceneArchive::SaveEntityTree(s, e));
+        Vec2 pos{0, 0};
+        if (const ecs::Transform2D* t = s.TryGet<ecs::Transform2D>(e)) pos = t->pos;
+        entityClipRootPos_.push_back(pos);
+    }
+    if (!entityClip_.empty())
+        LEMON_LOG("已复制 %zu 个实体（子树结构随行，Ctrl+V 粘贴）", entityClip_.size());
+}
+
+void EditorApp::PasteClipboard() {
+    if (entityClip_.empty() || ctx_.Playing()) return;
+    const std::string before = ctx_.SnapshotSceneJson();
+    ecs::Scene& s = ctx_.ActiveScene();
+    bool any = false;
+    for (size_t i = 0; i < entityClip_.size(); ++i) {
+        ecs::Entity root = ecs::SceneArchive::LoadEntityTree(s, entityClip_[i]);
+        if (root.IsNull()) continue;
+        // 相对偏移：根整体 +24/+24（连续粘贴不与原件叠死；子树相对位置随序列化保留）
+        if (s.Has<ecs::Transform2D>(root))
+            s.Get<ecs::Transform2D>(root).pos = entityClipRootPos_[i] + Vec2{24.0f, 24.0f};
+        ctx_.Select(root, any); // 粘贴根全进选择集（末位 = 主选中）
+        any = true;
+    }
+    if (any) {
+        ctx_.PushStructuralUndo("粘贴实体", before);
+        LEMON_LOG("已粘贴 %zu 个实体（偏移 +24,+24）", entityClip_.size());
+    }
+}
+
+void EditorApp::ImportDroppedFile(const std::string& absPath) {
+    // §5-3：OS 拖入窗口的文件 → 当前资产目录（AssetBrowser 浏览目录；面板不可见 = 根）
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (!fs::is_regular_file(absPath, ec)) {
+        LEMON_WARN("拖入跳过（非文件）：%s", absPath.c_str());
+        return;
+    }
+    if (ctx_.Assets().ProjectRoot().empty()) {
+        LEMON_ERROR("拖入导入失败：未打开项目。文件 → 新建项目... 或 打开项目...");
+        return;
+    }
+    std::string subDir; // ImportFile 的 relDest 相对 Assets/（"" = 根）
+    for (auto& en : panels_.Entries())
+        if (auto* browser = dynamic_cast<AssetBrowserPanel*>(en.panel)) {
+            const std::string& d = browser->CurrentDir(); // "" 或 "Assets[/x]"
+            if (d.rfind("Assets/", 0) == 0) subDir = d.substr(7);
+            break;
+        }
+    if (!subDir.empty() && subDir.back() != '/') subDir += '/';
+    // 重名不覆盖：自动加序号（拖同名文件静默覆盖旧资产太危险）
+    const std::string stem = fs::path(absPath).stem().string();
+    const std::string ext = fs::path(absPath).extension().string();
+    std::string relDest = subDir + stem + ext;
+    for (int i = 2; ctx_.Assets().FindByPath("Assets/" + relDest); ++i)
+        relDest = subDir + stem + " " + std::to_string(i) + ext;
+    if (const AssetEntry* e = ctx_.Assets().ImportFile(absPath, relDest)) {
+        if (e->type == AssetType::Sprite) gpuAssets_.ImportSprite(*e);
+        LEMON_LOG("拖入导入：%s（guid %016llx）", e->relPath.c_str(),
+                  (unsigned long long)e->guid);
+    }
+}
+
+void EditorApp::QueueScriptRebuild(const char* reason) {
+    // §5-5：排队后本帧 BuildUI 画"编译中…" → 下帧主循环才真构建（dotnet 阻塞 1–2s
+    // 期间屏幕上留着提示；主线程阻塞现状不动 = §6 观察项）
+    if (compileQueued_) return; // 已排队（合并）
+    compileQueued_ = true;
+    compileQueuedReason_ = reason;
+}
+
+void EditorApp::LogCompileErrors(const std::string& dotnetOutput) {
+    // §5-6：dotnet 输出 → `file(l,c): error CSxxxx: msg` 红字进 Console（可读性：
+    // 绝对路径裁成项目相对）
+    const std::vector<std::string> errs = ProjectWizard::ExtractCompileErrors(dotnetOutput);
+    if (errs.empty()) {
+        std::string snippet = dotnetOutput.substr(0, 400);
+        LEMON_ERROR("编译失败（dotnet 输出无 error 行；输出片段）：%s", snippet.c_str());
+        return;
+    }
+    const std::string prefix = ctx_.Assets().ProjectRoot() + "/";
+    for (const std::string& e : errs) {
+        std::string line = e;
+        if (line.rfind(prefix, 0) == 0) line = line.substr(prefix.size());
+        LEMON_ERROR("编译错误：%s", line.c_str());
+    }
+    if (errs.size() >= 50) LEMON_WARN("编译错误超 50 条，仅列前 50");
+}
+
+// ------------------------------------------------ 项目/脚本管线（M4.5）----
 bool EditorApp::FindGameProject(std::string& csproj, std::string& dll) {
     namespace fs = std::filesystem;
     const std::string& root = ctx_.Assets().ProjectRoot();
@@ -665,12 +838,14 @@ bool EditorApp::OpenProjectPipeline(const std::string& projectRoot) {
     std::string csproj, dll;
     if (launch_->script.empty() && FindGameProject(csproj, dll)) {
         double buildMs = 0.0;
+        std::string buildOut;
         if (ProjectWizard::BuildGameProject(csproj, ctx_.Assets().ProjectRoot() + "/.lemon/bin",
-                                            &buildMs) == 0) {
+                                            &buildMs, &buildOut) == 0) {
             InitScriptHostFrom(dll);
             LEMON_LOG("Game/ 编译 %.0fms → %s", buildMs, dll.c_str());
         } else {
             LEMON_ERROR("Game/ 编译失败（项目仍可编辑，无脚本）：dotnet build %s", csproj.c_str());
+            LogCompileErrors(buildOut); // M4.6 §5-6：启动期编译错误同样红字可读
         }
     } else if (launch_->script.empty()) {
         // 新项目无 Game/：清旧宿主（顺序 = 先摘 ctx 再毁宿主，指针永不悬空），
@@ -771,11 +946,13 @@ bool EditorApp::TryHotReloadScripts(const char* reason) {
     }
     const auto t0 = std::chrono::steady_clock::now();
     if (hasProject) {
+        std::string buildOut; // M4.6 §5-6：捕获输出 → 错误行红字进 Console
         const int rc = ProjectWizard::BuildGameProject(
-            csproj, ctx_.Assets().ProjectRoot() + "/.lemon/bin");
+            csproj, ctx_.Assets().ProjectRoot() + "/.lemon/bin", nullptr, &buildOut);
         if (rc != 0) {
             LEMON_ERROR("热重载编译失败（保持旧域运行）：dotnet build 退出码 %d（%s）", rc,
                         reason);
+            LogCompileErrors(buildOut);
             return false;
         }
     }
@@ -789,6 +966,7 @@ bool EditorApp::TryHotReloadScripts(const char* reason) {
     }
     LEMON_LOG("热重载完成（%s）：编译+换装+重装配 %.0fms（Play 重装配 %d 实例；类型 %zu 个）",
               reason, hotReloadMs_, reattached, ctx_.ScriptTypeNames().size());
+    lastBuildMs_ = hotReloadMs_; // 状态栏"上次编译"回显（M4.6 §5-5）
     if (info.leakCount > 0)
         LEMON_WARN("热重载泄漏计数 %d（旧 ALC 未回收——本 runtime 已知限制，ADR-010 A 线；"
                    "每次约百 KB 级，会话内可接受）",
@@ -796,7 +974,7 @@ bool EditorApp::TryHotReloadScripts(const char* reason) {
     return true;
 }
 
-void EditorApp::MenuRebuildScripts() { TryHotReloadScripts("手动触发"); }
+void EditorApp::MenuRebuildScripts() { QueueScriptRebuild("手动触发"); }
 
 void EditorApp::MenuNewProject() { wizOpen_ = true; }
 
@@ -973,6 +1151,14 @@ int EditorApp::Run(const EditorLaunch& launch) {
             if (!ctx_.ExitPlay()) LEMON_WARN("Stop 后快照校验失败（编辑场景已按快照重建）");
         }
         escHeld_ = esc;
+        // 外部拖拽导入（M4.6 §5-3）：OS drop 文件 → 当前资产目录（无项目 = 可操作红字）
+        for (const std::string& f : window_->TakeDroppedFiles()) ImportDroppedFile(f);
+        // 编译队列执行（M4.6 §5-5）：排队发生在上帧 → 上帧状态栏已画"编译中…"，
+        // 本帧才真正阻塞构建（dotnet 1–2s 期间屏幕留提示帧）
+        if (compileQueued_) {
+            compileQueued_ = false;
+            TryHotReloadScripts(compileQueuedReason_.c_str());
+        }
         // --smoke-close（M4.6 §4-9）：关闭状态机交互冒烟注入
         //   clean：干净场景下请求退出 → 应"不弹确认且立即退出"（b7094a9 修复回归线）
         //   dirty：置脏 → 请求退出 → 应弹确认（armed）→ 模拟"丢弃并退出"（forceExit）
@@ -986,10 +1172,11 @@ int EditorApp::Run(const EditorLaunch& launch) {
         // 资产热替换（M4.4）：watcher 置脏 → 重扫 + 增量导入（改文件落盘即时可见）
         if (watcher_.Running() && watcher_.ConsumeDirty()) RescanAssets();
         // C# 热重载（M4.5 §3.7）：Game/ 源写 → 防抖 0.4s（编辑器连续保存不打断）→ 编译+换装
+        // （M4.6 §5-5：改走编译队列——先画一帧"编译中…"再阻塞）
         if (scriptWatcher_.Running() && scriptWatcher_.ConsumeDirty() && !launch.finalTest) {
             if (ImGui::GetTime() >= reloadDebounceUntil_) {
                 reloadDebounceUntil_ = ImGui::GetTime() + 0.4;
-                if (ScriptSourceChanged()) TryHotReloadScripts("源码变更");
+                if (ScriptSourceChanged()) QueueScriptRebuild("源码变更");
             }
         }
         // 自动备份（§3.8）：5 分钟节拍，dirty 且非 Play 才写

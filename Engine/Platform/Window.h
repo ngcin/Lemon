@@ -3,6 +3,8 @@
 #pragma once
 
 #include <memory>
+#include <string>
+#include <vector>
 
 namespace lemon {
 
@@ -38,6 +40,8 @@ public:
     void RequestResize(int w, int h);
     /// 改窗口标题（编辑器标题栏：<场景>[●] — <项目> — Lemon；M4.6）
     void SetTitle(const char* title);
+    /// 拖放文件队列（M4.6 §5-3 外部拖拽导入）：取出并清空（绝对路径，OS drop 逐文件一条）
+    std::vector<std::string> TakeDroppedFiles();
     void* NativeHandle() const;
     void GetPixelSize(int& w, int& h) const;
     bool IsKeyDown(Key k) const;

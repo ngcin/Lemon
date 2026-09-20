@@ -5,6 +5,60 @@
 
 ---
 
+## 2026-09-20 · M4.6b 日常编辑效率七件套（复制粘贴/拖拽导入/新建脚本/编译反馈）
+
+按 M4.6 §5 实施（M4.6a 次日收尾轮）。全部 ImGui/SDL/STL 既有能力，零新第三方（R4）。
+
+**七件落地**：
+
+- **实体复制粘贴（Ctrl+C/V）**：选中子树的根（祖先也在选中集内的跳过）→
+  `SceneArchive::SaveEntityTree` 多根入内部剪贴板 + 各根原位置；粘贴
+  `LoadEntityTree`（guid 全换新）+ 根 +24/+24 相对偏移（连续粘贴不叠死）、进结构
+  Undo；Edit 态专属（Play 中禁用，与 Undo 轨一致）。Ctrl+D 原样保留。
+- **资产右键重命名/删除**：M4.4 时 UI 已接（本册 §3 清单误记"未接"）——本轮验收
+  确认引用不断/墓碑红字行为不变，未动代码。
+- **外部拖拽导入**：`Window::TakeDroppedFiles()`（SDL_EVENT_DROP_FILE 即拷即存——
+  `drop.data` 仅事件期内有效）语义层接口 → 落 AssetBrowser 当前浏览目录（面板不可
+  见 = Assets/ 根）→ `ImportFile`；重名自动加序号**不覆盖**（拖同名文件静默覆盖旧
+  资产太危险）；无项目可操作红字。平台差异按 §7 登记 07 §3.5（Windows 盘符路径
+  验证点）。
+- **新建脚本菜单**（Assets 菜单）：类名弹窗 → `ProjectWizard::AddBehaviourScript`
+  模板 .cs 落 Game/ + GameMain.cs 注册锚点前插 `Register<>` 行（与终验
+  EditProbeBehaviour 同款锚点手法，不动 Configure 签名）→ 编译队列热重载 → 类型
+  可挂。模板真机 dotnet 编译 0 错误；非法类名/重名拒绝（单测覆盖）。
+- **编译状态提示**：排队制——触发只置 `compileQueued_`，当帧状态栏画"编译中…
+  （dotnet build）"并 present，**下帧**才真正阻塞构建（阻塞 1–2s 期间屏幕留提示
+  帧），完成后状态栏回显"上次编译 Nms"。主线程阻塞现状不动（§6 观察项）。
+- **Console 编译错误解析**：`BuildGameProject` 改 popen 捕获合并输出（64KB 上限）；
+  `ExtractCompileErrors` 提取 `file(l,c): error CSxxxx` 行（去 `[csproj]` 尾巴、
+  50 行上限，纯函数单测）→ 编辑器侧裁项目根前缀后红字进 Console。真机 dotnet
+  输出格式对照一致（`/abs/Game/A.cs(6,17): error CS1525: ... [..csproj]`）。
+- **FilePicker 手输 + 快捷钮**：绝对路径回车直达（目录=进入 / 文件=进父目录并填
+  文件名，不存在=告警回显）；Home/项目根快捷钮每帧随动（切项目后随动）。
+
+**防重复编译小纪律**：新建脚本路径写完源即 `ScriptSourceChanged()` 吸收基线再排队
+（否则 watcher 500ms 后必二跑 dotnet）——所有非 watcher 文件写路径同理。
+
+### 验收数据（Release / AMD RX 590 / MoltenVK）
+
+| 项 | 结果 |
+|---|---|
+| engine-tests | **12986 checks 全绿**（+51：ExtractCompileErrors 格式/边界 + AddBehaviourScript 模板/锚点/非法名） |
+| ctest | 3/3（engine-tests / imgui-isolation / script-tests） |
+| 编辑器基础冒烟 | 120 帧 errors=0 PASS（冷启 535ms） |
+| 资产链冒烟 | `--project --smoke --frames 240`：spriteId=104、页 96×48 热替换、errors=0 PASS |
+| 脚本链冒烟 | `--project --script --smoke --play --frames 240 --validate`：playAlive=42、Play 往返 3.8/0.6ms 逐字节一致、errors=0 PASS |
+| 终验 `--final` | 620 帧全 OK：热重载 play=1283ms/edit=1249ms、stateBag 66/66、fps 59、冷启 345ms、autosave 链 OK |
+| 关闭状态机回归 | `--smoke-close clean/dirty` 双 OK（主循环改动零回退） |
+| 新脚本链 | 模板+注册行真机 dotnet 编译 0 错误；换装链同终验机制（1249ms ≪ 10s 判据） |
+
+### 遗留与观察
+
+- UI 观感项（拖拽入列动画、"编译中"帧的视觉时长感）待真人手测清单（M4.6 §5 末）。
+- dotnet build 主线程阻塞维持现状（M4.6 §6 观察项，>2s 频繁再异步化）。
+
+---
+
 ## 2026-09-20 · 会话内二次装配闪退闭环（宿主进程单例化）
 
 用户二次实测崩溃（SIGSEGV @0x19，栈 = ProfilerPanel → GcAllocated →

@@ -14,7 +14,7 @@
 | **M2 ECS 运行时** ✅ | 组件目录 + 系统管线 + 空间哈希 + 查询层 + Team + F3 面板 | 4–6 周（实际 1 天） | ✅（2026-09-19）bench-sim 1 万怪 **avg 5.10ms**（判据 ≤8）；回放 5 分钟双档 PASS；11545 checks（含复审轮）（[09 §7](./09-Testing.md)） |
 | **M3 C# 脚本层** ✅ | CoreCLRHost 全量 + 档②批量系统 + 档①脚本组件 + 事件桥 + 异常隔离 + 调试通路（热重载移 M4，[ADR-010](../ADR/ADR-010-M3-Scope-Thread-RNG.md)；ALC 卸载经 M3-2b 实测降级为已知 runtime 限制，同 ADR 修订） | 4–6 周（实际 1 天） | ✅（2026-09-19）bench-script 5k 弹整步 **0.25ms**；100k 净时比 **1.43×**（判据分档见 ADR-010 D5）；回放 18000 帧双档 PASS；毒脚本 60 帧自动禁用不崩；托管分配硬 0（D6）；断点通路 ✅（[09 §7.6](./09-Testing.md)） |
 | **M4 编辑器 v1** ✅ | 面板框架 + SceneView + Inspector + Play 沙盒 + Undo + 资产浏览器 + C# 热重载（自 M3 移入，ADR-010） | 6–8 周（实际 1 天） | ✅（2026-09-20）判据链全量化 PASS：零代码判据场景 Play fps 59（≥45）、热重载 1.3s ≤2s StateBag 续跑 66/66、进出 4.3/0.4ms 逐字节一致、冷启 367ms（[M4-Editor-Plan.md](./M4-Editor-Plan.md)） |
-| **M4.6 编辑器可用性加固** | 会话闭环（项目中心最小形态/最近项目/目录选择）+ 编辑效率件（重命名/拖拽导入/新建脚本/编译提示）+ 交互路径冒烟（触发：M4 收官当日真人实测 3 阻断 bug，已修） | 2–2.5 周（M4.6a ✅ 2026-09-20 `2273e7f`；M4.6b 未动工） | 新用户 30 分钟零命令行零文档完成 新建项目→导入→摆场景→Play→保存→关闭；交互冒烟 errors=0（[M4.6-Editor-Usability-Plan.md](./M4.6-Editor-Usability-Plan.md)） |
+| **M4.6 编辑器可用性加固** | 会话闭环（项目中心最小形态/最近项目/目录选择）+ 编辑效率件（重命名/拖拽导入/新建脚本/编译提示）+ 交互路径冒烟（触发：M4 收官当日真人实测 3 阻断 bug，已修） | 2–2.5 周（M4.6a ✅ `2273e7f`；M4.6b ✅ 2026-09-20，手测清单待真人过） | 新用户 30 分钟零命令行零文档完成 新建项目→导入→摆场景→Play→保存→关闭；交互冒烟 errors=0（[M4.6-Editor-Usability-Plan.md](./M4.6-Editor-Usability-Plan.md)） |
 | **M5 玩法 + VS 模板** | 技能/弹幕/命中/拾取/导演/HUD/存档 + vs-survivor 模板 | 6–8 周 | **10 分钟完整一局可玩；压测 B 达标（编辑器内 1 万怪 ≥ 45fps）** |
 | **M6 Tilemap + TD 模板** | Tilemap/自动瓦片/FlowField/波次 + tower-defense 模板 | 6–8 周 | TD 模板 10 波通关；千怪走流场 CPU ≤ 2ms |
 | **M7 发布管线** | packager + .baked + Steam + 存档云同步 | 4 周 | vs-survivor 一键出 Win 包 + Steam depot 上传成功；安装即玩 |

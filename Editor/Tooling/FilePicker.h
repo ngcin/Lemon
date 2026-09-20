@@ -5,6 +5,7 @@
 
 #include <filesystem>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace lemon::editor {
@@ -28,6 +29,11 @@ public:
     PickerResult Draw();
     bool IsOpen() const { return open_; }
 
+    /// 快捷目录钮（M4.6 §5-7）：(标签, 绝对路径)，如 Home / 当前项目根。打开前设置。
+    void SetQuickDirs(std::vector<std::pair<std::string, std::string>> dirs) {
+        quickDirs_ = std::move(dirs);
+    }
+
 private:
     void Refresh();
 
@@ -39,6 +45,8 @@ private:
     std::filesystem::path dir_;
     std::string fileName_;
     std::string requireExt_;
+    std::string pathInput_; // 路径手输框（M4.6 §5-7；随 dir_ 同步，回车直达）
+    std::vector<std::pair<std::string, std::string>> quickDirs_;
     struct Entry {
         std::string name;
         bool isDir;

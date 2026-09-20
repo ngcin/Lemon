@@ -48,6 +48,7 @@ void FilePicker::Refresh() {
         if (a.isDir != b.isDir) return a.isDir; // 目录在前
         return a.name < b.name;
     });
+    pathInput_ = dir_.string(); // 手输框随当前目录同步（M4.6 §5-7）
 }
 
 PickerResult FilePicker::Draw() {
@@ -100,7 +101,39 @@ PickerResult FilePicker::Draw() {
         }
         ImGui::SameLine();
     }
-    ImGui::TextUnformatted(dir_.string().c_str());
+    // 快捷目录钮 + 路径手输（M4.6 §5-7）：绝对路径回车直达（目录 = 进入；文件 = 进父目录并选中）
+    for (const auto& [label, path] : quickDirs_) {
+        std::error_code ecq;
+        if (!path.empty() && std::filesystem::is_directory(path, ecq) &&
+            ImGui::Button(label.c_str())) {
+            dir_ = std::filesystem::path(path);
+            selected_.clear();
+            Refresh();
+        }
+        ImGui::SameLine();
+    }
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::InputTextWithHint("##path", "路径（绝对，回车直达）", &pathInput_,
+                                 ImGuiInputTextFlags_EnterReturnsTrue)) {
+        std::error_code ecp;
+        std::filesystem::path p(pathInput_);
+        if (!pathInput_.empty() && std::filesystem::is_directory(p, ecp)) {
+            dir_ = p;
+            selected_.clear();
+            Refresh();
+        } else if (!pathInput_.empty() && std::filesystem::is_regular_file(p, ecp)) {
+            dir_ = p.parent_path();
+            if (!dirMode_) fileName_ = p.filename().string(); // 文件名进下方名字框
+            selected_ = p;
+            Refresh();
+            pathInput_ = dir_.string(); // 框回显父目录
+        } else if (!pathInput_.empty()) {
+            LEMON_WARN("路径不存在：%s", pathInput_.c_str());
+            pathInput_ = dir_.string();
+        }
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("输入绝对路径后回车：目录 = 进入；文件 = 选中并填入文件名");
 
     ImGui::Separator();
     ImGui::BeginChild("list", ImVec2(0, dirMode_ ? 0.0f : -ImGui::GetFrameHeightWithSpacing() * 2.2f),

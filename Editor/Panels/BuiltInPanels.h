@@ -98,6 +98,9 @@ public:
     const char* Name() const override { return "Assets"; }
     void OnGui(EditorApp& app) override;
 
+    /// 当前浏览目录（"" = Assets/ 根；M4.6 §5-3 拖拽导入落点）
+    const std::string& CurrentDir() const { return currentDir_; }
+
 private:
     void DrawItem(EditorApp& app, const AssetEntry& e);
 

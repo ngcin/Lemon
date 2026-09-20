@@ -3,10 +3,12 @@
 #include "Assets/ProjectWizard.h"
 
 #include <chrono>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <sstream>
 
 #include "stb_image_write.h"
@@ -172,20 +174,104 @@ bool ProjectWizard::WriteGameProject(const ProjectDesc& d, uint64_t spawnGuid) {
 }
 
 int ProjectWizard::BuildGameProject(const std::string& csprojAbs, const std::string& outDir,
-                                    double* outSeconds) {
+                                    double* outSeconds, std::string* outOutput) {
     const auto t0 = std::chrono::steady_clock::now();
     std::error_code ec;
     fs::create_directories(outDir, ec);
-    // 外置 dotnet CLI（04 §6：M4 用外置；内嵌 Roslyn 后置）。静默常规输出，
-    // 失败时 stderr 直通（Console 收到的是非零返回码红字）。
-    std::string cmd = "dotnet build \"" + csprojAbs + "\" -c Release --nologo -v q "
-                      "-o \"" + outDir + "\" 2>&1 >/dev/null";
-    const int rc = std::system(cmd.c_str());
+    // 外置 dotnet CLI（04 §6：M4 用外置；内嵌 Roslyn 后置）。M4.6 起捕获合并输出
+    // （编译错误行是 Console 解析原料；-v q 只剩错误/警告，量小）。
+    std::string cmd = "dotnet build \"" + csprojAbs + "\" -c Release --nologo -v q -o \"" +
+                      outDir + "\" 2>&1";
+    int rc = -1;
+    if (FILE* pipe = popen(cmd.c_str(), "r")) {
+        std::string out;
+        char buf[4096];
+        size_t n = 0;
+        while ((n = fread(buf, 1, sizeof(buf), pipe)) > 0) {
+            if (out.size() < 64 * 1024) out.append(buf, n); // 上限保护（错误洪泛不进环）
+        }
+        const int status = pclose(pipe);
+        rc = status >= 0 ? status : -1;
+        if (outOutput) *outOutput = std::move(out);
+    }
     if (outSeconds)
         *outSeconds = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
                                                                 t0)
                           .count();
     return rc == 0 ? 0 : (rc == -1 ? -1 : 1);
+}
+
+std::vector<std::string> ProjectWizard::ExtractCompileErrors(const std::string& dotnetOutput) {
+    // dotnet/MSBuild 错误行形如：
+    //   /abs/path/Game/A.cs(13,31): error CS1002: ; expected [/abs/path/Game/x.csproj]
+    // 提取含 ": error CS" 的行、去 " [....csproj]" 尾巴；上限 50 行（Console 环容量考虑）
+    std::vector<std::string> out;
+    size_t at = 0;
+    while (out.size() < 50) {
+        const size_t eol = dotnetOutput.find('\n', at);
+        std::string line = dotnetOutput.substr(
+            at, (eol == std::string::npos ? dotnetOutput.size() : eol) - at);
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+        if (line.find(": error CS") != std::string::npos) {
+            if (const size_t br = line.rfind(" ["); br != std::string::npos &&
+                                                  line.back() == ']' &&
+                                                  line.find(".csproj]", br) != std::string::npos)
+                line.resize(br);
+            out.push_back(std::move(line));
+        }
+        if (eol == std::string::npos) break;
+        at = eol + 1;
+    }
+    return out;
+}
+
+bool ProjectWizard::AddBehaviourScript(const std::string& gameDirAbs,
+                                       const std::string& className) {
+    // 类名 = C# 标识符（首字符字母/下划线；限长防 tag 类缓冲溢出类问题）
+    if (className.empty() || className.size() > 48) return false;
+    if (!std::isalpha((unsigned char)className[0]) && className[0] != '_') return false;
+    for (char c : className)
+        if (!std::isalnum((unsigned char)c) && c != '_') return false;
+
+    fs::path game(gameDirAbs);
+    std::error_code ec;
+    const fs::path cs = game / (className + ".cs");
+    if (fs::exists(cs, ec)) {
+        LEMON_WARN("新建脚本失败：已存在 %s", cs.string().c_str());
+        return false;
+    }
+    {
+        std::ofstream f(cs, std::ios::trunc);
+        f << "using Lemon;\n\n"
+          << "/// <summary>编辑器新建脚本（M4.6 模板）。</summary>\n"
+          << "public sealed class " << className << " : LemonBehaviour\n"
+          << "{\n"
+          << "    protected override void Start() { }\n\n"
+          << "    protected override void Update() { }\n"
+          << "}\n";
+    }
+    // 注册行（类型可挂的前提）：锚定首个 Register 行前插（与终验同款锚点手法，
+    // 不动 Configure 签名 → 大括号配对无险）。无锚点（用户改过 GameMain）= 告警手注册。
+    const fs::path main = game / "GameMain.cs";
+    std::ifstream in(main, std::ios::binary);
+    std::string src((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const std::string regLine = "Lemon.Behaviours.Register<" + className + ">();";
+    if (src.find(regLine) == std::string::npos) {
+        const std::string anchors[] = {"Lemon.Behaviours.Register<InputMoverBehaviour>();",
+                                       "Lemon.Behaviours.Register<"};
+        for (const std::string& a : anchors) {
+            const size_t at = src.find(a);
+            if (at != std::string::npos) {
+                src.insert(at, regLine + "\n        ");
+                std::ofstream out(main, std::ios::trunc);
+                out << src;
+                return true;
+            }
+        }
+        LEMON_WARN("脚本已建但未能自动注册（GameMain.cs 无注册锚点，请手加 %s）",
+                   regLine.c_str());
+    }
+    return true;
 }
 
 } // namespace lemon::editor

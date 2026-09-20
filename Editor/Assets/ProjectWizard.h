@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace lemon::editor {
 
@@ -29,8 +30,18 @@ public:
 
     /// dotnet build 包装（热重载/向导共用）：编译 <csproj> → 输出目录 outDir。
     /// 返回 0 = 成功；非 0 = 退出码（-1 = 启动 dotnet 失败）。
+    /// outOutput 非空时回捕合并 stdout/stderr（M4.6 §5-6 编译错误解析原料）。
     static int BuildGameProject(const std::string& csprojAbs, const std::string& outDir,
-                                double* outSeconds = nullptr);
+                                double* outSeconds = nullptr,
+                                std::string* outOutput = nullptr);
+
+    /// 从 dotnet build 输出提取错误行（M4.6 §5-6；纯函数可单测）：
+    /// `path/file.cs(l,c): error CSxxxx: message [csproj]` → 去 csproj 尾巴，原行返回。
+    static std::vector<std::string> ExtractCompileErrors(const std::string& dotnetOutput);
+
+    /// 新建行为脚本（M4.6 §5-4）：模板 .cs 落 gameDir/<类名>.cs（已存在 = false），
+    /// 并在 GameMain.cs 注册锚点前插 Register 行（锚点缺失 = 告警手注册，文件仍建）。
+    static bool AddBehaviourScript(const std::string& gameDirAbs, const std::string& className);
 };
 
 } // namespace lemon::editor

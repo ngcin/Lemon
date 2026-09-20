@@ -32,6 +32,8 @@
 > [M4.6-Editor-Usability-Plan.md](./M4.6-Editor-Usability-Plan.md)，本册判据链不变。
 > **M4.6a 会话闭环已完成（同日，`2273e7f`）**：引导横幅/目录选择/最近项目/标题栏/
 > 重命名/Undo 菜单/`--smoke-close` 交互冒烟（负向实验验证防线）。
+> **M4.6b 编辑效率已完成（2026-09-20）**：实体复制粘贴/拖拽导入/新建脚本菜单/编译
+> 状态提示/Console 编译错误解析/FilePicker 手输；ctest 12986 + 冒烟/终验零回退。
 > 前置状态：M3（2026-09-19 完成）+ M3.5 anim-smoke 全链基线。内核侧地基（反射注册表 / .scene v1（原 .lscene，同日更名）/ ClearViewport / Profiles / 脚本域）已就位，Editor/ 目录零代码。
 > 纪律：本册判据与 [08 路线图](./08-Development-Roadmap.md) §0 总表一致；次级取舍以"推荐 + 砍单候补"标注，砍前记 ADR（08 §4）。
 

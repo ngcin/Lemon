@@ -118,6 +118,13 @@ private:
     /// 崩溃恢复提示模态（启动检测 autosave 新于盘档 → 恢复/忽略）
     void DrawRecoveryModal();
 
+    // ---- M4.6b（§5 日常编辑效率）----
+    void CopySelection();    // §5-1：选中子树（多根）→ 内部剪贴板（树 JSON + 根位置）
+    void PasteClipboard();   // §5-1：粘贴（结构完整；根 +24/+24 相对偏移；进 Undo）
+    void ImportDroppedFile(const std::string& absPath); // §5-3：OS drop → 当前资产目录
+    void QueueScriptRebuild(const char* reason);        // §5-5：编译排队（先画一帧"编译中…"）
+    void LogCompileErrors(const std::string& dotnetOutput); // §5-6：CSxxxx 红字
+
     enum class PickerMode { Open, Save, Import, OpenProject, WizardDir };
     enum class ConfirmContext { Exit, SceneOp };
 
@@ -143,6 +150,19 @@ private:
     int64_t lastHandledCsWrite_ = 0; // 上次已处理的 .cs 新写时间戳（去重/防抖）
     double reloadDebounceUntil_ = 0.0;
     bool imguiIdConflictSeen_ = false; // 悬停扫掠命中过 ID 冲突（一次性计数）
+
+    // 编译状态（M4.6 §5-5）：排队 → 先画一帧"编译中…" → 下帧真构建（阻塞现状不动）
+    bool compileQueued_ = false;
+    std::string compileQueuedReason_;
+    double lastBuildMs_ = -1.0;      // 最近一次成功 编译+换装 耗时（状态栏回显）
+
+    // 新建脚本模态（M4.6 §5-4）
+    bool newScriptOpen_ = false;
+    char newScriptName_[64] = {};
+
+    // 实体剪贴板（M4.6 §5-1）：树 JSON 多根 + 各根原位置（粘贴相对偏移用）
+    std::vector<std::string> entityClip_;
+    std::vector<Vec2> entityClipRootPos_;
 
     // 向导/恢复模态状态
     char wizName_[64] = {};

@@ -2303,6 +2303,78 @@ void TestProjectWizard() {
     fs::remove_all(parent, ec);
 }
 
+// ---- M4.6-b：日常编辑效率件（编译错误解析 / 新建脚本模板）----
+void TestEditorUsability() {
+    namespace fs = std::filesystem;
+    using lemon::editor::ProjectWizard;
+    using lemon::editor::ProjectDesc;
+
+    // ExtractCompileErrors：dotnet/MSBuild 错误行提取（file(l,c): error CSxxxx 去 csproj 尾巴）
+    {
+        const std::string out =
+            "Microsoft (R) Build Engine version 17.x\n"
+            "  Determining projects to restore...\n"
+            "/tmp/proj/Game/SpawnerBehaviour.cs(13,31): error CS1002: ; expected "
+            "[/tmp/proj/Game/MyGame.csproj]\n"
+            "/tmp/proj/Game/GameMain.cs(5,1): error CS0116: A namespace cannot directly "
+            "contain members [/tmp/proj/Game/MyGame.csproj]\n"
+            "    2 Warning(s)\n    2 Error(s)\n";
+        const std::vector<std::string> errs = ProjectWizard::ExtractCompileErrors(out);
+        Expect(errs.size() == 2, "extract exactly error CS lines");
+        if (errs.size() == 2) {
+            Expect(errs[0].find("SpawnerBehaviour.cs(13,31): error CS1002: ; expected") !=
+                       std::string::npos &&
+                       errs[0].find(".csproj]") == std::string::npos,
+                   "error line keeps file(line,col), drops csproj tail");
+            Expect(errs[1].find("error CS0116") != std::string::npos, "second error extracted");
+        }
+        Expect(ProjectWizard::ExtractCompileErrors("no errors here\n").empty(),
+               "clean output yields nothing");
+        // 告警行（warning CS）不算错误
+        Expect(ProjectWizard::ExtractCompileErrors("A.cs(1,1): warning CS0219: var unused "
+                                                   "[x.csproj]\n").empty(),
+               "warnings are not errors");
+    }
+
+    // AddBehaviourScript：模板落盘 + GameMain 注册锚点插入 + 非法名/重名拒绝
+    const fs::path parent = fs::temp_directory_path() /
+                            ("lemon-test-newscript-" + std::to_string(::getpid()));
+    std::error_code ec;
+    fs::remove_all(parent, ec);
+    ProjectDesc d;
+    d.parentDir = parent.string();
+    d.name = "ScriptGame";
+    d.sdkDir = "/nonexistent-sdk";
+    d.engineVersion = "0.4.0-m4";
+    const std::string root = ProjectWizard::Create(d);
+    const std::string gameDir = root + "/Game";
+    Expect(!root.empty(), "wizard project for new-script test");
+
+    Expect(ProjectWizard::AddBehaviourScript(gameDir, "ProbeBehaviour"), "script created");
+    {
+        std::ifstream f(fs::path(gameDir) / "ProbeBehaviour.cs");
+        std::string src((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        Expect(src.find("public sealed class ProbeBehaviour : LemonBehaviour") !=
+                   std::string::npos,
+               "template declares class");
+        Expect(src.find("protected override void Update()") != std::string::npos,
+               "template has Update override");
+        std::ifstream m(fs::path(gameDir) / "GameMain.cs");
+        std::string main((std::istreambuf_iterator<char>(m)), std::istreambuf_iterator<char>());
+        const size_t reg = main.find("Lemon.Behaviours.Register<ProbeBehaviour>();");
+        const size_t anchor = main.find("Lemon.Behaviours.Register<InputMoverBehaviour>();");
+        Expect(reg != std::string::npos && anchor != std::string::npos && reg < anchor,
+               "register line inserted before existing anchor");
+    }
+    Expect(!ProjectWizard::AddBehaviourScript(gameDir, "ProbeBehaviour"),
+           "duplicate class refused");
+    Expect(!ProjectWizard::AddBehaviourScript(gameDir, "9BadName"), "digit-start refused");
+    Expect(!ProjectWizard::AddBehaviourScript(gameDir, "Bad/Name"), "path-separator refused");
+    Expect(!ProjectWizard::AddBehaviourScript(gameDir, ""), "empty name refused");
+
+    fs::remove_all(parent, ec);
+}
+
 // ---- M4.5-b：自动备份/崩溃恢复（§3.8 全链：快照→检出→恢复→落盘清）----
 void TestAutosaveRecovery() {
     namespace fs = std::filesystem;
@@ -2427,6 +2499,7 @@ int main() {
     TestAtlasPageHotUpdate();
     TestAssetDatabaseLifecycle();
     TestProjectWizard();
+    TestEditorUsability();
     TestAutosaveRecovery();
     TestEntityTreeArchive();
     TestScriptBoxArchive();
