@@ -238,9 +238,12 @@ void EditorApp::BuildToolbar() {
                                      {"Rotate (E)", "旋转工具", EditTool::Rotate},
                                      {"Scale (R)", "四角缩放工具", EditTool::Scale}};
     for (const auto& t : kTools) {
-        if (t.tool == tool_) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.42f, 0.38f, 0.10f, 1.0f));
+        // 高亮判定先落局部：点击会改 tool_，Push/Pop 若各查一次 tool_ 同帧即撕裂配对
+        // （点非当前工具按钮 = Push 未推 Pop 已弹 → "PopStyleColor too many times"）
+        const bool active = t.tool == tool_;
+        if (active) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.42f, 0.38f, 0.10f, 1.0f));
         if (ImGui::Button(t.label)) tool_ = t.tool;
-        if (t.tool == tool_) ImGui::PopStyleColor();
+        if (active) ImGui::PopStyleColor();
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", t.tip);
         ImGui::SameLine();
     }
