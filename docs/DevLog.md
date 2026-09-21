@@ -1217,3 +1217,33 @@ ADR-009 修订记录：逐字段 override 正式移 M5（砍单 #1 生效，M4.4
 本轮 **0 个新产品 bug**（6 个真 bug 均在前几轮抓住并修复，见 2026-09-21 M4.7d 条）；
 4 处全部是驱动侧坐标/时序/帧号问题。`LEMON_SMOKE_UI_DEBUG=1` 可出拖拽期行级
 [dnd] 逐帧 dump 与 Console/布局登记表态，后续注入式调试直接复用。
+
+## 2026-09-21 M4.7 手测第六轮：Play 相机钉死 / 视口平移不可用 / Assets 导入不可见
+
+### 三根因与修复
+
+1. **Play 中游戏相机钉死 (640,360)**：玩家 WASD 走出视野即"消失"。`gameCam_`
+   初始化后无人驱动（ViewportRenderer 注释"M4.3 可被脚本驱动"未落地）。修：
+   `EditorApp::UpdateGameCameraFollow`（TickPlay 后按固定 dt 驱动）——目标优先级
+   tag `Camera`（显式相机位实体，M4-Plan §2.2"场景中 Camera 实体"的标签化落地）
+   > tag `Player` > 首个挂脚本实体（blank 模板默认名 Sprite+InputMover 的兜底，
+   进 Play 日志一行可发现）；首帧吸附 + `Camera2D::Follow` 指数阻尼（02 §3.5）；
+   退出 Play 回默认位。M4.3 C# 相机门面落地后脚本驱动覆盖此兜底。
+2. **视口平移整体不可用**：①门控裸 `IsWindowHovered()`——与缩放同款 ActiveId
+   持活恒假问题（M4.7 曾修缩放/拾取漏了平移）；②macOS 触控板无中键、空格+左键
+   需先知快捷键。修：主手势 = **按住右键拖动**（Scene 视口无右键菜单无冲突），
+   辅以中键/空格+左键/Alt+左键；起拖后不再要求悬停（拖出视口边缘持续平移到
+   松键——对象拖出屏后拖视口找回的主路径）；平移修饰按住时左键不拾取不清选
+   （手型语义），平移中 Hand 光标反馈。
+3. **导入素材在浏览器不可见（只剩 project.lemon）**：根目录语义分裂——条目
+   `EntriesInDir("")` 列的是**项目根**散文件，而导入落点在 `Assets/` 下；且文件夹
+   单元格过滤把 `"Assets"` 这一层本身排除（`d.size() <= prefix.size()`），导入的
+   直下资产无任何视图可达。修：根 = `Assets/` 本身（与 BuiltInPanels 注释、
+   面包屑、OS 拖入落点语义归一）；根级目录（06 §1 根级 `Prefabs/`——Prefab 化
+   落点）补文件夹单元格，此前在任何层都进不去。
+
+### 回归
+
+`lemon-tests` 12986 checks OK；`--smoke` / `--smoke-ui`（含目录导航 dir=1/1）/
+`--smoke-drag` / `--play`（字节级往返）/ `--final`（判据场景 Player 行走 +
+相机跟随实跑，minFps=59）全 PASS；相机跟随进 Play 日志确认（"游戏相机跟随：Player"）。

@@ -128,6 +128,9 @@ private:
     bool ScriptSourceChanged();
     /// 崩溃恢复提示模态（启动检测 autosave 新于盘档 → 恢复/忽略）
     void DrawRecoveryModal();
+    /// Play 中游戏相机跟随（M4.7 手测修复）：tag "Camera"（显式相机实体）>
+    /// tag "Player" > 首个挂脚本实体；进 Play 首帧吸附、之后阻尼跟随；退出回默认位。
+    void UpdateGameCameraFollow(float dt);
 
     // ---- M4.6b（§5 日常编辑效率）----
     void CopySelection();    // §5-1：选中子树（多根）→ 内部剪贴板（树 JSON + 根位置）
@@ -196,6 +199,7 @@ private:
     bool paused_ = false;
     bool singleStep_ = false;
     bool gameViewFocused_ = false; // GameView 输入门控（§3.6）
+    bool gameFollowActive_ = false; // 游戏相机跟随已吸附（UpdateGameCameraFollow）
     EditTool tool_ = EditTool::Move;
     // 网格显示与吸附解耦（手测第五轮）：旧 gridSnap_ 一flag两用——想看网格就被迫
     // 吃 8px/15°/0.25 全套吸附台阶（= "8 向拖动不丝滑"主因）。Godot/Unity 语义：

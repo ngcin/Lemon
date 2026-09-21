@@ -133,21 +133,37 @@ void SceneViewPanel::OnGui(EditorApp& app) {
         const Vec2 after = vr.ScreenToWorld(cam, anchorPt, rtW, rtH);
         cam.center += before - after; // 锚点下世界点不动
     }
-    // ---- 相机：中键 / 空格+左键 平移 ----
-    const bool panning = ImGui::IsWindowHovered() &&
-                         (ImGui::IsMouseDragging(ImGuiMouseButton_Middle) ||
-                          (ImGui::IsKeyDown(ImGuiKey_Space) && ImGui::IsMouseDragging(ImGuiMouseButton_Left)));
-    if (panning) {
-        ImVec2 d = ImGui::GetIO().MouseDelta;
-        const float wppX = cam.HalfWidth((float)rtW / (float)rtH) * 2.0f / (float)rtW;
-        const float wppY = cam.halfHeight * 2.0f / (float)rtH;
-        cam.center.x -= d.x * ptToPx * wppX; // MouseDelta=点 → 换 RT 像素再乘世界/像素
-        cam.center.y -= d.y * ptToPx * wppY;
+    // ---- 相机：平移（主手势 = 按住右键拖动；辅 = 中键 / 空格+左键 / Alt+左键）----
+    // M4.7 手测修复：①门控原用裸 IsWindowHovered()——与上面缩放同款问题（有
+    // ActiveId 持活时恒假），改用同源 hovered；②macOS 触控板/妙控鼠标没有中键，
+    // 右键拖拽为无修饰主手势（Scene 视口无右键菜单，无冲突）。场景无固定大小：
+    // 起拖后不再要求悬停，拖出视口边缘仍持续平移到松键（对象拖出屏后拖视口找回）。
+    const bool panMod = ImGui::IsKeyDown(ImGuiKey_Space) || io.KeyAlt;
+    if (!panning_ && hovered && !io.WantTextInput &&
+        (ImGui::IsMouseClicked(ImGuiMouseButton_Right) ||
+         ImGui::IsMouseClicked(ImGuiMouseButton_Middle) ||
+         (panMod && ImGui::IsMouseClicked(ImGuiMouseButton_Left))))
+        panning_ = true;
+    if (panning_) {
+        if (!ImGui::IsMouseDown(ImGuiMouseButton_Right) &&
+            !ImGui::IsMouseDown(ImGuiMouseButton_Middle) &&
+            !(panMod && ImGui::IsMouseDown(ImGuiMouseButton_Left))) {
+            panning_ = false; // 全部平移键已松开
+        } else {
+            ImVec2 d = ImGui::GetIO().MouseDelta;
+            const float wppX = cam.HalfWidth((float)rtW / (float)rtH) * 2.0f / (float)rtW;
+            const float wppY = cam.halfHeight * 2.0f / (float)rtH;
+            cam.center.x -= d.x * ptToPx * wppX; // MouseDelta=点 → 换 RT 像素再乘世界/像素
+            cam.center.y -= d.y * ptToPx * wppY;
+        }
     }
+    if (panning_ || (panMod && hovered))
+        ImGui::SetMouseCursor(ImGuiMouseCursor_Hand); // 平移反馈/可发现性
 
     // ---- Gizmo / 拾取状态机（M4.7c：一段式 + 4px 阈值 + 轴约束 + Esc 取消）----
-    // 同上：不再看 WantCaptureKeyboard（1.92 = 窗口焦点恒真；真在输入由 WantTextInput 拦）
-    const bool canInteract = hovered && !io.WantTextInput;
+    // 同上：不再看 WantCaptureKeyboard（1.92 = 窗口焦点恒真；真在输入由 WantTextInput 拦）。
+    // 平移修饰（空格/Alt）按住时左键归平移——不拾取不清选（Photoshop 式手型语义）
+    const bool canInteract = hovered && !io.WantTextInput && !panMod;
     if (dbgTrace_) // 逐帧视口矩形（smoke-drag 稳定性排查；仅注入帧区间开启）
         std::printf("[vp] f-rel=(%.0f,%.0f) vp=(%.0f,%.0f %.0fx%.0f) rt=%ux%u\n",
                     mouseRel.x, mouseRel.y, vpX_, vpY_, vpW_, vpH_, rtW_, rtH_);

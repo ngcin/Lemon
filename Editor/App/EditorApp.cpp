@@ -3,6 +3,7 @@
 #include "App/EditorApp.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -1523,10 +1524,13 @@ int EditorApp::Run(const EditorLaunch& launch) {
                 if (ImGui::IsKeyDown(ImGuiKey_Space)) in.buttons |= 1u << 4; // bit4 attack
             }
             ctx_.ActiveWorld().ApplyInput(in);
-            ctx_.TickPlay(paused_ && !singleStep_ ? 0.0f : 1.0f / 60.0f); // Pause = dt0（含 Essential 提交）
+            const float dt = paused_ && !singleStep_ ? 0.0f : 1.0f / 60.0f;
+            ctx_.TickPlay(dt); // Pause = dt0（含 Essential 提交）
             singleStep_ = false;
+            UpdateGameCameraFollow(dt);
         } else {
             ctx_.TickEditor(1.0f / 60.0f); // Essential（销毁提交）+ 空 FixedTick
+            UpdateGameCameraFollow(0.0f);  // 非 Play：退出跟随时回默认位
         }
 
         // 冒烟悬停扫掠（M4.5）：逐帧走窗口网格 → 会话内所有可见控件至少被悬停
@@ -2491,6 +2495,66 @@ int EditorApp::Run(const EditorLaunch& launch) {
     device_.reset();
     window_.reset();
     return exitCode;
+}
+
+namespace {
+// 标签大小写不敏感比较（Meta.tag 固定 24B，无终止符风险由调用方保证）
+bool TagEquals(const char* tag, const char* want) {
+    if (!tag) return false;
+    while (*tag && *want) {
+        if (std::tolower((unsigned char)*tag) != std::tolower((unsigned char)*want)) return false;
+        ++tag;
+        ++want;
+    }
+    return *tag == *want;
+}
+} // namespace
+
+void EditorApp::UpdateGameCameraFollow(float dt) {
+    // M4.7 手测修复：Play 中游戏相机钉死 (640,360)，玩家 WASD 走出视野后"消失"。
+    // 目标优先级（M4-Editor-Plan §2.2 GameView"场景中 Camera 实体"的标签化落地）：
+    //   ① tag "Camera"——显式相机位实体（进阶：也可作空场景的固定取景）；
+    //   ② tag "Player"——默认跟随玩家；
+    //   ③ 首个挂脚本实体——blank 模板默认名"Sprite"+InputMover 的兜底。
+    // 首帧吸附（不从旧位滑过去），之后 Camera2D::Follow 指数阻尼（02 §3.5）。
+    // M4.3 后若 C# 相机门面落地，脚本驱动可覆盖（编辑器跟随仅兜底语义）。
+    Camera2D& cam = viewport_->GameCam();
+    if (!ctx_.Playing()) {
+        if (gameFollowActive_) { // 退出 Play → 编辑态默认位（ViewportRenderer 口径）
+            cam.center = {640, 360};
+            gameFollowActive_ = false;
+        }
+        return;
+    }
+    ecs::Scene& s = ctx_.ActiveScene();
+    ecs::Entity camEnt = ecs::Entity::Null(), playerEnt = ecs::Entity::Null(),
+                scriptedEnt = ecs::Entity::Null();
+    s.Each([&](ecs::Entity e) {
+        const bool hasTf = s.Has<ecs::Transform2D>(e);
+        if (!hasTf) return;
+        const ecs::Meta* m = s.TryGet<ecs::Meta>(e);
+        const char* tag = m ? m->tag : nullptr;
+        if (camEnt.IsNull() && TagEquals(tag, "Camera")) camEnt = e;
+        if (playerEnt.IsNull() && TagEquals(tag, "Player")) playerEnt = e;
+        if (scriptedEnt.IsNull() && s.Has<scripting::ScriptBox>(e)) scriptedEnt = e;
+    });
+    const ecs::Entity target = !camEnt.IsNull()     ? camEnt
+                               : !playerEnt.IsNull() ? playerEnt
+                                                     : scriptedEnt;
+    if (target.IsNull()) return; // 无目标：保持现位
+    ecs::WorldTransform2D wt{};
+    Vec2 pos = s.Get<ecs::Transform2D>(target).pos; // 父链异常兜底本地位
+    if (ecs::ComputeWorldTransform(s, target, wt)) pos = wt.pos;
+    if (!gameFollowActive_) {
+        cam.center = pos; // 吸附（首帧 1:1 对准，无阻尼入画）
+        gameFollowActive_ = true;
+        const char* tag = "脚本实体";
+        if (!camEnt.IsNull()) tag = "Camera";
+        else if (!playerEnt.IsNull()) tag = "Player";
+        LEMON_LOG("游戏相机跟随：%s", tag);
+    } else {
+        cam.Follow(pos, dt, /*dampingRate=*/5.0f);
+    }
 }
 
 void EditorApp::SeedSmokeScene() {

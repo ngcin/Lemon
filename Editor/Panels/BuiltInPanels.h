@@ -117,6 +117,7 @@ private:
     Vec2 dragScreenStart_{};       // 屏幕像素（阈值判据用）
     Vec2 lastMouseRel_{};          // 最近帧鼠标（视口内像素；BeginGizmoDrag 取起点）
     bool clickPending_ = false;
+    bool panning_ = false; // 视口平移中（起拖后不要求悬停——拖出边缘仍平移到松键）
     Vec2 dragStart_{}, dragLast_{}, pivot_{};
     float startAngle_ = 0.0f, startDist_ = 0.0f;
     std::vector<std::pair<ecs::Entity, ecs::Transform2D>> dragTfs_; // 拖拽起点快照

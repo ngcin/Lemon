@@ -97,12 +97,23 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
     // 子目录文件夹单元格（M4.7d 补全：面包屑只向上，向下进子目录靠这里——
     // 旧目录下拉删除后曾出现"子目录进不去"的导航缺口，smoke-ui 真人链路抓到）。
     // 单击进入；currentDir_ 语义 = "Assets/相对路径"（同 Directories()/面包屑）。
+    // M4.7 手测修复：currentDir_=""（根）= Assets/ 本身——此前 EntriesInDir("") 列
+    // 的是项目根散文件（浏览器里只剩 project.lemon，导入进 Assets/ 的素材因
+    // "Assets" 这层没有文件夹单元格而不可见）；根级目录（06 §1 Prefabs/）也补
+    // 单元格——Prefab 化落点此前在浏览器任何层都进不去。
     {
         const std::string prefix = currentDir_.empty() ? "Assets/" : currentDir_ + "/";
         for (const std::string& d : db.Directories()) {
-            if (d.size() <= prefix.size() || d.compare(0, prefix.size(), prefix) != 0) continue;
-            const std::string rest = d.substr(prefix.size());
-            if (rest.find('/') != std::string::npos) continue; // 只列直接子目录
+            bool direct =
+                d.size() > prefix.size() && d.compare(0, prefix.size(), prefix) == 0 &&
+                d.find('/', prefix.size()) == std::string::npos; // 当前目录直下子目录
+            if (!direct && currentDir_.empty() && d != "Assets" &&
+                d.find('/') == std::string::npos)
+                direct = true; // 根级目录（Assets 之外：Prefabs/ 等）
+            if (!direct) continue;
+            const bool outsideAssets =
+                currentDir_.empty() && d.compare(0, 6, "Assets") != 0;
+            const std::string rest = outsideAssets ? d : d.substr(prefix.size());
             if (!filter_.empty() && rest.find(filter_) == std::string::npos) continue;
             if (col++ > 0) ImGui::SameLine();
             ImGui::PushID(d.c_str());
@@ -141,7 +152,9 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
         }
     }
 
-    for (const AssetEntry* e : db.EntriesInDir(currentDir_)) {
+    // 条目网格：根（""）= Assets/ 直下；子目录 = currentDir_ 直下（同上面包屑语义）
+    const std::string entryDir = currentDir_.empty() ? "Assets" : currentDir_;
+    for (const AssetEntry* e : db.EntriesInDir(entryDir)) {
         if (!filter_.empty() && !strstr(e->FileName().c_str(), filter_.c_str())) continue;
         if (col++ > 0) ImGui::SameLine();
         DrawItem(app, *e);
