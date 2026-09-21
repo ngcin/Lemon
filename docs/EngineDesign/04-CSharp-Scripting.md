@@ -164,6 +164,14 @@ public readonly struct Transform               // 视图结构：逐属性访问
 }
 ```
 
+> **多脚本/实体（M5 条目，2026-09-22 登记——用户实测确认需要）**：上面 API 的
+> "T:LemonBehaviour 按类型查找（Unity 同义）"隐含每实体多脚本，但 M4 落地 = 每实体
+> 单个 `ScriptBox`（entt 同类型组件单实例 + `.scene` 单数 `script` 成员 + Inspector
+> 单段）。M5 随 SDK 门面扩展（`AddComponent<LemonBehaviour>` 路由）同期落地：存储
+> 改多实例（内嵌小数组或旁路池）、`.scene` `scripts: []`（读旧单数兼容）、Inspector
+> ScriptBox 段列表化；调度侧无需改（dense 数组按 typeId 分桶本按活动实例遍历）。
+> Unity 心智下是刚需（一个对象挂 Move + Health 常见）。
+
 ### 3.1 协程替代：async/await + C++ 定时器（ADR-009 基调——表面像 Unity，机器走 C++）
 
 - Unity `StartCoroutine/WaitForSeconds` → C# `async/await` + **Lemon 主线程同步上下文**（Prowl2D `Tasks/MainThreadContext` 思想）：

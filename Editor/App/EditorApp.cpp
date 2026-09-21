@@ -344,7 +344,7 @@ void EditorApp::BuildToolbar() {
         if (playing) {
             if (ctx_.ExitPlay()) tabFocusPending_ = -1;
             else LEMON_WARN("Stop 后快照校验失败（编辑场景已按快照重建）");
-        } else if (ctx_.EnterPlay()) {
+        } else if (TryEnterPlay()) {
             tabFocusPending_ = 1;
         }
     }
@@ -625,7 +625,7 @@ void EditorApp::BuildShortcuts() {
         if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_P)) {
             if (ctx_.Playing()) {
                 if (ctx_.ExitPlay()) tabFocusPending_ = -1;
-            } else if (ctx_.EnterPlay()) {
+            } else if (TryEnterPlay()) {
                 tabFocusPending_ = 1;
             }
         }
@@ -815,6 +815,31 @@ void EditorApp::BuildPickersAndModals() {
             confirmContext_ = ConfirmContext::Exit;
             exitRequested_ = false;
         }
+        ImGui::EndPopup();
+    }
+
+    // Play 阻断（2026-09-22）：Game/ 编译失败（宿主未装配）时阻止进 Play——
+    // 对齐 Unity/Godot。修错保存 → watcher 自动首装即解除；模态内亦可一键重试。
+    if (playBlockedOpen_) {
+        ImGui::OpenPopup("脚本未就绪");
+        playBlockedOpen_ = false;
+    }
+    if (ImGui::BeginPopupModal("脚本未就绪", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted(
+            "Game/ 脚本编译失败，已阻止进入 Play。\n"
+            "（防止\"游戏在跑但脚本没生效\"的隐性 bug）\n"
+            "错误详情见 Console 红字；修复保存后将自动重新编译装配。");
+        ImGui::Separator();
+        if (ImGui::Button("重新编译并进入 Play", ImVec2(210, 0))) {
+            ImGui::CloseCurrentPopup();
+            if (TryHotReloadScripts("Play 阻断重试")) {
+                if (ctx_.EnterPlay()) tabFocusPending_ = 1;
+            } else if (!host_) {
+                playBlockedOpen_ = true; // 仍失败：重开模态（新错误已进 Console）
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("取消", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
 
@@ -1282,7 +1307,26 @@ bool EditorApp::ScriptSourceChanged() {
 
 bool EditorApp::TryHotReloadScripts(const char* reason) {
     if (!host_) {
-        LEMON_WARN("热重载跳过：无脚本宿主（%s）", reason);
+        // 无宿主 + 有 Game/ 工程 = 启动期编译失败后的恢复路径（2026-09-22 与 Play
+        // 阻断配套）：此前直接跳过 = 修错保存后必须重启编辑器。这里试首装——
+        // 修错 → watcher → 编译队列 → 本函数 → InitScriptHostFrom（无宿主即首装
+        // 路径），成功后 Play 阻断自动解除。
+        std::string csproj, dll;
+        if (!FindGameProject(csproj, dll)) {
+            LEMON_WARN("热重载跳过：无脚本宿主（%s）", reason);
+            return false;
+        }
+        std::string buildOut;
+        if (ProjectWizard::BuildGameProject(csproj, ctx_.Assets().ProjectRoot() + "/.lemon/bin",
+                                            nullptr, &buildOut) != 0) {
+            LEMON_ERROR("脚本首装编译失败（Play 仍被阻断）：dotnet build（%s）", reason);
+            LogCompileErrors(buildOut);
+            return false;
+        }
+        if (InitScriptHostFrom(dll)) {
+            LEMON_LOG("脚本宿主已装配（%s）——Play 可用", reason);
+            return true;
+        }
         return false;
     }
     std::string csproj, dll;
@@ -1323,6 +1367,19 @@ bool EditorApp::TryHotReloadScripts(const char* reason) {
 }
 
 void EditorApp::MenuRebuildScripts() { QueueScriptRebuild("手动触发"); }
+
+bool EditorApp::TryEnterPlay() {
+    if (!host_) {
+        std::string csproj, dll;
+        if (FindGameProject(csproj, dll)) { // 项目带脚本工程：无宿主 = 启动期编译失败
+            playBlockedOpen_ = true;
+            LEMON_WARN("已阻止进入 Play：Game/ 编译失败（脚本宿主未装配）。"
+                       "错误见 Console 红字；修复保存后自动重编译装配");
+            return false;
+        }
+    }
+    return ctx_.EnterPlay();
+}
 
 void EditorApp::MenuNewProject() { wizOpen_ = true; }
 

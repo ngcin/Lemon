@@ -121,6 +121,10 @@ private:
     bool LoadLayoutIni(const std::string& name); // 命名 ini → 应用（帧内安全点）
     std::vector<std::string> ListSavedLayouts() const;
     void BuildShortcuts();   // Ctrl+S/O/D、Delete（输入框聚焦时屏蔽）
+    /// Play 入口守卫（2026-09-22）：项目带 Game/ 而宿主未装配（启动期编译失败）
+    /// → 阻止进 Play 弹模态（对齐 Unity/Godot——静默降级 = "游戏在跑脚本没生效"
+    /// 的隐性 bug）；修错保存经 watcher 自动首装解除。无 Game/ 会话直通。
+    bool TryEnterPlay();
     void BuildPickersAndModals();
     void BuildNoProjectCard(); // 无项目引导（M4.6 §4-1：中央卡 + 两按钮直达）
     void SetupDefaultLayout();
@@ -245,6 +249,7 @@ private:
     AssetBrowserPanel* assetPanel_ = nullptr; // --smoke-ui 注入定位（按名取，非所有权）
     bool noProjectCardDismissed_ = false;  // 无项目中央卡已关（会话内；卡会截走视口点击）
     bool forceDefaultLayout_ = false;      // smoke-drag：下帧 BuildUI 强制默认布局
+    bool playBlockedOpen_ = false;         // Play 阻断模态已请求开（脚本未装配）
 };
 
 } // namespace lemon::editor
