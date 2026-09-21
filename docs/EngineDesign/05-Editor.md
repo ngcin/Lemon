@@ -4,6 +4,7 @@
 > 骨架：Luma 编辑器面板框架（MIT 可移植）+ MoteurJV 的 Play 快照沙盒 + Prowl2D 的 Undo 属性级双轨/Prefab 模式（ADR-009）+ Editor-RPG2D 三件套交互小件（开放署名，可拷）。
 > **M4 实施详细规划已定稿（2026-09-19）：[M4-Editor-Plan.md](./M4-Editor-Plan.md)**（面板集冻结/界面规格/子阶段分解/验收矩阵/砍单序）。本册保持设计总册地位。
 > M4 收官后追加轮（2026-09-20 定稿）：**M4.6 可用性加固见 [M4.6-Editor-Usability-Plan.md](./M4.6-Editor-Usability-Plan.md)**（会话闭环 + 编辑效率 + 交互路径回归）。
+> **M4.7 UI 精美化见 [M4.7-Editor-UI-Polish-Plan.md](./M4.7-Editor-UI-Polish-Plan.md)**（2026-09-21 P0/a/b/c/d 全批次完成：overlay 通道修复/主题 token/自绘图标/视口交互 v2；手测修复归档 [M4.7-HandTest-Fix-Summary.md](./M4.7-HandTest-Fix-Summary.md)）。
 
 ---
 
@@ -47,7 +48,8 @@ v1 面板清单：
 
 布局持久化（ImGui ini + 面板开关状态进项目 `.lemon/`，不进资产目录）。
 
-> M4 决议（2026-09-19）：**面板集冻结为核心 7**（Hierarchy/Inspector/SceneView/GameView/AssetBrowser/Console/Profiler），上表 TilePalette/AnimationEditor/ParticleEditor/TeamEditor/DirectorEditor 后移 M5/M6；**窗口形态 = 单 OS 窗口 docking**（multi-viewport 与 GameView 分屏/宽高比模拟推 M5+）。见 M4-Editor-Plan §1/§8。
+> M4 决议（2026-09-19）：**面板集冻结为核心 7**（Hierarchy/Inspector/SceneView/GameView/AssetBrowser/Console/Profiler），上表 TilePalette/AnimationEditor/ParticleEditor/TeamEditor/DirectorEditor 后移 M5/M6；**窗口形态 = 单 OS 窗口 docking**（multi-viewport 与 GameView 分屏推 M5+）。见 M4-Editor-Plan §1/§8。
+> M4.7c 修订（2026-09-21）：GameView **Aspect 下拉**（Free/16:9/4:3/1:1 letterbox）已交付；分屏与 multi-viewport 维持 M5+。
 
 ## 3. 交互内核三件套（直接拷贝 Editor-RPG2D，注明出处）
 
