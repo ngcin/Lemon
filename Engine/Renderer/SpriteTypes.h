@@ -39,7 +39,7 @@ struct SpritePushConstants {
     uint32_t baseInstance;
     uint32_t atlasIndex;
     uint32_t samplerIndex;
-    uint32_t flags;
+    uint32_t ringIndex; // 实例环 SSBO 数组槽（多视口合批器各占一槽，与 sprite.vert 同名）
 };
 static_assert(sizeof(SpritePushConstants) == 48);
 

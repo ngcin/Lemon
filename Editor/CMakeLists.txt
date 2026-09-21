@@ -66,7 +66,8 @@ add_executable(lemon-editor
   Panels/ProfilerPanel.cpp
   Panels/ViewportPanels.cpp
   Interaction/ViewportRenderer.cpp
-  Tooling/FilePicker.cpp)
+  Tooling/FilePicker.cpp
+  Tooling/Theme.cpp)
 target_include_directories(lemon-editor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${stb_SOURCE_DIR})
 target_link_libraries(lemon-editor PRIVATE lemon-editor-core lemon-imgui)
 target_compile_features(lemon-editor PRIVATE cxx_std_20)

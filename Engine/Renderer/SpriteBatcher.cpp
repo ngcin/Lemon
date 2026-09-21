@@ -9,11 +9,13 @@
 namespace lemon::renderer {
 
 void SpriteBatcher::Init(rhi::Device& device, uint32_t samplerLinearSlot,
-                         uint32_t samplerPointSlot, rhi::Format colorFormat) {
+                         uint32_t samplerPointSlot, rhi::Format colorFormat,
+                         uint32_t ringSlot) {
     device_ = &device;
     colorFormat_ = colorFormat;
     samplerSlots_[0] = samplerLinearSlot;
     samplerSlots_[1] = samplerPointSlot;
+    ringSlot_ = ringSlot;
     CreateGeometry();
     EnsureCapacity(kInitialCapacity);
     CreatePipelines();
@@ -127,7 +129,7 @@ void SpriteBatcher::Record(rhi::CommandList& cl, const Mat3x2& viewProj) {
 
     cl.BindQuadGeometry(cornerVB_, indexIB_);
     cl.BindGlobalDescriptors();
-    cl.BindStorageBuffer(instanceRing_);
+    cl.BindStorageBuffer(instanceRing_, ringSlot_);
 
     SpritePushConstants pc{};
     pc.vpR0[0] = viewProj.m[0];
@@ -143,6 +145,7 @@ void SpriteBatcher::Record(rhi::CommandList& cl, const Mat3x2& viewProj) {
         pc.baseInstance = segBase + b.instanceOffset;
         pc.atlasIndex = (uint32_t)b.key.textureAtlas;
         pc.samplerIndex = samplerSlots_[b.key.filter];
+        pc.ringIndex = ringSlot_;
         cl.PushConstants(&pc, sizeof(pc));
         cl.DrawQuadInstances(b.instanceCount, 0);
     }

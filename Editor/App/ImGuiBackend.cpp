@@ -17,6 +17,7 @@
 #include "backends/imgui_impl_vulkan.h"
 
 #include "Core/Log.h"
+#include "Tooling/Theme.h"
 #include "Platform/Window.h"
 #include "Renderer/RHI.h"
 
@@ -71,24 +72,8 @@ struct ImGuiBackend::Impl {
     std::string iniFilename;      // io.IniFilename 指向本串，须长寿
 
     void SetupStyle(float scale) {
-        ImGui::StyleColorsDark();
-        ImGuiStyle& s = ImGui::GetStyle();
-        s.WindowRounding = 4.0f * scale;
-        s.FrameRounding = 3.0f * scale;
-        s.GrabRounding = 3.0f * scale;
-        s.TabRounding = 4.0f * scale;
-        s.WindowBorderSize = 1.0f * scale;
-        s.FrameBorderSize = 0.0f;
-        s.ScrollbarSize = 13.0f * scale;
-        // 柠檬点缀：标题/选中用暖黄，避免全灰蓝
-        ImVec4* c = s.Colors;
-        c[ImGuiCol_TitleBgActive] = ImVec4(0.28f, 0.24f, 0.05f, 1.0f);
-        c[ImGuiCol_TitleBgCollapsed] = ImVec4(0.15f, 0.13f, 0.10f, 1.0f);
-        c[ImGuiCol_Header] = ImVec4(0.42f, 0.38f, 0.10f, 0.55f);
-        c[ImGuiCol_HeaderHovered] = ImVec4(0.50f, 0.45f, 0.12f, 0.70f);
-        c[ImGuiCol_HeaderActive] = ImVec4(0.55f, 0.50f, 0.14f, 0.80f);
-        c[ImGuiCol_CheckMark] = ImVec4(0.95f, 0.85f, 0.35f, 1.0f);
-        c[ImGuiCol_DockingPreview] = ImVec4(0.90f, 0.80f, 0.20f, 0.35f);
+        // M4.7a：主题单点（Tooling/Theme——Unity 深色系；本函数不再自写色值）
+        theme::ApplyTheme(scale);
     }
 
     void RebuildFonts(float scale) {
@@ -211,7 +196,25 @@ void ImGuiBackend::BeginFrame(Window& window) {
     ImGui_ImplSDL3_NewFrame();
     if (mouseOverrideSet_) { // 冒烟扫掠：轮询后、排水前注入（顺序靠后生效）
         mouseOverrideSet_ = false;
-        ImGui::GetIO().AddMousePosEvent(mouseOverrideX_, mouseOverrideY_);
+        ImGuiIO& io = ImGui::GetIO();
+        io.AddMousePosEvent(mouseOverrideX_, mouseOverrideY_);
+        if (mouseBtnSet_) { // --smoke-drag：左键态跟随位置注入
+            mouseBtnSet_ = false;
+            io.AddMouseButtonEvent(ImGuiMouseButton_Left, mouseBtnLeft_);
+        }
+        if (wheelSet_) { // --smoke-drag：滚轮格数注入
+            wheelSet_ = false;
+            io.AddMouseWheelEvent(0.0f, mouseWheel_);
+        }
+    }
+    if (keyDownSet_) { // --smoke-drag 段 5：本帧 down，下一帧补 up（按下沿可采样）
+        keyDownSet_ = false;
+        ImGui::GetIO().AddKeyEvent((ImGuiKey)keyDown_, true);
+        keyUp_ = keyDown_;
+        keyUpSet_ = true;
+    } else if (keyUpSet_) {
+        keyUpSet_ = false;
+        ImGui::GetIO().AddKeyEvent((ImGuiKey)keyUp_, false);
     }
     ImGui_ImplVulkan_NewFrame();
     ImGui::NewFrame();

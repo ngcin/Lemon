@@ -9,6 +9,7 @@
 #include "Panels/BuiltInPanels.h"
 #include "Renderer/RHI.h"
 #include "Scripting/ScriptHost.h"
+#include "Tooling/Theme.h"
 #include "imgui.h"
 
 namespace lemon::editor {
@@ -68,7 +69,7 @@ void ProfilerPanel::OnGui(EditorApp& app) {
         const uint64_t gcNow = ctx.Scripts()->GcAllocated();
         if (gcPrev_ != 0) { // 首帧只立基线不显示
             const int64_t perFrame = gcNow > gcPrev_ ? (int64_t)(gcNow - gcPrev_) : 0;
-            if (perFrame > 0) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.3f, 1.0f));
+            if (perFrame > 0) ImGui::PushStyleColor(ImGuiCol_Text, theme::kTextError);
             ImGui::Text("C# GC 分配/帧：%lld B%s", (long long)perFrame,
                         perFrame > 0 ? "  ⚠ 热路径分配（红字口径 04 §5）" : "（零分配 ✔）");
             if (perFrame > 0) ImGui::PopStyleColor();
@@ -77,7 +78,7 @@ void ProfilerPanel::OnGui(EditorApp& app) {
         // 热重载换装/泄漏常驻显示（§3.7：A 线已知限制对用户可见）
         const int reloads = ctx.Scripts()->HotReloadCount();
         const int leaks = ctx.Scripts()->HotReloadLeakCount();
-        if (leaks > 0) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.3f, 1.0f));
+        if (leaks > 0) ImGui::PushStyleColor(ImGuiCol_Text, theme::kTextError);
         ImGui::Text("热重载：%d 次｜旧域未回收 %d 次（~%d KB，ADR-010 A 线已知限制）", reloads,
                     leaks, leaks * 100);
         if (leaks > 0) ImGui::PopStyleColor();

@@ -434,10 +434,13 @@ void EditorContext::Select(ecs::Entity e, bool additive) {
 void EditorContext::ClearSelection() { selection_.clear(); }
 
 void EditorContext::PruneSelection() {
+    // 按当前可视场景校验（Play 期间 = Play 世界）：Inspector 每帧调用——若恒按编辑
+    // 场景校验，Play 中的任何选中下一帧即被误清（Play 中无法选中/检视实体的根因）。
+    // 编辑选区不会跨 Play 存活（EnterPlay 清空 + guid 恢复），无 id 撞车歧义。
     std::vector<ecs::Entity> keep;
     keep.reserve(selection_.size());
     for (auto e : selection_)
-        if (scene_->Alive(e)) keep.push_back(e);
+        if (ActiveScene().Alive(e)) keep.push_back(e);
     selection_.swap(keep);
 }
 

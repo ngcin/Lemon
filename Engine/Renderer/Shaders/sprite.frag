@@ -10,7 +10,7 @@ layout(push_constant, std430) uniform PC {
     uint baseInstance;
     uint atlasIndex;
     uint samplerIndex;
-    uint flags;
+    uint ringIndex; // 与 sprite.vert 逐字段一致（本着色器不消费）
 } pcf;
 
 layout(location = 0) in vec4 vColor;

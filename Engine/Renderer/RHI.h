@@ -18,6 +18,9 @@ constexpr uint32_t kInvalid = 0;
 constexpr uint32_t kMaxTextureSlots = 64;   // bindless sampled image 数组容量
 constexpr uint32_t kMaxSamplerSlots = 8;
 constexpr uint32_t kMaxPushConstants = 128; // Vulkan 保证下限，M1 用 48B
+// 实例环 SSBO 数组槽位数（binding 2；每视口合批器固定占一槽——与 sprite.vert 的
+// rings[4] 数组长度一致，改动需两侧同步）
+constexpr uint32_t kRingSsboSlots = 4;
 
 // ---------------------------------------------------------------- 句柄 ----
 struct Buffer   { uint32_t id = kInvalid; bool IsValid() const { return id != kInvalid; } };
@@ -125,13 +128,17 @@ public:
     void BindPipeline(Pipeline p);
     void BindQuadGeometry(Buffer cornerVB, Buffer indexIB); // 路径 A 四边形几何（每帧一次）
     void BindGlobalDescriptors();                            // set 0：bindless 纹理/采样器数组
-    void BindStorageBuffer(Buffer ssbo);                     // 实例环形 SSBO（每帧一次）
+    /// 实例环形 SSBO → 数组槽（每合批器/视口固定一槽，帧内不改写；M4.7-P0 语义）
+    void BindStorageBuffer(Buffer ssbo, uint32_t slot = 0);
     void SetViewportScissor(uint32_t w, uint32_t h);
     void PushConstants(const void* data, uint32_t size);     // ≤ kMaxPushConstants，vert|frag
     void DrawQuadInstances(uint32_t instanceCount, uint32_t baseInstance);
     /// 调试截屏：录制当帧交换链图像 → 中转缓冲（须在 EndPass 之后、EndFrameAndPresent
     /// 之前调用；随后 Device::DebugFetchCapture 取回）。见 Device 段注释。
     void DebugRecordCapture();
+    /// 指定纹理回读（须在该纹理 EndPass 之后调用；DebugFetchTextureCapture 取回）。
+    /// M4.7-P0：冒烟像素断言扫场景 RT（线性空间，无 UI 合成/sRGB 干扰）
+    void DebugRecordTextureCapture(Texture tex);
     /// 本帧原始命令缓冲（void* = VkCommandBuffer）。与 VulkanInteropHandles 同一豁免口：
     /// 仅编辑器后端 glue（在外部渲染块内追加录制）使用，引擎语义层不得调用。
     void* NativeCommandBuffer() const;
@@ -200,6 +207,9 @@ public:
     // 随后本接口取回内容（内部 WaitIdle）。RGBA8 字节序，自左上角行优先；
     // 交换链为 BGRA 时自动交换通道；alpha 恒写 255（不透明合成）。
     bool DebugFetchCapture(std::vector<uint8_t>& rgbaOut, uint32_t& w, uint32_t& h);
+    // CommandList::DebugRecordTextureCapture(tex) 的取回口（M4.7-P0：冒烟扫场景 RT）；
+    // 原样拷贝 RGBA8（线性空间，无通道交换——RT 恒 RGBA）
+    bool DebugFetchTextureCapture(std::vector<uint8_t>& rgbaOut, uint32_t& w, uint32_t& h);
 
 private:
     friend class CommandList; // 录制器需要访问 Device::Impl（同模块 .cpp 内）

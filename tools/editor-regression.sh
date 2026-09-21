@@ -52,6 +52,9 @@ grep_step "smoke-close clean (clean scene exits at once)" "OK" \
     "${EDITOR}" --smoke-close clean --frames 300
 grep_step "smoke-close dirty (dirty scene confirm)" "OK" \
     "${EDITOR}" --smoke-close dirty --frames 300
+grep_step "smoke-drag (viewport gizmo move+rotate+resize+zoom+sling+focus injection)" \
+    "smoke-drag: .* => OK" \
+    "${EDITOR}" --smoke-drag --frames 90 --no-reopen
 
 if [ "${MODE}" = "full" ]; then
     grep_step "asset-chain smoke (import/hot-replace/thumbnail)" "editor-smoke PASS" \

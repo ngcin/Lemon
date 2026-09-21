@@ -110,6 +110,8 @@ std::span<const SpritePacket> RenderableManager::Extract(const AtlasRegistry& at
 
     for (auto& e : entries_) {
         if (!e.alive) continue;
+        // spriteId 0/越界 = 槽位无 sprite（Unity 语义 Sprite=None：合法存在，不渲染）
+        if (e.desc.spriteId == 0 || e.desc.spriteId > atlas.SpriteCount()) continue;
         const SpriteInfo& spr = atlas.GetSprite(e.desc.spriteId);
         Vec2 pos = math::Lerp(e.prevPos, e.curPos, alpha);
         float rot = math::Lerp(e.prevRot, e.curRot, alpha);

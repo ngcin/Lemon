@@ -146,11 +146,14 @@ struct Device::Impl {
 
     VkCommandPool uploadPool = VK_NULL_HANDLE; // 一次性提交（staging）
 
-    // bindless 全局集：binding0 采样图数组(64) / binding1 采样器数组(8) / binding2 实例 SSBO
+    // bindless 全局集：binding0 采样图数组(64) / binding1 采样器数组(8) / binding2 实例环 SSBO 数组(kRingSsboSlots)
     VkDescriptorSetLayout bindlessLayout = VK_NULL_HANDLE;
     VkDescriptorPool bindlessPool = VK_NULL_HANDLE;
     VkDescriptorSet bindlessSet = VK_NULL_HANDLE;
-    uint32_t boundStorageBufferId = 0; // SSBO 是单一大环形缓冲：绑定一次，帧内不再变
+    // SSBO 数组每槽各绑一个实例环（多视口合批器）：槽位一经绑定帧内不再改写——
+    // M4.7-P0 教训：单槽 + UPDATE_AFTER_BIND"执行期取最新值"语义下，同帧第二个
+    // 合批器改写会让首个合批器的绘制读到错误的环（overlay 通道整体消失的根因）
+    uint32_t boundStorageBufferIds[kRingSsboSlots] = {};
 
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE; // 全 M1 管线共享
     VkPipelineCache pipelineCache = VK_NULL_HANDLE;
@@ -182,6 +185,8 @@ struct Device::Impl {
 
     // 调试截屏中转缓冲（惰性创建；随 buffers 表在设备丢失时一并销毁并置空）
     Buffer captureBuffer;
+    Buffer texCaptureBuffer;                  // DebugRecordTextureCapture 目标（M4.7-P0 冒烟）
+    uint32_t texCaptureW = 0, texCaptureH = 0;
 
     // ---------------------------------------------------------------- 引导
     void CreateInstance() {
@@ -439,7 +444,7 @@ struct Device::Impl {
         bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
         bindings[2].binding = 2;
         bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        bindings[2].descriptorCount = 1;
+        bindings[2].descriptorCount = kRingSsboSlots;
         bindings[2].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
         // 采样器数组：PARTIALLY_BOUND（未用槽不校验）但无需 UPDATE_AFTER_BIND（只在首帧前写）
         VkDescriptorBindingFlags flagArr[3] = {bindFlags, VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT,
@@ -469,7 +474,7 @@ struct Device::Impl {
         ai.descriptorSetCount = 1;
         ai.pSetLayouts = &bindlessLayout;
         VK_CHECK(vkAllocateDescriptorSets(device, &ai, &bindlessSet));
-        boundStorageBufferId = 0;
+        for (auto& id : boundStorageBufferIds) id = 0;
 
         // 管线布局：set0 bindless + 128B push constant（vert|frag）
         VkPushConstantRange pc{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
@@ -656,6 +661,8 @@ struct Device::Impl {
             if (r.buf) vmaDestroyBuffer(allocator, r.buf, r.alloc);
         buffers.clear(); bufferFree.clear();
         captureBuffer = {};
+        texCaptureBuffer = {};
+        texCaptureW = texCaptureH = 0;
         for (auto& r : textures) {
             if (r.view) vkDestroyImageView(device, r.view, nullptr);
             if (r.image) vmaDestroyImage(allocator, r.image, r.alloc);
@@ -678,7 +685,7 @@ struct Device::Impl {
         if (pipelineLayout) vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
         pipelineLayout = VK_NULL_HANDLE;
         bindlessSet = VK_NULL_HANDLE; // UPDATE_AFTER_BIND 池不支持 free 单 set，随池销毁
-        boundStorageBufferId = 0;
+        for (auto& id : boundStorageBufferIds) id = 0;
         if (bindlessPool) vkDestroyDescriptorPool(device, bindlessPool, nullptr);
         bindlessPool = VK_NULL_HANDLE;
         if (bindlessLayout) vkDestroyDescriptorSetLayout(device, bindlessLayout, nullptr);
@@ -863,7 +870,8 @@ void Device::DestroyBuffer(Buffer b) {
     m->bufferFree.push_back(b.id);
     // 关键:句柄 id 会被空闲表复用——若不重置,扩容重建后 BindStorageBuffer
     // 会因"id 相同"跳过描述符重写,描述符悬空指向已销毁缓冲(实测画面错乱)
-    if (m->boundStorageBufferId == b.id) m->boundStorageBufferId = 0;
+    for (auto& id : m->boundStorageBufferIds)
+        if (id == b.id) id = 0;
 }
 
 Texture Device::CreateTexture(const TextureDesc& desc) {
@@ -1312,6 +1320,53 @@ void CommandList::DebugRecordCapture() {
                        VK_PIPELINE_STAGE_TRANSFER_BIT, 0, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
 }
 
+void CommandList::DebugRecordTextureCapture(Texture tex) {
+    // M4.7-P0：指定纹理回读（冒烟像素断言扫场景 RT——线性空间、无 UI 合成干扰，
+    // 与 swapchain 截屏的 sRGB 空间解耦）。前置：该纹理已过 EndPass（SHADER_READ_ONLY）。
+    auto* d = (Device::Impl*)m->dev;
+    LEMON_ASSERT(m->cmd, "DebugRecordTextureCapture must be called between BeginFrame and EndFrameAndPresent");
+    LEMON_ASSERT(tex.IsValid(), "DebugRecordTextureCapture: invalid texture");
+    auto& r = d->textures[tex.id - 1];
+    const uint32_t w = r.desc.width, h = r.desc.height;
+    const uint64_t size = (uint64_t)w * h * 4;
+    if (!d->texCaptureBuffer.IsValid() ||
+        d->buffers[d->texCaptureBuffer.id - 1].desc.size < size) {
+        if (d->texCaptureBuffer.IsValid()) d->ownerDevice->DestroyBuffer(d->texCaptureBuffer);
+        d->texCaptureBuffer = d->ownerDevice->CreateBuffer({.size = size,
+                                                            .usage = (uint32_t)BufferUsage::TransferDst,
+                                                            .hostMapped = true,
+                                                            .debugName = "debug-tex-capture"});
+    }
+    d->TransitionImage(m->cmd, r.image, 1, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                       VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_SHADER_READ_BIT,
+                       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+                       VK_PIPELINE_STAGE_TRANSFER_BIT);
+    VkBufferImageCopy copy{};
+    copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    copy.imageExtent = {w, h, 1};
+    vkCmdCopyImageToBuffer(m->cmd, r.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           d->buffers[d->texCaptureBuffer.id - 1].buf, 1, &copy);
+    d->TransitionImage(m->cmd, r.image, 1, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_READ_BIT,
+                       VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_READ_BIT,
+                       VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+    d->texCaptureW = w;
+    d->texCaptureH = h;
+}
+
+bool Device::DebugFetchTextureCapture(std::vector<uint8_t>& rgbaOut, uint32_t& w, uint32_t& h) {
+    if (!m->texCaptureBuffer.IsValid()) return false;
+    WaitIdle(); // 截屏非热路径：粗暴等待保证拷贝已完成
+    w = m->texCaptureW;
+    h = m->texCaptureH;
+    if (w == 0 || h == 0) return false;
+    const uint64_t size = (uint64_t)w * h * 4;
+    rgbaOut.resize((size_t)size);
+    const uint8_t* src = (const uint8_t*)m->buffers[m->texCaptureBuffer.id - 1].mapped;
+    std::memcpy(rgbaOut.data(), src, (size_t)size); // RT 一律 RGBA8；alpha 无意义
+    return true;
+}
+
 bool Device::DebugFetchCapture(std::vector<uint8_t>& rgbaOut, uint32_t& w, uint32_t& h) {
     if (!m->captureBuffer.IsValid()) return false;
     WaitIdle(); // 截屏非热路径：粗暴等待保证拷贝已完成
@@ -1438,12 +1493,13 @@ void CommandList::BindGlobalDescriptors() {
                             &d->bindlessSet, 0, nullptr);
 }
 
-void CommandList::BindStorageBuffer(Buffer ssbo) {
-    // 实例环形 SSBO 是单一大缓冲：仅在缓冲对象变化时重写描述符（resize/设备丢失后）。
-    // 绘制期间该槽不被重写 → 无 UPDATE_AFTER_BIND 在用竞争。
+void CommandList::BindStorageBuffer(Buffer ssbo, uint32_t slot) {
+    // 实例环形 SSBO 数组槽：每个合批器（视口）固定占一槽；槽位一经绑定帧内不再
+    // 改写 → 无 UPDATE_AFTER_BIND 在用竞争（仅缓冲对象变化时重写该槽）。
     auto* d = (Device::Impl*)m->dev;
-    if (d->boundStorageBufferId == ssbo.id) return;
+    LEMON_ASSERT(slot < kRingSsboSlots, "instance ring slot out of range");
     LEMON_ASSERT(ssbo.IsValid(), "invalid storage buffer");
+    if (d->boundStorageBufferIds[slot] == ssbo.id) return;
     VkDescriptorBufferInfo info{};
     info.buffer = d->buffers[ssbo.id - 1].buf;
     info.offset = 0;
@@ -1451,12 +1507,12 @@ void CommandList::BindStorageBuffer(Buffer ssbo) {
     VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
     write.dstSet = d->bindlessSet;
     write.dstBinding = 2;
-    write.dstArrayElement = 0;
+    write.dstArrayElement = slot;
     write.descriptorCount = 1;
     write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     write.pBufferInfo = &info;
     vkUpdateDescriptorSets(d->device, 1, &write, 0, nullptr);
-    d->boundStorageBufferId = ssbo.id;
+    d->boundStorageBufferIds[slot] = ssbo.id;
 }
 
 void CommandList::SetViewportScissor(uint32_t w, uint32_t h) {

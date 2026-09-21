@@ -22,9 +22,11 @@ public:
 
     /// preheat：全部混合模式管线一次建齐（启动期；管线磁盘缓存加速二启）。
     /// colorFormat = 目标附件格式（交换链 pass 用交换链格式；离屏视口用 RT 格式——
-    /// 动态渲染下管线唯一格式依赖，格式不符 = 验证层 VUID 拦截）
+    /// 动态渲染下管线唯一格式依赖，格式不符 = 验证层 VUID 拦截）。
+    /// ringSlot = 实例环 SSBO 数组槽（多视口合批器各占一槽，帧内不改写；M4.7-P0）
     void Init(rhi::Device& device, uint32_t samplerLinearSlot, uint32_t samplerPointSlot,
-              rhi::Format colorFormat = rhi::Format::BGRA8UnormSrgb);
+              rhi::Format colorFormat = rhi::Format::BGRA8UnormSrgb,
+              uint32_t ringSlot = 0);
 
     /// Bake：有序包段（精灵 / 粒子 / 文本，各段内有序、段间层序递增）→ 实例 + 批表。
     /// 跨段同键不合并（批数上限误差 +1，语义无损）
@@ -61,6 +63,7 @@ private:
     rhi::Device* device_ = nullptr;
     rhi::Format colorFormat_ = rhi::Format::BGRA8UnormSrgb;
     uint32_t samplerSlots_[2] = {0, 1}; // Linear/Point → bindless 采样器槽
+    uint32_t ringSlot_ = 0;             // 实例环 SSBO 数组槽（binding 2 下标）
     rhi::Buffer cornerVB_, indexIB_;
     rhi::Buffer instanceRing_;
     SpriteInstance* ringMapped_ = nullptr;

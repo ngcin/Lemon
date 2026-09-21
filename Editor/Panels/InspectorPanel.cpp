@@ -4,6 +4,8 @@
 // Undo 属性轨 M4.2 接入（IsItemActivated/Deactivated 拖拽合并）。
 #include <cstdio>
 #include <cstring>
+#include <limits>
+#include <type_traits>
 
 #include "App/EditorApp.h"
 #include "Assets/AssetDatabase.h"
@@ -13,6 +15,7 @@
 #include "EditorContext.h"
 #include "Panels/BuiltInPanels.h"
 #include "Scripting/ScriptBox.h"
+#include "Tooling/Theme.h"
 #include "imgui.h"
 #include "misc/cpp/imgui_stdlib.h"
 
@@ -49,6 +52,74 @@ const char* TeamName(uint32_t t) {
 }
 
 float Clampf(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
+
+// ---- label-scrub（M4.7d 回捞砍单候补首位）：拖字段名横向改值（Unity 拖 label 手感）----
+// Text 无交互 ID（IsItemActive 恒假）→ 手动跟踪：hover+左键按下接管，按住期间
+// 逐帧累计 dx。同一时刻至多一个 label 在拖，全局单份状态即够。
+struct LabelScrubState {
+    ImGuiID id = 0;     // 拖拽中的字段 label ID（0 = 无）
+    float lastX = 0.0f; // 上帧鼠标 X（dx 差分）
+    float acc = 0.0f;   // 整数步余数累计（慢拖不丢步）
+} scrub_;
+bool g_scrubActive = false; // 本帧拖拽进行中（DrawComponent 属性轨 → anyActive）
+bool g_scrubEnded = false;  // 本帧拖拽刚结束（→ anyDeactivated 提交属性轨）
+
+/// 在 label 文本项之后调用（hover 语义跟随上一项）。返回本帧 dx（0 = 未拖）。
+float LabelScrubDelta(ImGuiID id) {
+    ImGuiIO& io = ImGui::GetIO();
+    if (scrub_.id == id) {
+        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            scrub_.id = 0;
+            g_scrubEnded = true;
+            return 0.0f;
+        }
+        const float dx = io.MousePos.x - scrub_.lastX;
+        scrub_.lastX = io.MousePos.x;
+        g_scrubActive = true;
+        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+        return dx;
+    }
+    if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        scrub_.id = id;
+        scrub_.lastX = io.MousePos.x;
+        scrub_.acc = 0.0f;
+        g_scrubActive = true;
+        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+        return 0.0f;
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+    return 0.0f;
+}
+
+/// 浮点 dx → 整数步（余数跨帧累计，慢拖不丢步）
+int ScrubSteps(float dx) {
+    scrub_.acc += dx;
+    const int s = (int)scrub_.acc;
+    scrub_.acc -= (float)s;
+    return s;
+}
+
+/// 整型字段 scrub 落值（钳类型域；返回是否写入）
+template <typename T>
+bool ScrubInt(float dx, void* p) {
+    if (dx == 0.0f) return false;
+    const int step = ScrubSteps(dx);
+    if (step == 0) return false;
+    if constexpr (std::is_unsigned_v<T> && sizeof(T) == 8) { // uint64 不入 int64 域
+        uint64_t& cur = *(uint64_t*)p;
+        if (step > 0) cur += (uint64_t)step;
+        else if ((uint64_t)(-(int64_t)step) <= cur) cur -= (uint64_t)(-(int64_t)step);
+        else cur = 0;
+    } else {
+        int64_t nv = (int64_t)*(T*)p + step;
+        if (nv < (int64_t)std::numeric_limits<T>::min())
+            nv = (int64_t)std::numeric_limits<T>::min();
+        if (nv > (int64_t)std::numeric_limits<T>::max())
+            nv = (int64_t)std::numeric_limits<T>::max();
+        *(T*)p = (T)nv;
+    }
+    return true;
+}
 
 /// 枚举控件（整数字段 + kFieldEnum）。返回是否写入
 bool DrawEnumControl(const FieldMeta& f, const FieldEditorMeta& ed, uint8_t* p) {
@@ -97,7 +168,7 @@ bool DrawSpriteSlot(EditorApp& app, uint8_t* p) {
     if (void* thumb = entry && !entry->missing ? app.AssetGpu().Thumbnail(entry->guid) : nullptr) {
         ImGui::Image(thumb, ImVec2(28, 28));
     } else {
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.18f, 0.18f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Button, theme::kPlayStop); // 悬空槽红框占位
         ImGui::Button(entry ? "×" : "·", ImVec2(28, 28));
         ImGui::PopStyleColor();
     }
@@ -157,14 +228,43 @@ bool DrawSpriteSlot(EditorApp& app, uint8_t* p) {
 bool DrawField(EditorApp& app, const FieldMeta& f, const FieldEditorMeta& ed, void* comp) {
     EditorContext& ctx = app.Ctx();
     uint8_t* p = (uint8_t*)comp + f.offset;
+    // PushID 覆盖整字段（label + 控件共用字段名种子；控件 "##v" 的最终 ID 与
+    // 旧版逐字一致 = hash(种子栈+f.name, "##v")）
+    ImGui::PushID(f.name);
     ImGui::TableNextRow();
     ImGui::TableNextColumn();
     ImGui::TextUnformatted(f.name);
     if (ed.tooltip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", ed.tooltip);
+    // label-scrub（M4.7d）：数值字段的名字可拖（hover 下划线 + 双向箭头光标）；
+    // dx 由下方数值分支消费，Shift = 浮点 ×0.1 微调。开始/结束沿经
+    // g_scrubActive/g_scrubEnded 汇入 DrawComponent 属性轨（拖拽天然合并）。
+    const bool scrubbable =
+        !ecs::HasHint(ed.hints, FieldHint::Hide) &&
+        !ecs::HasHint(ed.hints, FieldHint::AssetRef) &&
+        !ecs::HasHint(ed.hints, FieldHint::Enum) &&
+        !ecs::HasHint(ed.hints, FieldHint::ColorHex) &&
+        (f.type == FieldType::Float || f.type == FieldType::Double ||
+         f.type == FieldType::Int32 || f.type == FieldType::UInt32 ||
+         f.type == FieldType::UInt64 || f.type == FieldType::Int16 ||
+         f.type == FieldType::UInt16 ||
+         ((f.type == FieldType::Int8 || f.type == FieldType::UInt8) &&
+          !ecs::HasHint(ed.hints, FieldHint::Bool8)));
+    float scrubDx = 0.0f;
+    if (scrubbable) {
+        const ImGuiID sid = ImGui::GetID("##scrub");
+        const bool active = scrub_.id == sid;
+        const bool hover = ImGui::IsItemHovered();
+        scrubDx = LabelScrubDelta(sid);
+        if (active || hover) { // 可拖提示：名字下加主题色下划线
+            const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+            ImGui::GetWindowDrawList()->AddRectFilled(
+                ImVec2(a.x, b.y - 1.0f), ImVec2(b.x, b.y),
+                ImGui::ColorConvertFloat4ToU32(theme::kAccent));
+        }
+    }
     ImGui::TableNextColumn();
     ImGui::SetNextItemWidth(-1);
 
-    ImGui::PushID(f.name);
     bool changed = false;
 
     if (ecs::HasHint(ed.hints, FieldHint::Hide)) {
@@ -186,6 +286,17 @@ bool DrawField(EditorApp& app, const FieldMeta& f, const FieldEditorMeta& ed, vo
     } else {
         switch (f.type) {
             case FieldType::Float: {
+                if (scrubDx != 0.0f) { // label-scrub（度字段走 0.5°/px 档与 DragFloat 对齐）
+                    const float k = ImGui::GetIO().KeyShift ? 0.1f : 1.0f;
+                    float sv = *(float*)p +
+                               scrubDx * k *
+                                   (ecs::HasHint(ed.hints, FieldHint::Degree)
+                                        ? 0.5f / 57.29577951f : 1.0f);
+                    if (ecs::HasHint(ed.hints, FieldHint::Range))
+                        sv = Clampf(sv, ed.rangeMin, ed.rangeMax);
+                    *(float*)p = sv;
+                    changed = true;
+                }
                 float v = *(float*)p;
                 if (ecs::HasHint(ed.hints, FieldHint::Degree)) {
                     float deg = v * 57.29577951f;
@@ -204,6 +315,10 @@ bool DrawField(EditorApp& app, const FieldMeta& f, const FieldEditorMeta& ed, vo
                 break;
             }
             case FieldType::Double: {
+                if (scrubDx != 0.0f) {
+                    *(double*)p += scrubDx * (ImGui::GetIO().KeyShift ? 0.01 : 0.1);
+                    changed = true;
+                }
                 double v = *(double*)p;
                 if (ImGui::DragScalar("##v", ImGuiDataType_Double, &v, 0.1, nullptr, nullptr,
                                       "%.3f")) {
@@ -213,20 +328,25 @@ bool DrawField(EditorApp& app, const FieldMeta& f, const FieldEditorMeta& ed, vo
                 break;
             }
             case FieldType::Int32:
-                changed = ImGui::DragScalar("##v", ImGuiDataType_S32, p, 1);
+                if (ScrubInt<int32_t>(scrubDx, p)) changed = true;
+                changed |= ImGui::DragScalar("##v", ImGuiDataType_S32, p, 1);
                 break;
             case FieldType::UInt32:
-                changed = ImGui::DragScalar("##v", ImGuiDataType_U32, p, 1, nullptr, nullptr, "%u");
+                if (ScrubInt<uint32_t>(scrubDx, p)) changed = true;
+                changed |= ImGui::DragScalar("##v", ImGuiDataType_U32, p, 1, nullptr, nullptr, "%u");
                 break;
             case FieldType::UInt64:
-                changed = ImGui::DragScalar("##v", ImGuiDataType_U64, p, 1, nullptr, nullptr, "%llu");
+                if (ScrubInt<uint64_t>(scrubDx, p)) changed = true;
+                changed |= ImGui::DragScalar("##v", ImGuiDataType_U64, p, 1, nullptr, nullptr, "%llu");
                 break;
             case FieldType::Int16: {
+                if (ScrubInt<int16_t>(scrubDx, p)) changed = true;
                 int v = *(int16_t*)p;
                 if (ImGui::DragInt("##v", &v, 1)) { *(int16_t*)p = (int16_t)v; changed = true; }
                 break;
             }
             case FieldType::UInt16: {
+                if (ScrubInt<uint16_t>(scrubDx, p)) changed = true;
                 int v = *(uint16_t*)p;
                 if (ImGui::DragInt("##v", &v, 1, 0, 65535)) { *(uint16_t*)p = (uint16_t)v; changed = true; }
                 break;
@@ -237,6 +357,9 @@ bool DrawField(EditorApp& app, const FieldMeta& f, const FieldEditorMeta& ed, vo
                     bool b = *(uint8_t*)p != 0;
                     if (ImGui::Checkbox("##v", &b)) { *(uint8_t*)p = b ? 1 : 0; changed = true; }
                 } else {
+                    if (f.type == FieldType::Int8 ? ScrubInt<int8_t>(scrubDx, p)
+                                                  : ScrubInt<uint8_t>(scrubDx, p))
+                        changed = true;
                     int v = *(uint8_t*)p;
                     if (ImGui::DragInt("##v", &v, 1, 0, 255)) { *(uint8_t*)p = (uint8_t)v; changed = true; }
                 }
@@ -340,7 +463,7 @@ void InspectorPanel::OnGui(EditorApp& app) {
         // override 高亮 = 砍单候补 #1，M5）
         if (m->prefabId) {
             const AssetEntry* pf = ctx.Assets().FindByGuid(m->prefabId);
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.3f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, theme::kTextWarn);
             ImGui::Text("Prefab 实例：%s", pf ? pf->FileName().c_str() : "⚠ 源资产缺失");
             ImGui::PopStyleColor();
             if (ImGui::Button("Apply")) { // 实例写回源（含子树）
@@ -492,18 +615,29 @@ void InspectorPanel::DrawComponent(EditorApp& app, const ComponentMeta& meta, ec
                 anyActive |= ImGui::IsItemActive();
                 anyDeactivated |= ImGui::IsItemDeactivated();
             }
+            // label-scrub 汇入属性轨（M4.7d）：进行中 = active（冻结空闲快照刷新），
+            // 结束帧 = deactivated（提交 before/after，与控件拖拽同合并语义）。
+            // 读毕即清——拖拽中字段所在组件本帧消化，不泄漏到后续组件。
+            anyActive |= g_scrubActive;
+            anyDeactivated |= g_scrubEnded;
+            g_scrubActive = g_scrubEnded = false;
             ImGui::EndTable();
         }
         DrawArraySeg(app, meta, comp);
-        // 属性轨提交：空闲帧刷新缓存；交互结束帧 = before(缓存) vs after(现状)
+        // 属性轨提交：交互结束帧 = before(空闲缓存) vs after(现状)；空闲帧刷新缓存。
+        // 顺序纪律：提交判定必须在前——ImGui 释放帧 IsItemActive 已翻 false 而
+        // IsItemDeactivated 为 true，若先判 !anyActive 会把空闲缓存刷成改后值，
+        // 提交分支永远走不到（M4.2 潜伏：Inspector 控件编辑从不进 Undo，仅
+        // Gizmo 直推路径可用；M4.7d 修）。
         if (!ctx.Playing() && guid && meta.sizeOf > 0) {
-            if (!anyActive) {
-                idleKey_ = guid ^ ((uint64_t)meta.id << 48);
+            const uint64_t key = guid ^ ((uint64_t)meta.id << 48);
+            if (anyDeactivated && !idleSnap_.empty() && idleKey_ == key) {
+                const std::vector<uint8_t> after = ctx.SnapshotComponent(e, meta.id);
+                if (after != idleSnap_) // 空交互（点了没改值）不入栈
+                    ctx.PushPropertyUndo(meta.name, guid, meta.id, idleSnap_, after);
+            } else if (!anyActive) {
+                idleKey_ = key;
                 idleSnap_ = ctx.SnapshotComponent(e, meta.id);
-            } else if (anyDeactivated && !idleSnap_.empty() &&
-                       idleKey_ == (guid ^ ((uint64_t)meta.id << 48))) {
-                ctx.PushPropertyUndo(meta.name, guid, meta.id, idleSnap_,
-                                     ctx.SnapshotComponent(e, meta.id));
             }
         }
     }

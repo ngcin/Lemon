@@ -11,7 +11,9 @@
 #include "Core/Log.h"
 #include "EditorContext.h"
 #include "Interaction/ViewportRenderer.h"
+#include "Interaction/ViewportRenderer.h"
 #include "Panels/BuiltInPanels.h"
+#include "Tooling/Theme.h"
 #include "imgui.h"
 #include "misc/cpp/imgui_stdlib.h"
 
@@ -38,12 +40,30 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
     EditorContext& ctx = app.Ctx();
     AssetDatabase& db = ctx.Assets();
 
-    // 工具行：目录下拉 + 搜索 + 重扫 + 计数
-    if (ImGui::BeginCombo("##dir", currentDir_.empty() ? "Assets/" : currentDir_.c_str())) {
-        for (const std::string& d : db.Directories())
-            if (ImGui::Selectable(d.empty() ? "Assets/" : d.c_str(), d == currentDir_))
-                currentDir_ = d;
-        ImGui::EndCombo();
+    // 面包屑（M4.7d）：Assets/ 逐级可点直达，替代目录下拉——深层目录不用在
+    // 全量列表里翻；末段 = 当前目录（灰显不可点）。
+    if (ImGui::TextLink("Assets")) currentDir_.clear();
+    {
+        std::string rest = currentDir_;
+        std::string prefix;
+        while (!rest.empty()) {
+            const size_t pos = rest.find('/');
+            const std::string seg = pos == std::string::npos ? rest : rest.substr(0, pos);
+            rest = pos == std::string::npos ? "" : rest.substr(pos + 1);
+            if (seg.empty()) continue; // 连续/尾随斜杠防御
+            prefix = prefix.empty() ? seg : prefix + "/" + seg;
+            ImGui::SameLine();
+            ImGui::TextDisabled("/");
+            ImGui::SameLine();
+            if (rest.empty()) { // 末段：当前位置
+                ImGui::TextUnformatted(seg.c_str());
+                break;
+            }
+            ImGui::PushID(prefix.c_str());
+            const std::string target = prefix;
+            if (ImGui::TextLink(seg.c_str())) currentDir_ = target;
+            ImGui::PopID();
+        }
     }
     ImGui::SameLine();
     ImGui::PushItemWidth(160);
@@ -119,16 +139,25 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
 
     ImGui::PushID((int)e.guid);
     ImGui::BeginGroup();
-    // 缩略图 / 类型图标（sprite = 纹理页；其余 = 调色板色块 uv 子区）
+    // 缩略图 / 类型图标：sprite = 纹理页缩略；其余 = 形状页类型图标（M4.7b，
+    // 替代旧调色板色块——prefab 蓝调 / script 墨绿 / generic 次级灰，ImageButton tint 染色）
     const ImVec2 size(72, 72);
-    void* tex = isSprite ? app.AssetGpu().Thumbnail(e.guid) : app.Viewport().PaletteIconTex();
+    void* tex = isSprite ? app.AssetGpu().Thumbnail(e.guid) : app.Viewport().IconTex();
     ImVec2 uv0(0, 0), uv1(1, 1);
-    if (!isSprite && tex) { // 调色板第 kind 格
-        const float cell = 1.0f / (float)ProceduralAtlas::kPaletteSprites;
-        uv0 = ImVec2(cell * KindOf(e.type), 0.0f);
-        uv1 = ImVec2(cell * (KindOf(e.type) + 1), 1.0f);
+    ImVec4 tint(1, 1, 1, 1);
+    if (!isSprite && tex) {
+        float u0, v0, u1, v1;
+        const IconKind k = e.type == AssetType::Prefab ? IconKind::AssetPrefab
+                          : e.type == AssetType::Script ? IconKind::AssetScript
+                                                        : IconKind::AssetGeneric;
+        app.Viewport().Assets().IconUV(k, u0, v0, u1, v1);
+        uv0 = ImVec2(u0, v0);
+        uv1 = ImVec2(u1, v1);
+        tint = e.type == AssetType::Prefab ? theme::kAccent
+               : e.type == AssetType::Script ? theme::kTextOk
+                                             : theme::kTextDim;
     }
-    if (tex) ImGui::ImageButton("##thumb", tex, size, uv0, uv1);
+    if (tex) ImGui::ImageButton("##thumb", tex, size, uv0, uv1, theme::kBgMid, tint);
     else ImGui::Button("?", size);
     const bool hovered = ImGui::IsItemHovered();
     const bool doubleClicked = hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);

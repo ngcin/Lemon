@@ -25,6 +25,34 @@ namespace lemon::editor {
 class ImGuiBackend;
 class EditorContext;
 
+/// UI 图标集（M4.7b 决议 D1：自绘最小集，程序化形状页，零新依赖）。
+/// 形状页 = 图集槽 2 的 N×32 页（每枚 32px 槽，N = 枚数），白色形状 → ImGui::Image 染色。
+enum class IconKind : uint8_t {
+    Play = 0, Pause, Step, Stop,       // 传输控制
+    Move, Rotate, Scale, Grid,         // 变换工具
+    Entity, Sprite, Camera, Script,    // 实体类型（Hierarchy 行前）
+    AssetSprite, AssetPrefab, AssetScript, AssetGeneric, // 资产类型
+    Cursor,                            // Select 工具（Godot 式选择模式）
+    Magnet,                            // 拖拽吸附开关（Godot 磁铁语义）
+    Count
+};
+inline constexpr uint32_t kIconCount = (uint32_t)IconKind::Count;
+
+/// overlay 特征色（SceneView overlay 推送与 EditorApp 冒烟像素断言共用——改值自动同步）
+namespace overlay {
+inline constexpr uint32_t Pack(uint8_t r, uint8_t g, uint8_t b, uint8_t a) {
+    return (uint32_t)r | ((uint32_t)g << 8) | ((uint32_t)b << 16) | ((uint32_t)a << 24);
+}
+// 选框青 / 主选亮青 / 网格 / 主轴稍亮 / Gizmo 手柄黄 / 实体名标签墨色
+// （网格 α110 / major α150：α70 时半像素覆盖的线几乎隐形——缩小后格子"忽有忽无"）
+inline constexpr uint32_t kSelectColor = Pack(120, 225, 240, 220);
+inline constexpr uint32_t kPrimaryColor = Pack(90, 215, 245, 255);
+inline constexpr uint32_t kGridColor = Pack(120, 140, 150, 110);
+inline constexpr uint32_t kAxisColor = Pack(150, 175, 185, 150);
+inline constexpr uint32_t kHandleColor = Pack(250, 220, 90, 255);
+inline constexpr uint32_t kLabelInk = Pack(240, 255, 200, 230);
+} // namespace overlay
+
 using renderer::AtlasRegistry;
 using renderer::BitmapFont;
 using renderer::Camera2D;
@@ -33,24 +61,31 @@ using renderer::SpriteBatcher;
 using renderer::SpritePacket;
 
 /// 程序化测试图集：8×64px 调色板（0=白 overlay 染色底纹，1..7 彩色）+ ASCII 字体页
+/// + 16×32px 图标形状页（M4.7b；白形状 → UI 染色）
 class ProceduralAtlas {
 public:
     static constexpr uint32_t kPaletteSprites = 8;
     static constexpr uint32_t kCellPx = 64;
+    static constexpr uint32_t kIconPx = 32; // 形状页图标边长
 
-    void Build(rhi::Device& device); // 页纹理 + 采样器 + 图集槽 0 / 字体槽 1
+    void Build(rhi::Device& device); // 页纹理 + 采样器 + 图集槽 0 / 字体槽 1 / 图标槽 2
     AtlasRegistry& Registry() { return atlas_; }
     const AtlasRegistry& Registry() const { return atlas_; }
     BitmapFont& Font() { return font_; }
     uint32_t WhiteSprite() const { return whiteId_; } // overlay 染色底纹（Build 时登记）
     rhi::Texture Page() const { return page_; }       // 调色板页（AssetBrowser 图标源）
+    rhi::Texture IconPage() const { return iconPage_; } // 形状页（UI 图标源）
+    /// 图标 uv 子区（ImGui::Image 用；页 16 槽行优先）
+    void IconUV(IconKind k, float& u0, float& v0, float& u1, float& v1) const;
 
 private:
     AtlasRegistry atlas_;
     BitmapFont font_;
     rhi::Texture page_{};
+    rhi::Texture iconPage_{};
     rhi::Sampler linear_{}, point_{};
     uint32_t whiteId_ = 1; // spriteId 1 起始（Atlas 句柄约定；0 无效）
+    rhi::Texture BuildIconPage(rhi::Device& device); // M4.7b 形状页（逐枚 32px 白形状）
 };
 
 /// 双视口渲染器（SceneView idx=0 / GameView idx=1）
@@ -93,8 +128,12 @@ public:
 
     uint32_t LastSceneVisible() const { return lastSceneVisible_; }
     ProceduralAtlas& Assets() { return assets_; }
+    /// 场景视口 RT（冒烟像素断言回读用；无效 = 面板折叠/未建）
+    rhi::Texture SceneRenderTarget() const { return rts_[0].tex; }
     /// 调色板页的 ImGui 纹理（AssetBrowser 非资产图标：色块 uv 子区）。null = 未注册
     void* PaletteIconTex() const { return paletteIconTex_; }
+    /// 图标形状页的 ImGui 纹理（M4.7b 工具栏/Hierarchy/AssetBrowser 图标源）
+    void* IconTex() const { return iconTex_; }
     /// 编辑相机世界→屏幕（用于鼠标坐标换算；面板持有 RT 尺寸）
     Vec2 WorldToScreen(const Camera2D& cam, Vec2 world, uint32_t rtW, uint32_t rtH) const;
     Vec2 ScreenToWorld(const Camera2D& cam, Vec2 screen, uint32_t rtW, uint32_t rtH) const;
@@ -126,6 +165,7 @@ private:
     RT rts_[2];
     uint32_t lastSceneVisible_ = 0;
     void* paletteIconTex_ = nullptr; // 调色板页 ImTextureID（图标源；设备丢失重注册）
+    void* iconTex_ = nullptr;        // 形状页 ImTextureID（M4.7b；设备丢失重注册）
 };
 
 } // namespace lemon::editor

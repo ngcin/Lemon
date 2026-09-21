@@ -8,6 +8,10 @@
 #include "Components/CoreComponents.h"
 #include "Core/Log.h"
 #include "ECS/Hierarchy.h"
+#include "Components/RenderComponents.h"
+#include "Interaction/ViewportRenderer.h"
+#include "Scripting/ScriptBox.h"
+#include "Tooling/Theme.h"
 #include "EditorContext.h"
 #include "Panels/BuiltInPanels.h"
 #include "imgui.h"
@@ -60,7 +64,8 @@ void HierarchyPanel::CommitRename(EditorApp& app, ecs::Entity e, bool apply) {
 }
 
 void HierarchyPanel::OnGui(EditorApp& app) {
-    if (!ImGui::Begin(Name(), nullptr, ImGuiWindowFlags_NoCollapse)) {
+    if (!ImGui::Begin(Name(), nullptr,
+                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar)) {
         ImGui::End();
         return;
     }
@@ -98,8 +103,8 @@ void HierarchyPanel::OnGui(EditorApp& app) {
     }
 
     ImGui::Separator();
-    ImGui::BeginChild("tree", ImVec2(0, 0), ImGuiChildFlags_None,
-                      ImGuiWindowFlags_AlwaysVerticalScrollbar);
+    // 滚动条按需出现（曾挂 AlwaysVerticalScrollbar：空列表也常驻——手测反馈移除）
+    ImGui::BeginChild("tree", ImVec2(0, 0), ImGuiChildFlags_None);
 
     scene.Each([&](ecs::Entity e) {
         const ecs::Hierarchy* h = scene.TryGet<ecs::Hierarchy>(e);
@@ -164,8 +169,30 @@ void HierarchyPanel::DrawNode(EditorApp& app, ecs::Entity e, bool hasHierarchy) 
     if (!first.IsNull() && openedOnce_.insert(e.id).second)
         flags |= ImGuiTreeNodeFlags_DefaultOpen; // 首见节点默认展开
 
+    // M4.7b 行前类型图标：Prefab 实例 > 带脚本 > 精灵 > 空实体（标签留两空格让位）
+    const ecs::Meta* meta = scene.TryGet<ecs::Meta>(e);
+    const IconKind icon = meta && meta->prefabId    ? IconKind::AssetPrefab
+                          : scene.Has<scripting::ScriptBox>(e) ? IconKind::Script
+                          : scene.Has<ecs::SpriteRenderer>(e) ? IconKind::Sprite
+                                                              : IconKind::Entity;
     const bool nodeOpen =
-        ImGui::TreeNodeEx((void*)(uintptr_t)e.id, flags, "%s", DisplayName(scene, e));
+        ImGui::TreeNodeEx((void*)(uintptr_t)e.id, flags, "  %s", DisplayName(scene, e));
+    { // 图标叠画在行首箭头右侧（白形状染 prefab 蓝 / 其余主题文本色）
+        void* tex = app.Viewport().IconTex();
+        if (tex) {
+            float u0, v0, u1, v1;
+            app.Viewport().Assets().IconUV(icon, u0, v0, u1, v1);
+            const ImVec2 p = ImGui::GetItemRectMin();
+            const float s = ImGui::GetTextLineHeight() * 0.9f;
+            const float ox = p.x + ImGui::GetStyle().FramePadding.x + s * 1.15f;
+            ImGui::GetWindowDrawList()->AddImage(
+                (ImTextureID)tex, ImVec2(ox, p.y + (ImGui::GetTextLineHeight() - s) * 0.5f),
+                ImVec2(ox + s, p.y + (ImGui::GetTextLineHeight() + s) * 0.5f), ImVec2(u0, v0),
+                ImVec2(u1, v1),
+                ImGui::ColorConvertFloat4ToU32(icon == IconKind::AssetPrefab ? theme::kAccent
+                                                            : theme::kText));
+        }
+    }
     if (ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Left))
         ctx.Select(e, ImGui::GetIO().KeyCtrl); // Ctrl 点选 = 增删选；主选中 = 末位
     // 叶子节点双击 = 重命名（§4-7；父节点双击已被 展开/收起 占用——其用 F2/右键）

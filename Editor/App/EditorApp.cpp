@@ -8,7 +8,9 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iterator>
+#include <sstream>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -19,6 +21,8 @@
 #include "Assets/AssetDatabase.h"
 #include "Assets/ProjectWizard.h"
 #include "Interaction/ViewportRenderer.h"
+#include "Tooling/Icons.h"
+#include "Tooling/Theme.h"
 #include "Components/BehaviorComponents.h"
 #include "Components/CoreComponents.h"
 #include "Components/GameplayComponents.h"
@@ -33,6 +37,7 @@
 #include "Serialization/SceneArchive.h"
 #include "imgui.h"
 #include "imgui_internal.h" // DockBuilder（docking 分支布局编程 API）
+#include "misc/cpp/imgui_stdlib.h" // InputText(std::string*) 重载（Layout 命名等）
 
 namespace lemon::editor {
 
@@ -59,6 +64,30 @@ int g_imguiErrorCount = 0;
 void ImGuiErrorSink(ImGuiContext*, void* user_data, const char* msg) {
     ++*static_cast<int*>(user_data);
     LEMON_WARN("ImGui 错误：%s", msg);
+}
+
+// ---- M4.7-P0 冒烟像素断言辅助：overlay 渲染可见性（数像素不数包）----
+int CountPixelsNear(const std::vector<uint8_t>& px, uint32_t w, uint32_t h, int r, int g,
+                    int b, int tol) {
+    int n = 0;
+    for (size_t i = 0; i < (size_t)w * h; ++i) {
+        const uint8_t* p = &px[i * 4];
+        if (std::abs((int)p[0] - r) <= tol && std::abs((int)p[1] - g) <= tol &&
+            std::abs((int)p[2] - b) <= tol)
+            ++n;
+    }
+    return n;
+}
+// 网格线特征 = "比视口底色略亮的灰系"（α70 网格与 α110 主轴在 (23,26,33) 底上
+// 混出约 (49,54,58)~(78,90,97) 的灰带；UI 面板底 (35,38,46) 与亮灰文字均在带外）
+int CountGridishPixels(const std::vector<uint8_t>& px, uint32_t w, uint32_t h) {
+    int n = 0;
+    for (size_t i = 0; i < (size_t)w * h; ++i) {
+        const uint8_t* p = &px[i * 4];
+        const int r = p[0], g = p[1], b = p[2];
+        if (g >= 44 && g <= 104 && std::abs(r - g) <= 14 && std::abs(g - b) <= 14) ++n;
+    }
+    return n;
 }
 
 // ---- 最近项目（M4.6 §4-4；$HOME/.lemon/recent.json，用户级跨项目共享）----
@@ -211,43 +240,179 @@ void EditorApp::BuildMenuBar() {
 }
 
 void EditorApp::BuildToolbar() {
+    // M4.7a/b 三段式图标工具栏：左 = Q/W/E/R + 网格显示/吸附｜中 = Play/Pause/单步
+    // （居中）｜右 = 预留（Layout 下拉 M5）。图标 = 形状页（零新依赖），居中按按钮实宽精算。
     const bool playing = ctx_.Playing();
+    const float x0 = ImGui::GetCursorPosX();
+    const float avail = ImGui::GetContentRegionAvail().x;
+
+    // ---- 左段：Q 选择/W 移动/E 旋转/R 缩放 工具组 + 网格吸附（图标 toggle）----
+    struct ToolBtn { IconKind icon; const char* id; const char* tip; EditTool tool; };
+    static const ToolBtn kTools[] = {
+        {IconKind::Cursor, "##toolSelect", "选择（Q）：8 向手柄调整大小 / 拖动移动", EditTool::Select},
+        {IconKind::Move, "##toolMove", "移动 (W)", EditTool::Move},
+        {IconKind::Rotate, "##toolRotate", "旋转 (E)", EditTool::Rotate},
+        {IconKind::Scale, "##toolScale", "四角缩放 (R)", EditTool::Scale}};
+    for (const auto& t : kTools) {
+        if (ui::IconButton(*this, t.icon, t.id, t.tool == tool_)) tool_ = t.tool;
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", t.tip);
+        ImGui::SameLine();
+    }
+    // 网格显示（纯视觉）与拖拽吸附（独立开关，默认关）——Godot/Unity 语义
+    if (ui::IconButton(*this, IconKind::Grid, "##gridVisible", gridVisible_))
+        gridVisible_ = !gridVisible_;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("网格显示");
+    ImGui::SameLine();
+    if (ui::IconButton(*this, IconKind::Magnet, "##snap", snapEnabled_))
+        snapEnabled_ = !snapEnabled_;
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("拖拽吸附（平移 8px / 旋转 15° / 缩放 0.25 档；按住 Ctrl 拖拽临时取反）");
+    ImGui::SameLine();
+
+    // ---- 中段：Play/Pause/单步（水平居中 ±2px）----
+    const ImGuiStyle& st = ImGui::GetStyle();
+    const float btnW = 18.0f + 8.0f + st.FramePadding.x * 2.0f; // IconButton 实宽
+    const float centerW = btnW * 3.0f + st.ItemSpacing.x * 2.0f;
+    const float afterLeft = ImGui::GetCursorPosX() - st.ItemSpacing.x; // SameLine 补偿
+    const float centerTarget = x0 + (avail - centerW) * 0.5f;
+    if (centerTarget > afterLeft + st.ItemSpacing.x)
+        ImGui::SetCursorPosX(centerTarget);
+
+    // 决议 D3：编辑态 Play 灰蓝/播放态 Stop 红调（图标底色承载态色）
     ImGui::PushStyleColor(ImGuiCol_Button,
-                          playing ? ImVec4(0.50f, 0.32f, 0.06f, 1.0f) : ImVec4(0.22f, 0.26f, 0.20f, 1.0f));
-    if (ImGui::Button(playing ? "Stop" : "Play")) {
+                          playing ? theme::kPlayStop : theme::kAccentDim);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                          playing ? theme::kPlayStop : theme::kAccentDim);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,
+                          playing ? theme::kPlayStop : theme::kAccentDim);
+    if (ui::IconButton(*this, playing ? IconKind::Stop : IconKind::Play, "##play", false)) {
         if (playing) {
             if (!ctx_.ExitPlay()) LEMON_WARN("Stop 后快照校验失败（编辑场景已按快照重建）");
         } else {
             ctx_.EnterPlay();
         }
     }
-    ImGui::PopStyleColor();
+    ImGui::PopStyleColor(3);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", playing ? "Stop（恢复编辑场景）" : "Play（进入沙盒）");
     ImGui::SameLine();
     ImGui::BeginDisabled(!playing);
-    if (ImGui::Button(paused_ ? "Resume" : "Pause")) paused_ = !paused_;
+    if (ui::IconButton(*this, IconKind::Pause, "##pause", paused_)) paused_ = !paused_;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "暂停/继续（仅 Play 态）");
+    ImGui::SameLine();
+    if (ui::IconButton(*this, IconKind::Step, "##step", false)) singleStep_ = true;
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "单步一帧（仅 Play 态）");
     ImGui::EndDisabled();
+
+    // ---- 右段：Layout 下拉（M4.7d；右对齐；窄工具栏时让位不与中段重叠）----
     ImGui::SameLine();
-    ImGui::BeginDisabled(!playing);
-    if (ImGui::Button("单步")) singleStep_ = true;
-    ImGui::EndDisabled();
-    ImGui::SameLine();
-    ImGui::TextDisabled("|");
-    ImGui::SameLine();
-    struct ToolBtn { const char* label; const char* tip; EditTool tool; };
-    static const ToolBtn kTools[] = {{"Move (W)", "移动工具", EditTool::Move},
-                                     {"Rotate (E)", "旋转工具", EditTool::Rotate},
-                                     {"Scale (R)", "四角缩放工具", EditTool::Scale}};
-    for (const auto& t : kTools) {
-        // 高亮判定先落局部：点击会改 tool_，Push/Pop 若各查一次 tool_ 同帧即撕裂配对
-        // （点非当前工具按钮 = Push 未推 Pop 已弹 → "PopStyleColor too many times"）
-        const bool active = t.tool == tool_;
-        if (active) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.42f, 0.38f, 0.10f, 1.0f));
-        if (ImGui::Button(t.label)) tool_ = t.tool;
-        if (active) ImGui::PopStyleColor();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", t.tip);
-        ImGui::SameLine();
+    constexpr float kLayoutW = 150.0f;
+    const float rightX = x0 + avail - kLayoutW;
+    if (ImGui::GetCursorPosX() < rightX) {
+        ImGui::SetCursorPosX(rightX);
+        BuildLayoutDropdown();
     }
-    ImGui::Checkbox("Grid Snap", &gridSnap_); // 生效于 M4.2 Gizmo
+}
+
+// ---- Layout 下拉（M4.7d）：命名布局 = imgui.ini 全量快照另存，一键切换 ----
+// 切换延迟一帧到 BuildUI 的布局安全点应用（与 forceDefaultLayout_ 同点，
+// DockBuilder/LoadIniSettingsFromMemory 均在帧内 dockspace 构建前调用）。
+void EditorApp::BuildLayoutDropdown() {
+    const std::vector<std::string> names = ListSavedLayouts();
+    const char* preview = activeLayout_.empty() ? "布局：默认" : activeLayout_.c_str();
+    ImGui::SetNextItemWidth(150.0f);
+    if (ImGui::BeginCombo("##layout", preview)) {
+        if (ImGui::Selectable("默认布局", activeLayout_.empty())) {
+            activeLayout_.clear();
+            forceDefaultLayout_ = true; // 下帧 SetupDefaultLayout（帧内 DockBuilder 点）
+        }
+        for (const std::string& n : names)
+            if (ImGui::Selectable(n.c_str(), n == activeLayout_)) {
+                activeLayout_ = n;
+                pendingLayout_ = n; // 下帧 LoadLayoutIni
+            }
+        ImGui::Separator();
+        if (ImGui::Selectable("保存当前布局…")) {
+            layoutNameBuf_ = activeLayout_;
+            layoutSaveOpen_ = true;
+        }
+        if (!activeLayout_.empty()) {
+            char buf[96];
+            std::snprintf(buf, sizeof(buf), "更新 \xe2\x80\x9c%s\xe2\x80\x9d",
+                          activeLayout_.c_str());
+            if (ImGui::Selectable(buf)) SaveLayoutIni(activeLayout_);
+            std::snprintf(buf, sizeof(buf), "删除 \xe2\x80\x9c%s\xe2\x80\x9d",
+                          activeLayout_.c_str());
+            if (ImGui::Selectable(buf)) {
+                std::error_code ec;
+                std::filesystem::remove(".lemon/editor/layouts/" + activeLayout_ + ".ini", ec);
+                activeLayout_.clear();
+            }
+        }
+        ImGui::EndCombo();
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("%s", "命名布局（保存/切换/删除；默认 = 内置七面板）");
+
+    // 保存命名模态（OpenPopup 需在组合框外的稳定 ID 栈位调用）
+    if (layoutSaveOpen_) {
+        layoutSaveOpen_ = false;
+        ImGui::OpenPopup("保存布局");
+    }
+    if (ImGui::BeginPopupModal("保存布局", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("布局名：");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(180);
+        ImGui::InputText("##name", &layoutNameBuf_);
+        ImGui::BeginDisabled(layoutNameBuf_.empty());
+        if (ImGui::Button("保存", ImVec2(100, 0)) ||
+            (ImGui::IsKeyPressed(ImGuiKey_Enter, false) && !layoutNameBuf_.empty())) {
+            if (SaveLayoutIni(layoutNameBuf_)) {
+                activeLayout_ = layoutNameBuf_;
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button("取消", ImVec2(100, 0)) ||
+            ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+            ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+}
+
+bool EditorApp::SaveLayoutIni(const std::string& name) {
+    std::error_code ec;
+    std::filesystem::create_directories(".lemon/editor/layouts", ec);
+    size_t sz = 0;
+    const char* ini = ImGui::SaveIniSettingsToMemory(&sz);
+    if (!ini || sz == 0) return false;
+    std::ofstream f(".lemon/editor/layouts/" + name + ".ini", std::ios::binary);
+    if (!f) return false;
+    f.write(ini, (std::streamsize)sz);
+    LEMON_LOG("布局已保存：%s（%zu B）", name.c_str(), sz);
+    return true;
+}
+
+bool EditorApp::LoadLayoutIni(const std::string& name) {
+    std::ifstream f(".lemon/editor/layouts/" + name + ".ini", std::ios::binary);
+    if (!f) return false;
+    std::ostringstream ss;
+    ss << f.rdbuf();
+    const std::string ini = ss.str();
+    if (ini.empty()) return false;
+    ImGui::LoadIniSettingsFromMemory(ini.c_str(), ini.size());
+    return true;
+}
+
+std::vector<std::string> EditorApp::ListSavedLayouts() const {
+    std::vector<std::string> out;
+    std::error_code ec;
+    for (const auto& it : std::filesystem::directory_iterator(".lemon/editor/layouts", ec)) {
+        if (!it.is_regular_file() || it.path().extension() != ".ini") continue;
+        out.push_back(it.path().stem().string());
+    }
+    std::sort(out.begin(), out.end());
+    return out;
 }
 
 void EditorApp::BuildStatusBar() {
@@ -260,20 +425,20 @@ void EditorApp::BuildStatusBar() {
                         ctx_.Selection().size(), ctx_.Assets().SpriteAssetCount());
     if (playing_) {
         ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.65f, 0.15f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, theme::kAccent);
         ImGui::TextUnformatted("| \xe2\x96\xb6 PLAY"); // ▶
         ImGui::PopStyleColor();
     }
     if (ctx_.Assets().ProjectRoot().empty()) { // M4.6 §4-1：无项目显式可见
         ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.3f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, theme::kTextError);
         ImGui::TextUnformatted("| 未打开项目（文件 → 新建/打开项目）");
         ImGui::PopStyleColor();
     }
     // 编译状态（M4.6 §5-5）：排队中橙字（构建阻塞期间屏幕留此帧）；完成后回显耗时
     if (compileQueued_) {
         ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.65f, 0.15f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, theme::kTextWarn);
         ImGui::TextUnformatted("| 编译中…（dotnet build）");
         ImGui::PopStyleColor();
     } else if (lastBuildMs_ >= 0.0) {
@@ -285,7 +450,11 @@ void EditorApp::BuildStatusBar() {
 void EditorApp::BuildNoProjectCard() {
     // 无项目引导（M4.6 §4-1，最小横幅形态——决议 R1）：中央卡两按钮直达
     // 新建/打开；有项目/向导开着不出现。用户不再需要知道 --project 的存在。
-    if (!ctx_.Assets().ProjectRoot().empty() || wizOpen_ || picker_.IsOpen()) return;
+    // 可关闭（M4.7 修复：卡悬停区会截走其下 Scene 视口的点击/拖拽——视口中心
+    // 恰是实体聚集区；关掉即恢复全程可编辑，会话内不再弹出）。
+    if (!ctx_.Assets().ProjectRoot().empty() || wizOpen_ || picker_.IsOpen() ||
+        noProjectCardDismissed_)
+        return;
     ImGuiIO& io = ImGui::GetIO();
     ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.45f),
                             ImGuiCond_Always, ImVec2(0.5f, 0.5f));
@@ -299,6 +468,8 @@ void EditorApp::BuildNoProjectCard() {
     if (open) {
         ImGui::Dummy(ImVec2(0, 6));
         ImGui::TextUnformatted("  尚未打开项目");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("×##dismiss")) noProjectCardDismissed_ = true;
         ImGui::TextDisabled("  导入资产、脚本编译、场景保存都需要项目目录。");
         ImGui::Dummy(ImVec2(0, 8));
         if (ImGui::Button("新建项目…", ImVec2(-1, 0))) MenuNewProject();
@@ -345,6 +516,7 @@ void EditorApp::BuildShortcuts() {
             for (ecs::Entity e : ctx_.Selection()) ctx_.DestroyEntityTree(e);
             ctx_.ClearSelection();
         }
+        if (ImGui::IsKeyPressed(ImGuiKey_Q)) tool_ = EditTool::Select;
         if (ImGui::IsKeyPressed(ImGuiKey_W)) tool_ = EditTool::Move;
         if (ImGui::IsKeyPressed(ImGuiKey_E)) tool_ = EditTool::Rotate;
         if (ImGui::IsKeyPressed(ImGuiKey_R)) tool_ = EditTool::Scale;
@@ -375,7 +547,8 @@ void EditorApp::BuildUI() {
                  ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoTitleBar |
                      ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
                      ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus |
-                     ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_MenuBar);
+                     ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_MenuBar |
+                     ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PopStyleVar(3);
 
     BuildMenuBar();
@@ -384,9 +557,9 @@ void EditorApp::BuildUI() {
     if (ImGui::BeginChild("##Toolbar",
                           ImVec2(0.0f, ImGui::GetFrameHeightWithSpacing() + 4.0f))) {
         BuildToolbar();
-        if (playing_) { // Play 橙色横幅（§2.4；沙盒 M4.3 生效）
+        if (playing_) { // Play 亮蓝横幅（§2.4；沙盒 M4.3 生效；M4.7a 旧橙改主题蓝）
             ImGui::SameLine();
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.60f, 0.10f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, theme::kAccent);
             ImGui::TextUnformatted("PLAY MODE — 编辑落 Play World，Stop 即丢；GameView 聚焦时键鼠进游戏");
             ImGui::PopStyleColor();
         }
@@ -396,11 +569,25 @@ void EditorApp::BuildUI() {
 
     const float statusBarH = ImGui::GetFrameHeightWithSpacing();
     ImGuiID dock = ImGui::GetID("LemonDockSpace");
+    if (forceDefaultLayout_) { // smoke-drag：忽略 ini 漂移，强制默认布局（一次）
+        forceDefaultLayout_ = false;
+        SetupDefaultLayout();
+    }
+    if (!pendingLayout_.empty()) { // M4.7d Layout 下拉切换：帧内安全点应用
+        if (!LoadLayoutIni(pendingLayout_)) {
+            LEMON_WARN("布局加载失败：%s（文件缺失？回到默认）", pendingLayout_.c_str());
+            activeLayout_.clear();
+        }
+        pendingLayout_.clear();
+    }
     if (ImGui::DockBuilderGetNode(dock) == nullptr) SetupDefaultLayout();
     ImGui::DockSpace(dock, ImVec2(0.0f, ImGui::GetContentRegionAvail().y - statusBarH),
                      ImGuiDockNodeFlags_None);
 
-    if (ImGui::BeginChild("##StatusBar", ImVec2(0.0f, statusBarH))) BuildStatusBar();
+    if (ImGui::BeginChild("##StatusBar", ImVec2(0.0f, statusBarH),
+                          ImGuiChildFlags_None,
+                          ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse))
+        BuildStatusBar();
     ImGui::EndChild();
     ImGui::End();
 
@@ -818,7 +1005,7 @@ bool EditorApp::OpenProjectPipeline(const std::string& projectRoot) {
     const uint32_t spriteIdBase = viewport_->Assets().Registry().SpriteCount() + 1;
     if (!ctx_.Assets().OpenProject(projectRoot, spriteIdBase)) return false;
     gpuAssets_.Init(*device_, ui_.get(), &viewport_->Assets().Registry(),
-                    ctx_.Assets(), /*firstSlot=*/2); // 0=调色板 1=字体页
+                    ctx_.Assets(), /*firstSlot=*/3); // 0=调色板 1=字体页 2=图标形状页(M4.7b)
     for (const AssetEntry& e : ctx_.Assets().Entries())
         if (!e.missing && e.type == AssetType::Sprite) gpuAssets_.ImportSprite(e);
     // 设备丢失重建（"editor-viewport" 先 Reset+重建程序化页 → 此处按 DB 记账号接续）；
@@ -1043,6 +1230,9 @@ int EditorApp::Run(const EditorLaunch& launch) {
 
     ownedPanels_ = CreateAllPanels();
     for (auto& p : ownedPanels_) panels_.Add(p.get());
+    for (auto& e : panels_.Entries()) // --smoke-drag 注入定位（按名取 Scene 面板）
+        if (std::strcmp(e.panel->Name(), "Scene") == 0)
+            scenePanel_ = static_cast<SceneViewPanel*>(e.panel);
 
     // ---- M4.4 资产链 / M4.5 项目向导与终验 ----
     if (launch.smoke && !launch.projectDir.empty() && !launch.finalTest) SeedSmokeProject();
@@ -1104,7 +1294,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
         if (!ctx_.OpenScene(launch_->projectDir + "/Scenes/Main.scene")) return 1;
         SeedJudgementScene(wizardSpawnGuid_);
         smokeSeeded_ = ctx_.ActiveScene().AliveCount();
-    } else if (launch.smoke) {
+    } else if (launch.smoke || launch.smokeDrag) {
         SeedSmokeScene();
     } else {
         ctx_.NewScene();
@@ -1134,10 +1324,41 @@ int EditorApp::Run(const EditorLaunch& launch) {
         LEMON_ERROR("--smoke-close 需要 --frames N（看门狗）");
         return 2;
     }
+    // --smoke-drag 看门狗（同上；84 帧 = 移动 3-23 + 旋转 24-41 + resize 43-56 +
+    //  缩放 58-63 + 判定余量）
+    if (launch.smokeDrag && launch.frames < 84) {
+        LEMON_ERROR("--smoke-drag 需要 --frames N（N>=84 看门狗）");
+        return 2;
+    }
     // ---- 主循环（anim-smoke 基线骨架；编辑 Step = Essential）----
     uint64_t frame = 0;
     double firstFrameMs = -1.0;
     bool running = true;
+    // --smoke-drag 注入状态（M4.7c 交互回归）
+    ecs::Entity dragTarget{};
+    Vec2 dragBefore{0, 0};
+    float dragDx = 0.0f, dragDy = 0.0f;
+    bool dragPassed = false, dragDone = false;
+    // 第二段（旋转）：弧点换算闭包 + 前后角
+    float rotBefore = 0.0f, rotAfter = 0.0f;
+    bool rotPassed = false, rotDone = false, rotReady = false;
+    std::function<Vec2(float)> arcWorldToPt;
+    // 第三段（Select 8 向 resize）：右边中点手柄外拖 → scale.x 增大 + 左缘锚定
+    float scaleBefore = 0.0f, scaleAfter = 0.0f;
+    float anchorLeft0 = 0.0f, anchorLeft1 = 0.0f;
+    bool resizeDone = false, resizePassed = false, resizeReady = false, moveReady = false;
+    Vec2 handleWorld{0, 0};   // 手柄世界点（注入帧换算屏幕）
+    Vec2 moveWorld{0, 0};     // 移动段按下世界点
+    Vec2 handleDragDir{1, 0}; // 手柄外拖方向 = 实体本地 +X 世界朝向
+    // 第四段（缩放）：滚轮前推 = 放大 + 选中对象屏幕位置不动
+    float zoomBefore = 0.0f, zoomAfter = 0.0f;
+    Vec2 selScreen0{0, 0}, selScreen1{0, 0};
+    bool zoomDone = false, zoomPassed = false;
+    std::function<Vec2(Vec2)> worldToPt; // 世界→窗口点（cam 就绪后于帧 3 装配）
+    // 第五段（甩飞防护 + F 聚焦）：远处实体不得拽走相机（锚点回退）；F 键找回
+    Vec2 slingWorld{0, 0}, slingCenter0{0, 0};
+    float slingDx = 0.0f, slingDy = 0.0f, focusDelta = 0.0f;
+    bool slingDone = false, slingPassed = false, focusDone = false;
     const double autosaveClock0 = ImGui::GetTime(); // steady 秒（TickAutosave 节拍源）
     // 终验冷启动口径 = 编辑器主循环首帧（向导建项目 + Game 首次编译是创建期工作，
     // 另由 final-wizard/编译日志计量——不混入 §6 #3 判定）
@@ -1277,6 +1498,247 @@ int EditorApp::Run(const EditorLaunch& launch) {
                     (float)(idx / kCols) / (float)(kRows - 1) * io.DisplaySize.y);
             }
         }
+        // 冒烟末帧：强制主选中 = 首个精灵实体（overlay 像素断言的选框/手柄原料。
+        // --play 换世界 / --scene 重开路径下既有选区可能指向失效实体，需确定性供给）
+        if (launch.smoke && launch.frames > 0 && (int)frame == launch.frames - 1) {
+            for (auto [ent, tf, sr] :
+                 ctx_.ActiveScene().View<ecs::Transform2D, ecs::SpriteRenderer>().each()) {
+                (void)tf;
+                if (sr.flags & 0x4) { // SpriteRenderer.flags bit2 = enabled
+                    ctx_.Select(ecs::Scene::FromEntt(ent), false);
+                    break;
+                }
+            }
+        }
+
+        // --smoke-drag（M4.7c 交互回归）：ImGui 事件注入模拟"点选已选实体 → 拖 44pt →
+        // 释放"，断言 Transform 位移 ≈ 屏幕位移 × 世界/点。链路分段计数由
+        // SceneViewPanel 诊断成员给出（按下→arm→4px 阈值→Update）。与悬停扫掠互斥。
+        if (launch.smokeDrag && scenePanel_) {
+            Camera2D& cam = viewport_->SceneCam();
+            if (frame == 2) {
+                // 注入回归不吃 ini 漂移账：标记后由 BuildUI 在合法作用域内重建默认布局
+                // （DockBuilder 调用必须在 NewFrame 内 + ##LemonEditor 窗口 ID 栈上）
+                forceDefaultLayout_ = true;
+            } else if (frame == 3) {
+                noProjectCardDismissed_ = true; // 中央卡会截走视口中心点击（无项目模式）
+                for (auto [ent, tf, sr] :
+                     ctx_.ActiveScene().View<ecs::Transform2D, ecs::SpriteRenderer>().each()) {
+                    if (!(sr.flags & 0x4)) continue;
+                    ecs::Entity e = ecs::Scene::FromEntt(ent);
+                    // 只取根实体：子实体 Transform2D.pos 是本地坐标（世界 = 父链合成），
+                    // 拿本地当世界设相机中心会让拾取点全部落空
+                    if (const ecs::Hierarchy* h = ctx_.ActiveScene().TryGet<ecs::Hierarchy>(e);
+                        h && !h->parent.IsNull())
+                        continue;
+                    dragTarget = e;
+                    dragBefore = tf.pos;
+                    break;
+                }
+                snapEnabled_ = false;       // 断言免吸附台阶化（现默认已关，显式防默认变更）
+                cam.zoom = 1.0f;
+                cam.halfHeight = 360.0f;
+                cam.center = dragBefore;    // 目标居中（屏幕位置确定性）
+                ctx_.Select(dragTarget, false);
+                // 世界→窗口点换算（λ 内自取 SceneCam：cam 为帧内局部量，跨帧捕获会悬垂）
+                worldToPt = [&](Vec2 w) {
+                    Camera2D& c = viewport_->SceneCam();
+                    const Vec2 s = viewport_->WorldToScreen(
+                        c, w, scenePanel_->LastRtW(), scenePanel_->LastRtH());
+                    return Vec2{scenePanel_->LastVpX() +
+                                    s.x * scenePanel_->LastVpW() / (float)scenePanel_->LastRtW(),
+                                scenePanel_->LastVpY() +
+                                    s.y * scenePanel_->LastVpH() / (float)scenePanel_->LastRtH()};
+                };
+            } else if (frame == 4 && !dragTarget.IsNull()) {
+                // 按下点 = 目标中心 + 世界 (20,20)px（体内、避开中心块/轴带）。
+                // 只记世界坐标，注入帧才换算屏幕点——面板矩形早帧可能还在 settle
+                moveWorld = Vec2{dragBefore.x + 20.0f, dragBefore.y + 20.0f};
+                moveReady = true;
+            } else if (frame >= 5 && frame <= 21 && moveReady) {
+                if (scenePanel_->LastRtW() == 0) { /* 面板未就绪：跳过本帧注入 */ }
+                else {
+                    const float moveX =
+                        frame <= 9 ? 0.0f : std::min<float>((float)(frame - 9) * 4.0f, 44.0f);
+                    int btn = -1; // -1 = 本帧不动按键
+                    if (frame == 9 || (frame >= 10 && frame < 21)) btn = 1; // 9 按下，10-20 按住
+                    else if (frame == 21) btn = 0;                          // 21 释放
+                    const Vec2 pt = worldToPt(moveWorld);
+                    ui_->SetInputOverride(pt.x + moveX, pt.y, btn);
+                }
+            } else if (frame == 23 && !dragDone) {
+                dragDone = true; // 释放后一帧取值（EndGizmoDrag 已结算）
+                if (ctx_.ActiveScene().Alive(dragTarget) &&
+                    ctx_.ActiveScene().Has<ecs::Transform2D>(dragTarget)) {
+                    const Vec2 after = ctx_.ActiveScene().Get<ecs::Transform2D>(dragTarget).pos;
+                    const float wpp = 2.0f * cam.halfHeight /
+                                      std::max(1.0f, scenePanel_->LastVpH()); // 世界/点
+                    dragDx = after.x - dragBefore.x;
+                    dragDy = after.y - dragBefore.y;
+                    dragPassed = std::fabs(dragDx - 44.0f * wpp) < 3.0f && std::fabs(dragDy) < 3.0f;
+                }
+            }
+            // ---- 第二段：旋转（同一 arm 路径，验证绕质心角度数学）----
+            // 24 切 Rotate 工具；25-27 悬停；28 按下于体内点（中心 +45° 半径 28px）；
+            // 29-38 沿圆弧 −90°；39 释放；41 断言 rot Δ=−π/2（snap 已关 = 连续角）。
+            else if (frame == 24) {
+                tool_ = EditTool::Rotate;
+                if (ctx_.ActiveScene().Has<ecs::Transform2D>(dragTarget))
+                    rotBefore = ctx_.ActiveScene().Get<ecs::Transform2D>(dragTarget).rot;
+            } else if (frame == 25 && scenePanel_->LastRtW() > 0) {
+                // 弧上点 → 屏幕点换算；弧心 = 移动段结束后的当前位置。
+                // λ 内自取 SceneCam（cam 为帧内局部量，跨帧捕获会悬垂）
+                const Vec2 rotCenter =
+                    ctx_.ActiveScene().Alive(dragTarget) &&
+                            ctx_.ActiveScene().Has<ecs::Transform2D>(dragTarget)
+                        ? ctx_.ActiveScene().Get<ecs::Transform2D>(dragTarget).pos
+                        : dragBefore;
+                arcWorldToPt = [&, rotCenter](float ang) {
+                    const Vec2 w{rotCenter.x + 28.0f * std::cos(ang),
+                                 rotCenter.y + 28.0f * std::sin(ang)};
+                    const Vec2 s = viewport_->WorldToScreen(
+                        viewport_->SceneCam(), w, scenePanel_->LastRtW(), scenePanel_->LastRtH());
+                    return Vec2{scenePanel_->LastVpX() +
+                                    s.x * scenePanel_->LastVpW() / (float)scenePanel_->LastRtW(),
+                                scenePanel_->LastVpY() +
+                                    s.y * scenePanel_->LastVpH() / (float)scenePanel_->LastRtH()};
+                };
+                rotReady = true;
+            } else if (frame >= 26 && frame <= 39 && rotReady) {
+                constexpr float kA0 = 0.78539818f;           // 45°
+                const float t = frame <= 28 ? 0.0f
+                    : std::min<float>((float)(frame - 28) / 10.0f, 1.0f); // 28-38 走弧
+                const float ang = kA0 - t * 1.57079637f;     // 45° → −45°
+                const Vec2 p = arcWorldToPt(ang);
+                int btn = -1;
+                if (frame == 28 || (frame >= 29 && frame < 39)) btn = 1;
+                else if (frame == 39) btn = 0;
+                ui_->SetInputOverride(p.x, p.y, btn);
+            } else if (frame == 41 && !rotDone) {
+                rotDone = true;
+                if (ctx_.ActiveScene().Alive(dragTarget) &&
+                    ctx_.ActiveScene().Has<ecs::Transform2D>(dragTarget)) {
+                    rotAfter = ctx_.ActiveScene().Get<ecs::Transform2D>(dragTarget).rot;
+                    rotPassed = std::fabs(rotAfter - rotBefore + 1.57079637f) < 0.06f;
+                    dragPassed = dragPassed && rotPassed;
+                }
+            }
+            // ---- 第三段：Select 8 向 resize（43 切工具；44 按右边中点手柄；
+            //      45-53 外拖 27pt；54 释放；56 断言 scale.x 增大 + 左缘锚定）----
+            else if (frame == 43) {
+                tool_ = EditTool::Select;
+                if (ctx_.ActiveScene().Alive(dragTarget) &&
+                    ctx_.ActiveScene().Has<ecs::Transform2D>(dragTarget)) {
+                    scaleBefore = ctx_.ActiveScene().Get<ecs::Transform2D>(dragTarget).scale.x;
+                    Vec2 c, s;
+                    float r = 0;
+                    if (viewport_->WorldBoundsOf(ctx_, dragTarget, c, s, r)) {
+                        // 右边中点手柄（世界点，注入帧才换算屏幕）+ 外拖方向
+                        // （实体本地 +X 轴的世界朝向——旋转段后已转 ~−90°）
+                        const float cs = std::cos(r), sn = std::sin(r);
+                        handleWorld = Vec2{c.x + cs * s.x * 0.5f, c.y + sn * s.x * 0.5f};
+                        anchorLeft0 = c.x - cs * s.x * 0.5f;
+                        handleDragDir = Vec2{cs, sn};
+                        resizeReady = true;
+                    }
+                }
+            } else if (frame >= 44 && frame <= 54 && resizeReady) {
+                if (scenePanel_->LastRtW() > 0) {
+                    const float off =
+                        frame <= 44 ? 0.0f : std::min<float>((frame - 44) * 3.0f, 27.0f);
+                    int btn = -1;
+                    if (frame == 44 || (frame >= 45 && frame < 54)) btn = 1;
+                    else if (frame == 54) btn = 0;
+                    const Vec2 pt = worldToPt(handleWorld);
+                    ui_->SetInputOverride(pt.x + handleDragDir.x * off,
+                                          pt.y + handleDragDir.y * off, btn);
+                }
+            } else if (frame == 56 && !resizeDone) {
+                resizeDone = true;
+                if (ctx_.ActiveScene().Alive(dragTarget) &&
+                    ctx_.ActiveScene().Has<ecs::Transform2D>(dragTarget)) {
+                    const auto& tf = ctx_.ActiveScene().Get<ecs::Transform2D>(dragTarget);
+                    scaleAfter = tf.scale.x;
+                    Vec2 c, s;
+                    float r = 0;
+                    if (viewport_->WorldBoundsOf(ctx_, dragTarget, c, s, r))
+                        anchorLeft1 = c.x - std::cos(r) * s.x * 0.5f;
+                    const bool grew = scaleAfter > scaleBefore * 1.15f;
+                    const bool anchored = std::fabs(anchorLeft1 - anchorLeft0) < 6.0f;
+                    resizePassed = grew && anchored;
+                    dragPassed = dragPassed && resizePassed;
+                }
+            }
+            // ---- 第四段：缩放（58 记锚；59-61 滚轮 +1 前推；63 断言 zoom 增大
+            //      且选中对象屏幕位置不动）----
+            else if (frame == 58) {
+                zoomBefore = cam.zoom;
+                if (ctx_.ActiveScene().Alive(dragTarget) &&
+                    ctx_.ActiveScene().Has<ecs::Transform2D>(dragTarget)) {
+                    // 锚点 = 对象当前中心（移动/resize 段后已不在原位）
+                    const Vec2 cur = ctx_.ActiveScene().Get<ecs::Transform2D>(dragTarget).pos;
+                    selScreen0 = worldToPt(cur);
+                }
+            } else if (frame >= 59 && frame <= 61 && scenePanel_->LastRtW() > 0) {
+                const Vec2 ctr{scenePanel_->LastVpX() + scenePanel_->LastVpW() * 0.5f,
+                               scenePanel_->LastVpY() + scenePanel_->LastVpH() * 0.5f};
+                ui_->SetInputOverride(ctr.x, ctr.y, -1, /*wheel=*/1);
+            } else if (frame == 63 && !zoomDone) {
+                zoomDone = true;
+                zoomAfter = cam.zoom;
+                if (ctx_.ActiveScene().Alive(dragTarget) &&
+                    ctx_.ActiveScene().Has<ecs::Transform2D>(dragTarget)) {
+                    const Vec2 cur = ctx_.ActiveScene().Get<ecs::Transform2D>(dragTarget).pos;
+                    selScreen1 = worldToPt(cur);
+                }
+                const bool zoomedIn = zoomAfter > zoomBefore * 1.25f;
+                const bool anchored =
+                    Length(Vec2{selScreen1.x - selScreen0.x, selScreen1.y - selScreen0.y}) < 12.0f;
+                zoomPassed = zoomedIn && anchored;
+                dragPassed = dragPassed && zoomPassed;
+            }
+            // ---- 临时诊断（网格 v4）：末段跳极缩小取景，配 --screenshot 做像素扫描 ----
+            else if (frame == 70) {
+                cam.zoom = 0.05f;
+                cam.halfHeight = 360.0f / cam.zoom;
+                cam.center = Vec2{0, 0};
+                ctx_.ClearSelection();
+                gridVisible_ = true; // 网格显示门控（极缩小诊断截图需网格在画）
+            }
+            // ---- 第五段：甩飞防护 + F 聚焦（72 抛远实体并选中；73-75 视口中心滚轮
+            //      +1；77 断言相机没被拽走——视野外对象禁止锚定；79 注 F；81 断言
+            //      相机聚焦到实体）----
+            else if (frame == 72) {
+                if (ctx_.ActiveScene().Alive(dragTarget) &&
+                    ctx_.ActiveScene().Has<ecs::Transform2D>(dragTarget)) {
+                    slingWorld = Vec2{2.0e5f, 3.5e5f};
+                    ctx_.ActiveScene().Get<ecs::Transform2D>(dragTarget).pos = slingWorld;
+                    ctx_.Select(dragTarget, false);
+                    slingCenter0 = viewport_->SceneCam().center;
+                }
+            } else if (frame >= 73 && frame <= 75 && scenePanel_->LastRtW() > 0) {
+                const Vec2 ctr{scenePanel_->LastVpX() + scenePanel_->LastVpW() * 0.5f,
+                               scenePanel_->LastVpY() + scenePanel_->LastVpH() * 0.5f};
+                ui_->SetInputOverride(ctr.x, ctr.y, -1, /*wheel=*/1);
+            } else if (frame == 77 && !slingDone) {
+                slingDone = true;
+                const Vec2 c = viewport_->SceneCam().center;
+                slingDx = c.x - slingCenter0.x;
+                slingDy = c.y - slingCenter0.y;
+                // 容差 16 世界单位：注入中心点与逐帧视口中心有 ±1pt 布局抖动，
+                // 极缩小下折 ~2 单位/格；真甩飞（无锚点回退）= 每格 2 万+
+                slingPassed = std::fabs(slingDx) < 16.0f && std::fabs(slingDy) < 16.0f;
+            } else if (frame == 79) {
+                ui_->SetKeyTapOverride(ImGuiKey_F);
+            } else if (frame == 81 && !focusDone) {
+                focusDone = true;
+                const Vec2 c = viewport_->SceneCam().center;
+                focusDelta = Length(Vec2{c.x - slingWorld.x, c.y - slingWorld.y});
+                slingPassed = slingPassed && focusDelta < 32.0f;
+                dragPassed = dragPassed && slingPassed;
+            }
+        }
+
         ui_->BeginFrame(*window_);
         BuildUI();
         if (quitConfirmArmed_) smokeCloseArmedEver_ = true; // dirty 模式断言原料
@@ -1318,9 +1780,15 @@ int EditorApp::Run(const EditorLaunch& launch) {
             LEMON_WARN("ImGui：可见控件 ID 冲突（悬停扫掠命中；循环内控件需 PushID 或 ##xx 唯一化）");
         }
 
+        const bool wantCapture = !launch.screenshot.empty() || launch.smoke;
         const bool lastFrame =
-            launch.frames > 0 && (int)frame == launch.frames - 1 && !launch.screenshot.empty();
-        if (lastFrame) cl.DebugRecordCapture();
+            launch.frames > 0 && (int)frame == launch.frames - 1 && wantCapture;
+        if (lastFrame) {
+            cl.DebugRecordCapture();
+            // 场景 RT 回读（冒烟像素断言源：线性空间、无 UI 合成/sRGB 干扰）
+            if (launch.smoke && viewport_->SceneRenderTarget().IsValid())
+                cl.DebugRecordTextureCapture(viewport_->SceneRenderTarget());
+        }
 
         bool needRe = false, lost = false;
         device_->EndFrameAndPresent(needRe, lost);
@@ -1354,6 +1822,22 @@ int EditorApp::Run(const EditorLaunch& launch) {
 
     // ---- 冒烟自检（§6 #13：退出码即判据）----
     int exitCode = 0;
+    // --smoke-drag 裁决（M4.7c 交互回归）：链路分段计数 + 位移/旋转/缩放/缩放相机断言
+    if (launch.smokeDrag) {
+        if (scenePanel_)
+            std::printf("[lemon] smoke-drag: press=%d armed=%d updates=%d "
+                        "move=(%.1f,%.1f) rot=%.3frad(exp -1.571) "
+                        "scale %.2f→%.2f leftΔ=%.1f zoom %.2f→%.2f selΔ=%.1fpx "
+                        "slingΔ=(%.0f,%.0f) focusΔ=%.0f => %s\n",
+                        scenePanel_->dbgPress_, scenePanel_->dbgArmed_, scenePanel_->dbgUpdates_,
+                        dragDx, dragDy, rotAfter - rotBefore, scaleBefore, scaleAfter,
+                        std::fabs(anchorLeft1 - anchorLeft0), zoomBefore, zoomAfter,
+                        Length(Vec2{selScreen1.x - selScreen0.x, selScreen1.y - selScreen0.y}),
+                        slingDx, slingDy, focusDelta, dragPassed ? "OK" : "FAIL");
+        else
+            std::printf("[lemon] smoke-drag: Scene 面板未找到 => FAIL\n");
+        if (!dragPassed) exitCode = 1;
+    }
     // --smoke-close 裁决（M4.6 §4-9）：独立于 --smoke——专用最小跑（无项目/无播种）
     if (!launch.smokeClose.empty()) {
         const bool exitedEarly = launch.frames > 0 && frame < (uint64_t)launch.frames;
@@ -1369,17 +1853,19 @@ int EditorApp::Run(const EditorLaunch& launch) {
         }
         if (!ok) exitCode = 1;
     }
+    // 帧末截屏回读（--screenshot 落盘 + 冒烟像素断言共用一次回读）
+    std::vector<uint8_t> capturePx;
+    uint32_t captureW = 0, captureH = 0;
+    const bool haveCapture = device_->DebugFetchCapture(capturePx, captureW, captureH);
     if (!launch.screenshot.empty()) {
-        std::vector<uint8_t> px;
-        uint32_t sw = 0, sh = 0;
-        if (device_->DebugFetchCapture(px, sw, sh)) {
+        if (haveCapture) {
             std::error_code ec;
             if (auto p = std::filesystem::path(launch.screenshot).parent_path(); !p.empty())
                 std::filesystem::create_directories(p, ec);
-            int ok = stbi_write_png(launch.screenshot.c_str(), (int)sw, (int)sh, 4, px.data(),
-                                    (int)sw * 4);
+            int ok = stbi_write_png(launch.screenshot.c_str(), (int)captureW, (int)captureH, 4,
+                                    capturePx.data(), (int)captureW * 4);
             std::printf("[lemon] editor-smoke screenshot: %s %ux%u => %s\n",
-                        launch.screenshot.c_str(), sw, sh, ok ? "written" : "FAILED");
+                        launch.screenshot.c_str(), captureW, captureH, ok ? "written" : "FAILED");
             exitCode |= ok ? 0 : 1;
         } else {
             std::printf("[lemon] editor-smoke screenshot: capture FAILED\n");
@@ -1506,8 +1992,37 @@ int EditorApp::Run(const EditorLaunch& launch) {
             if (!finalOk) std::printf("[lemon] final FAIL 项：bag=%d hr=%d fps=%d cold=%d autosave=%d play=%d\n",
                                       bagOk, hrOk, fpsOk, coldOk, autosaveOk, playVerified);
         }
+        // M4.7-P0 冒烟防线：overlay 渲染可见性像素断言（扫场景 RT——线性空间原值，
+        // 无 UI 合成与 sRGB 编码干扰）。此前"推入正常但绘制侧全灭"的缺陷穿透了
+        // 全部自动化（都只数包不数像素）。四要素特征色：网格（灰系淡带）/主选框
+        // （亮青，α255 原值）/Gizmo 手柄（黄，α255 原值）/标签墨（α230 混底 ≈219,233,184）。
+        // 容差避开调色板近似色（青 80,220,220 / 黄 250,220,60 / 白 255 三者距离均超带）；
+        // 网格阈值取 8000：棋盘精灵暗格 (60,60,60) 同在灰带（≤4096px）不足以假阳。
+        bool overlayOk = true;
+        {
+            std::vector<uint8_t> rt;
+            uint32_t rw = 0, rh = 0;
+            if (device_->DebugFetchTextureCapture(rt, rw, rh)) {
+                auto rgb = [](uint32_t c, int i) { return (int)((c >> (i * 8)) & 0xFF); };
+                const int selN = CountPixelsNear(
+                    rt, rw, rh, rgb(overlay::kPrimaryColor, 0), rgb(overlay::kPrimaryColor, 1),
+                    rgb(overlay::kPrimaryColor, 2), 10);
+                const int handleN = CountPixelsNear(
+                    rt, rw, rh, rgb(overlay::kHandleColor, 0), rgb(overlay::kHandleColor, 1),
+                    rgb(overlay::kHandleColor, 2), 12);
+                const int labelN = CountPixelsNear(rt, rw, rh, 219, 233, 184, 22);
+                const int gridN = CountGridishPixels(rt, rw, rh);
+                overlayOk = selN >= 20 && handleN >= 20 && labelN >= 20 && gridN >= 8000;
+                std::printf("[lemon] editor-smoke overlay-visible: grid=%d(≥8000) sel=%d(≥20) "
+                            "handle=%d(≥20) label=%d(≥20) => %s\n",
+                            gridN, selN, handleN, labelN, overlayOk ? "OK" : "FAIL");
+            } else {
+                overlayOk = false; // 场景 RT 回读失败 = 断言原料缺失，按失败计
+                std::printf("[lemon] editor-smoke overlay-visible: 场景 RT 回读缺失 => FAIL\n");
+            }
+        }
         if (!drew || !cjkOk || errCount > 0 || !sceneOk || !playOk || !assetsOk || !scriptOk ||
-            !finalOk || g_imguiErrorCount > 0) {
+            !finalOk || !overlayOk || g_imguiErrorCount > 0) {
             std::printf("[lemon] editor-smoke FAIL\n");
             exitCode = 1;
         } else {

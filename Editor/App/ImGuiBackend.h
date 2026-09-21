@@ -58,11 +58,42 @@ public:
         mouseOverrideSet_ = true;
     }
 
+    /// --smoke-drag（M4.7c 交互回归）：位置 + 左键态一并注入（模拟按下/拖动/释放）。
+    /// leftDown：-1 = 本帧不改按键，1 = 按下，0 = 释放；wheel：0 = 无，±N = 滚轮格数。
+    /// 同样一次性、排水前生效。
+    void SetInputOverride(float x, float y, int leftDown, int wheel = 0) {
+        SetMouseOverride(x, y);
+        if (leftDown >= 0) {
+            mouseBtnLeft_ = leftDown != 0;
+            mouseBtnSet_ = true;
+        }
+        if (wheel != 0) {
+            mouseWheel_ = (float)wheel;
+            wheelSet_ = true;
+        }
+    }
+
+    /// --smoke-drag 段 5（F 聚焦回归）：按键注入。注入帧下发 down、下一帧补 up
+    /// （同帧 down+up 会在 NewFrame 排水中合并，IsKeyPressed 采样不到按下沿）。
+    /// key = ImGuiKey_* 的 int 值（后端头不引 imgui.h）。
+    void SetKeyTapOverride(int key) {
+        keyDown_ = key;
+        keyDownSet_ = true;
+    }
+
 private:
     struct Impl;
     std::unique_ptr<Impl> m;
     float mouseOverrideX_ = 0.0f, mouseOverrideY_ = 0.0f;
     bool mouseOverrideSet_ = false;
+    bool mouseBtnSet_ = false;
+    bool mouseBtnLeft_ = false;
+    float mouseWheel_ = 0.0f;
+    bool wheelSet_ = false;
+    int keyDown_ = -1;
+    bool keyDownSet_ = false;
+    int keyUp_ = -1;
+    bool keyUpSet_ = false;
 };
 
 } // namespace lemon::editor

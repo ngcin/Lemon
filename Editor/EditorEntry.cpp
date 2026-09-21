@@ -43,6 +43,8 @@ int main(int argc, char** argv) {
             launch.noReopen = true; // M4.6：跳过"自动重开上次项目"
         else if (!std::strcmp(argv[i], "--smoke-close") && i + 1 < argc)
             launch.smokeClose = argv[++i]; // clean|dirty：关闭状态机交互冒烟
+        else if (!std::strcmp(argv[i], "--smoke-drag"))
+            launch.smokeDrag = true; // 视口拖拽注入冒烟（M4.7c 交互回归）
         else {
             std::printf("unknown arg: %s\n", argv[i]);
             std::printf("usage: lemon-editor [--smoke] [--frames N] [--validate] [--demo] "

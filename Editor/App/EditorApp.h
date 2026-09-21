@@ -29,6 +29,7 @@ namespace lemon::editor {
 
 class ImGuiBackend;
 class ViewportRenderer;
+class SceneViewPanel;
 
 struct EditorLaunch {
     int frames = 0;          // 0 = 无限；>0 = 跑 N 帧退出（冒烟）
@@ -44,10 +45,11 @@ struct EditorLaunch {
     bool finalTest = false;  // --final：M4.5 终验（向导建项目→判据场景→Play/热重载量化）
     bool noReopen = false;   // --no-reopen：跳过"自动重开上次项目"（M4.6 §4-4）
     std::string smokeClose;  // --smoke-close clean|dirty：关闭状态机交互冒烟（M4.6 §4-9）
+    bool smokeDrag = false;  // --smoke-drag：视口拖拽注入冒烟（M4.7c 交互回归）
 };
 
-/// 工具标识（工具栏 W/E/R 三态 + 后续模式栈的地基）
-enum class EditTool : uint8_t { Move, Rotate, Scale };
+/// 工具标识（Q 选择 / W 移动 / E 旋转 / R 缩放；Godot 式 Select 模式 = 8 向手柄）
+enum class EditTool : uint8_t { Select = 0, Move, Rotate, Scale };
 
 class EditorApp {
 public:
@@ -64,7 +66,8 @@ public:
     AssetGpuCache& AssetGpu() { return gpuAssets_; }
     bool Playing() const { return playing_; } // Play 沙盒 M4.3 接入
     EditTool Tool() const { return tool_; }
-    bool GridSnap() const { return gridSnap_; }
+    bool GridVisible() const { return gridVisible_; } // 网格显示（纯视觉）
+    bool SnapEnabled() const { return snapEnabled_; } // 拖拽吸附（默认关；Ctrl 临时取反）
     void RequestExit() { exitRequested_ = true; }
     void SetGameViewFocused(bool f) { gameViewFocused_ = f; }
     const EditorLaunch& Launch() const { return *launch_; }
@@ -103,6 +106,11 @@ private:
     void BuildMenuBar();
     void BuildToolbar();
     void BuildStatusBar();
+    // ---- Layout 下拉（M4.7d：命名布局快照 .lemon/editor/layouts/*.ini）----
+    void BuildLayoutDropdown();          // 工具栏右段：切换/保存/更新/删除
+    bool SaveLayoutIni(const std::string& name); // 当前布局 → 命名 ini
+    bool LoadLayoutIni(const std::string& name); // 命名 ini → 应用（帧内安全点）
+    std::vector<std::string> ListSavedLayouts() const;
     void BuildShortcuts();   // Ctrl+S/O/D、Delete（输入框聚焦时屏蔽）
     void BuildPickersAndModals();
     void BuildNoProjectCard(); // 无项目引导（M4.6 §4-1：中央卡 + 两按钮直达）
@@ -186,7 +194,16 @@ private:
     bool singleStep_ = false;
     bool gameViewFocused_ = false; // GameView 输入门控（§3.6）
     EditTool tool_ = EditTool::Move;
-    bool gridSnap_ = true;
+    // 网格显示与吸附解耦（手测第五轮）：旧 gridSnap_ 一flag两用——想看网格就被迫
+    // 吃 8px/15°/0.25 全套吸附台阶（= "8 向拖动不丝滑"主因）。Godot/Unity 语义：
+    // 网格纯视觉默认开；吸附独立开关默认关，按住 Ctrl 拖拽临时取反。
+    bool gridVisible_ = true;
+    bool snapEnabled_ = false;
+    // Layout 下拉状态（M4.7d）
+    std::string activeLayout_;    // 当前命名布局（空 = 默认，imgui.ini 直管）
+    std::string pendingLayout_;   // 待应用（与 forceDefaultLayout_ 同点帧内加载）
+    bool layoutSaveOpen_ = false; // 保存命名模态请求
+    std::string layoutNameBuf_;
     bool exitRequested_ = false;
     bool forceExit_ = false;       // 确认模态放行退出
     bool quitConfirmOpen_ = false; // 本帧打开模态
@@ -199,6 +216,9 @@ private:
     ConfirmContext confirmContext_ = ConfirmContext::Exit;
     bool aboutOpen_ = false;
     uint32_t smokeSeeded_ = 0;     // 冒烟播种实体数（退出时守恒断言）
+    SceneViewPanel* scenePanel_ = nullptr; // --smoke-drag 注入定位（按名取，非所有权）
+    bool noProjectCardDismissed_ = false;  // 无项目中央卡已关（会话内；卡会截走视口点击）
+    bool forceDefaultLayout_ = false;      // smoke-drag：下帧 BuildUI 强制默认布局
 };
 
 } // namespace lemon::editor
