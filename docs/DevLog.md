@@ -1459,3 +1459,39 @@ EnterPlay 调用点有的在 NewFrame 外，直接 Set 会断言）。Unity 心�
 ### 回归
 
 `editor-regression.sh full` **11/11 PASS**（smoke-drag 抖动重跑后稳定 3/3）。
+
+## 2026-09-22 M4.8 收官批：组件重置 + 最近场景 + 冒烟 ini 隔离（M4 关闭）
+
+修复批（`bd3ad93`）之后的三件套，计划册
+[M4.8-Editor-Closeout-Plan.md](./EngineDesign/M4.8-Editor-Closeout-Plan.md)。
+
+**a 组件级重置（Inspector 右键组件头）**：`BeginPopupContextItem("comp_reset_ctx")`
+放在 `PushID(meta.name)` 作用域内（node_ctx 共享 ID 教训：不隔离则首节点弹过一次
+后其余节点右键无菜单）。语义 = Unity Reset Component：`SnapshotComponent(before)
+→ removeFn → emplaceFn → PushPropertyUndo(一条) → dirty`，guid/实体/其他组件
+不动；Meta 不可重置（guid = 身份），Play 中/无 removeFn+emplaceFn 灰显。提交后
+`return` 不画本帧字段表——池 remove+emplace 可能重排，comp 指针已失效（下帧重取）；
+顺带 `idleSnaps_.erase` 作废属性轨空闲快照（否则下次控件编辑的 before 是重置前旧值）。
+
+**b File 最近场景**：记账集中在 `EditorContext::OpenScene` 成功路径（picker/最近
+菜单/启动 --scene 全覆盖），落 `.lemon/recent-scenes.json`（≤5 去重置顶，坏档丢弃
+重建）；`OpenProjectPipeline` 成功后 `LoadRecentScenes()`（随项目走，不跨项目）。
+菜单 = File → 最近场景子菜单：文件名 +（当前）标记灰显不可点、tooltip 全路径、
+文件被删灰显。脏场景点击走 `PendingSceneOp::RecentScene + pendingScenePath_`（上次
+修复批的确认模态分流续用：保存/丢弃后直达路径，不再二次弹选择器；取消/另存分支
+清路径防悬空复用）。
+
+**c 冒烟状态隔离（smoke-drag flaky 根治）**：`ImGuiBackend::Init` 增
+`persistLayout`（默认 true），注入/冒烟模式（--smoke/--smoke-ui/--smoke-drag/
+--smoke-close/--final/--play）传 false → `io.IniFilename = nullptr`，ini 读写全禁——
+cwd 共享 `.lemon/editor/imgui.ini` 把注入帧瞬时窗口态带进后续 run 的互窜链路切断。
+空布局起步每轮命中 `DockBuilderGetNode(dock)==nullptr` → 默认布局，确定性反而更高
+（此前各注入点手动 `forceDefaultLayout_` 的补丁逻辑不变，成为二重保险）。pipeline
+cache 路径不动（冷启动预算保护）。双向验证：冒烟前后 ini mtime 不变；普通会话
+（无冒烟标志）30 帧退出 ini 照写。
+
+### 回归
+
+`editor-regression.sh full` **11/11 PASS**；`smoke-drag --frames 90 --no-reopen`
+连跑 **10/10 OK**（修复批期间同命令 10 次里挂 2 次的间歇失败消失）。M4 代码面
+关闭，余 §5 30 分钟零文档走查（用户执行）。

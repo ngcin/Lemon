@@ -78,10 +78,12 @@ public:
     // 脏场景确认后的续操作（M4.2 欠账 2026-09-21 补齐：此前 SceneOp 复用退出模态，
     // 按钮"保存并退出/丢弃并退出"硬编码 forceExit_ —— 打开/新建场景、切项目直接把
     // 整个编辑器关了）
-    enum class PendingSceneOp { None, OpenScene, NewScene, OpenProject };
+    enum class PendingSceneOp { None, OpenScene, NewScene, OpenProject, RecentScene };
     // ---- 场景 IO 动作（菜单/快捷键共用；File 状态机内聚于此）----
     void MenuNewScene();
     void MenuOpenScene();
+    /// M4.8-b：最近场景一键切回（脏场景确认后继续走 pendingScenePath_）
+    void MenuOpenRecentScene(const std::string& path);
     void MenuSaveScene();    // 无路径 → 转 SaveAs
     void MenuSaveSceneAs();
     bool ConfirmUnsaved(PendingSceneOp after); // 脏场景确认（SceneOp 分流：确认后做 after）   // dirty 时弹确认框；返回 false = 用户取消
@@ -235,6 +237,7 @@ private:
     bool smokeCloseArmedEver_ = false; // --smoke-close dirty：确认框出现过
     ConfirmContext confirmContext_ = ConfirmContext::Exit;
     PendingSceneOp pendingSceneOp_ = PendingSceneOp::None; // SceneOp 确认后要做的场景操作
+    std::string pendingScenePath_; // RecentScene 的目标路径（确认模态期间持有）
     int8_t tabFocusPending_ = 0; // Play 进出自动切 Game/Scene 标签页（+1/-1；BuildUI 内消费）
     bool aboutOpen_ = false;
     uint32_t smokeSeeded_ = 0;     // 冒烟播种实体数（退出时守恒断言）

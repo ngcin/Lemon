@@ -8,6 +8,8 @@
 #include <fstream>
 #include <iterator>
 
+#include <nlohmann/json.hpp>
+
 #include "Components/CoreComponents.h"
 #include "Components/RenderComponents.h"
 #include "Core/Guid.h"
@@ -61,8 +63,42 @@ bool EditorContext::OpenScene(const std::string& path) {
     selection_.clear();
     BackfillGuids();
     dirty = false;
+    RecordRecentScene(path);
     LEMON_LOG("场景已打开：%s（%u 实体）", path.c_str(), scene_->AliveCount());
     return true;
+}
+
+// ------------------------------------------------ 最近场景（M4.8-b）----
+void EditorContext::LoadRecentScenes() {
+    recentScenes_.clear();
+    const std::string& root = assets_.ProjectRoot();
+    if (root.empty()) return;
+    std::ifstream f(root + "/.lemon/recent-scenes.json", std::ios::binary);
+    if (!f) return;
+    try {
+        nlohmann::json j = nlohmann::json::parse(f);
+        for (const auto& p : j.at("scenes"))
+            if (p.is_string()) recentScenes_.push_back(p.get<std::string>());
+    } catch (const std::exception&) {
+        recentScenes_.clear(); // 坏档丢弃（下次保存重建）
+    }
+    if (recentScenes_.size() > 5) recentScenes_.resize(5);
+}
+
+void EditorContext::RecordRecentScene(const std::string& path) {
+    if (path.empty() || assets_.ProjectRoot().empty()) return;
+    recentScenes_.erase(std::remove_if(recentScenes_.begin(), recentScenes_.end(),
+                                       [&](const std::string& p) { return p == path; }),
+                        recentScenes_.end());
+    recentScenes_.insert(recentScenes_.begin(), path); // 置顶
+    if (recentScenes_.size() > 5) recentScenes_.resize(5);
+    nlohmann::json j;
+    j["scenes"] = recentScenes_;
+    std::error_code ec;
+    std::filesystem::create_directories(assets_.ProjectRoot() + "/.lemon", ec);
+    std::ofstream f(assets_.ProjectRoot() + "/.lemon/recent-scenes.json",
+                    std::ios::binary | std::ios::trunc);
+    if (f) f << j.dump(2) << '\n';
 }
 
 bool EditorContext::SaveScene(std::string path) {

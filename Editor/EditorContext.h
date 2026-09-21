@@ -54,6 +54,11 @@ public:
     const std::string& ScenePath() const { return scenePath_; }
     std::string SceneName() const; // 文件名或 "untitled"
 
+    // ---- 最近场景（M4.8-b：File 菜单一键切回；.lemon/recent-scenes.json，≤5 去重）----
+    const std::vector<std::string>& RecentScenes() const { return recentScenes_; }
+    void LoadRecentScenes();                        // 开项目时调（OpenProjectPipeline）
+    void RecordRecentScene(const std::string& path); // OpenScene 成功路径集中记
+
     // ---- 自动备份与崩溃恢复（§3.8 M4.5：5 分钟快照 + 启动 mtime 比对提示）----
     /// 每帧驱动：interval 秒且 dirty 且非 Play → 写 .lemon/autosave/<名>.scene（单份滚动）
     void TickAutosave(double nowSec, double intervalSec = 300.0);
@@ -143,6 +148,7 @@ private:
     std::unique_ptr<ecs::World> world_;
     ecs::Scene* scene_ = nullptr;
     std::string scenePath_;
+    std::vector<std::string> recentScenes_; // M4.8-b：最近场景（项目内记账）
     std::vector<ecs::Entity> selection_;
     AssetDatabase assets_;
     scripting::ScriptHost* scripts_ = nullptr;

@@ -112,7 +112,8 @@ struct ImGuiBackend::Impl {
 ImGuiBackend::ImGuiBackend() : m(std::make_unique<Impl>()) {}
 ImGuiBackend::~ImGuiBackend() { Shutdown(); }
 
-bool ImGuiBackend::Init(Window& window, rhi::Device& device, const char* iniDir) {
+bool ImGuiBackend::Init(Window& window, rhi::Device& device, const char* iniDir,
+                        bool persistLayout) {
     m->window = &window;
     m->device = &device;
 
@@ -126,7 +127,9 @@ bool ImGuiBackend::Init(Window& window, rhi::Device& device, const char* iniDir)
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable; // 单窗口 docking（决议 #7）
-    io.IniFilename = m->iniFilename.c_str();
+    // 注入/冒烟模式不持久化布局（M4.8-c）：ini 读写会把注入帧的瞬时窗口态带进
+    // 后续会话（cwd 共享 .lemon/editor/imgui.ini 曾致 smoke-drag 间歇失败）
+    io.IniFilename = persistLayout ? m->iniFilename.c_str() : nullptr;
 
     // CJK 字体：取首个可加载候选（加载结果冒烟断言）
     for (const char* path : kCjkFontCandidates) {

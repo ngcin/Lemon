@@ -611,6 +611,30 @@ void InspectorPanel::DrawComponent(EditorApp& app, const ComponentMeta& meta, ec
     // （Inspector ID 唯一性的外层保证；内层 = DrawField 的 PushID(f.name)）
     ImGui::PushID(meta.name);
     if (ImGui::CollapsingHeader(meta.name, &open, ImGuiTreeNodeFlags_DefaultOpen)) {
+        // M4.8-a 组件级重置：右键组件头 → removeFn+emplaceFn 恢复默认值（Unity
+        // Reset Component 同语义）。Meta 除外（guid = 身份，重置会断场景引用）；
+        // Transform2D 可重置 = 归零（Unity 同）。弹窗 ID 在 PushID(meta.name)
+        // 作用域内 = 每组件唯一（node_ctx 共享 ID 教训）
+        if (ImGui::BeginPopupContextItem("comp_reset_ctx")) {
+            const bool canReset = std::strcmp(meta.name, "Meta") != 0 &&
+                                  meta.removeFn && meta.emplaceFn && !ctx.Playing();
+            if (ImGui::MenuItem("重置组件（恢复默认值）", nullptr, false, canReset)) {
+                const std::vector<uint8_t> before = ctx.SnapshotComponent(e, meta.id);
+                meta.removeFn(ctx.ActiveScene(), e);
+                meta.emplaceFn(ctx.ActiveScene(), e);
+                ctx.dirty = true;
+                if (guid && meta.sizeOf > 0)
+                    ctx.PushPropertyUndo("重置组件", guid, meta.id, before,
+                                         ctx.SnapshotComponent(e, meta.id));
+                idleSnaps_.erase(guid ^ ((uint64_t)meta.id << 48)); // 空闲快照失效
+                LEMON_LOG("重置组件 %s（实体 %llu）", meta.name,
+                          (unsigned long long)e.id);
+            }
+            ImGui::EndPopup();
+            ImGui::PopStyleVar();
+            ImGui::PopID();
+            return; // 池可能重排：comp 指针已失效，本帧不画字段表（下帧重取）
+        }
         if (meta.fieldCount > 0 && ImGui::BeginTable("fields", 2, ImGuiTableFlags_SizingStretchProp)) {
             ImGui::TableSetupColumn("name", ImGuiTableColumnFlags_WidthFixed,
                                     ImGui::CalcTextSize("sortingLayer").x + 20);

@@ -1,6 +1,6 @@
 # Lemon 引擎 — 主工程说明
 
-**Lemon**：纯 2D 高性能游戏引擎（C++20 + Vulkan 内核 + C# 脚本 + Unity 风格 ECS 编辑器），目标品类 ARPG/塔防/吸血鬼幸存者/增量，坚决不做 3D、不做重物理。当前阶段：**M0–M3 已完成（含 M3.5 anim-smoke 全链基线，2026-09-19），M4 编辑器详细规划已定稿（[docs/EngineDesign/M4-Editor-Plan.md](./docs/EngineDesign/M4-Editor-Plan.md)），待动工**。
+**Lemon**：纯 2D 高性能游戏引擎（C++20 + Vulkan 内核 + C# 脚本 + Unity 风格 ECS 编辑器），目标品类 ARPG/塔防/吸血鬼幸存者/增量，坚决不做 3D、不做重物理。当前阶段：**M0–M3 已完成（含 M3.5 anim-smoke 全链基线，2026-09-19）；M4 编辑器 M4.0–M4.8 代码完成（2026-09-22，回归 11/11 + smoke-drag ×10 全绿，收官批见 [docs/EngineDesign/M4.8-Editor-Closeout-Plan.md](./docs/EngineDesign/M4.8-Editor-Closeout-Plan.md)），余 30 分钟零文档走查（用户执行）；下一步 M5**（[08-Development-Roadmap.md](./docs/EngineDesign/08-Development-Roadmap.md)）。
 
 > 工作区根目录的目录地图与参考目录只读红线见根 [`../AGENTS.md`](../AGENTS.md)；本文件是 Lemon 工程内的权威指令。
 

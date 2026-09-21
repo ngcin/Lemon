@@ -182,6 +182,23 @@ void EditorApp::BuildMenuBar() {
     if (ImGui::BeginMenu("File")) {
         if (ImGui::MenuItem("新建场景", nullptr, false, !playing_)) MenuNewScene();
         if (ImGui::MenuItem("打开场景...", "Ctrl+O", false, !playing_)) MenuOpenScene();
+        // M4.8-b：最近场景子菜单（文件名 + 当前标记；tooltip 全路径）
+        if (ImGui::BeginMenu("最近场景", !ctx_.RecentScenes().empty() && !playing_)) {
+            namespace fsr = std::filesystem;
+            for (const std::string& p : ctx_.RecentScenes()) {
+                ImGui::PushID(p.c_str());
+                std::error_code ec;
+                const bool usable = fsr::is_regular_file(p, ec); // 文件被删 → 灰显可辨
+                const bool cur = p == ctx_.ScenePath();
+                const std::string label =
+                    fsr::path(p).filename().string() + (cur ? "（当前）" : "");
+                if (ImGui::MenuItem(label.c_str(), nullptr, cur, usable && !cur))
+                    MenuOpenRecentScene(p);
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", p.c_str());
+                ImGui::PopID();
+            }
+            ImGui::EndMenu();
+        }
         ImGui::Separator();
         char saveLabel[96];
         std::snprintf(saveLabel, sizeof(saveLabel), "保存场景 %s", ctx_.ScenePath().empty() ? "" : "(Ctrl+S)");
@@ -756,6 +773,10 @@ void EditorApp::BuildPickersAndModals() {
                 case PendingSceneOp::OpenScene: MenuOpenScene(); break;
                 case PendingSceneOp::NewScene: MenuNewScene(); break;
                 case PendingSceneOp::OpenProject: MenuOpenProject(); break;
+                case PendingSceneOp::RecentScene: // M4.8-b：路径已持有，无需选择器
+                    if (!pendingScenePath_.empty()) ctx_.OpenScene(pendingScenePath_);
+                    pendingScenePath_.clear();
+                    break;
                 default: break;
             }
         };
@@ -765,6 +786,7 @@ void EditorApp::BuildPickersAndModals() {
                 ImGui::CloseCurrentPopup();
                 quitConfirmArmed_ = false;
                 pendingSceneOp_ = PendingSceneOp::None;
+                pendingScenePath_.clear();
                 confirmContext_ = ConfirmContext::Exit;
                 exitRequested_ = false; // 等另存完成由用户再关（简化环）
                 MenuSaveSceneAs();
@@ -789,6 +811,7 @@ void EditorApp::BuildPickersAndModals() {
             ImGui::CloseCurrentPopup();
             quitConfirmArmed_ = false;
             pendingSceneOp_ = PendingSceneOp::None;
+            pendingScenePath_.clear();
             confirmContext_ = ConfirmContext::Exit;
             exitRequested_ = false;
         }
@@ -893,6 +916,20 @@ void EditorApp::MenuOpenScene() {
     if (dir.empty()) dir = std::filesystem::current_path(ec).string();
     pickerMode_ = PickerMode::Open;
     picker_.Open("打开场景", dir, "", ".scene");
+}
+
+void EditorApp::MenuOpenRecentScene(const std::string& path) {
+    if (ctx_.Playing()) {
+        LEMON_WARN("Play 中不能切换场景（先 Stop）");
+        return;
+    }
+    if (path == ctx_.ScenePath()) return; // 已是当前场景：无操作
+    if (ctx_.dirty) { // 脏场景：确认后直达路径（模态期间持有）
+        pendingScenePath_ = path;
+        ConfirmUnsaved(PendingSceneOp::RecentScene);
+        return;
+    }
+    ctx_.OpenScene(path);
 }
 
 void EditorApp::MenuSaveScene() {
@@ -1166,6 +1203,7 @@ bool EditorApp::OpenProjectPipeline(const std::string& projectRoot) {
     // 记最近项目用 DB 侧 root_（已绝对化）——入参可能是向导手敲的相对路径
     if (!launch_->smoke)
         PushRecentProject(ctx_.Assets().ProjectRoot(), recentProjects_);
+    ctx_.LoadRecentScenes(); // M4.8-b：项目内最近场景随项目装载
     return true;
 }
 
@@ -1340,7 +1378,12 @@ int EditorApp::Run(const EditorLaunch& launch) {
     device_->EnableTimestamps(); // Profiler 面板 GPU 列（02 §3.5）
 
     ui_ = std::make_unique<ImGuiBackend>();
-    if (!ui_->Init(*window_, *device_, ".lemon/editor")) return 1;
+    // M4.8-c：注入/冒烟模式不做布局持久化（cwd 共享 ini 的状态污染 = smoke-drag
+    // 间歇失败的根因）；正常会话布局持久化照旧
+    const bool persistLayout = !(launch.smoke || launch.smokeUi || launch.smokeDrag ||
+                                 launch.playTest || launch.finalTest ||
+                                 !launch.smokeClose.empty());
+    if (!ui_->Init(*window_, *device_, ".lemon/editor", persistLayout)) return 1;
     // ImGui 程序员错误（ID 冲突等）进编辑器日志 + 冒烟清零断言（见 anon-ns 注记）
     ImGui::GetCurrentContext()->ErrorCallback = ImGuiErrorSink;
     ImGui::GetCurrentContext()->ErrorCallbackUserData = &g_imguiErrorCount;

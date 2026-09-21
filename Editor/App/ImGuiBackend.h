@@ -28,7 +28,10 @@ public:
     ~ImGuiBackend();
 
     /// iniDir：布局持久化目录（如 ".lemon/editor"），内部创建；布局文件 imgui.ini。
-    bool Init(Window& window, rhi::Device& device, const char* iniDir);
+    /// persistLayout=false（注入/冒烟模式）：IniFilename = nullptr，不读写布局
+    /// （M4.8-c：冒烟与用户会话共享 cwd 下 ini 曾互相污染 → smoke-drag 间歇失败）。
+    bool Init(Window& window, rhi::Device& device, const char* iniDir,
+              bool persistLayout = true);
     void Shutdown();
 
     /// 每帧开头：DPI 自检（变化则重建字体/缩放 style）+ 三段 NewFrame。
