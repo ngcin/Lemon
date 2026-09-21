@@ -55,6 +55,9 @@ grep_step "smoke-close dirty (dirty scene confirm)" "OK" \
 grep_step "smoke-drag (viewport gizmo move+rotate+resize+zoom+sling+focus injection)" \
     "smoke-drag: .* => OK" \
     "${EDITOR}" --smoke-drag --frames 90 --no-reopen
+grep_step "smoke-ui (real-person session: shortcuts/undo/scrub/save/play/rename/reparent/nav/layout)" \
+    "smoke-ui: .* => OK" \
+    "${EDITOR}" --project "${TMP}/ui" --smoke-ui --frames 160 --no-reopen
 
 if [ "${MODE}" = "full" ]; then
     grep_step "asset-chain smoke (import/hot-replace/thumbnail)" "editor-smoke PASS" \

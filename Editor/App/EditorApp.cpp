@@ -36,8 +36,9 @@
 #include "Scripting/ScriptHost.h"
 #include "Serialization/SceneArchive.h"
 #include "imgui.h"
-#include "imgui_internal.h" // DockBuilder（docking 分支布局编程 API）
+#include "imgui_internal.h" // DockBuilder（docking 分支布局编程 API）+ FindWindowByName
 #include "misc/cpp/imgui_stdlib.h" // InputText(std::string*) 重载（Layout 命名等）
+#include "Tooling/TestHooks.h"
 
 namespace lemon::editor {
 
@@ -321,10 +322,13 @@ void EditorApp::BuildLayoutDropdown() {
     const char* preview = activeLayout_.empty() ? "布局：默认" : activeLayout_.c_str();
     ImGui::SetNextItemWidth(150.0f);
     if (ImGui::BeginCombo("##layout", preview)) {
+        testhooks::Stash("layout.comboOpen", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
         if (ImGui::Selectable("默认布局", activeLayout_.empty())) {
             activeLayout_.clear();
             forceDefaultLayout_ = true; // 下帧 SetupDefaultLayout（帧内 DockBuilder 点）
         }
+        testhooks::Stash("layout.item.default", ImGui::GetItemRectMin(),
+                         ImGui::GetItemRectMax());
         for (const std::string& n : names)
             if (ImGui::Selectable(n.c_str(), n == activeLayout_)) {
                 activeLayout_ = n;
@@ -335,6 +339,7 @@ void EditorApp::BuildLayoutDropdown() {
             layoutNameBuf_ = activeLayout_;
             layoutSaveOpen_ = true;
         }
+        testhooks::Stash("layout.item.save", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
         if (!activeLayout_.empty()) {
             char buf[96];
             std::snprintf(buf, sizeof(buf), "更新 \xe2\x80\x9c%s\xe2\x80\x9d",
@@ -349,6 +354,8 @@ void EditorApp::BuildLayoutDropdown() {
             }
         }
         ImGui::EndCombo();
+    } else {
+        testhooks::Stash("layout.combo", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
     }
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("%s", "命名布局（保存/切换/删除；默认 = 内置七面板）");
@@ -363,6 +370,7 @@ void EditorApp::BuildLayoutDropdown() {
         ImGui::SameLine();
         ImGui::SetNextItemWidth(180);
         ImGui::InputText("##name", &layoutNameBuf_);
+        testhooks::Stash("layout.nameInput", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
         ImGui::BeginDisabled(layoutNameBuf_.empty());
         if (ImGui::Button("保存", ImVec2(100, 0)) ||
             (ImGui::IsKeyPressed(ImGuiKey_Enter, false) && !layoutNameBuf_.empty())) {
@@ -372,6 +380,7 @@ void EditorApp::BuildLayoutDropdown() {
             }
         }
         ImGui::EndDisabled();
+        testhooks::Stash("layout.saveBtn", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
         ImGui::SameLine();
         if (ImGui::Button("取消", ImVec2(100, 0)) ||
             ImGui::IsKeyPressed(ImGuiKey_Escape, false))
@@ -503,8 +512,14 @@ void EditorApp::BuildShortcuts() {
         if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_D)) {
             ecs::Entity e = ctx_.Primary();
             if (!e.IsNull()) {
+                // 结构轨：复制前快照（此前漏推——Ctrl+Z 无法撤销复制，与右键
+                // "粘贴/删除"不对称；smoke-ui 真人链路抓到）
+                const std::string before = ctx_.SnapshotSceneJson();
                 ecs::Entity copy = ctx_.DuplicateEntity(e);
-                if (!copy.IsNull()) ctx_.Select(copy, false);
+                if (!copy.IsNull()) {
+                    ctx_.Select(copy, false);
+                    if (!ctx_.Playing()) ctx_.PushStructuralUndo("复制实体", before);
+                }
             }
         }
         // M4.6 §5-1：复制/粘贴（Edit 态专属——Undo 结构轨在 Play 禁用）；Ctrl+D 保留
@@ -513,8 +528,16 @@ void EditorApp::BuildShortcuts() {
         if (!ctx_.Playing() && ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_V))
             PasteClipboard();
         if (ImGui::IsKeyPressed(ImGuiKey_Delete, false)) {
-            for (ecs::Entity e : ctx_.Selection()) ctx_.DestroyEntityTree(e);
+            // 结构轨：删除前快照（此前漏推——Del 键删完 Ctrl+Z 无效，与右键
+            // "删除 (Del)" 菜单不对称；smoke-ui 真人链路抓到）
+            const std::string before = ctx_.SnapshotSceneJson();
+            bool any = false;
+            for (ecs::Entity e : ctx_.Selection()) {
+                ctx_.DestroyEntityTree(e);
+                any = true;
+            }
             ctx_.ClearSelection();
+            if (any && !ctx_.Playing()) ctx_.PushStructuralUndo("删除实体", before);
         }
         if (ImGui::IsKeyPressed(ImGuiKey_Q)) tool_ = EditTool::Select;
         if (ImGui::IsKeyPressed(ImGuiKey_W)) tool_ = EditTool::Move;
@@ -535,6 +558,7 @@ void EditorApp::BuildShortcuts() {
 void EditorApp::BuildUI() {
     playing_ = ctx_.Playing(); // 冗余显示态每帧对齐真值（菜单/快捷键/横幅守卫共用；
                                // 失同步曾致 Play 中 Ctrl+S 把 Play 世界存进编辑场景）
+    testhooks::ClearAll();     // --smoke-ui 矩形登记每帧重建（防陈旧矩形误导注入）
     BuildShortcuts();
 
     ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -1231,11 +1255,16 @@ int EditorApp::Run(const EditorLaunch& launch) {
     ownedPanels_ = CreateAllPanels();
     for (auto& p : ownedPanels_) panels_.Add(p.get());
     for (auto& e : panels_.Entries()) // --smoke-drag 注入定位（按名取 Scene 面板）
+    {
         if (std::strcmp(e.panel->Name(), "Scene") == 0)
             scenePanel_ = static_cast<SceneViewPanel*>(e.panel);
+        if (std::strcmp(e.panel->Name(), "Assets") == 0)
+            assetPanel_ = static_cast<AssetBrowserPanel*>(e.panel);
+    }
 
     // ---- M4.4 资产链 / M4.5 项目向导与终验 ----
-    if (launch.smoke && !launch.projectDir.empty() && !launch.finalTest) SeedSmokeProject();
+    if ((launch.smoke || launch.smokeUi) && !launch.projectDir.empty() && !launch.finalTest)
+        SeedSmokeProject();
     if (launch.finalTest) {
         // 终验第一步：向导建项目（blank 模板；目录必须不存在 → --project 传父目录，
         // 项目名固定 lemon-final，保证可重复跑）
@@ -1294,7 +1323,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
         if (!ctx_.OpenScene(launch_->projectDir + "/Scenes/Main.scene")) return 1;
         SeedJudgementScene(wizardSpawnGuid_);
         smokeSeeded_ = ctx_.ActiveScene().AliveCount();
-    } else if (launch.smoke || launch.smokeDrag) {
+    } else if (launch.smoke || launch.smokeDrag || launch.smokeUi) {
         SeedSmokeScene();
     } else {
         ctx_.NewScene();
@@ -1330,6 +1359,10 @@ int EditorApp::Run(const EditorLaunch& launch) {
         LEMON_ERROR("--smoke-drag 需要 --frames N（N>=84 看门狗）");
         return 2;
     }
+    if (launch.smokeUi && launch.frames < 160) {
+        LEMON_ERROR("--smoke-ui 需要 --frames N（N>=160 看门狗）");
+        return 2;
+    }
     // ---- 主循环（anim-smoke 基线骨架；编辑 Step = Essential）----
     uint64_t frame = 0;
     double firstFrameMs = -1.0;
@@ -1359,6 +1392,18 @@ int EditorApp::Run(const EditorLaunch& launch) {
     Vec2 slingWorld{0, 0}, slingCenter0{0, 0};
     float slingDx = 0.0f, slingDy = 0.0f, focusDelta = 0.0f;
     bool slingDone = false, slingPassed = false, focusDone = false;
+    // --smoke-ui（M4.7d 真人会话回归）：快捷键/点选/复制删除 Undo 往返/label-scrub/
+    // 保存/Play/重命名/挂父子/目录导航/命名布局。断言旗标逐段置位，末帧总裁决。
+    ecs::Entity uiTarget{}, uiGate{};
+    uint32_t uiBaseCount = 0;
+    float uiRot0 = 0.0f, uiRot1 = 0.0f;
+    Vec2 uiPt0{0, 0}, uiPt1{0, 0};
+    bool uiAllOk = false, uiVerdictDone = false;
+    bool toolsOk = false, selOk = false, dupOk = false, delOk = false, dupUndoOk = false,
+         dupRedoOk = false, delRedoOk = false, scrubOk = false, scrubUndoOk = false,
+         saveOk = false, playOk = false, stopOk = false, gselOk = false, renameOk = false,
+         renameUndoOk = false, parentOk = false, parentUndoOk = false, folderOk = false,
+         crumbOk = false, layoutOk = false, consoleOk = false;
     const double autosaveClock0 = ImGui::GetTime(); // steady 秒（TickAutosave 节拍源）
     // 终验冷启动口径 = 编辑器主循环首帧（向导建项目 + Game 首次编译是创建期工作，
     // 另由 final-wizard/编译日志计量——不混入 §6 #3 判定）
@@ -1739,6 +1784,407 @@ int EditorApp::Run(const EditorLaunch& launch) {
             }
         }
 
+        // --smoke-ui（M4.7d 收尾轮）：真人会话注入回归。事件走真实 ImGui 管线
+        // （后端 chord/text 注入），点击目标 = 面板登记的控件屏幕矩形
+        // （Tooling/TestHooks——上一帧 UI 所画，静态 UI 坐标逐帧稳定）。
+        // 覆盖：Q/W/E/R 工具切换 → 点选 → Ctrl+D 复制 → Del 删除 → Undo/Redo
+        // 全往返 → label-scrub（拖字段名改 rot + Ctrl+Z）→ Ctrl+S → Ctrl+P
+        // Play 往返 → Hierarchy 点击+F2 重命名（打字）→ 行拖拽挂父子（Undo）→
+        // 子目录文件夹进入+面包屑返回 → 命名布局保存（模态+打字+Enter）→ 默认
+        // 布局还原 → Console 标签页点击 + Collapse 开关。
+        if (launch.smokeUi && scenePanel_) {
+            auto rectCenter = [](const char* key) -> Vec2 {
+                ImVec2 mn, mx;
+                if (testhooks::Find(key, mn, mx))
+                    return Vec2{(mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f};
+                return Vec2{-1.0e9f, -1.0e9f};
+            };
+            auto hold = [&](Vec2 pt) { ui_->SetInputOverride(pt.x, pt.y, 1); };
+            auto release = [&](Vec2 pt) { ui_->SetInputOverride(pt.x, pt.y, 0); };
+            if (frame == 2) {
+                forceDefaultLayout_ = true; // 注入不吃 ini 漂移账（同 smoke-drag）
+            } else if (frame == 4) {
+                namespace fs = std::filesystem;
+                std::error_code ec;
+                // Profiler 非默认布局成员（浮动位置随 ini 漂移，会随机遮挡底部
+                // dock 区域的注入目标）——真人回归里显式关掉保证确定性
+                for (auto& e : panels_.Entries())
+                    if (std::strcmp(e.panel->Name(), "Profiler") == 0) e.open = false;
+                // 目录导航段原料：Assets/sub/ + 资产副本（重扫保确定性）
+                fs::path assets = fs::path(launchCopy_.projectDir) / "Assets";
+                fs::create_directories(assets / "sub", ec);
+                fs::copy_file(assets / "smoke.png", assets / "sub" / "other.png",
+                              fs::copy_options::overwrite_existing, ec);
+                RescanAssets();
+                ctx_.ActiveScene().Each([&](ecs::Entity e) {
+                    const ecs::Meta* m = ctx_.ActiveScene().TryGet<ecs::Meta>(e);
+                    if (!m) return;
+                    if (std::strcmp(m->tag, "Player") == 0) uiTarget = e;
+                    if (std::strcmp(m->tag, "Gate") == 0) uiGate = e;
+                });
+                snapEnabled_ = false;
+                Camera2D& cam = viewport_->SceneCam();
+                cam.zoom = 1.0f;
+                cam.halfHeight = 360.0f;
+                cam.center = ctx_.ActiveScene().Get<ecs::Transform2D>(uiTarget).pos;
+                uiBaseCount = ctx_.ActiveScene().AliveCount();
+                uiRot0 = ctx_.ActiveScene().Get<ecs::Transform2D>(uiTarget).rot;
+                // 场景路径先行落定（否则 Ctrl+S 走另存为弹窗——那是 FilePicker 冒烟）
+                fs::create_directories(fs::path(launchCopy_.projectDir) / "Scenes", ec);
+                ctx_.SaveScene(
+                    (fs::path(launchCopy_.projectDir) / "Scenes" / "ui.scene").string());
+            }
+            // ---- A. 工具快捷键（tap 下帧断言 Tool）----
+            else if (frame == 6) ui_->SetKeyTapOverride(ImGuiKey_Q);
+            else if (frame == 7) toolsOk = tool_ == EditTool::Select;
+            else if (frame == 8) ui_->SetKeyTapOverride(ImGuiKey_W);
+            else if (frame == 9) toolsOk = toolsOk && tool_ == EditTool::Move;
+            else if (frame == 10) ui_->SetKeyTapOverride(ImGuiKey_E);
+            else if (frame == 11) toolsOk = toolsOk && tool_ == EditTool::Rotate;
+            else if (frame == 12) ui_->SetKeyTapOverride(ImGuiKey_R);
+            else if (frame == 13) toolsOk = toolsOk && tool_ == EditTool::Scale;
+            else if (frame == 14) ui_->SetKeyTapOverride(ImGuiKey_Q);
+            else if (frame == 15) toolsOk = toolsOk && tool_ == EditTool::Select;
+            // ---- B. 视口点选（Select 工具，点击实体体内 +6px）----
+            else if (frame == 16 && scenePanel_->LastRtW() > 0) {
+                const Vec2 w = ctx_.ActiveScene().Get<ecs::Transform2D>(uiTarget).pos;
+                const Vec2 s = viewport_->WorldToScreen(
+                    viewport_->SceneCam(), Vec2{w.x + 6.0f, w.y + 6.0f},
+                    scenePanel_->LastRtW(), scenePanel_->LastRtH());
+                uiPt0 = Vec2{scenePanel_->LastVpX() +
+                                 s.x * scenePanel_->LastVpW() / (float)scenePanel_->LastRtW(),
+                             scenePanel_->LastVpY() +
+                                 s.y * scenePanel_->LastVpH() / (float)scenePanel_->LastRtH()};
+                hold(uiPt0);
+            } else if (frame == 17) {
+                release(uiPt0);
+            } else if (frame == 18) {
+                selOk = ctx_.Primary() == uiTarget;
+            }
+            // ---- C. 复制/删除 + Undo/Redo 全往返（栈序 [复制,删除]）----
+            else if (frame == 20)
+                ui_->SetKeyChordOverride((int)ImGuiMod_Ctrl, (int)ImGuiKey_D);
+            else if (frame == 22)
+                dupOk = ctx_.ActiveScene().AliveCount() == uiBaseCount + 1 &&
+                        !ctx_.Primary().IsNull();
+            else if (frame == 24)
+                ui_->SetKeyChordOverride((int)ImGuiMod_Ctrl, (int)ImGuiKey_Delete);
+            else if (frame == 26) delOk = ctx_.ActiveScene().AliveCount() == uiBaseCount;
+            else if (frame == 28)
+                ui_->SetKeyChordOverride((int)ImGuiMod_Ctrl, (int)ImGuiKey_Z);
+            else if (frame == 30)
+                dupUndoOk = ctx_.ActiveScene().AliveCount() == uiBaseCount + 1;
+            else if (frame == 32)
+                ui_->SetKeyChordOverride((int)ImGuiMod_Ctrl, (int)ImGuiKey_Z);
+            else if (frame == 34)
+                dupUndoOk = dupUndoOk && ctx_.ActiveScene().AliveCount() == uiBaseCount;
+            else if (frame == 36)
+                ui_->SetKeyChordOverride((int)ImGuiMod_Ctrl, (int)ImGuiKey_Y);
+            else if (frame == 38)
+                dupRedoOk = ctx_.ActiveScene().AliveCount() == uiBaseCount + 1;
+            else if (frame == 40)
+                ui_->SetKeyChordOverride((int)ImGuiMod_Ctrl, (int)ImGuiKey_Y);
+            else if (frame == 42)
+                delRedoOk = ctx_.ActiveScene().AliveCount() == uiBaseCount;
+            else if (frame == 43) {
+                // 结构轨 Undo/Redo = 整场景 JSON 重载（实体全重建、句柄版本全变）
+                // ——后续段（scrub/挂父子）必须用新句柄
+                uiTarget = ecs::Entity::Null();
+                ctx_.ActiveScene().Each([&](ecs::Entity e) {
+                    const ecs::Meta* m = ctx_.ActiveScene().TryGet<ecs::Meta>(e);
+                    if (m && std::strcmp(m->tag, "Player") == 0) uiTarget = e;
+                });
+            }
+            // ---- D. label-scrub：拖 Transform2D.rot 名字 +28px（0.5°/px = +14°）→
+            //         断言值与 Undo 往返（属性轨 = 本轮修好的提交顺序）----
+            else if (frame == 44) {
+                ctx_.Select(uiTarget, false);
+            } else if (frame == 46) {
+                uiPt0 = rectCenter("Transform2D.rot");
+                if (uiPt0.x > -1.0e8f) hold(uiPt0);
+            } else if (frame >= 47 && frame <= 53) {
+                uiPt1 = Vec2{uiPt0.x + (float)(frame - 46) * 4.0f, uiPt0.y};
+                hold(uiPt1);
+            } else if (frame == 54) {
+                release(uiPt1);
+            } else if (frame == 56) {
+                uiRot1 = ctx_.ActiveScene().Get<ecs::Transform2D>(uiTarget).rot;
+                const float deltaDeg = (uiRot1 - uiRot0) * 57.29577951f;
+                scrubOk = std::fabs(deltaDeg - 14.0f) < 3.0f;
+            } else if (frame == 58)
+                ui_->SetKeyChordOverride((int)ImGuiMod_Ctrl, (int)ImGuiKey_Z);
+            else if (frame == 60) {
+                const float back = ctx_.ActiveScene().Get<ecs::Transform2D>(uiTarget).rot;
+                scrubUndoOk = std::fabs(back - uiRot0) < 1.0e-4f;
+            }
+            // ---- E. Ctrl+S（路径已在帧 4 落定 → 直存不弹窗）----
+            else if (frame == 62) {
+                saveOk = ctx_.dirty; // scrub 的编辑已置脏（undo 也保持 dirty，简化语义）
+                ui_->SetKeyChordOverride((int)ImGuiMod_Ctrl, (int)ImGuiKey_S);
+            } else if (frame == 64) {
+                std::error_code ec;
+                saveOk = saveOk && !ctx_.dirty &&
+                         std::filesystem::is_regular_file(
+                             std::filesystem::path(ctx_.ScenePath()), ec);
+            }
+            // ---- F. Ctrl+P Play 往返 ----
+            else if (frame == 66)
+                ui_->SetKeyChordOverride((int)ImGuiMod_Ctrl, (int)ImGuiKey_P);
+            else if (frame == 68) {
+                playOk = ctx_.Playing();
+            } else if (frame == 70)
+                ui_->SetKeyChordOverride((int)ImGuiMod_Ctrl, (int)ImGuiKey_P);
+            else if (frame == 72) {
+                stopOk = !ctx_.Playing();
+            } else if (frame == 74) {
+                // ExitPlay 按快照重建了场景（实体全部重建）——句柄重找，后续段有效
+                uiTarget = uiGate = ecs::Entity::Null();
+                ctx_.ActiveScene().Each([&](ecs::Entity e) {
+                    const ecs::Meta* m = ctx_.ActiveScene().TryGet<ecs::Meta>(e);
+                    if (!m) return;
+                    if (std::strcmp(m->tag, "Player") == 0) uiTarget = e;
+                    if (std::strcmp(m->tag, "Gate") == 0) uiGate = e;
+                });
+            }
+            // ---- G. Hierarchy 点击选中 + F2 重命名（打字 + Enter）----
+            else if (frame == 76) {
+                uiPt0 = rectCenter("hier.Gate");
+                if (uiPt0.x > -1.0e8f) hold(uiPt0);
+            } else if (frame == 77) {
+                release(uiPt0);
+            } else if (frame == 79) {
+                gselOk = ctx_.Primary() == uiGate;
+            } else if (frame == 80) {
+                ui_->SetKeyTapOverride(ImGuiKey_F2);
+            } else if (frame == 82) {
+                ui_->SetTextOverride("Gate2");
+            } else if (frame == 84) {
+                ui_->SetKeyTapOverride(ImGuiKey_Enter);
+            } else if (frame == 86) {
+                renameOk = !uiGate.IsNull() &&
+                           std::strcmp(ctx_.ActiveScene().Get<ecs::Meta>(uiGate).tag,
+                                       "Gate2") == 0;
+            } else if (frame == 88)
+                ui_->SetKeyChordOverride((int)ImGuiMod_Ctrl, (int)ImGuiKey_Z);
+            else if (frame == 90)
+                renameUndoOk = std::strcmp(ctx_.ActiveScene().Get<ecs::Meta>(uiGate).tag,
+                                           "Gate") == 0;
+            // ---- H. 行拖拽挂父子（Gate 拖到 Player 上 → Undo 摘回）----
+            // 压 8 帧动程 + 目标处停 1 帧（DnD 激活 = 阈值 + 移动帧；过短偶发不激活）
+            else if (frame == 92) {
+                uiPt0 = rectCenter("hier.Gate");
+                if (uiPt0.x > -1.0e8f) ui_->SetInputOverride(uiPt0.x, uiPt0.y, -1);
+            } else if (frame == 93) {
+                uiPt0 = rectCenter("hier.Gate");
+                uiPt1 = rectCenter("hier.Player");
+                // x+24 偏移按下：G 段刚点过同一行（注入帧距 < 双击时限），原点按下
+                // 会被 ImGui 判成双击触发重命名行，行布局整体位移（真人手速不会）
+                if (uiPt0.x > -1.0e8f && uiPt1.x > -1.0e8f)
+                    hold(Vec2{uiPt0.x + 24.0f, uiPt0.y});
+                uiPt0.x += 24.0f;
+            } else if (frame >= 94 && frame <= 100) {
+                const float t = std::min<float>((float)(frame - 93) / 7.0f, 1.0f);
+                hold(Vec2{uiPt0.x + (uiPt1.x - uiPt0.x) * t,
+                          uiPt0.y + (uiPt1.y - uiPt0.y) * t});
+                if (frame == 98 && std::getenv("LEMON_SMOKE_UI_DEBUG"))
+                    std::printf("[smoke-ui dbg] drag98 dnd=%d activeId=%llx\n",
+                                ImGui::GetCurrentContext()->DragDropActive ? 1 : 0,
+                                (unsigned long long)ImGui::GetCurrentContext()->ActiveId);
+            } else if (frame == 101) {
+                // 松手前必须重读目标行现位：拖拽启动会触发行布局变化，用 f93
+                // 时的旧坐标会松开在源行上（SourceId==id 被拒，永不投递）
+                uiPt1 = rectCenter("hier.Player");
+                hold(uiPt1);
+            } else if (frame == 102) {
+                release(uiPt1);
+            } else if (frame == 103 && std::getenv("LEMON_SMOKE_UI_DEBUG")) {
+                const ecs::Hierarchy* h = ctx_.ActiveScene().TryGet<ecs::Hierarchy>(uiGate);
+                std::printf("[smoke-ui dbg] f=103 parent=%lld expect=%lld gateAlive=%d\n",
+                            h ? (long long)(h->parent.id & 0xFFFFFFFF) : -1,
+                            (long long)(uiTarget.id & 0xFFFFFFFF),
+                            ctx_.ActiveScene().Alive(uiGate) ? 1 : 0);
+            } else if (frame == 104) {
+                const ecs::Hierarchy* h = ctx_.ActiveScene().TryGet<ecs::Hierarchy>(uiGate);
+                parentOk = h && h->parent == uiTarget;
+            } else if (frame == 106)
+                ui_->SetKeyChordOverride((int)ImGuiMod_Ctrl, (int)ImGuiKey_Z);
+            else if (frame == 108) {
+                const ecs::Hierarchy* h = ctx_.ActiveScene().TryGet<ecs::Hierarchy>(uiGate);
+                parentUndoOk = !h || h->parent.IsNull();
+            }
+            // ---- 诊断（LEMON_SMOKE_UI_DEBUG=1）：关键帧 dump 登记表与 dock 态 ----
+            else if (frame == 45 || frame == 55 || frame == 57 || frame == 65 ||
+                     frame == 71 || frame == 97 || frame == 107 || frame == 109 ||
+                     frame == 114 || frame == 145 || frame == 150) {
+                if (std::getenv("LEMON_SMOKE_UI_DEBUG")) {
+                    ImVec2 mn, mx;
+                    const bool hasRot = testhooks::Find("Transform2D.rot", mn, mx);
+                    ImGuiContext* gctx = ImGui::GetCurrentContext();
+                    const char* colOpen = "?";
+                    for (auto& pe : panels_.Entries())
+                        if (std::strcmp(pe.panel->Name(), "Console") == 0)
+                            colOpen = pe.open ? "1" : "0";
+                    const ImGuiWindow* cw = ImGui::FindWindowByName("Console");
+                    std::printf(
+                        "[smoke-ui dbg] f=%d folder.sub=%s rot.label=%s count=%u undoRec=%d "
+                        "undo=%d redo=%d dnd=%d primary=%lld target=%lld rot=%.4f "
+                        "mouse=(%.0f,%.0f) down=%d dir='%s' collapse=%s con.open=%s "
+                        "con.active=%d con.skip=%d con.tabVis=%d\n",
+                        (int)frame,
+                        testhooks::Find("assets.folder.sub", mn, mx) ? "Y" : "N",
+                        hasRot ? "Y" : "N", ctx_.ActiveScene().AliveCount(),
+                        (int)ctx_.Undo().Records().size(), ctx_.Undo().CanUndo(),
+                        ctx_.Undo().CanRedo(), gctx->DragDropActive ? 1 : 0,
+                        (long long)(ctx_.Primary().id & 0xFFFFFFFF),
+                        (long long)(uiTarget.id & 0xFFFFFFFF),
+                        !ctx_.ActiveScene().Has<ecs::Transform2D>(uiTarget)
+                            ? -99.0f
+                            : ctx_.ActiveScene().Get<ecs::Transform2D>(uiTarget).rot,
+                        ImGui::GetIO().MousePos.x, ImGui::GetIO().MousePos.y,
+                        ImGui::GetIO().MouseDown[0] ? 1 : 0,
+                        assetPanel_ ? assetPanel_->CurrentDir().c_str() : "?",
+                        testhooks::Find("console.collapse", mn, mx) ? "Y" : "N", colOpen,
+                        cw ? (cw->Active ? 1 : 0) : -1, cw ? (cw->SkipItems ? 1 : 0) : -1,
+                        cw ? (cw->DockTabIsVisible ? 1 : 0) : -1);
+                    if (frame == 107 || frame == 145) {
+                        ctx_.ActiveScene().Each([&](ecs::Entity e) {
+                            const ecs::Meta* m = ctx_.ActiveScene().TryGet<ecs::Meta>(e);
+                            std::printf("[smoke-ui dbg]   ent=%lld tag='%s'\n",
+                                        (long long)(e.id & 0xFFFFFFFF),
+                                        m ? m->tag : "(none)");
+                        });
+                    }
+                    if (frame == 107 || frame == 145) {
+                        if (ImGuiWindow* w = ImGui::FindWindowByName("Console")) {
+                            std::printf("[smoke-ui dbg]   Console pos=(%.0f,%.0f) "
+                                        "tabVisible=%d node=%d\n",
+                                        w->Pos.x, w->Pos.y, w->DockTabIsVisible ? 1 : 0,
+                                        w->DockNode ? 1 : 0);
+                            if (w->DockNode && w->DockNode->TabBar) {
+                                ImGuiTabBar* tb = w->DockNode->TabBar;
+                                for (int i = 0; i < tb->Tabs.size(); ++i) {
+                                    ImGuiTabItem& tab = tb->Tabs[i];
+                                    std::printf("[smoke-ui dbg]   tab[%d]='%s' id=%llx "
+                                                "off=%.1f w=%.1f\n",
+                                                i, ImGui::TabBarGetTabName(tb, &tab),
+                                                (unsigned long long)tab.ID, tab.Offset,
+                                                tab.Width);
+                                }
+                                ImGuiContext* gc = ImGui::GetCurrentContext();
+                                std::printf("[smoke-ui dbg]   tabId=%llx nextSel=%llx "
+                                            "sel=%llx hoveredWin='%s'\n",
+                                            (unsigned long long)w->TabId,
+                                            (unsigned long long)tb->NextSelectedTabId,
+                                            (unsigned long long)tb->SelectedTabId,
+                                            gc->HoveredWindow ? gc->HoveredWindow->Name
+                                                              : "(null)");
+                            }
+                        }
+                    }
+                }
+            }
+            // ---- I. 子目录文件夹进入 + 面包屑返回 ----
+            // Assets 是 dock 标签页之一：非活动标签的面板体不绘制（登记点不存在），
+            // 先切 Assets 为活动标签（ImGui 原生 FocusWindow，同真人点标签）
+            else if (frame == 110) {
+                if (ImGuiWindow* w = ImGui::FindWindowByName("Assets"))
+                    ImGui::FocusWindow(w);
+            } else if (frame == 112) {
+                uiPt0 = rectCenter("assets.folder.sub");
+                if (uiPt0.x > -1.0e8f) hold(uiPt0);
+            } else if (frame == 113) {
+                release(uiPt0);
+            } else if (frame == 115) {
+                folderOk = assetPanel_ && assetPanel_->CurrentDir() == "Assets/sub";
+            } else if (frame == 117) {
+                uiPt0 = rectCenter("crumbAssets");
+                if (uiPt0.x > -1.0e8f) hold(uiPt0);
+            } else if (frame == 118) {
+                release(uiPt0);
+            } else if (frame == 120) {
+                crumbOk = assetPanel_ && assetPanel_->CurrentDir().empty();
+            }
+            // ---- J. 命名布局：combo → 保存… → 模态打字 + Enter → 文件存在；
+            //         再切回默认布局 ----
+            else if (frame == 122) {
+                uiPt0 = rectCenter("layout.combo");
+                if (uiPt0.x > -1.0e8f) ui_->SetInputOverride(uiPt0.x, uiPt0.y, -1);
+            } else if (frame == 123) {
+                uiPt0 = rectCenter("layout.combo");
+                if (uiPt0.x > -1.0e8f) hold(uiPt0);
+            } else if (frame == 124) {
+                release(uiPt0);
+            } else if (frame == 126) {
+                uiPt0 = rectCenter("layout.item.save");
+                if (uiPt0.x > -1.0e8f) hold(uiPt0);
+            } else if (frame == 127) {
+                release(uiPt0);
+            } else if (frame == 129) {
+                uiPt0 = rectCenter("layout.nameInput");
+                if (uiPt0.x > -1.0e8f) hold(uiPt0);
+            } else if (frame == 130) {
+                release(uiPt0);
+            } else if (frame == 131) {
+                ui_->SetTextOverride("ui");
+            } else if (frame == 133) {
+                ui_->SetKeyTapOverride(ImGuiKey_Enter);
+            } else if (frame == 135) {
+                std::error_code ec;
+                layoutOk =
+                    std::filesystem::is_regular_file(".lemon/editor/layouts/ui.ini", ec);
+            } else if (frame == 137) {
+                uiPt0 = rectCenter("layout.combo");
+                if (uiPt0.x > -1.0e8f) hold(uiPt0);
+            } else if (frame == 138) {
+                release(uiPt0);
+            } else if (frame == 140) {
+                uiPt0 = rectCenter("layout.item.default");
+                if (uiPt0.x > -1.0e8f) hold(uiPt0);
+            } else if (frame == 141) {
+                release(uiPt0);
+            }
+            // ---- K. Console 标签页点击 + Collapse 开关（开关态无状态可断——
+            //         断言可点击/不崩；视觉效果由截图归档）----
+            else if (frame == 143) {
+                // 切到 Console 标签：ImGui 原生 FocusWindow（对 dock 窗口 = 选中其
+                // 标签，与真人点标签同语义）。物理点击 dock 标签在注入管线里
+                // 与真实鼠标事件竞争，无法稳定命中——此处不改被测面板逻辑。
+                if (ImGuiWindow* w = ImGui::FindWindowByName("Console"))
+                    if (!w->DockTabIsVisible) ImGui::FocusWindow(w);
+            } else if (frame == 147) {
+                ImVec2 mn, mx;
+                if (testhooks::Find("console.collapse", mn, mx)) {
+                    uiPt0 = Vec2{(mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f};
+                    hold(uiPt0);
+                } else {
+                    uiPt0 = Vec2{-1.0e9f, -1.0e9f}; // 开关没画出来 = 标签/面板体未就位
+                }
+            } else if (frame == 148) {
+                release(uiPt0);
+            } else if (frame == 151) {
+                // 收紧：开关被找到并点击 = 标签已切 + 面板体已绘制 + 控件可点，缺一不可
+                // （f151 而非 f150——诊断块占 f150，同链 else-if 会被它截胡）
+                consoleOk = uiPt0.x > -1.0e8f;
+            }
+            // ---- 总裁决 ----
+            else if (frame == 154 && !uiVerdictDone) {
+                uiVerdictDone = true;
+                uiAllOk = toolsOk && selOk && dupOk && delOk && dupUndoOk && dupRedoOk &&
+                          delRedoOk && scrubOk && scrubUndoOk && saveOk && playOk && stopOk &&
+                          gselOk && renameOk && renameUndoOk && parentOk && parentUndoOk &&
+                          folderOk && crumbOk && layoutOk && consoleOk;
+                std::printf("[lemon] smoke-ui: tools=%d sel=%d dup=%d del=%d dupZ=%d "
+                            "dupUndo=%d delRedo=%d scrub=%.1fdeg/%d/%d save=%d play=%d/%d "
+                            "gsel=%d rename=%d/%d parent=%d/%d dir=%d/%d layout=%d "
+                            "console=%d => %s\n",
+                            toolsOk, selOk, dupOk, delOk, dupUndoOk, dupRedoOk, delRedoOk,
+                            (uiRot1 - uiRot0) * 57.29577951f, scrubOk, scrubUndoOk, saveOk,
+                            playOk, stopOk, gselOk, renameOk, renameUndoOk, parentOk,
+                            parentUndoOk, folderOk, crumbOk, layoutOk, consoleOk,
+                            uiAllOk ? "OK" : "FAIL");
+            }
+        }
+
         ui_->BeginFrame(*window_);
         BuildUI();
         if (quitConfirmArmed_) smokeCloseArmedEver_ = true; // dirty 模式断言原料
@@ -1838,6 +2284,8 @@ int EditorApp::Run(const EditorLaunch& launch) {
             std::printf("[lemon] smoke-drag: Scene 面板未找到 => FAIL\n");
         if (!dragPassed) exitCode = 1;
     }
+    // --smoke-ui 裁决（裁决行已在帧 154 打印；此处只定退出码）
+    if (launch.smokeUi && !uiAllOk) exitCode = 1;
     // --smoke-close 裁决（M4.6 §4-9）：独立于 --smoke——专用最小跑（无项目/无播种）
     if (!launch.smokeClose.empty()) {
         const bool exitedEarly = launch.frames > 0 && frame < (uint64_t)launch.frames;

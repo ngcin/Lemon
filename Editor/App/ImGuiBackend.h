@@ -77,8 +77,23 @@ public:
     /// （同帧 down+up 会在 NewFrame 排水中合并，IsKeyPressed 采样不到按下沿）。
     /// key = ImGuiKey_* 的 int 值（后端头不引 imgui.h）。
     void SetKeyTapOverride(int key) {
-        keyDown_ = key;
-        keyDownSet_ = true;
+        SetKeyChordOverride(0, key);
+    }
+
+    /// --smoke-ui：组合键注入（如 Ctrl+S = SetKeyChordOverride(ImGuiMod_Ctrl, ImGuiKey_S)）。
+    /// 时序同 tap：注入帧 mods+key 先后 down，下一帧 key+mods 先后 up。
+    /// mods = ImGuiMod_* 的 int（0 = 无修饰，等价 tap）。
+    void SetKeyChordOverride(int mods, int key) {
+        chordMods_ = mods;
+        chordKey_ = key;
+        chordSet_ = true;
+    }
+
+    /// --smoke-ui：文本注入（UTF-8，本帧 AddInputCharactersUTF8；InputText 活动时
+    /// 逐字符上屏）。一次性：BeginFrame 消费即清。
+    void SetTextOverride(const char* utf8) {
+        textIn_ = utf8;
+        textSet_ = true;
     }
 
 private:
@@ -90,10 +105,10 @@ private:
     bool mouseBtnLeft_ = false;
     float mouseWheel_ = 0.0f;
     bool wheelSet_ = false;
-    int keyDown_ = -1;
-    bool keyDownSet_ = false;
-    int keyUp_ = -1;
-    bool keyUpSet_ = false;
+    int chordMods_ = 0, chordKey_ = -1;
+    bool chordSet_ = false, chordUpPending_ = false;
+    const char* textIn_ = nullptr;
+    bool textSet_ = false;
 };
 
 } // namespace lemon::editor

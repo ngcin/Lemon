@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -52,9 +53,9 @@ private:
     void DrawArraySeg(EditorApp& app, const ecs::ComponentMeta& meta, const void* comp);
 
     std::unordered_set<uint64_t> openedHeaders_;
-    // 属性轨空闲缓存（key = guid ⊕ compId<<48；空闲帧刷新，交互结束帧作 before）
-    uint64_t idleKey_ = 0;
-    std::vector<uint8_t> idleSnap_;
+    // 属性轨空闲缓存（M4.7d 修：按 组件键→快照 多槽——原单槽被"排最后的组件"
+    // 的空闲刷新覆盖，编辑首个组件时 key 永不匹配 → 控件编辑不进 Undo）
+    std::unordered_map<uint64_t, std::vector<uint8_t>> idleSnaps_;
 };
 
 /// SceneView（M4.2）：编辑相机 + 拾取 + Gizmo 三态 + 网格吸附（§2.2）

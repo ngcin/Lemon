@@ -207,14 +207,37 @@ void ImGuiBackend::BeginFrame(Window& window) {
             io.AddMouseWheelEvent(0.0f, mouseWheel_);
         }
     }
-    if (keyDownSet_) { // --smoke-drag 段 5：本帧 down，下一帧补 up（按下沿可采样）
-        keyDownSet_ = false;
-        ImGui::GetIO().AddKeyEvent((ImGuiKey)keyDown_, true);
-        keyUp_ = keyDown_;
-        keyUpSet_ = true;
-    } else if (keyUpSet_) {
-        keyUpSet_ = false;
-        ImGui::GetIO().AddKeyEvent((ImGuiKey)keyUp_, false);
+    if (chordSet_) { // --smoke-drag/ui：本帧 (mods+)key down，下一帧 key(+mods) up
+        chordSet_ = false;
+        ImGuiIO& io = ImGui::GetIO();
+        // macOS：ConfigMacOSXBehaviors（默认开）在事件层交换 Ctrl↔Super——真键盘
+        // Cmd 进来被换成 Ctrl；注入侧同理必须发 Super 才能点亮 KeyCtrl，
+        // 否则 IsKeyChordPressed(Ctrl|X) 的 KeyMods 精确比对永假（组合键全失效）
+        int mods = chordMods_;
+#ifdef __APPLE__
+        if (mods & (int)ImGuiMod_Ctrl) {
+            mods &= ~(int)ImGuiMod_Ctrl;
+            mods |= (int)ImGuiMod_Super;
+        }
+#endif
+        if (mods) io.AddKeyEvent((ImGuiKey)mods, true);
+        io.AddKeyEvent((ImGuiKey)chordKey_, true);
+        chordUpPending_ = true;
+    } else if (chordUpPending_) {
+        chordUpPending_ = false;
+        ImGuiIO& io = ImGui::GetIO();
+        io.AddKeyEvent((ImGuiKey)chordKey_, false);
+#ifdef __APPLE__
+        if (chordMods_ & (int)ImGuiMod_Ctrl) {
+            io.AddKeyEvent(ImGuiMod_Super, false);
+        } else
+#endif
+        if (chordMods_) io.AddKeyEvent((ImGuiKey)chordMods_, false);
+    }
+    if (textSet_) { // --smoke-ui：文本上屏（InputText 活动时逐字符进）
+        textSet_ = false;
+        if (textIn_) ImGui::GetIO().AddInputCharactersUTF8(textIn_);
+        textIn_ = nullptr;
     }
     ImGui_ImplVulkan_NewFrame();
     ImGui::NewFrame();

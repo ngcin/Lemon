@@ -2,6 +2,7 @@
 // 数据源：Scene 实体遍历 + Hierarchy 父子链（ECS/Hierarchy.h 维护）。
 // 验收点：拖拽成环被拒（SetParent 引擎侧拒绝 + Console 告警）；Play 中切数据源 M4.3。
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include "App/EditorApp.h"
@@ -11,10 +12,12 @@
 #include "Components/RenderComponents.h"
 #include "Interaction/ViewportRenderer.h"
 #include "Scripting/ScriptBox.h"
+#include "Tooling/TestHooks.h"
 #include "Tooling/Theme.h"
 #include "EditorContext.h"
 #include "Panels/BuiltInPanels.h"
 #include "imgui.h"
+#include "imgui_internal.h"
 #include "misc/cpp/imgui_stdlib.h"
 
 namespace lemon::editor {
@@ -177,6 +180,10 @@ void HierarchyPanel::DrawNode(EditorApp& app, ecs::Entity e, bool hasHierarchy) 
                                                               : IconKind::Entity;
     const bool nodeOpen =
         ImGui::TreeNodeEx((void*)(uintptr_t)e.id, flags, "  %s", DisplayName(scene, e));
+    // --smoke-ui 定位：行矩形（键 "hier.<tag>"；未命名实体不登记）
+    if (meta && meta->tag[0])
+        testhooks::Stash((std::string("hier.") + meta->tag).c_str(), ImGui::GetItemRectMin(),
+                         ImGui::GetItemRectMax());
     { // 图标叠画在行首箭头右侧（白形状染 prefab 蓝 / 其余主题文本色）
         void* tex = app.Viewport().IconTex();
         if (tex) {
@@ -218,11 +225,46 @@ void HierarchyPanel::DrawNode(EditorApp& app, ecs::Entity e, bool hasHierarchy) 
         ImGui::TextUnformatted(DisplayName(scene, e));
         ImGui::EndDragDropSource();
     }
+    static const bool dbg_dnd = std::getenv("LEMON_SMOKE_UI_DEBUG") != nullptr;
+    if (dbg_dnd && (GImGui->DragDropActive ||
+                    (GImGui->FrameCount >= 90 && GImGui->FrameCount <= 97))) {
+        ImGuiContext& g = *GImGui;
+        const ImRect& rb = g.LastItemData.Rect;
+        std::printf(
+            "[dnd] f=%u row=%llx tag='%s' hovRect=%d skip=%d rect=(%.0f,%.0f)-(%.0f,%.0f) "
+            "mouse=(%.0f,%.0f) hovWin='%s' hovUnder='%s' prev=%llx cur=%llx own=%d "
+            "srcId=%llx lastId=%llx rootEq=%d dtype='%s' dfc=%d ren=%d scroll=%.0f\n",
+            g.FrameCount, (unsigned long long)(e.id & 0xFFFFFFFF),
+            meta && meta->tag[0] ? meta->tag : "?",
+            (g.LastItemData.StatusFlags & ImGuiItemStatusFlags_HoveredRect) ? 1 : 0,
+            g.CurrentWindow->SkipItems ? 1 : 0,
+            rb.Min.x, rb.Min.y, rb.Max.x, rb.Max.y,
+            g.IO.MousePos.x, g.IO.MousePos.y,
+            g.HoveredWindow ? g.HoveredWindow->Name : "-",
+            g.HoveredWindowUnderMovingWindow ? g.HoveredWindowUnderMovingWindow->Name : "-",
+            (unsigned long long)g.DragDropAcceptIdPrev,
+            (unsigned long long)g.DragDropAcceptIdCurr,
+            g.IO.MouseDownOwned[0] ? 1 : 0,
+            (unsigned long long)g.DragDropPayload.SourceId,
+            (unsigned long long)g.LastItemData.ID,
+            g.HoveredWindowUnderMovingWindow &&
+                    g.CurrentWindow->RootWindowDockTree ==
+                        g.HoveredWindowUnderMovingWindow->RootWindowDockTree
+                ? 1 : 0,
+            g.DragDropPayload.DataType,
+            g.DragDropPayload.DataFrameCount,
+            renaming_ == e ? 1 : 0,
+            g.CurrentWindow->Scroll.y);
+    }
     if (ImGui::BeginDragDropTarget()) { // 拖到我身上 = 挂为我的子（成环被引擎拒绝）
         if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("LemonEntity")) {
             ecs::Entity dropped{};
             std::memcpy(&dropped, p->Data, sizeof(dropped));
             const std::string before = ctx.SnapshotSceneJson();
+            if (std::getenv("LEMON_SMOKE_UI_DEBUG"))
+                std::printf("[smoke-ui dbg] drop: dropped=%llx onto=%llx\n",
+                            (unsigned long long)(dropped.id & 0xFFFFFFFF),
+                            (unsigned long long)(e.id & 0xFFFFFFFF));
             if (SceneSetParent(scene, dropped, e)) {
                 ctx.dirty = true;
                 if (!ctx.Playing()) ctx.PushStructuralUndo("挂接父子", before);

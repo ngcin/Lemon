@@ -45,12 +45,15 @@ int main(int argc, char** argv) {
             launch.smokeClose = argv[++i]; // clean|dirty：关闭状态机交互冒烟
         else if (!std::strcmp(argv[i], "--smoke-drag"))
             launch.smokeDrag = true; // 视口拖拽注入冒烟（M4.7c 交互回归）
+        else if (!std::strcmp(argv[i], "--smoke-ui"))
+            launch.smokeUi = true; // 真人会话注入冒烟（快捷键/Undo/保存/重命名/导航等）
         else {
             std::printf("unknown arg: %s\n", argv[i]);
             std::printf("usage: lemon-editor [--smoke] [--frames N] [--validate] [--demo] "
                         "[--screenshot out.png] [--project dir] [--scene f.scene] "
                         "[--save-scene f.scene] [--play] [--script Game.dll] [--final] "
-                        "[--no-reopen] [--smoke-close clean|dirty]\n");
+                        "[--no-reopen] [--smoke-close clean|dirty] [--smoke-drag] "
+                        "[--smoke-ui]\n");
             return 2;
         }
     }

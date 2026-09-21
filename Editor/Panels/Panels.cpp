@@ -9,6 +9,7 @@
 #include "EditorContext.h"
 #include "Panels/BuiltInPanels.h"
 #include "Panels/Panel.h"
+#include "Tooling/TestHooks.h"
 #include "Tooling/Theme.h"
 
 namespace lemon::editor {
@@ -44,6 +45,7 @@ public:
         ImGui::Checkbox("Auto-scroll", &autoScroll_);
         ImGui::SameLine();
         ImGui::Checkbox("Collapse", &collapse_); // M4.7d：连续重复行折叠 ×N
+        testhooks::Stash("console.collapse", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
         ImGui::Separator();
 
         ImGui::BeginChild("lines", ImVec2(0, 0), ImGuiChildFlags_None,

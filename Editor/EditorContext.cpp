@@ -404,6 +404,10 @@ ecs::Entity EditorContext::DuplicateEntity(ecs::Entity e) {
 void EditorContext::DestroyEntityTree(ecs::Entity e) {
     if (e.IsNull() || !scene_->Alive(e)) return;
     SceneDestroyEntityTree(*scene_, e);
+    // 立即提交销毁（默认帧末 DestroyCommit 系统做）——结构轨 PushStructuralUndo
+    // 在调用方"销毁后"快照 after，若销毁仍在队列中，快照含待删实体 → Redo 会
+    // 复活被删实体（smoke-ui 真人链路抓到；右键删除/Delete 键同路径）。
+    scene_->CommitDestroys();
     PruneSelection();
     dirty = true;
 }

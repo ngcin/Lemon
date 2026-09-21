@@ -30,6 +30,7 @@ namespace lemon::editor {
 class ImGuiBackend;
 class ViewportRenderer;
 class SceneViewPanel;
+class AssetBrowserPanel;
 
 struct EditorLaunch {
     int frames = 0;          // 0 = 无限；>0 = 跑 N 帧退出（冒烟）
@@ -46,6 +47,8 @@ struct EditorLaunch {
     bool noReopen = false;   // --no-reopen：跳过"自动重开上次项目"（M4.6 §4-4）
     std::string smokeClose;  // --smoke-close clean|dirty：关闭状态机交互冒烟（M4.6 §4-9）
     bool smokeDrag = false;  // --smoke-drag：视口拖拽注入冒烟（M4.7c 交互回归）
+    bool smokeUi = false;    // --smoke-ui：真人会话注入冒烟（快捷键/Undo/保存/Play/重命名/
+                             // 挂父子/目录导航/命名布局；M4.7d 收尾轮）
 };
 
 /// 工具标识（Q 选择 / W 移动 / E 旋转 / R 缩放；Godot 式 Select 模式 = 8 向手柄）
@@ -217,6 +220,7 @@ private:
     bool aboutOpen_ = false;
     uint32_t smokeSeeded_ = 0;     // 冒烟播种实体数（退出时守恒断言）
     SceneViewPanel* scenePanel_ = nullptr; // --smoke-drag 注入定位（按名取，非所有权）
+    AssetBrowserPanel* assetPanel_ = nullptr; // --smoke-ui 注入定位（按名取，非所有权）
     bool noProjectCardDismissed_ = false;  // 无项目中央卡已关（会话内；卡会截走视口点击）
     bool forceDefaultLayout_ = false;      // smoke-drag：下帧 BuildUI 强制默认布局
 };

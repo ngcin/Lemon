@@ -3,6 +3,7 @@
 // 零编辑器代码出现在此（验收点）。编辑直写组件 + ctx.dirty；
 // Undo 属性轨 M4.2 接入（IsItemActivated/Deactivated 拖拽合并）。
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <type_traits>
@@ -15,6 +16,7 @@
 #include "EditorContext.h"
 #include "Panels/BuiltInPanels.h"
 #include "Scripting/ScriptBox.h"
+#include "Tooling/TestHooks.h"
 #include "Tooling/Theme.h"
 #include "imgui.h"
 #include "misc/cpp/imgui_stdlib.h"
@@ -225,7 +227,8 @@ bool DrawSpriteSlot(EditorApp& app, uint8_t* p) {
 /// 同组件内字段名唯一；组件级再由 DrawComponent PushID(组件名) 兜底跨组件同名字段。
 /// （M4.5 修复：曾经无作用域，SpriteRenderer 4 个输入同 ID 撞车 → ImGui 调试检查
 /// 标冲突后整组控件失去交互。）
-bool DrawField(EditorApp& app, const FieldMeta& f, const FieldEditorMeta& ed, void* comp) {
+bool DrawField(EditorApp& app, const FieldMeta& f, const FieldEditorMeta& ed, void* comp,
+               const char* compName) {
     EditorContext& ctx = app.Ctx();
     uint8_t* p = (uint8_t*)comp + f.offset;
     // PushID 覆盖整字段（label + 控件共用字段名种子；控件 "##v" 的最终 ID 与
@@ -251,6 +254,9 @@ bool DrawField(EditorApp& app, const FieldMeta& f, const FieldEditorMeta& ed, vo
           !ecs::HasHint(ed.hints, FieldHint::Bool8)));
     float scrubDx = 0.0f;
     if (scrubbable) {
+        // --smoke-ui 定位：登记 label 矩形（键 "组件.字段"，如 Transform2D.rot）
+        testhooks::Stash((std::string(compName) + "." + f.name).c_str(),
+                         ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
         const ImGuiID sid = ImGui::GetID("##scrub");
         const bool active = scrub_.id == sid;
         const bool hover = ImGui::IsItemHovered();
@@ -607,10 +613,10 @@ void InspectorPanel::DrawComponent(EditorApp& app, const ComponentMeta& meta, ec
                 const FieldEditorMeta& ed = EdOf(meta, i);
                 if (f.flags & ecs::kFieldRuntime) { // 运行时字段：只读灰显
                     ImGui::BeginDisabled();
-                    DrawField(app, f, ed, comp); // 禁用态控件 changed 恒 false，不会置 dirty
+                    DrawField(app, f, ed, comp, meta.name); // 禁用态控件 changed 恒 false，不会置 dirty
                     ImGui::EndDisabled();
                 } else {
-                    DrawField(app, f, ed, comp);
+                    DrawField(app, f, ed, comp, meta.name);
                 }
                 anyActive |= ImGui::IsItemActive();
                 anyDeactivated |= ImGui::IsItemDeactivated();
@@ -631,13 +637,17 @@ void InspectorPanel::DrawComponent(EditorApp& app, const ComponentMeta& meta, ec
         // Gizmo 直推路径可用；M4.7d 修）。
         if (!ctx.Playing() && guid && meta.sizeOf > 0) {
             const uint64_t key = guid ^ ((uint64_t)meta.id << 48);
-            if (anyDeactivated && !idleSnap_.empty() && idleKey_ == key) {
-                const std::vector<uint8_t> after = ctx.SnapshotComponent(e, meta.id);
-                if (after != idleSnap_) // 空交互（点了没改值）不入栈
-                    ctx.PushPropertyUndo(meta.name, guid, meta.id, idleSnap_, after);
+            if (anyDeactivated) {
+                auto it = idleSnaps_.find(key);
+                if (it != idleSnaps_.end()) {
+                    const std::vector<uint8_t> after = ctx.SnapshotComponent(e, meta.id);
+                    if (after != it->second) // 空交互（点了没改值）不入栈
+                        ctx.PushPropertyUndo(meta.name, guid, meta.id, it->second, after);
+                    idleSnaps_.erase(it);
+                }
             } else if (!anyActive) {
-                idleKey_ = key;
-                idleSnap_ = ctx.SnapshotComponent(e, meta.id);
+                if (idleSnaps_.size() > 64) idleSnaps_.clear(); // 换实体/长会话护栏
+                idleSnaps_[key] = ctx.SnapshotComponent(e, meta.id);
             }
         }
     }

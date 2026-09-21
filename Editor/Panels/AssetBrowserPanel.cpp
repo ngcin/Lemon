@@ -4,6 +4,7 @@
 // sprite 槽 = 设引用；拖 prefab 进 SceneView/Hierarchy = 实例化；右键导入/
 // 重命名（guid 随 .meta 走 → 引用不断）/删除（墓碑 + 体检红字）；双击 = 建实体。
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 #include "App/EditorApp.h"
@@ -11,10 +12,11 @@
 #include "Core/Log.h"
 #include "EditorContext.h"
 #include "Interaction/ViewportRenderer.h"
-#include "Interaction/ViewportRenderer.h"
 #include "Panels/BuiltInPanels.h"
+#include "Tooling/TestHooks.h"
 #include "Tooling/Theme.h"
 #include "imgui.h"
+#include "imgui_internal.h" // 诊断临时：HoveredWindow
 #include "misc/cpp/imgui_stdlib.h"
 
 namespace lemon::editor {
@@ -41,17 +43,27 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
     AssetDatabase& db = ctx.Assets();
 
     // 面包屑（M4.7d）：Assets/ 逐级可点直达，替代目录下拉——深层目录不用在
-    // 全量列表里翻；末段 = 当前目录（灰显不可点）。
-    if (ImGui::TextLink("Assets")) currentDir_.clear();
+    // 全量列表里翻；末段 = 当前目录（灰显不可点）。子目录由网格内文件夹单元格
+    // 进入（下方；面包屑只负责向上，v1 曾只有面包屑 → 子目录无法进入）。
+    // 语义约定：currentDir_ = ""（根）或 "Assets/相对路径"——与 Directories()/
+    // EntriesInDir 的前缀同源（扫描根 = 项目根，v1 曾写 "sub" 风格 → 进子目录
+    // 列表恒空，smoke-ui 真人链路抓到）。
+    ImGui::TextLink("Assets");
+    testhooks::Stash("crumbAssets", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) currentDir_.clear();
     {
         std::string rest = currentDir_;
-        std::string prefix;
+        if (rest.compare(0, 7, "Assets/") == 0) rest = rest.substr(7);
+        else if (rest == "Assets") rest.clear();
+        std::string rel; // 相对 Assets/ 的已消费前缀
+        std::string target; // currentDir_ 语义目标（"Assets/..."）
         while (!rest.empty()) {
             const size_t pos = rest.find('/');
             const std::string seg = pos == std::string::npos ? rest : rest.substr(0, pos);
             rest = pos == std::string::npos ? "" : rest.substr(pos + 1);
             if (seg.empty()) continue; // 连续/尾随斜杠防御
-            prefix = prefix.empty() ? seg : prefix + "/" + seg;
+            rel = rel.empty() ? seg : rel + "/" + seg;
+            target = "Assets/" + rel;
             ImGui::SameLine();
             ImGui::TextDisabled("/");
             ImGui::SameLine();
@@ -59,9 +71,10 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
                 ImGui::TextUnformatted(seg.c_str());
                 break;
             }
-            ImGui::PushID(prefix.c_str());
-            const std::string target = prefix;
+            ImGui::PushID(rel.c_str());
             if (ImGui::TextLink(seg.c_str())) currentDir_ = target;
+            testhooks::Stash(("crumbAssets." + rel).c_str(), ImGui::GetItemRectMin(),
+                             ImGui::GetItemRectMax());
             ImGui::PopID();
         }
     }
@@ -80,6 +93,54 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
     const float avail = ImGui::GetContentRegionAvail().x;
     const int cols = std::max(1, (int)(avail / kCell));
     int col = 0;
+
+    // 子目录文件夹单元格（M4.7d 补全：面包屑只向上，向下进子目录靠这里——
+    // 旧目录下拉删除后曾出现"子目录进不去"的导航缺口，smoke-ui 真人链路抓到）。
+    // 单击进入；currentDir_ 语义 = "Assets/相对路径"（同 Directories()/面包屑）。
+    {
+        const std::string prefix = currentDir_.empty() ? "Assets/" : currentDir_ + "/";
+        for (const std::string& d : db.Directories()) {
+            if (d.size() <= prefix.size() || d.compare(0, prefix.size(), prefix) != 0) continue;
+            const std::string rest = d.substr(prefix.size());
+            if (rest.find('/') != std::string::npos) continue; // 只列直接子目录
+            if (!filter_.empty() && rest.find(filter_) == std::string::npos) continue;
+            if (col++ > 0) ImGui::SameLine();
+            ImGui::PushID(d.c_str());
+            ImGui::BeginGroup();
+            void* tex = app.Viewport().IconTex();
+            float u0 = 0, v0 = 0, u1 = 1, v1 = 1;
+            if (tex) app.Viewport().Assets().IconUV(IconKind::AssetGeneric, u0, v0, u1, v1);
+            const ImVec2 size(72, 72);
+            if (tex)
+                ImGui::ImageButton("##dir", tex, size, ImVec2(u0, v0), ImVec2(u1, v1),
+                                   theme::kBgMid, theme::kAccent);
+            else
+                ImGui::Button("/", size);
+            const bool iconHover = ImGui::IsItemHovered();
+            if (iconHover) ImGui::SetTooltip("文件夹（单击进入）\n%s", d.c_str());
+            ImGui::TextWrapped("%.12s%s", rest.c_str(), rest.size() > 12 ? "…" : "");
+            const bool labelHover = ImGui::IsItemHovered();
+            testhooks::Stash(("assets.folder." + rest).c_str(), ImGui::GetItemRectMin(),
+                             ImGui::GetItemRectMax());
+            // 图标或名字任一处单击进入（v1 只挂图标 → 点名字无反应，smoke-ui 抓到）
+            if (std::getenv("LEMON_SMOKE_UI_DEBUG") && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                ImVec2 rmin = ImGui::GetItemRectMin(), rmax = ImGui::GetItemRectMax();
+                ImGuiContext* gc = ImGui::GetCurrentContext();
+                std::printf("[smoke-ui dbg] folder='%s' iconH=%d labelH=%d rect=(%.0f,%.0f)-"
+                            "(%.0f,%.0f) mouse=(%.0f,%.0f) hoveredWin='%s' curWin='%s'\n",
+                            rest.c_str(), iconHover, labelHover, rmin.x, rmin.y, rmax.x, rmax.y,
+                            ImGui::GetIO().MousePos.x, ImGui::GetIO().MousePos.y,
+                            gc->HoveredWindow ? gc->HoveredWindow->Name : "(null)",
+                            ImGui::GetCurrentWindow()->Name);
+            }
+            if ((iconHover || labelHover) && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+                currentDir_ = d; // 单击进入（面包屑返回）
+            ImGui::EndGroup();
+            ImGui::PopID();
+            if (col >= cols) col = 0;
+        }
+    }
+
     for (const AssetEntry* e : db.EntriesInDir(currentDir_)) {
         if (!filter_.empty() && !strstr(e->FileName().c_str(), filter_.c_str())) continue;
         if (col++ > 0) ImGui::SameLine();
