@@ -26,6 +26,7 @@ struct AppArgs {
     bool immediate = false;
     bool validate = false;
     int deviceLossAtFrame = -1;
+    bool badArg = false; // 未知参数（2026-09-22 测试报告观察 5：此前静默忽略按默认跑满）
 };
 
 AppArgs ParseArgs(int argc, char** argv) {
@@ -36,6 +37,13 @@ AppArgs ParseArgs(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--validate")) a.validate = true;
         else if (!std::strcmp(argv[i], "--device-loss") && i + 1 < argc)
             a.deviceLossAtFrame = std::atoi(argv[++i]);
+        else {
+            std::printf("unknown arg: %s\n", argv[i]);
+            std::printf("usage: rhi-smoke [--frames N] [--immediate] [--validate] "
+                        "[--device-loss N]\n");
+            a.badArg = true;
+            return a;
+        }
     }
     return a;
 }
@@ -134,6 +142,7 @@ void BuildGpuResources(Device& dev, GpuResources& g) {
 
 int main(int argc, char** argv) {
     AppArgs args = ParseArgs(argc, argv);
+    if (args.badArg) return 2;
 
     auto window = Window::Create({.title = "Lemon rhi-smoke", .width = 1280, .height = 720});
     if (!window) return 1;

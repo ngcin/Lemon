@@ -10,16 +10,39 @@
 //   lemon-editor --final [--project <父目录>] [--frames 260]
 //                  # M4.5 终验：向导建项目 → 判据场景 → Play/热重载/备份全量化
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <string>
 
 #include "App/EditorApp.h"
+
+namespace {
+
+// 参数非法拒启（测试报告观察 1/2：此前 --frames abc/-5 静默按 0 = 无限运行、
+// --smoke-close 乱值无告警跑普通模式——CI 手滑即挂起/错跑）
+int usageExit(const char* why) {
+    std::printf("%s\n", why);
+    std::printf("usage: lemon-editor [--smoke] [--frames N] [--validate] [--demo] "
+                "[--screenshot out.png] [--project dir] [--scene f.scene] "
+                "[--save-scene f.scene] [--play] [--script Game.dll] [--final] "
+                "[--no-reopen] [--smoke-close clean|dirty] [--smoke-drag] "
+                "[--smoke-ui]\n");
+    return 2;
+}
+
+} // namespace
 
 int main(int argc, char** argv) {
     lemon::editor::EditorLaunch launch;
     for (int i = 1; i < argc; ++i) {
-        if (!std::strcmp(argv[i], "--frames") && i + 1 < argc)
-            launch.frames = std::atoi(argv[++i]);
-        else if (!std::strcmp(argv[i], "--validate"))
+        if (!std::strcmp(argv[i], "--frames") && i + 1 < argc) {
+            const char* v = argv[++i];
+            char* end = nullptr;
+            const long n = std::strtol(v, &end, 10);
+            if (!v[0] || !end || *end != '\0' || n < 0)
+                return usageExit("--frames 非法值：非数字或负数（应为 ≥0 整数；0 = 无限运行）");
+            launch.frames = (int)n;
+        } else if (!std::strcmp(argv[i], "--validate"))
             launch.validate = true;
         else if (!std::strcmp(argv[i], "--smoke"))
             launch.smoke = true;
@@ -41,21 +64,17 @@ int main(int argc, char** argv) {
             launch.script = argv[++i];
         else if (!std::strcmp(argv[i], "--no-reopen"))
             launch.noReopen = true; // M4.6：跳过"自动重开上次项目"
-        else if (!std::strcmp(argv[i], "--smoke-close") && i + 1 < argc)
-            launch.smokeClose = argv[++i]; // clean|dirty：关闭状态机交互冒烟
-        else if (!std::strcmp(argv[i], "--smoke-drag"))
+        else if (!std::strcmp(argv[i], "--smoke-close") && i + 1 < argc) {
+            const char* v = argv[++i];
+            if (std::strcmp(v, "clean") && std::strcmp(v, "dirty"))
+                return usageExit("--smoke-close 非法值（应为 clean|dirty）");
+            launch.smokeClose = v; // clean|dirty：关闭状态机交互冒烟
+        } else if (!std::strcmp(argv[i], "--smoke-drag"))
             launch.smokeDrag = true; // 视口拖拽注入冒烟（M4.7c 交互回归）
         else if (!std::strcmp(argv[i], "--smoke-ui"))
             launch.smokeUi = true; // 真人会话注入冒烟（快捷键/Undo/保存/重命名/导航等）
-        else {
-            std::printf("unknown arg: %s\n", argv[i]);
-            std::printf("usage: lemon-editor [--smoke] [--frames N] [--validate] [--demo] "
-                        "[--screenshot out.png] [--project dir] [--scene f.scene] "
-                        "[--save-scene f.scene] [--play] [--script Game.dll] [--final] "
-                        "[--no-reopen] [--smoke-close clean|dirty] [--smoke-drag] "
-                        "[--smoke-ui]\n");
-            return 2;
-        }
+        else
+            return usageExit((std::string("unknown arg: ") + argv[i]).c_str());
     }
     lemon::editor::EditorApp app;
     return app.Run(launch);

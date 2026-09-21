@@ -1170,6 +1170,36 @@ bool EditorApp::FindGameProject(std::string& csproj, std::string& dll) {
 }
 
 bool EditorApp::OpenProjectPipeline(const std::string& projectRoot) {
+    // project.lemon 存在性守卫（2026-09-22 测试报告 BUG-1）：此前 --project 对任意
+    // 目录静默"收养"——建 Assets/Prefabs/manifest 半成品且零告警（打错的相对路径
+    // 曾在仓库里落垃圾目录）。UI picker 路径本有校验；此守卫统一覆盖所有入口
+    // （向导/最近菜单入口此刻 project.lemon 必在——新建即写、菜单侧已灰显校验）。
+    {
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(
+                std::filesystem::path(projectRoot) / "project.lemon", ec)) {
+            LEMON_ERROR("打开项目失败：%s 下没有 project.lemon（应选项目根目录）",
+                        projectRoot.c_str());
+            return false;
+        }
+    }
+    // project.lemon 内容最小校验（测试报告 BUG-2）：内容当前无消费者（存在性 =
+    // 项目标记），坏档静默无视会让用户误以为项目完好——json 可解析 + name 字段。
+    // 坏 = 红字但不阻断（Assets/ 场景可能完好，重建工程文件由用户决定）。
+    {
+        std::ifstream pf(projectRoot + "/project.lemon", std::ios::binary);
+        std::string text((std::istreambuf_iterator<char>(pf)),
+                         std::istreambuf_iterator<char>());
+        bool plOk = false;
+        try {
+            const nlohmann::json j = nlohmann::json::parse(text);
+            plOk = j.contains("name") && j.at("name").is_string();
+        } catch (const std::exception&) {
+        }
+        if (!plOk)
+            LEMON_ERROR("project.lemon 损坏或缺少 name 字段：%s——项目按目录继续打开，"
+                        "建议重建工程文件", projectRoot.c_str());
+    }
     // 会话内切换支持（M4.6）：Start 对已运行 watcher 是 no-op，必须先停旧根
     watcher_.Stop();
     scriptWatcher_.Stop();
@@ -1225,8 +1255,12 @@ bool EditorApp::OpenProjectPipeline(const std::string& projectRoot) {
         ctx_.SetScriptHost(nullptr);
         host_.reset();
     }
-    // 记最近项目用 DB 侧 root_（已绝对化）——入参可能是向导手敲的相对路径
-    if (!launch_->smoke)
+    // 记最近项目用 DB 侧 root_（已绝对化）——入参可能是向导手敲的相对路径。
+    // 注入/冒烟会话不记（2026-09-22 测试报告复验时发现：smoke-ui 不带 --smoke
+    // 标志，回归曾把 ${TMP}/ui 推成首条；trap 删目录后成死条目并挤掉真实项目）
+    const bool injectionSession = launch_->smoke || launch_->smokeUi || launch_->smokeDrag ||
+                                  launch_->finalTest || !launch_->smokeClose.empty();
+    if (!injectionSession)
         PushRecentProject(ctx_.Assets().ProjectRoot(), recentProjects_);
     ctx_.LoadRecentScenes(); // M4.8-b：项目内最近场景随项目装载
     return true;
@@ -1368,15 +1402,18 @@ bool EditorApp::TryHotReloadScripts(const char* reason) {
 
 void EditorApp::MenuRebuildScripts() { QueueScriptRebuild("手动触发"); }
 
+bool EditorApp::PlayBlockedByScripts() {
+    if (host_) return false;
+    std::string csproj, dll;
+    return FindGameProject(csproj, dll); // 带 Game/ 工程而无宿主 = 启动期编译/装配失败
+}
+
 bool EditorApp::TryEnterPlay() {
-    if (!host_) {
-        std::string csproj, dll;
-        if (FindGameProject(csproj, dll)) { // 项目带脚本工程：无宿主 = 启动期编译失败
-            playBlockedOpen_ = true;
-            LEMON_WARN("已阻止进入 Play：Game/ 编译失败（脚本宿主未装配）。"
-                       "错误见 Console 红字；修复保存后自动重编译装配");
-            return false;
-        }
+    if (PlayBlockedByScripts()) {
+        playBlockedOpen_ = true;
+        LEMON_WARN("已阻止进入 Play：Game/ 编译失败（脚本宿主未装配）。"
+                   "错误见 Console 红字；修复保存后自动重编译装配");
+        return false;
     }
     return ctx_.EnterPlay();
 }
@@ -1500,6 +1537,9 @@ int EditorApp::Run(const EditorLaunch& launch) {
             launchCopy_.projectDir = last;
             launch_ = &launchCopy_;
             LEMON_LOG("自动重开上次项目：%s（--no-reopen 跳过）", last.c_str());
+        } else { // BUG-1 连带（测试报告）：半成品目录此前静默跳过零日志
+            LEMON_WARN("自动重开跳过：%s 下没有 project.lemon"
+                       "（File → 最近打开 可清除该条目）", last.c_str());
         }
     }
     if (!launch_->projectDir.empty()) {
@@ -1539,6 +1579,14 @@ int EditorApp::Run(const EditorLaunch& launch) {
     // --play：Play 往返验收（§6 #4/#5）：进 Play → 中段编辑落 Play World → Stop 逐字节断言
     // --final 同样进 Play（终验 §6 #2/#6：Play 中热重载 + fps）
     if ((launch.playTest || launch.finalTest) && launch.smoke) {
+        // 程序化守卫（2026-09-22 测试报告 BUG-3）：与交互侧 TryEnterPlay 同判据
+        // （PlayBlockedByScripts）——此前直调 EnterPlay，坏档项目 --play 静默无脚本
+        // 运行。无头路径不弹模态：红字 + 退出码 1。--script 显式供装属既定语义。
+        if (PlayBlockedByScripts()) {
+            LEMON_ERROR("已阻止进入 Play：Game/ 编译失败（脚本宿主未装配）——"
+                        "修复编译错误后重跑（本次 exit 1）");
+            return 1;
+        }
         if (!ctx_.EnterPlay()) return 1;
     }
 
@@ -2533,12 +2581,17 @@ int EditorApp::Run(const EditorLaunch& launch) {
             ok = exitedEarly && smokeCloseArmedEver_; // 脏场景：先弹确认再丢弃退出
             std::printf("[lemon] smoke-close dirty: confirmShown=%d exitedEarly=%d => %s\n",
                         smokeCloseArmedEver_ ? 1 : 0, exitedEarly ? 1 : 0, ok ? "OK" : "FAIL");
+        } else { // 未知值（测试报告观察 2）：此前无诊断静默 exit 1——值校验已在
+            // EditorEntry 拒启，此处兜底防未来新增入口漏校验
+            std::printf("[lemon] smoke-close: 未知值 '%s'（应为 clean|dirty）=> FAIL\n",
+                        launch.smokeClose.c_str());
         }
         if (!ok) exitCode = 1;
     }
     // 帧末截屏回读（--screenshot 落盘 + 冒烟像素断言共用一次回读）
     std::vector<uint8_t> capturePx;
     uint32_t captureW = 0, captureH = 0;
+    bool screenshotOk = true; // 观察项（测试报告观察 2）：写失败并入冒烟汇总谓词
     const bool haveCapture = device_->DebugFetchCapture(capturePx, captureW, captureH);
     if (!launch.screenshot.empty()) {
         if (haveCapture) {
@@ -2549,9 +2602,11 @@ int EditorApp::Run(const EditorLaunch& launch) {
                                     capturePx.data(), (int)captureW * 4);
             std::printf("[lemon] editor-smoke screenshot: %s %ux%u => %s\n",
                         launch.screenshot.c_str(), captureW, captureH, ok ? "written" : "FAILED");
+            screenshotOk = ok != 0;
             exitCode |= ok ? 0 : 1;
         } else {
             std::printf("[lemon] editor-smoke screenshot: capture FAILED\n");
+            screenshotOk = false;
             exitCode = 1;
         }
     }
@@ -2705,7 +2760,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
             }
         }
         if (!drew || !cjkOk || errCount > 0 || !sceneOk || !playOk || !assetsOk || !scriptOk ||
-            !finalOk || !overlayOk || g_imguiErrorCount > 0) {
+            !finalOk || !overlayOk || !screenshotOk || g_imguiErrorCount > 0) {
             std::printf("[lemon] editor-smoke FAIL\n");
             exitCode = 1;
         } else {
@@ -2841,6 +2896,13 @@ void EditorApp::SeedSmokeProject() {
     std::error_code ec;
     std::filesystem::path root(launchCopy_.projectDir);
     std::filesystem::create_directories(root / "Assets", ec);
+    // project.lemon（2026-09-22 BUG-1 守卫配套）：冒烟项目此前依赖 --project
+    // "收养"任意目录的旧语义——守卫已废，播种时补工程标记
+    if (std::filesystem::path pl = root / "project.lemon"; !std::filesystem::exists(pl, ec)) {
+        std::ofstream f(pl, std::ios::trunc);
+        f << "{\n  \"schemaVersion\": 1,\n  \"name\": \"smoke\",\n"
+             "  \"engineVersion\": \"0.4.0-m4\"\n}\n";
+    }
     std::filesystem::path png = root / "Assets" / "smoke.png";
     if (!std::filesystem::exists(png, ec)) {
         std::vector<uint8_t> px(64 * 64 * 4);

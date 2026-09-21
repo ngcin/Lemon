@@ -121,6 +121,10 @@ private:
     bool LoadLayoutIni(const std::string& name); // 命名 ini → 应用（帧内安全点）
     std::vector<std::string> ListSavedLayouts() const;
     void BuildShortcuts();   // Ctrl+S/O/D、Delete（输入框聚焦时屏蔽）
+    /// Play 阻断判据（2026-09-22 测试报告 BUG-3 补程序化侧）：项目带 Game/ 工程
+    /// 而宿主未装配（启动期编译失败）。交互侧 TryEnterPlay 弹模态；--play/--final
+    /// 程序化侧红字退出——静默无脚本运行是难排查的隐性 bug（对齐 Unity/Godot）。
+    bool PlayBlockedByScripts();
     /// Play 入口守卫（2026-09-22）：项目带 Game/ 而宿主未装配（启动期编译失败）
     /// → 阻止进 Play 弹模态（对齐 Unity/Godot——静默降级 = "游戏在跑脚本没生效"
     /// 的隐性 bug）；修错保存经 watcher 自动首装解除。无 Game/ 会话直通。

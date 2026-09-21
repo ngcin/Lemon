@@ -62,6 +62,24 @@ bool EditorContext::OpenScene(const std::string& path) {
     scenePath_ = path;
     selection_.clear();
     BackfillGuids();
+    // 悬空 spriteId 聚合告警（2026-09-22 测试报告观察 6）：AtlasRegistry 无此 id =
+    // 渲染静默缺失（"sprite 不显示"排查半天的第一案发现场）。装载期一次性列出
+    // 计数，不逐实体刷屏。合法域 = 程序化页（< 基号）∪ DB 记账号（含墓碑——
+    // 源文件缺失走 Inspector ⚠，不在此重复报）。0 = 未设置，跳过。
+    if (!assets_.ProjectRoot().empty()) {
+        uint32_t dangling = 0;
+        scene_->Each([&](ecs::Entity e) {
+            if (const ecs::SpriteRenderer* sr = scene_->TryGet<ecs::SpriteRenderer>(e)) {
+                const uint32_t id = sr->spriteId;
+                if (id != 0 && id >= assets_.SpriteIdBase() &&
+                    assets_.FindBySpriteId(id) == nullptr)
+                    ++dangling;
+            }
+        });
+        if (dangling)
+            LEMON_WARN("场景装载：%u 个 SpriteRenderer.spriteId 未在资产库（渲染将缺失；"
+                       "Inspector sprite 槽重指可修）", dangling);
+    }
     dirty = false;
     RecordRecentScene(path);
     LEMON_LOG("场景已打开：%s（%u 实体）", path.c_str(), scene_->AliveCount());

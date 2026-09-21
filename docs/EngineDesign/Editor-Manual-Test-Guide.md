@@ -217,8 +217,10 @@ engine-tests；壳与面板渲染/字体/ID 冲突扫掠 = 基础冒烟；资产
 - 已登记观察项：切项目 spriteId 红字自愈（`spriteId 记账漂移`——自愈重指是**设计行为**，
   M5 评估 guid 间接化）；dotnet build 主线程阻塞 1–2s（只有"编译中…"提示，异步化 M5 评估）；
   热重载旧 ALC 泄漏红字（ADR-010 A 线，约百 KB/次）；>1000 实体 Hierarchy 帧率（M5 压测）；
-  smoke-drag flaky（cwd 共享 `.lemon/editor/imgui.ini` 状态相关误报——**M4.8 根治**：
-  冒烟模式 ini 隔离或失败重跑）；**多场景 tab（Godot 式）**：建议 v1.1 再评估——单人
+  smoke-drag flaky（cwd 共享 `.lemon/editor/imgui.ini` 状态相关误报——**M4.8 已根治**：
+  冒烟模式 ini 隔离，2026-09-22 连跑 10/10）；**smoke assets flaky 新变体**（2026-09-22
+  测试报告观察 4：坏档 Game/ 启动编译阻塞 ~2s 挤压 watcher 帧窗口 → `hotreload=n/a`
+  FAIL——帧预算 vs 墙钟阻塞的时序类，与 ini 污染不同源；M5 冒烟基建改造时一并处理）；**多场景 tab（Godot 式）**：建议 v1.1 再评估——单人
   时间预算优先 M5 玩法，且 Undo 全局快照栈/选择集/相机按场景隔离是一笔结构工程；
   便宜的 80% 替代 = File 菜单"最近场景"一键切回（M4.8 候选）；**组件级重置**
   （右键组件头；字段级需先补字段默认值元数据）M4.8；FilePicker 优化待具体痛点

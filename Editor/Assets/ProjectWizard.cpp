@@ -2,6 +2,7 @@
 // stb_image_write 只经 Tooling/StbImpl.cpp 的唯一定义 TU（隔离纪律同 AssetGpuCache）。
 #include "Assets/ProjectWizard.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cctype>
 #include <cstdio>
@@ -217,7 +218,10 @@ std::vector<std::string> ProjectWizard::ExtractCompileErrors(const std::string& 
                                                   line.back() == ']' &&
                                                   line.find(".csproj]", br) != std::string::npos)
                 line.resize(br);
-            out.push_back(std::move(line));
+            // dotnet 失败时把每条错误打两遍（编译段 + 失败摘要段）——同文去重，
+            // 否则 Console 红字整段翻倍（2026-09-22 测试报告观察 3 实测定位）
+            if (std::find(out.begin(), out.end(), line) == out.end())
+                out.push_back(std::move(line));
         }
         if (eol == std::string::npos) break;
         at = eol + 1;

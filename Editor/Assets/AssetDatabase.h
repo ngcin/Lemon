@@ -67,6 +67,9 @@ public:
 
     const std::string& ProjectRoot() const { return root_; }
     std::string AssetsRoot() const;                     // root/Assets（导入落点）
+    /// 程序化图集基号（OpenProject 入参留存）：id < 基号 = 程序化页，无需 DB 记账
+    /// （场景悬空 spriteId 体检用——EditorContext::OpenScene，2026-09-22 测试报告观察 6）
+    uint32_t SpriteIdBase() const { return spriteIdBase_; }
     std::string AbsolutePath(const AssetEntry& e) const { return root_ + "/" + e.relPath; }
     /// 16 位 hex（Inspector 槽显示 / C# Assets.SpriteOf 参数形态）
     static std::string GuidToHex(uint64_t guid);
