@@ -60,3 +60,13 @@ M0 GO 之后、M1 动工之前重新对齐方向时，用户明确：
 - **正面**：Unity/Prowl2D 开发者上手成本最小化；编辑器与脚本文档叙述统一；Prowl2D 已验证设计不流失。
 - **代价**：04 §3 API 草案重写；"期望落差"须靠对齐/不对齐清单管理；~150 个手写导出的命名需按 Unity 风格定稿。
 - **性能影响**：零（纯命名与门面）或正向（SceneDispatcher 调度、Prefab 运行时物化、Undo 属性级）。
+
+---
+
+## 修订记录
+
+- **2026-09-21（M4 收官后修订）**：D3 表 PrefabLink/PropertyOverride 项（标注"M4 落地"）中的
+  **逐字段 override UI**（字段级蓝标高亮 + 逐字段 Revert）按 M4-Editor-Plan §7 砍单序 #1
+  正式移 M5——M4.4 已交付 Prefab 最小集（拖入实例化 / Apply / **整体** Revert / Break）顶住
+  判据（判据场景不依赖 Prefab）；overrides 深合并 schema 不裁，M5 落地时与字段级 UI 一并实现。
+  （M4-Editor-Plan §9 回填项闭环）

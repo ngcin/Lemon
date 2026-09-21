@@ -390,10 +390,14 @@ SDL 事件 ─→ ImGui（WantCaptureKeyboard/Mouse 为真 = GUI 占用）
       见 06 分册同日注记）；**M4.5 补**：资产扫描根改为项目根（06 §1 布局），
       根级 `Prefabs/` 入索引、`Game/Scenes/Data/Builds/obj/bin` 排除，
       M4.4 旧 manifest 键（相对 Assets/）同号迁移；
-- [ ] 09 §8：多窗口补课顺延 M5 的记录 + 编辑器 `--smoke` 无头冒烟条目（验收 #13 之提案）；
+- [x] 09 §8：多窗口补课顺延 M5 的记录 + 编辑器 `--smoke` 无头冒烟条目（验收 #13 之提案）
+      （**2026-09-21 回填**：多窗口标注 M5+（决议 #7）；§8 补编辑器冒烟覆盖边界条目——
+      `--smoke/--smoke-close/--smoke-drag/--final` 十步一键 + 真人手测清单分工）；
 - [x] 00 §8：扩展名更名（`.scene`/`.prefab`/`.baked`，2026-09-19 随决议 #11 回填）与 `.lemon/autosave/` 命名记录；
 - [x] ADR-010：M4.0 探针复测结论（A/B 线判定）写回（**M4.5 动工前复测，2026-09-20**：
       runtime 10.0.12 行为与 M3-2b 矩阵一致——UCO 一次性线程 OK / 域线程全形态 pin /
       pin 后重载可用；**A 线整域重建定案交付**，换装实测 1.2–1.3s（含 dotnet build）、
       每次泄漏计数 +1 红字告警；B 线挂起待 runtime 升级探针复跑；见 ADR 同日修订）；
-- [ ] ADR-009：Inspector 逐字段 override 若移 M5，记 ADR 修订。
+- [x] ADR-009：Inspector 逐字段 override 若移 M5，记 ADR 修订（**2026-09-21 回填**：
+      砍单 #1 正式生效——M4.4 最小集（Apply/整体 Revert/Break）顶住判据，字段级
+      override UI + 深合并 schema 一并 M5；见 ADR-009 修订记录节）。

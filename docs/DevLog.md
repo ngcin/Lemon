@@ -5,6 +5,30 @@
 
 ---
 
+## 2026-09-20 · 【P0 发现】overlay 渲染通道缺陷——网格/选框/Gizmo/标签从未画出
+
+M4.7 规划讨论中用户反馈"灰色界面完全没有网格线"，与代码行为（GridSnap 默认开）
+矛盾，追查确认为**绘制侧缺陷**而非观感问题。诊断细节与假设排序记
+[M4.7-Editor-UI-Polish-Plan.md §2.6](./EngineDesign/M4.7-Editor-UI-Polish-Plan.md)。
+
+**证据链**（探针已还原，工作区零代码改动）：
+
+1. `--smoke --screenshot` 截图：网格/选中选框/Gizmo 手柄/实体名标签全部缺失，
+   精灵正常显示。
+2. Render() 埋点：每帧 `overlay=68` 包、`batches=3`、`instances=90`
+   （6 精灵 + 68 overlay + 16 文本）——**推入与 Bake 侧正常**。
+3. 极限对照：网格临时改为不透明纯黄 20px 粗线，截图仍无任何线条——排除
+   α70/线宽/配色，缺陷在绘制侧。
+4. 交叉观察：仅批 1（instanceOffset=0，精灵）可见；批 2（offset=6，overlay）、
+   批 3（offset=74，文本）全部不可见——**指向非零 instanceOffset 的实例寻址断裂**
+   （`pc.baseInstance` 与 `DrawQuadInstances` 第二参语义不闭环为最高嫌疑）。
+
+**教训**：此缺陷自某次 M4.2 后变更潜伏至今，`tools/editor-regression.sh` 9/9 PASS
+照旧——自动化只断言精灵渲染与数据正确性，**渲染结果可见性（overlay/文本要素）无
+任何自动防线**。M4.7-P0 修复后须把"`--screenshot` 四要素可见性"入冒烟断言。
+
+---
+
 ## 2026-09-20 · 编辑器使用测试指南 + 一键自动化回归（9/9 PASS）
 
 **`docs/EngineDesign/Editor-Manual-Test-Guide.md`**：按工作流分区（A 启动/项目 →
@@ -850,3 +874,314 @@ M4.5 项目向导一并落地，DB 单根扫描简化 M4.4）。
 4. **【测试工程】guid 数字位数不定**——实体树二次导出的文本 size 比对误报（十进制
    位数随值漂移）；改数据级断言。场景名是宿主属性，不动点测试需同名场景（既有
    TestSceneArchive 已注明，新测试照办）。
+
+## 2026-09-21 M4.7 编辑器 UI 精美化（P0 + a + b + c 全批次）
+
+触发与方案：`docs/EngineDesign/M4.7-Editor-UI-Polish-Plan.md`（定稿 v1）。
+
+### P0 overlay 渲染通道修复（§2.6）——两个叠加缺陷，均实证定位
+
+1. **overlay scale 语义错位**：`PushOverlayQuad` 误将 size 除以 64px 单元格
+   （全引擎约定 = 世界像素边长，见 Extract/DrawText），overlay 整体缩小 64 倍
+   （1.5px 线宽 → 0.023px 亚像素）。
+2. **跨合批器 SSBO 描述符竞态（主因）**：`boundStorageBufferId` 设备级去重 +
+   UPDATE_AFTER_BIND"执行期取最新值"——同帧 scene.Record → game.Record 改写
+   binding 2 后提交，**scene 视口全部绘制读的是 game 环**。批 1（offset 0）
+   恰与 game 环前 6 个精灵同位故可见；批 2/3（offset 6/74）读到从未写的零数据
+   → 退化零尺寸四边形全灭——与计划实验 #4"只有首个批可见"完全吻合。
+   **对照实验**：交换两视口渲染顺序 → 四要素全部显现，假设坐实。
+   **修复**：binding 2 升级为 4 槽 SSBO 数组（每合批器固定一槽，push constant
+   `ringIndex` 索引，帧内零改写）；shader/RHI/SpriteBatcher 三侧同步。
+3. **冒烟像素防线**（防再穿透）：`--smoke` 末帧回读场景 RT（新增
+   `DebugRecordTextureCapture`，线性空间无 UI/sRGB 干扰），扫描四要素特征色
+   （网格灰带/主选青/手柄黄/标签墨），计数入 exit code。复现竞态时四项全 0 →
+   FAIL，防线有效。
+4. **顺手修真 bug**：`PruneSelection` 恒按编辑场景校验 + Inspector 每帧调用
+   → Play 中任何选中下一帧被误清（Play 无法选中/检视实体）。改按 ActiveScene 校验。
+
+### M4.7a 主题 token + 工具栏三段式
+
+`Tooling/Theme.h/.cpp` 单点（决议 D2：中性 Unity 深色 + 蓝强调；旧柠檬黄全撤）；
+工具栏三段式（左 W/E/R+GridSnap｜中 Play/Pause/单步按实宽精算居中｜右预留）；
+Play 态色 D3（编辑灰蓝/Stop 红）；Console 分级计数徽标；全库 ~15 处散落
+ImVec4 字面量收编 token。
+
+### M4.7b 图标体系（决议 D1：自绘 16 枚，零新依赖）
+
+程序化形状页（图集槽 2，512×32：16×32px 白形状，4× 超采样软件光栅化）→
+`Tooling/Icons.h`（IconButton/DrawIcon）。工具栏 7 键、Hierarchy 行前类型图标
+（prefab 蓝/带脚本/精灵/空实体）、AssetBrowser 类型图标（替代旧调色板色块）。
+资产导入槽位从 2 → 3 起（图标页占用，撞"槽位重用"断言后修正）。
+
+### M4.7c 视口交互 v2 + 网格 v2 + GameView Aspect
+
+- **一段式拖拽（D5）**：mousedown 命中即选中并 arm，位移 ≥4px 才真正改
+  Transform（点 vs 拖二分）；纯点击不入 Undo。
+- **Move 轴约束**：X 红/Y 绿箭头（Unity 语义）独立命中（优先于实体本体），
+  中心块自由拖；hover/拖拽轴提亮 + 光标变化（EW/NS/手型）。
+- **Esc 取消拖拽**：恢复起点快照，不入 Undo。
+- **hover 轮廓**：未选中实体悬停亮边（框选 M5 铺底）。
+- **网格 v2**：zoom 自适应密度（屏幕 14–72px 区间内翻倍/减半）+ 两级网格
+  （minor 常显/major 每 4 格提亮）+ 世界主轴高亮 + 原点标记。
+- **GameView Aspect 下拉**：Free/16:9/4:3/1:1 letterbox（原固定 16:9）。
+
+### 回归红线（全过）
+
+ctest 3/3；`tools/editor-regression.sh full` **9/9**（含 overlay 像素断言全路径）；
+验证层零报错；基线图 `docs/Baselines/m4.7-editor-ui.png`。
+
+## 2026-09-21 M4.7 手测首击：两个真用缺陷（崩溃 + 拖拽全灭）修复
+
+用户手测报告两题，其一竟是自 ImGui 1.92 升级起就存在的静默全灭。
+
+### 缺陷 1：空实体 + 加 SpriteRenderer → 选中即断言崩溃
+
+`ASSERT Atlas.cpp:70 bad spriteId`。根因：`ViewportRenderer::WorldBoundsOf` 的
+守卫写成 `spriteId < SpriteCount()`——把 `spriteId == 0`（槽位未设，合法态）放
+过去直撞 `GetSprite(0)` 断言。引擎侧 `RenderableManager::Extract` 同样未守卫
+（运行时路径同炸）。对齐 Unity 语义（SpriteRenderer 挂任意 GameObject、
+Sprite=None 即不渲染）：两处守卫改 `spriteId != 0 && spriteId <= SpriteCount()`
+→ 无 sprite 实体不渲染、选框落 24px 占位框。验证：手工构造 `spriteId=0` 首位
+实体的场景 `--scene` + `--smoke` 强选路径（曾经的崩溃路径）现在 PASS（sel=307
+来自占位框轮廓）。
+
+### 缺陷 2：视口 Gizmo 拖拽/缩放/旋转全部无效（连滚轮缩放也死）
+
+静态审查状态机无果 → 新建 `--smoke-drag` 注入模式（ImGui 事件注入模拟真实
+按下/拖动/释放 + 链路分段计数 + 位移/角度断言），一次跑出真凶：
+
+- **根因**：`canInteract = hovered && !WantTextInput && !WantCaptureKeyboard` ——
+  ImGui **1.92 改了 WantCaptureKeyboard 语义**：有任意窗口持有焦点即真（编辑器
+  UI 内恒真，实测 activeId=0、无文本输入仍 kb=1）。视口点击/滚轮缩放自 1.92
+  升级起从未活过；M4.7c 手柄变显眼后终于被手测抓到。修复：视口两处（拾取门 +
+  滚轮门）撤下该条件，输入态由 `WantTextInput` 表达（与 GameView 输入路由同
+  口径）。
+- **次因**：无项目时"尚未打开项目"中央卡（400px）悬在视口中心 = 实体聚集区，
+  截走 hover/点击。加 `×` 关闭按钮（会话内不再弹）。
+- 顺带修 `Renderable.cpp` 守卫（见缺陷 1）、确认子实体本地坐标陷阱在驱动侧。
+
+### --smoke-drag（新回归线，防再犯）
+
+注入链：帧 3 选根实体+关吸附+居中相机 → 9 按下（体内点，避手柄带）→ 10-20
+拖 44pt → 21 释放 → 断言位移 = 44pt×世界/点；24 切 Rotate → 28 按下于 45° 弧
+点 → 29-38 沿圆弧 −90° → 39 释放 → 断言 Δrot=−π/2。诊断计数（press/armed/
+activeEver/updates）打进裁决行，失效可分段定位。接入 editor-regression.sh。
+
+### 回归红线（全过）
+
+ctest 3/3；`tools/editor-regression.sh full` **10/10**（9 项 + smoke-drag）；
+smoke-drag 与 empty-sr 场景 `--validate` 零报错。
+
+## 2026-09-21 M4.7 手测第二轮：滚动条/网格 v3/缩放手感/Select 模式
+
+### 1. 滚动条清理（外层 + Hierarchy 空表常驻条）
+
+- Hierarchy 树区域曾挂 `AlwaysVerticalScrollbar` → 空列表也常驻滚动条，改按需出现；
+  面板窗口本体挂 `NoScrollbar`（滚动只发生在 tree 子区）。
+- 外层宿主 `##LemonEditor` 与 Scene/Game 窗口挂 `NoScrollbar | NoScrollWithMouse`：
+  内容溢出的 1–2px 曾触发最外层滚动条；更重要的是**滚轮会从 Scene 子区冒泡到
+  可滚动的祖先窗口**（ImGui 行为）——把整个布局顶走 = "缩放后无法操作"的真凶。
+
+### 2. 网格 v3（Godot 样式）
+
+全部网格线统一 1px 宽（v2：minor 1.5px + 原点标记 2px 混杂观感乱）；major 仅
+颜色区分不加重；原点主轴 Godot 语义 **X 红 / Y 绿**（1.5px 略粗），专用原点十字
+/方块标记删除。像素验证：y=0 红轴 RGB(238,148,139) 落屏正确（x=0 默认视野外，
+平移即现，代码路径对称）。
+
+### 3. 缩放手感
+
+- 方向反转：滚轮**前推 = 放大**（ImGui MouseWheel 正值 = 前推，原式符号反了）；
+- 锚点：有主选中 = **对象中心**（缩放前后对象屏幕位置纹丝不动，像素验证 Δ=0.0px；
+  初版误把世界坐标当屏幕坐标传 ScreenToWorld——selΔ=107px 抓出）；无选中 = 鼠标点。
+
+### 4. Select 模式（Q；Godot 式 8 向手柄）
+
+- `EditTool::Select`（Q 键 + 工具栏首位 Cursor 图标，形状页 16→17 枚）；
+- 选中实体显示 8 手柄（4 角 + 4 边中点，白圈红点仿 Godot，hover 放大）；
+- **拖手柄 = 调整大小**：对侧手柄锚定，新半尺寸 = 鼠标在实体本地轴投影 ÷2（角
+  手柄双轴随动/边手柄单轴；旋转感知——本地轴分解，锚点像素验证 Δ=0.0）；拖本体
+  = 移动（复用 Move 数学）；
+- 8 向 hover 光标（NS/EW/NWSE/NESW）；复用 4px 阈值/Esc 取消/Undo 属性轨/网格吸附；
+- 冒烟像素断言不变（网格变细后 35364 ≥ 8000 仍达标）。
+
+### --smoke-drag 扩为四段（防再犯）
+
+移动（3–23）+ 旋转（24–41）+ **Select resize（43–56：右边中点外拖 → scale
+1.00→1.53 且左缘锚定 Δ=0.0）** + **缩放（58–63：滚轮 +3 → zoom 1.00→1.43 且
+对象屏幕位置 Δ=0.0px）**；裁决行带分段数值。教训入册：注入拖动方向必须沿手柄
+本地轴（旋转后沿屏幕轴拖会投影成负值把 scale 压没）；测试驱动量"当前"位置而非
+原始位置（相机锚点断言 selΔ 19.8→0.0 的修正）；λ 捕获帧内局部 `cam` 引用跨帧
+悬垂（UB，改为 λ 内自取 `viewport_->SceneCam()`）。
+
+### 回归红线（全过）
+
+ctest 3/3；`tools/editor-regression.sh full` **10/10**；smoke-drag `--validate`
+零报错。
+
+## 2026-09-21 M4.7 手测第三轮：格子不均 + Transform 天文数字（4.3e7）根治
+
+### 症状同源：resize 爆炸 → 极限缩放 → 网格/断言全露设计缺口
+
+用户手测：格子忽大忽小；8 向拖没几下，Transform2D.pos 到 43555688/1363321。
+
+### 1. Transform 爆炸——Resize 三重缺陷叠加
+
+- **÷2 模型跳变**："新半宽 = 鼠标投影÷2"在 arm 时鼠标≠精确手柄位会瞬间跳 2×，
+  且手感是半速拖拽。改**比例跟随**：arm 时记录鼠标相对锚点的本地投影 d0，此后
+  hx' = hx0·(d/d0)——arm 零跳变，手柄 1:1 跟随鼠标（Godot 手感）。
+- **无上限**：极缩放下 1pt = 数十世界 px（zoom 0.05 时 ≈20），旧模型一帧 +300
+  半宽、连拖数次数乘到 4e7。硬钳 scale ∈ [~0.01, 200]（半宽域 [2, 200·单位半宽]）。
+- **子实体世界/本地混写**：锚点/半宽按世界算，结果直接写进本地 pos——父链当
+  放大器逐次累乘。补父链逆变换：世界意图（锚点 + 本地轴新半宽）→ R(−pw.rot)
+  与 pw.scale 逆映射回本地（TRS 复合之逆，ComputeWorldTransform 同约定）。
+  8 向手柄仅在**单选**时激活（多选是合体框语义）。
+
+### 2. 格子不均——半像素 AA 吞线
+
+网格线宽 1/zoom 世界 px 但不吸附像素：线骑在两物理像素之间时各得 ~50% 覆盖，
+α70 的网格混完后几乎隐形 → 一段段"空带"（缩得越小越密越明显）。网格 v4：
+**所有线吸附到 RT 像素中心、宽度恒 = 1 物理像素**——任何缩放下等宽等距等亮度；
+网格 α70→110 / major 110→150（仍在冒烟灰带内）；原点主轴 X 红/Y 绿改同宽不透明
+（顺带修正 v4 初版把红绿画反）。选框同吃一套吸附（PushOverlayRectSnapped，
+旋转框走 AA 不吸附）——final 套件的 sel=0 偶发（1.8px 线 AA 后无像素达 ±10
+纯色容差）就此消除。
+
+### 3. 测试稳健化（smoke-drag 连挂引发的工程）
+
+- 注入坐标改**世界锚定、注入帧重投影**（旧版帧 4 定屏幕点，布局 settle 后漂移
+  → 点落空，press=0 偶发）；λ 内自取 SceneCam（捕获帧内局部 cam 引用 = UB）。
+- smoke-drag 帧 2 标记 + BuildUI 强制默认布局（DockBuilder 必须在 NewFrame 内
+  且窗口 ID 栈上——直接在主循环调 = 崩溃，已踩）。回归不再吃 ini 布局漂移账。
+- full 套件曾在机器高负载下 final fps 判据抖（minFps 30 vs 45 阈值）——判定为
+  负载抖动非回归，静置后 58–59 稳过。
+- 极缩小诊断口：smoke-drag 帧 70 跳 zoom 0.05 取景（配 --screenshot 扫描网格
+  均匀性；用后保留，间距/亮度扫描全部均匀）。
+
+### 回归红线（全过，两轮连跑）
+
+ctest 3/3；`tools/editor-regression.sh full` **10/10 × 2**；smoke-drag
+`--validate` 零报错；empty-sr 场景（上轮崩溃路径）PASS。
+
+## 2026-09-21 M4.7 手测第四轮：滚轮几次后相机甩飞（center=(12333,139304)）+ F 找不回
+
+### 1. 根因：视野外选中对象参与缩放锚定 = 每格滚轮甩 11% 距离
+
+缩放锚点数学本身量纲正确（before/after 均 ScreenToWorld），但锚点选择无条件取
+**选中对象中心**：对象在视野外（或父链携带上轮爆炸损伤——Inspector 显示的 pos 是
+**局部值**，世界坐标可在 1e5+ 量级）时，每格滚轮把相机向它拖 (1−1/k)·距离——
+对象在 1e6 世界距离处一格就是 ~1.1e5 单位，"放大缩小几次"即可把 center 甩到
+十万量级（截图 center=(12333,139304)、visible 0、原点红线出视野全是同一件事）。
+修复：**选中对象屏幕锚点在视野 ±25% 余量内才锚其中心，否则退回鼠标锚**（视野外
+对象从此无法拽动相机；Godot 手感 = 鼠标锚）。
+
+### 2. F 聚焦被 hover 门挡死 = 迷路后没有回家键
+
+F 原实现要求鼠标悬停 Scene 窗口——在 Hierarchy 选中实体再按 F 完全无效。修复：
+- F 去 hover 门（仅 WantTextInput 拦截），层级面板选中后直接按 F 即聚焦；
+- 空选中 = 聚焦**全部**可绘制实体（View<Transform2D,SpriteRenderer> 包围盒）；
+- 角标 visible=0 且有选中时提示"选中对象在视野外 —— 按 F 聚焦"。
+
+### 3. 顺带修掉：SDL3 鼠标点坐标 vs RT 像素量纲（DPI≠1 隐患）
+
+SDL3 后端透传窗口"点"坐标，ScreenToWorld/缩放锚点/平移按 RT"像素"归一——
+Retina（DPI=2）下拾取/拖拽/鼠标锚点会整体偏 2×。统一加 ptToPx 换算
+（mousePx / pan delta）；DPI=1 行为不变（本机测试环境即 1，回归判定不受影响）。
+
+### 4. 回归扩线：smoke-drag 第五段（甩飞防护 + F 聚焦）
+
+帧 72 抛远实体（2e5,3.5e5）并选中；73-75 视口中心滚轮 ×3；77 断言相机未被拽走
+（|Δcenter|<16——注入点 ±1pt 抖动在极缩小下折 ~2 单位/格，真甩飞是每格 2 万+）；
+79 经 ImGuiBackend::SetKeyTapOverride 注 F（down 帧注入、次帧补 up，同帧合并会
+吃掉按下沿）；81 断言相机聚焦实体（focusΔ<32）。看门狗 70→84 帧，套件
+--frames 80→90。verdict 追加 `slingΔ=(x,y) focusΔ=` 字段。
+
+### 回归红线
+
+`tools/editor-regression.sh` **10/10 × 2 连跑**；smoke-drag 全段 OK
+（move/rot/scale/zoom/sling/focus）。
+
+## 2026-09-21 M4.7 手测第五轮：8 向拖动"不丝滑"——吸附与网格显示解耦
+
+### 根因：gridSnap_ 一 flag 两用
+
+`gridSnap_` 默认 true，同时 gate **网格显示**（DrawGrid）与**全部拖拽吸附**——
+用户看得见网格（默认开）就必然吃着全套台阶：平移 8 世界单位一档、旋转 15° 一档、
+8 向 resize **半宽** 8 单位一档（总尺寸 16 单位，zoom≥1 时每跳 8-16px）、Scale
+0.25 档。这不是帧率问题（GPU 0.3ms、60fps），是吸附档位台阶被感知为"卡顿"。
+Godot（磁铁开关）/Unity（按 Ctrl 才吸）默认都是**不吸附**。
+
+### 修复：Godot/Unity 语义对齐
+
+- `gridSnap_` 拆成 `gridVisible_`（默认 true，纯视觉）+ `snapEnabled_`
+  （默认 false）——拖拽全模式连续丝滑；
+- **按住 Ctrl 拖拽 = 临时取反吸附**（`snap != io.KeyCtrl`），吸附党不用去点开关；
+- 工具栏拆两钮：# 网格显示 / 新 **Magnet**（马蹄磁铁，形状页 17→18 图标）吸附
+  开关，tooltip 注明档位与 Ctrl 临时取反；
+- smoke-drag 帧 3 `gridSnap_=false` → `snapEnabled_=false`（现默认已关，显式防
+  默认变更），帧 70 诊断 → `gridVisible_=true`。
+
+### 附带确认（拖拽手感其余环节本就正确）
+
+比例跟随模型 arm 时 f=1 无跳变、手柄 1:1 跟随鼠标；4px arm 阈值与 Godot 同级；
+拖拽逐帧路径无分配/无 O(n)（dragTfs_ 仅 arm 时快照一次）。上一轮的 ptToPx 量纲
+修正保证 Retina 下鼠标→世界 1:1（否则拖拽速度整体 2× 偏差也会被感知为"不丝滑"）。
+
+### 回归红线
+
+`tools/editor-regression.sh` **10/10 × 2 连跑**；工具栏/图标页截图核对正常。
+
+## 2026-09-21 M4.7d 可选件回捞：label-scrub / Console 折叠 / 面包屑 / Layout 下拉 + 属性轨潜伏修复
+
+M4 规划剩余功能面 = M4.7 d 批次四件（原砍单候补，全部回捞）+ M4-Editor-Plan §9 两处
+回填。本轮一并闭环。
+
+### 1. Inspector label-scrub（砍单候补首位）
+
+- **手感**：拖字段名横向改值（Unity 拖 label 同款）。Text 无交互 ID（IsItemActive 恒假）
+  → 手动跟踪：hover+左键接管，按住期间逐帧 dx；hover/拖拽 = 主题色下划线 +
+  ResizeEW 光标（发现性）。浮点 1.0/px（度字段 0.5°/px 与 DragFloat 对齐）、Shift = ×0.1
+  微调；整型走**余数累计**（acc += dx → 取整步 → 残差跨帧保留，慢拖不丢步），钳类型域
+  （uint64 特判不入 int64 域）。覆盖 Float/Double/整型族；Vec2/Bool/枚举/颜色/资产槽
+  /EntityRef/TeamRef 不参与（歧义或非数值）。
+- **ID 纪律**：PushID(f.name) 提前到整字段作用域（label "##scrub" 与控件 "##v" 共用
+  字段名种子，控件 ID 与旧版逐字一致）。
+- **属性轨合流**：进行中 → g_scrubActive（冻结空闲快照刷新）；结束帧 → g_scrubEnded
+  （= Deactivated，提交 before/after）——与控件拖拽同一合并语义，读毕即清不跨组件。
+
+### 2. 属性轨潜伏 bug（M4.2 起）：Inspector 控件编辑从不进 Undo
+
+- **根因**：DrawComponent 提交块判序 `if (!anyActive) 刷新空闲快照 else if (anyDeactivated)
+  提交`——ImGui 释放帧 IsItemActive 已翻 false 而 IsItemDeactivated 为 true（源码核实：
+  ButtonBehavior 释放路径就地 ClearActiveID → SetActiveID(0) 记 DeactivatedItemData），
+  单字段交互永远走第一分支把空闲缓存刷成改后值，提交分支不可达。Gizmo 拖拽走直推
+  路径（ViewportPanels → PushPropertyUndo）故未暴露；M4.2 验收只测了 Gizmo 链。
+- **修复**：提交判定前置（anyDeactivated && key 匹配 → 提交；否则 !anyActive 才刷新），
+  加空交互跳过（点了没改值 before==after 不入栈）。
+
+### 3. Console Collapse（M4.7d）
+
+连续同文同级并组一行 + `×N` 徽标（Unity 语义；刷怪/重复告警降噪）；过滤作用整组
+（组内同级等效）。默认开，与 Auto-scroll 并列开关。
+
+### 4. AssetBrowser 面包屑（M4.7d）
+
+`Assets / 子目录 / …` 逐级 TextLink 可点直达（末段灰显 = 当前位置），替代目录下拉
+——深层目录不用在全量列表翻。连续/尾随斜杠防御；逐段 PushID 防同级重名。
+
+### 5. 工具栏 Layout 下拉（M4.7d，右段兑现"预留"）
+
+命名布局 = imgui.ini 全量快照另存（`SaveIniSettingsToMemory` → `.lemon/editor/
+layouts/<名>.ini`）；切换/更新/删除/另存；"默认布局"走既有 forceDefaultLayout_ 通路。
+切换延迟一帧到 BuildUI 布局安全点（与 DockBuilder 同点帧内应用）。窄工具栏下让位
+（右对齐坐标 < 当前光标则不画，不挤中段 Play）。
+
+### 文档回填（M4-Editor-Plan §9 收尾）
+
+09 §8：多窗口顺延 M5+ 记录 + 编辑器冒烟覆盖边界条目（十步一键 vs 真人手测分工）；
+ADR-009 修订记录：逐字段 override 正式移 M5（砍单 #1 生效，M4.4 整体 Revert 顶住）。
+
+### 回归红线
+
+`tools/editor-regression.sh` **10/10 × 2**（改动前后各一轮）；截图目检：Layout 下拉
+右对齐不叠中段、面包屑 TextLink 正常渲染、Console Collapse 控件在位。

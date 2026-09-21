@@ -260,8 +260,12 @@ macOS 安全策略拒绝 lldb 原生 attach（Console.app 可见 debugserver 拒
 ## 8. 已知未覆盖（记录在案）
 
 - Dock 最小化时 acquire 的 0 尺寸分支（resize 压测已覆盖退化尺寸的相邻路径）。
-- 多窗口（M1 范围外，编辑器 M4 时补）。
+- 多窗口（M1 范围外；M4 决议 #7 定单窗口 docking 交付，multi-viewport 补课顺延 **M5+**）。
 - Windows 平台（CMake 预设 `win` 待加，见 README）。
+- 编辑器交互覆盖边界（M4-Editor-Plan §6 提案已落地）：无头冒烟 `--smoke`（含 overlay
+  可见性像素断言）/ `--smoke-close`（关闭状态机）/ `--smoke-drag`（视口注入五段）/
+  `--final`（终验链）经 `tools/editor-regression.sh` 一键 10 步；**未脚本化**的纯观感路径
+  （Inspector 控件手感、面板排版）仍靠 [Editor-Manual-Test-Guide.md](./EngineDesign/Editor-Manual-Test-Guide.md) 真人清单。
 - M2：bench-sim 早期怪群聚拢阶段存在 max ~145ms 单步尖峰（avg 判据不受影响；哈希重建
   并行化是已预留路径，触发 M5 压测 B 再做）；投射物穿透去重用全量 iFrames 策略（M5 细化）；
   Patrol 端点暂停未实现（M5 随 clip 资产补）；Animator 帧映射待 clip 资产表（M5）。
