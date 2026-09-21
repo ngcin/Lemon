@@ -11,6 +11,7 @@
 #include "App/EditorApp.h"
 #include "Assets/AssetDatabase.h"
 #include "Components/CoreComponents.h"
+#include "Components/RenderComponents.h"
 #include "Core/Log.h"
 #include "ECS/ComponentRegistry.h"
 #include "EditorContext.h"
@@ -160,7 +161,9 @@ bool DrawEnumControl(const FieldMeta& f, const FieldEditorMeta& ed, uint8_t* p) 
 /// 值 = AtlasRegistry spriteId；UI 反查资产（guid 名/缩略图）。拖 AssetBrowser
 /// sprite 进来 = 设引用；下拉全列；右键清空。最后绘制的控件是 combo →
 /// DrawComponent 的 IsItemDeactivated 属性轨照常捕获。
-bool DrawSpriteSlot(EditorApp& app, uint8_t* p) {
+/// 赋值同时置 flags.enabled——「指定了图片 = 要显示」（也救旧档 flags=0 的禁用实例；
+/// 2026-09-21：默认禁用 + 提取静默跳过曾使 Add Component 路径完全不显示）。
+bool DrawSpriteSlot(EditorApp& app, uint8_t* p, ecs::SpriteRenderer& sr) {
     EditorContext& ctx = app.Ctx();
     AssetDatabase& db = ctx.Assets();
     uint32_t& id = *(uint32_t*)p;
@@ -195,6 +198,7 @@ bool DrawSpriteSlot(EditorApp& app, uint8_t* p) {
                           e.relPath.c_str());
             if (ImGui::Selectable(item, e.spriteId == id)) {
                 id = e.spriteId;
+                sr.flags |= ecs::kSrEnabled;
                 ctx.dirty = true;
             }
         }
@@ -207,6 +211,7 @@ bool DrawSpriteSlot(EditorApp& app, uint8_t* p) {
             std::memcpy(&d, pay->Data, sizeof(d));
             if (d.kind == 0 && d.spriteId != 0) {
                 id = d.spriteId;
+                sr.flags |= ecs::kSrEnabled;
                 ctx.dirty = true;
             }
         }
@@ -276,7 +281,9 @@ bool DrawField(EditorApp& app, const FieldMeta& f, const FieldEditorMeta& ed, vo
     if (ecs::HasHint(ed.hints, FieldHint::Hide)) {
         ImGui::TextDisabled("(internal)");
     } else if (ecs::HasHint(ed.hints, FieldHint::AssetRef) && f.type == FieldType::UInt32) {
-        DrawSpriteSlot(app, p); // 写入就地完成（combo 尾置 → 属性轨由 Deactivated 捕获）
+        // AssetRef 槽当前仅 SpriteRenderer.spriteId（ED_ASSET 全目录唯一）→ 可取整组件
+        // 写入就地完成（combo 尾置 → 属性轨由 Deactivated 捕获）
+        DrawSpriteSlot(app, p, *static_cast<ecs::SpriteRenderer*>(comp));
     } else if (ecs::HasHint(ed.hints, FieldHint::Enum)) {
         changed = DrawEnumControl(f, ed, p);
     } else if (ecs::HasHint(ed.hints, FieldHint::ColorHex) && f.type == FieldType::UInt32) {

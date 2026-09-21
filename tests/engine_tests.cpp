@@ -126,6 +126,30 @@ void TestAtlasUV() {
     Expect(full.atlasIndex == 3, "atlas index passthrough");
 }
 
+// ---- 显式号登记（2026-09-21：注册表自增号 vs manifest 记账两本账漂移的根治）----
+void TestVerifyAddSpriteAtHolesAndConflict() {
+    AtlasRegistry reg;
+    reg.RegisterAtlas(5, rhi::Texture{}, 64, 64); // 头把 Texture 占位（纯逻辑测试无设备）
+    Expect(reg.AddSprite(5, 0, 0, 16, 16) == 1, "dense append id 1");
+
+    // 跳号登记（= manifest 记账 3 号）：中间 2 号成空洞
+    Expect(reg.AddSpriteAt(3, 5, 0, 0, 32, 32), "register at explicit id 3");
+    Expect(reg.SpriteCount() == 3, "table grown to cover id 3");
+    Expect(reg.IsValidSprite(1) && reg.IsValidSprite(3), "dense + explicit valid");
+    Expect(!reg.IsValidSprite(2), "hole (retired id) invalid");
+    Expect(!reg.IsValidSprite(0) && !reg.IsValidSprite(4), "zero/out-of-range invalid");
+    Expect(reg.GetSprite(3).widthPx == 32, "explicit entry data correct");
+
+    // 冲突拒绝：占用号不可重复登记；0 号非法；被拒写入不破坏原条目
+    Expect(!reg.AddSpriteAt(3, 5, 0, 0, 8, 8), "occupied id rejected");
+    Expect(!reg.AddSpriteAt(0, 5, 0, 0, 8, 8), "id 0 rejected");
+    Expect(reg.GetSprite(3).widthPx == 32, "rejected write left entry intact");
+
+    // 空洞可被后续登记（新资产恰好分到退役号）
+    Expect(reg.AddSpriteAt(2, 5, 0, 0, 8, 8), "hole refilled");
+    Expect(reg.IsValidSprite(2) && reg.GetSprite(2).widthPx == 8, "refilled entry valid");
+}
+
 void TestBatchKey() {
     SpriteBatchKey a = MakeBatchKey(0, BlendKind::Alpha, FilterKind::Linear, 0);
     SpriteBatchKey b = MakeBatchKey(0, BlendKind::Alpha, FilterKind::Linear, 0);
@@ -549,6 +573,18 @@ void TestComponentRegistry() {
     Expect(std::is_trivially_copyable_v<Projectile>, "projectile trivial");
     Expect(std::is_trivially_copyable_v<StatusEffects>, "status trivial");
     Expect(std::is_trivially_copyable_v<Inventory>, "inventory trivial");
+
+    // SpriteRenderer 默认启用（2026-09-21 回归：曾默认 flags=0 禁用 → 提取静默跳过，
+    // Inspector Add Component / 脚本 Emplace 新增即不可见；NSDMI 经 Emplace 值初始化生效）
+    Expect((SpriteRenderer{}.flags & kSrEnabled) != 0, "sprite flags default enabled");
+    {
+        World w;
+        Scene& s = w.CreateScene("sr_defaults");
+        Entity e = s.Create();
+        s.Emplace<SpriteRenderer>(e);
+        Expect((s.Get<SpriteRenderer>(e).flags & kSrEnabled) != 0,
+               "sprite emplace default enabled");
+    }
 }
 
 void TestVerifyWorldAutoRegistersCatalog() {
@@ -1849,6 +1885,44 @@ void TestHierarchyChainLifecycle() {
     Expect(s.Alive(chain[5]), "rejected node not in tree, survives");
 }
 
+// ---- 用户手测复现（2026-09-21 第八轮）：C 拖拽挂到 P（全链）→ 存档往返
+// （= EnterPlay 快照同路径）→ 移动 P → 子世界位置必须跟随。此前数学有测、
+// 往返只有"半链"（手写 Hierarchy 只设 parent）覆盖，全链往返 + 跟随是空白。----
+void TestVerifyFullChainFollowsAfterRoundtrip() {
+    World w;
+    Scene& s = w.CreateScene("chain");
+    Entity p = s.Create();
+    s.Emplace<Transform2D>(p, Transform2D{{100, 100}, 0, {1, 1}});
+    Entity c = s.Create();
+    s.Emplace<Transform2D>(c, Transform2D{{10, 0}, 0, {1, 1}});
+    Expect(SceneSetParent(s, c, p), "full link c-p");
+
+    const std::string json = SceneArchive::Save(s);
+    World w2;
+    Scene& d = w2.CreateScene("reload");
+    Expect(SceneArchive::Load(d, json), "reload ok");
+
+    Entity dp{}, dc{}; // 找回：父也持有 Hierarchy（firstChild），按 parent 非空判子
+    d.Each([&](Entity e) {
+        const Hierarchy* h = d.TryGet<Hierarchy>(e);
+        if (h && !h->parent.IsNull()) dc = e;
+        else dp = e;
+    });
+    Expect(!dp.IsNull() && !dc.IsNull(), "entities located after reload");
+    Expect(d.Get<Hierarchy>(dc).parent == dp, "parent remapped");
+    Expect(d.Get<Hierarchy>(dp).firstChild == dc, "firstChild remapped（全链非半链）");
+
+    // 父移动（同脚本每帧写 pos）→ 子世界位置精确跟随（渲染消费端同一函数）
+    WorldTransform2D wt;
+    Expect(ComputeWorldTransform(d, dc, wt), "world before");
+    const Vec2 before = wt.pos;
+    ExpectNear(before.x, 110.0f, 1e-4f, "child world = parent+local");
+    d.Get<Transform2D>(dp).pos = {150, 100};
+    Expect(ComputeWorldTransform(d, dc, wt), "world after");
+    ExpectNear(wt.pos.x, 160.0f, 1e-4f, "child follows parent move after roundtrip");
+    ExpectNear(wt.pos.y, 100.0f, 1e-4f, "child y follows");
+}
+
 // ---- M4.1：Meta.guid 序列化往返（内核 #5）----
 #include "Serialization/SceneArchive.h"
 
@@ -2444,6 +2518,7 @@ int main() {
     TestColor();
     TestUtils();
     TestAtlasUV();
+    TestVerifyAddSpriteAtHolesAndConflict();
     TestBatchKey();
     TestSortStability();
     TestParticles();
@@ -2493,6 +2568,7 @@ int main() {
     TestVerifyStateHashStability();
     TestNoDoubleDeathEvents();
     TestHierarchyChainLifecycle();
+    TestVerifyFullChainFollowsAfterRoundtrip();
     TestMetaGuidRoundtrip();
     TestEditorMetaSanity();
 #ifdef LEMON_EDITOR_CORE

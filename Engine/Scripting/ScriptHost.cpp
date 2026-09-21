@@ -80,9 +80,8 @@ uint64_t NativeSpawnSprite(uint32_t spriteId, float x, float y) {
     auto& tf = g_scene->Emplace<ecs::Transform2D>(e);
     tf.pos = {x, y};
     if (spriteId != 0) {
-        auto& sr = g_scene->Emplace<ecs::SpriteRenderer>(e);
+        auto& sr = g_scene->Emplace<ecs::SpriteRenderer>(e); // 默认启用
         sr.spriteId = spriteId;
-        sr.flags = 0x4; // enabled
     }
     auto& m = g_scene->Emplace<ecs::Meta>(e);
     std::snprintf(m.tag, sizeof(m.tag), "spawned");

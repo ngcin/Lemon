@@ -8,7 +8,10 @@ if(LEMON_BUILD_EDITOR)
 endif()
 
 enable_testing()
+# TIMEOUT 护栏：挂死快速失败而非无限等（2026-09-21 JobSystem 丢唤醒死锁实抓教训——
+# ctest 干等 25 分钟；正常 <30s）
 add_test(NAME engine-tests COMMAND lemon-tests)
+set_tests_properties(engine-tests PROPERTIES TIMEOUT 300)
 
 # M4 纪律断言：ImGui 头文件只准出现在 Editor/（M4-Editor-Plan §5 M4.0 验收项）
 add_test(NAME imgui-isolation

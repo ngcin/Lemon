@@ -723,10 +723,9 @@ void GameViewPanel::OnGui(EditorApp& app) {
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     if (avail.x >= 16 && avail.y >= 16) {
         const float dpi = app.Ui().DisplayScale();
-        void* tex = vr.EnsureRenderTarget(1, (uint32_t)(avail.x * dpi),
-                                          (uint32_t)(avail.y * dpi), "gameRT");
-        Camera2D& cam = vr.GameCam();
-        cam.halfHeight = kRefHalfHeight / cam.zoom;
+        // 先算 letterbox 显示矩形，RT 按**显示矩形**的像素尺寸建 → 1:1 呈现。
+        // （2026-09-21 手测第九轮修复：曾 RT=整面板尺寸 + Image 压进 16:9 矩形，
+        // 相机每帧亚像素移动 = 整幅画面逐帧重采样 = 「全屏抖动/不平顺」+ 比例畸变）
         float imgW = avail.x, imgH = avail.y;
         if (aspectIdx_ != 0) { // Free = 铺满；其余按比例 letterbox 居中
             static const float kRatio[] = {0.0f, 16.0f / 9.0f, 4.0f / 3.0f, 1.0f};
@@ -734,6 +733,10 @@ void GameViewPanel::OnGui(EditorApp& app) {
             if (imgW / imgH > gameAspect) imgW = imgH * gameAspect;
             else imgH = imgW / gameAspect;
         }
+        void* tex = vr.EnsureRenderTarget(1, (uint32_t)(imgW * dpi),
+                                          (uint32_t)(imgH * dpi), "gameRT");
+        Camera2D& cam = vr.GameCam();
+        cam.halfHeight = kRefHalfHeight / cam.zoom;
         const ImVec2 off((avail.x - imgW) * 0.5f, (avail.y - imgH) * 0.5f);
         ImGui::SetCursorPos(ImVec2(ImGui::GetCursorPosX() + off.x, ImGui::GetCursorPosY() + off.y));
         ImGui::Image(tex, ImVec2(imgW, imgH), ImVec2(0, 0), ImVec2(1, 1));

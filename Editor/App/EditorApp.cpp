@@ -1031,8 +1031,18 @@ bool EditorApp::OpenProjectPipeline(const std::string& projectRoot) {
     if (!ctx_.Assets().OpenProject(projectRoot, spriteIdBase)) return false;
     gpuAssets_.Init(*device_, ui_.get(), &viewport_->Assets().Registry(),
                     ctx_.Assets(), /*firstSlot=*/3); // 0=调色板 1=字体页 2=图标形状页(M4.7b)
-    for (const AssetEntry& e : ctx_.Assets().Entries())
-        if (!e.missing && e.type == AssetType::Sprite) gpuAssets_.ImportSprite(e);
+    {
+        // 按 DB 记账号升序导入（与设备重建回调同约定）：bindless 槽位分配确定性，
+        // 与文件系统扫描序无关（2026-09-21：扫描序曾致注册表号与记账交叉）
+        std::vector<const AssetEntry*> imps;
+        for (const AssetEntry& e : ctx_.Assets().Entries())
+            if (!e.missing && e.type == AssetType::Sprite) imps.push_back(&e);
+        std::sort(imps.begin(), imps.end(),
+                  [](const AssetEntry* a, const AssetEntry* b) {
+                      return a->spriteId < b->spriteId;
+                  });
+        for (const AssetEntry* e : imps) gpuAssets_.ImportSprite(*e);
+    }
     // 设备丢失重建（"editor-viewport" 先 Reset+重建程序化页 → 此处按 DB 记账号接续）；
     // 只注册一次——会话内切项目重复注册会叠加回调（RebuildAll 被调两遍）
     if (!assetGpuCbRegistered_) {
@@ -1315,6 +1325,8 @@ int EditorApp::Run(const EditorLaunch& launch) {
     if (!launch.script.empty()) InitScriptHostFrom(launch.script);
     g_app = this;
     scripting::SetEditorAssetHooks({HookSpriteOf, HookInstantiate});
+    playDiag_ = std::getenv("LEMON_PLAY_DIAG") != nullptr; // 相机手感诊断开关
+    if (playDiag_) std::printf("[playdiag] init on\n");
 
     // 启动场景：--scene 指定则打开；向导项目开 Main.scene；冒烟播种示例实体
     if (!launch.openScene.empty()) {
@@ -1326,6 +1338,10 @@ int EditorApp::Run(const EditorLaunch& launch) {
         smokeSeeded_ = ctx_.ActiveScene().AliveCount();
     } else if (launch.smoke || launch.smokeDrag || launch.smokeUi) {
         SeedSmokeScene();
+        // 冒烟不吃 ini 布局漂移账（同 smoke-drag 语义）：断言依赖 Scene 面板被绘制
+        // （grid/选框/手柄 = 面板侧推送），上次会话若把 GameView 切成活动标签，
+        // Scene 沉入后台标签 = overlay 三要素全零误报（etest 排查实抓，2026-09-21）
+        forceDefaultLayout_ = true;
     } else {
         ctx_.NewScene();
         LEMON_LOG("编辑器就绪（新建场景；Ctrl+O 打开 .scene）");
@@ -1511,6 +1527,11 @@ int EditorApp::Run(const EditorLaunch& launch) {
             if (!finalPlayReloadOk_) LEMON_ERROR("final: Play 中热重载失败");
         }
         if (ctx_.Playing()) {
+            if (playDiag_ && !playDiagPlayingSeen_) { // 诊断探针：Playing 分支首帧
+                playDiagPlayingSeen_ = true;
+                std::printf("[playdiag] playing branch at f=%llu\n",
+                            (unsigned long long)frame);
+            }
             // 输入路由：GameView 聚焦且非文本输入 → 语义子集（WASD/箭头/空格）进 Play World
             ecs::InputState in;
             if (gameViewFocused_ && !ImGui::GetIO().WantTextInput) {
@@ -1523,11 +1544,32 @@ int EditorApp::Run(const EditorLaunch& launch) {
                 in.ay = ay;
                 if (ImGui::IsKeyDown(ImGuiKey_Space)) in.buttons |= 1u << 4; // bit4 attack
             }
+            if (playDiag_ && frame >= 60 && frame < 120)
+                in.ax = 1.0f; // 诊断注入：D 键右走（自动化无真人点击，不经聚焦门）
             ctx_.ActiveWorld().ApplyInput(in);
             const float dt = paused_ && !singleStep_ ? 0.0f : 1.0f / 60.0f;
             ctx_.TickPlay(dt); // Pause = dt0（含 Essential 提交）
             singleStep_ = false;
             UpdateGameCameraFollow(dt);
+            if (playDiag_ && frame >= 2 && frame < 220) {
+                // 逐帧：墙钟帧耗时（pacing）/ 相机中心 / 跟随目标 / gameRT 尺寸（重建
+                // 翻转即 churn）。f60-120 走、121+ 停——抖动段应能在 dt 或 cam 序列现形
+                const auto nowD = std::chrono::steady_clock::now();
+                const float wallMs =
+                    playDiagPrev_.time_since_epoch().count() == 0
+                        ? 0.0f
+                        : std::chrono::duration<float, std::milli>(nowD - playDiagPrev_).count();
+                playDiagPrev_ = nowD;
+                if (playDiagHasTarget_) {
+                    const Camera2D& gc = viewport_->GameCam();
+                    std::printf("[playdiag] f=%llu dt=%.2f cam=(%.3f,%.3f) tgt=(%.3f,%.3f) "
+                                "rt=%ux%u\n",
+                                (unsigned long long)frame, wallMs, gc.center.x, gc.center.y,
+                                playDiagTarget_.x, playDiagTarget_.y,
+                                viewport_->RenderTargetWidth(1),
+                                viewport_->RenderTargetHeight(1));
+                }
+            }
         } else {
             ctx_.TickEditor(1.0f / 60.0f); // Essential（销毁提交）+ 空 FixedTick
             UpdateGameCameraFollow(0.0f);  // 非 Play：退出跟随时回默认位
@@ -2545,16 +2587,20 @@ void EditorApp::UpdateGameCameraFollow(float dt) {
     ecs::WorldTransform2D wt{};
     Vec2 pos = s.Get<ecs::Transform2D>(target).pos; // 父链异常兜底本地位
     if (ecs::ComputeWorldTransform(s, target, wt)) pos = wt.pos;
+    playDiagTarget_ = pos;      // LEMON_PLAY_DIAG 回传（帧循环节奏诊断）
+    playDiagHasTarget_ = true;
     if (!gameFollowActive_) {
-        cam.center = pos; // 吸附（首帧 1:1 对准，无阻尼入画）
         gameFollowActive_ = true;
         const char* tag = "脚本实体";
         if (!camEnt.IsNull()) tag = "Camera";
         else if (!playerEnt.IsNull()) tag = "Player";
         LEMON_LOG("游戏相机跟随：%s", tag);
-    } else {
-        cam.Follow(pos, dt, /*dampingRate=*/5.0f);
     }
+    // 手测第十轮：刚性跟随（center = 目标，零滞后）。阻尼版（rate 5/9 两轮实测）
+    // 的稳态滞后在走/停切换时反演成 ~28px 往返滑移 + 亚像素爬行 = 「抖动」观感；
+    // LEMON_PLAY_DIAG 数据证明帧节奏/RT/收敛曲线本身全平顺，锅在滞后动态。
+    // 电影感阻尼留给 C# 相机门面（M4.3 规划）按需启用 Camera2D::Follow。
+    cam.center = pos;
 }
 
 void EditorApp::SeedSmokeScene() {
@@ -2565,9 +2611,8 @@ void EditorApp::SeedSmokeScene() {
     ecs::Entity root = ctx_.CreateEntity("Player");
     s.Get<Transform2D>(root).pos = Vec2{640, 360}; // 相机中心
     {
-        SpriteRenderer& sr = s.Emplace<SpriteRenderer>(root);
+        SpriteRenderer& sr = s.Emplace<SpriteRenderer>(root); // 默认启用
         sr.spriteId = 3;
-        sr.flags = 0x4;
         Health& hp = s.Emplace<Health>(root);
         hp.max = hp.cur = 100.0f;
         Stats& st = s.Emplace<Stats>(root);

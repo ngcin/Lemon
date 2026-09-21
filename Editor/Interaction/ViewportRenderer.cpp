@@ -18,8 +18,8 @@ namespace lemon::editor {
 
 using ecs::Entity;
 using ecs::Scene;
-static constexpr uint32_t kSrEnabled = 0x4; // SpriteRenderer.flags bit2
-static constexpr uint32_t kSrFlipMask = 0x3;
+using ecs::kSrEnabled;     // RenderComponents.h 单一来源
+using ecs::kSrFlipMask;
 static constexpr float kOverlayLayer = 63.0f; // overlay 排序层（最顶）
 
 // ------------------------------------------------------- 图标形状页 ----
@@ -358,14 +358,13 @@ void ViewportRenderer::ExtractScene(EditorContext& ctx) {
     rm_.BeginSimTick();
     std::vector<uint64_t> seen;
     seen.reserve(entityToRenderable_.size() + 16);
-    const uint32_t spriteIdCap = assets_.Registry().SpriteCount();
     for (auto [ent, tf, sr] : s.View<ecs::Transform2D, ecs::SpriteRenderer>().each()) {
         (void)tf;
         Entity e = Scene::FromEntt(ent);
         if (!(sr.flags & kSrEnabled)) continue;
         // 悬空引用（资产已删/未导入）：不建 renderable（Inspector 槽红显 + 体检红字；
-        // GetSprite 越界断言的编辑器侧防线）
-        if (sr.spriteId == 0 || sr.spriteId > spriteIdCap) continue;
+        // GetSprite 越界断言的编辑器侧防线）。空洞号（退役资产）同理不渲染
+        if (!assets_.Registry().IsValidSprite(sr.spriteId)) continue;
         seen.push_back(e.id);
 
         // 世界变换（内核 #1 消费端；链异常回退本地，保持可渲染）
@@ -441,8 +440,9 @@ void ViewportRenderer::RenderViewport(rhi::CommandList& cl, uint32_t idx, Sprite
                 std::snprintf(label, sizeof(label), "%s", m->tag);
             else
                 std::snprintf(label, sizeof(label), "#%u", (uint32_t)(e.id & 0xFFFFFFFF));
-            const uint32_t spriteH = sr.spriteId != 0 && sr.spriteId <= reg.SpriteCount() ? reg.GetSprite(sr.spriteId).heightPx
-                                                                     : ProceduralAtlas::kCellPx;
+            const uint32_t spriteH = reg.IsValidSprite(sr.spriteId)
+                                         ? reg.GetSprite(sr.spriteId).heightPx
+                                         : ProceduralAtlas::kCellPx;
             Vec2 anchor{wt.pos.x - assets_.Font().TextWidth(label, labelScale) * 0.5f,
                         wt.pos.y + wt.scale.y * spriteH * 0.5f + 4.0f / cam.zoom};
             assets_.Font().DrawText(textPackets, label, anchor, labelScale, ink);
@@ -518,7 +518,7 @@ bool ViewportRenderer::WorldBoundsOf(EditorContext& ctx, Entity e, Vec2& center,
     center = wt.pos;
     rot = wt.rot;
     if (const ecs::SpriteRenderer* sr = s.TryGet<ecs::SpriteRenderer>(e);
-        sr && sr->spriteId != 0 && sr->spriteId <= assets_.Registry().SpriteCount()) {
+        sr && assets_.Registry().IsValidSprite(sr->spriteId)) {
         const auto& info = assets_.Registry().GetSprite(sr->spriteId);
         size = Vec2{wt.scale.x * info.widthPx, wt.scale.y * info.heightPx};
     } else {

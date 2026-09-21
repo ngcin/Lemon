@@ -1247,3 +1247,128 @@ ADR-009 修订记录：逐字段 override 正式移 M5（砍单 #1 生效，M4.4
 `lemon-tests` 12986 checks OK；`--smoke` / `--smoke-ui`（含目录导航 dir=1/1）/
 `--smoke-drag` / `--play`（字节级往返）/ `--final`（判据场景 Player 行走 +
 相机跟随实跑，minFps=59）全 PASS；相机跟随进 Play 日志确认（"游戏相机跟随：Player"）。
+
+## 2026-09-21 M4.7 手测第七轮：Add Component 加 SpriteRenderer 不显示 + JobSystem 丢唤醒死锁
+
+**现象①**：Hierarchy 建实体 → Inspector Add Component 加 SpriteRenderer → 指定
+spriteId → 不渲染（与父子层级无关，根级实体同发）。
+
+**根因**：`SpriteRenderer.flags` 默认 0（bit2 enabled 未置），而渲染提取
+（ViewportRenderer::ExtractScene）对无 enabled 位的实体**静默跳过**。全编辑器只有
+Hierarchy"创建精灵"（CreateSpriteEntity）和种子场景两条路显式 `flags = 0x4`，
+Add Component 的通用 `emplaceFn` 值初始化与 sprite 槽赋值路径都不置位。唯一手动
+出口 = Inspector 原始字节 flags 字段填 4（陷阱 UX）。
+
+**修复**（两层，Unity 语义对齐）：
+- 引擎侧治本：`flags` 默认值 `kSrEnabled`（新增即启用）；位常量收编
+  RenderComponents.h 单一来源（`kSrFlipX/kSrFlipY/kSrEnabled/kSrFlipMask`），
+  ViewportRenderer/anim-smoke 原本地副本常量删除（匿名命名空间 + using 会撞名）；
+  CreateSpriteEntity/SeedSmokeScene/NativeSpawnSprite 的显式 `= 0x4` 冗余行移除。
+- 编辑器侧加固：sprite 资产槽赋值（下拉/拖入）时 `flags |= kSrEnabled`——
+  "指定了图片 = 要显示"，同时救旧档 flags=0 的禁用实例。
+- C# 镜像注释同步：引擎侧默认启用，但 `default(SpriteRenderer)` 零值 = 禁用，
+  SetComponent 整写前须置 0x4。
+- 组件头 Enabled 复选框按用户决议**留 M5 Inspector 精化轮**。
+
+**现象②**（本轮回归实抓）：`editor-regression.sh` 的 ctest 步 lemon-tests 偶发
+**挂死不退出**（实抓一次干等 25 分钟；sample 采样钉板：主线程停在
+`~JobSystem → thread::join`，工作线程停在 `condition_variable::wait`）。
+
+**根因**：`~JobSystem` 的 `stop_.store + notify_all()` **不持 `wakeMutex_`**——
+通知落进工作线程"谓词已查 false → 入队等待"窗口被蒸发，线程永眠、join 挂死
+（教科书丢唤醒；`Enqueue` 的 `notify_one` 同款窗口）。原子变量防数据竞争但
+不防这个交错。单跑/首跑常绿纯靠时序运气。
+
+**修复**：stop_/queuedTasks_ 变更加 `wakeMutex_` 临界区后再 notify（谓词变更与
+等待方谓词检查互斥）；ctest 两个测试加 `TIMEOUT 300` 护栏（挂死快速失败）。
+
+### 回归
+
+`lemon-tests` 12988 checks（+2：flags 默认启用 / Emplace 值初始化路径）连跑
+8/8 OK；`tools/editor-regression.sh full` **11/11 PASS**（含上轮序列内偶发 FAIL
+的 smoke-drag；JobSystem 修复后单跑 3/3 + 序列内均绿）。
+
+## 2026-09-21 M4.7 手测第八轮（etest 项目实抓）：spriteId 两本账漂移 + smoke ini 漂移误报
+
+**问题①（父子链疑云 → 排除引擎）**：用户报"脚本挂父节点，子节点不跟动，疑似
+世界/本地坐标未实现"。排查：引擎链路全绿——新增回归
+`TestVerifyFullChainFollowsAfterRoundtrip`（SceneSetParent 全链 → 存档往返 =
+EnterPlay 同路径 → 动父 → 子世界位置精确跟随，engine_tests:1864）。用户场景
+JSON 证实链真实存在（first→second→third）。"走一点又弹回"实为**游戏相机跟随的
+阻尼回中**（M4.7 第六轮新增）：目标前移 → 相机滞后 → 相机追上 → 屏幕上回到
+原位；Inspector 坐标一直在变即证据。Scene 视口（编辑相机不跟随）可见全家真实
+移动。**工作方式符合设计**。
+
+**问题②（spriteId 两本账，真 bug 根治）**：etest 实抓"指定 logo 显示 spawn、
+指定 spawn 显示 logo；重开场景后切换两张都不显示"。根因三层：
+1. `AssetGpuCache::ImportSprite` 用注册表**自增号**登记（按文件系统扫描序），
+   与 manifest 记账号是两本账；不一致时"自愈"接受漂移号——错误信息声称
+   "场景引用已按新号重指"但**什么都没重指**。
+2. 文件系统扫描序不确定（APFS）：一次 [spawn,logo] 序即两账交叉 → 指定 A
+   显示 B。
+3. 新会话基址低于记账号时自增号整体下移 → 场景引用超出注册表容量 → 提取
+   跳过 → 全部不显示。
+
+**修复**：`AtlasRegistry::AddSpriteAt`（显式号登记；空洞 = 退役号哨兵，
+`IsValidSprite` 过滤；占用/0 号拒绝）+ `IsValidSprite` 三处消费端替换裸容量
+判断（ExtractScene/标签高/WorldBoundsOf）+ 初始导入按记账号升序（与设备重建
+回调同约定，槽位确定性）+ 冲突真报错回滚整页。etest 复验：`logo→106、
+spawn→107` 按记账登记，交换消失。guid 间接化（彻底解）仍 M5。
+
+**问题③（smoke ini 漂移误报，测试线加固）**：排障中 `--smoke` 连续 FAIL
+（grid/sel/handle 全零、label 正常）——grid/选框/手柄由 **Scene 面板侧**推送、
+标签由**渲染侧**推送：签名指向 Scene 沉入后台标签。实锤 = 上次会话把 GameView
+切成活动标签 → 退出写 ini → 冒烟吃漂移账（smoke-drag/smoke-ui 早有
+forceDefaultLayout_ 防线，基础 smoke 没加）。修：冒烟启动统一强制默认布局；
+污染序列（etest run → 基础 smoke）复验 PASS。
+
+### 回归
+
+`lemon-tests` **13010 checks**（+12：AddSpriteAt 空洞/冲突/回填 + 全链跟动 ×10）；
+etest 项目导入日志记账一致；`tools/editor-regression.sh full` **11/11 PASS**
+（含污染 ini 序列下基础 smoke）。
+
+## 2026-09-21 M4.7 手测第九轮：相机跟随手感——全屏抖动/停步后抖几下才停
+
+**现象**（用户确认"弹回 = 相机跟随"后）：移动不平顺、全屏有抖动感；停步后
+屏幕"抖动几次才完全停下"。
+
+**根因三层**：
+1. **GameView letterbox 重采样（最大头）**：RT 按整个面板尺寸渲染，Image 却压进
+   16:9 显示矩形——非 1:1 缩放 + 比例畸变；相机每帧亚像素移动 = 整幅画面逐帧
+   重采样 = 全屏抖动。Aspect 默认 16:9（aspectIdx_=1），用户默认踩中。
+2. **阻尼尾巴量化**：指数收敛（rate 5，~1s 尾巴）在亚像素区间的尾段每帧
+   0~1 像素交替跳 = "停步后抖几次"。
+3. 阻尼 5.0 偏松：停步后长滑行加重观感。
+
+**修复**：① RT 按 letterbox 显示矩形的像素尺寸建（1:1 呈现，零重采样零畸变，
+相机 aspect = 真实 16:9）；② 阻尼 5→9（收敛减半、跟得更紧）；③ 静止死区吸合
+（残差 < ~1.5 屏幕像素 = 1.5/zoom 世界单位 → center = pos，尾巴精确收口）。
+
+### 回归
+
+quick 6/6 + full **11/11** PASS；`lemon-tests` 13010 OK。手测复验：Play 中 WASD
+移动/停步——跟随手感待用户确认（帧率 pacing 若仍有不平顺，下一刀 Profiler
+CPU/GPU 帧时间排查）。
+
+## 2026-09-21 M4.7 手测第十轮：跟随手感收口——数据驱动定位，阻尼滞后即"抖动"
+
+第九轮三修（letterbox 1:1 / 阻尼 5→9 / 静止死区）后用户仍报抖动。**上测量**
+（新增 `LEMON_PLAY_DIAG=1` 诊断器：逐帧墙钟帧耗时/相机中心/跟随目标/gameRT
+尺寸 + f60-120 自动注入 D 键，走→停可复现；`--scene` 指定用户真实场景驱动
+InputMoverBehaviour——播种场景的 Spawner 不读输入，白跑一轮的教训）。
+
+**数据结论**（etest untitled.scene，220 帧）：目标每帧精确 +4px、帧时 16-17ms
+锁 vsync（子毫秒帧全在启动瞬态 f2-20，窗口上屏前）、gameRT 全程稳定
+1308×736（letterbox 1:1 生效）、阻尼收敛曲线纯指数无振荡——**帧节奏/GPU/RT
+全部无辜**。用户看到的"抖动" = 阻尼**稳态滞后**的动态：走动起步相机落后
+~28px（滑移累积）、停步反向滑回——往返滑移 + 亚像素爬行的合成观感。
+
+**修复**：编辑器跟随改**刚性**（`cam.center = pos`，零滞后零尾巴；整数步进
+mover 下相机落整像素，连亚像素爬行也消失）。诊断器复验：走动段 cam==tgt
+逐帧相等、停止即静止。电影感阻尼（Camera2D::Follow）保留给 C# 相机门面
+（M4.3 规划）按需启用。
+
+### 回归
+
+`lemon-tests` 13010 OK；`editor-regression.sh full` **11/11 PASS**。

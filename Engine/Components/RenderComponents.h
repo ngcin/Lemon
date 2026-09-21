@@ -6,12 +6,18 @@
 
 namespace lemon::ecs {
 
+/// SpriteRenderer.flags 位（单一来源；C# 镜像 Components.cs 同步注释）
+inline constexpr uint8_t kSrFlipX = 0x1;
+inline constexpr uint8_t kSrFlipY = 0x2;
+inline constexpr uint8_t kSrEnabled = 0x4;
+inline constexpr uint8_t kSrFlipMask = kSrFlipX | kSrFlipY;
+
 struct SpriteRenderer {
     uint32_t spriteId = 0;     // AtlasRegistry 静态表 id
     uint32_t colorRGBA = 0xFFFFFFFFu;
     int16_t sortOrder = 0;
     uint8_t sortingLayer = 0;
-    uint8_t flags = 0;         // bit0 flipX, bit1 flipY, bit2 enabled
+    uint8_t flags = kSrEnabled; // 新增即启用（Unity 语义；C# default(T) 零值 = 禁用）
 };
 
 struct Animator2D {

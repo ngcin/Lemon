@@ -86,16 +86,22 @@ void AssetGpuCache::ImportSprite(const AssetEntry& e) {
     device_->UploadTexture(p.tex, px, (uint64_t)w * h * 4);
     device_->BindTextureToSlot(p.tex, p.slot);
     atlas_->RegisterAtlas(p.slot, p.tex, p.w, p.h);
-    uint32_t got = atlas_->AddSprite(p.slot, 0, 0, p.w, p.h); // 全幅单 sprite（M4 最小集）
-    if (got != p.spriteId) {
-        // 分配号漂移（程序化图集变更/manifest 损坏重建）——以登记序为准自愈并红字
-        LEMON_ERROR("spriteId 记账漂移：%s 记 %u 实得 %u（场景引用已按新号重指）",
-                    e.relPath.c_str(), p.spriteId, got);
-        p.spriteId = got;
+    // 按 DB 记账号显式登记（全幅单 sprite，M4 最小集）——注册表与 manifest 同一本账，
+    // 扫描序无关。2026-09-21 根治：曾按登记序自增 + "自愈"接受漂移号（且并未重指
+    // 场景引用）——文件系统扫描序一变，两本账交叉 = 指定 A 显示 B；号超出注册表
+    // 容量 = 全部不显示（etest 实抓）。
+    if (!atlas_->AddSpriteAt(e.spriteId, p.slot, 0, 0, p.w, p.h)) {
+        LEMON_ERROR("spriteId %u 登记失败（0/已占用）：'%s'——manifest 记账冲突，"
+                    "资产未导入（引用红显；删 .lemon/manifest.json 可重排）",
+                    e.spriteId, e.relPath.c_str());
+        device_->WaitIdle(); // 刚上传的纹理无登记号：回滚整页
+        device_->DestroyTexture(p.tex);
+        stbi_image_free(px);
+        return;
     }
     stbi_image_free(px);
 
-    // 保持 spriteId 升序（= 分配序；RebuildAll 的编号复原依赖此序）
+    // 保持 spriteId 升序（RebuildAll 的槽位复原依赖此序）
     pages_.push_back(p);
     std::sort(pages_.begin(), pages_.end(), [](const Page& a, const Page& b) {
         return a.spriteId < b.spriteId;

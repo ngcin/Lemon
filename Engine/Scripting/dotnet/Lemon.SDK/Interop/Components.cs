@@ -62,7 +62,10 @@ public struct SpriteRenderer // 12B
     public uint ColorRGBA;
     public short SortOrder;
     public byte SortingLayer;
-    public byte Flags;        // bit0 flipX, bit1 flipY, bit2 enabled
+    public byte Flags;        // bit0 flipX, bit1 flipY, bit2 enabled。
+                              // 注意：引擎侧新增组件默认启用（RenderComponents.h），
+                              // 但 C# default(SpriteRenderer) 是零值 = 禁用——
+                              // SetComponent 整写前须置 Flags = 0x4（否则不渲染）。
 }
 
 [StructLayout(LayoutKind.Sequential)]

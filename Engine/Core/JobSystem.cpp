@@ -34,7 +34,12 @@ JobSystem::JobSystem(int threadCount) {
 }
 
 JobSystem::~JobSystem() {
-    stop_.store(true, std::memory_order_release);
+    { // stop_ 写入须与 WorkerLoop 谓词检查互斥：不持锁的 notify 会落进
+      // 「谓词已查 false → 入队等待」窗口被蒸发 → 工作线程永眠、join 挂死
+      // （2026-09-21 ctest 实抓：lemon-tests 偶发不退出，采样停在 cond_wait）
+      std::lock_guard<std::mutex> lock(wakeMutex_);
+      stop_.store(true, std::memory_order_release);
+    }
     wakeCv_.notify_all();
     for (std::thread& t : threads_)
         if (t.joinable()) t.join();
@@ -49,7 +54,10 @@ void JobSystem::Enqueue(std::packaged_task<void()> task) {
         std::lock_guard<std::mutex> lock(queueMutexes_[q]);
         queues_[q].push_back(std::move(task));
     }
-    queuedTasks_.fetch_add(1, std::memory_order_release);
+    { // 同 ~JobSystem：计数更新入临界区，notify 不丢（谓词见 JobSystem.h）
+        std::lock_guard<std::mutex> lock(wakeMutex_);
+        queuedTasks_.fetch_add(1, std::memory_order_release);
+    }
     wakeCv_.notify_one(); // 只唤醒一个，避免惊群
 }
 

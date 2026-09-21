@@ -4,3 +4,4 @@ add_dependencies(lemon-script-tests lemon-dotnet-asm)
 target_link_libraries(lemon-script-tests PRIVATE lemon-csharp)
 
 add_test(NAME script-tests COMMAND lemon-script-tests)
+set_tests_properties(script-tests PROPERTIES TIMEOUT 300) # 挂死快速失败（同 engine-tests）

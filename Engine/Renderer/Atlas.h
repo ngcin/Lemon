@@ -31,6 +31,13 @@ public:
     void UpdateAtlasPage(uint32_t atlasIndex, rhi::Texture tex, uint32_t width, uint32_t height);
     /// 在页内登记一块子纹理，返回全局 spriteId
     uint32_t AddSprite(uint32_t atlasIndex, uint32_t px, uint32_t py, uint32_t w, uint32_t h);
+    /// 按调用方持久号显式登记（编辑器导入页：号 = manifest 记账，与扫描序无关；
+    /// 中间空洞 = 退役号——资产删除只增不减）。id 0 / 已占用返回 false，调用方红字
+    /// ——根治"注册表自增号与 DB 记账两本账漂移"（2026-09-21，指定 A 显示 B 的元凶）
+    bool AddSpriteAt(uint32_t spriteId, uint32_t atlasIndex, uint32_t px, uint32_t py,
+                     uint32_t w, uint32_t h);
+    /// 该号是否有效登记（0 / 越界 / 空洞 = false）。空洞页采样越界，渲染侧须先过滤
+    bool IsValidSprite(uint32_t spriteId) const;
     const SpriteInfo& GetSprite(uint32_t spriteId) const;
     uint32_t SpriteCount() const { return (uint32_t)sprites_.size(); }
     uint32_t AtlasCount() const { return (uint32_t)atlases_.size(); }

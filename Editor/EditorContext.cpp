@@ -166,9 +166,8 @@ ecs::Entity EditorContext::CreateEntity(const char* tag) {
 
 ecs::Entity EditorContext::CreateSpriteEntity(const char* tag, uint32_t spriteId) {
     ecs::Entity e = CreateEntity(tag);
-    ecs::SpriteRenderer& sr = scene_->Emplace<ecs::SpriteRenderer>(e);
+    ecs::SpriteRenderer& sr = scene_->Emplace<ecs::SpriteRenderer>(e); // 默认启用
     sr.spriteId = spriteId;
-    sr.flags = 0x4; // bit2 enabled
     return e;
 }
 

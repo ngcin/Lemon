@@ -7,6 +7,12 @@
 
 namespace lemon::renderer {
 
+namespace {
+/// 空洞哨兵：atlasIndex 槽位恒非法（bindless 越界）——IsValidSprite 据此过滤退役号
+constexpr uint32_t kHoleAtlasIdx = 0xFFFFFFFFu;
+const SpriteInfo kHoleSprite = MakeSpriteInfo(kHoleAtlasIdx, 1, 1, 0, 0, 1, 1);
+} // namespace
+
 SpriteInfo MakeSpriteInfo(uint32_t atlasIndex, uint32_t atlasW, uint32_t atlasH, uint32_t px,
                           uint32_t py, uint32_t w, uint32_t h) {
     SpriteInfo s;
@@ -64,6 +70,30 @@ uint32_t AtlasRegistry::AddSprite(uint32_t atlasIndex, uint32_t px, uint32_t py,
     }
     LEMON_ASSERT(false, "unknown atlasIndex");
     return 0;
+}
+
+bool AtlasRegistry::AddSpriteAt(uint32_t spriteId, uint32_t atlasIndex, uint32_t px,
+                                uint32_t py, uint32_t w, uint32_t h) {
+    if (spriteId == 0) return false;
+    if (spriteId <= sprites_.size()) {
+        if (sprites_[spriteId - 1].atlasIndex != kHoleAtlasIdx) return false; // 已占用
+    } else {
+        // 中间空洞 = 退役号（资产删除只增不减）：哨兵占位，IsValidSprite 过滤
+        sprites_.resize(spriteId, kHoleSprite);
+    }
+    for (auto& a : atlases_) {
+        if (a.atlasIndex != atlasIndex) continue;
+        LEMON_ASSERT(px + w <= a.width && py + h <= a.height, "sprite rect out of atlas");
+        sprites_[spriteId - 1] = MakeSpriteInfo(atlasIndex, a.width, a.height, px, py, w, h);
+        return true;
+    }
+    LEMON_ASSERT(false, "unknown atlasIndex");
+    return false;
+}
+
+bool AtlasRegistry::IsValidSprite(uint32_t spriteId) const {
+    return spriteId != 0 && spriteId <= sprites_.size() &&
+           sprites_[spriteId - 1].atlasIndex != kHoleAtlasIdx;
 }
 
 const SpriteInfo& AtlasRegistry::GetSprite(uint32_t spriteId) const {

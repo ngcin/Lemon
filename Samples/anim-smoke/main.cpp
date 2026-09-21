@@ -46,8 +46,7 @@ constexpr uint32_t kFramePx = 64;
 constexpr uint32_t kAtlasW = kFrameCount * kFramePx; // 1024×64 单页
 constexpr uint32_t kAtlasH = kFramePx;
 constexpr float kFps = 10.0f;                        // 换帧率（C++/C# 两侧一致）
-constexpr uint8_t kSrEnabled = 0x4;                  // SpriteRenderer.flags bit2
-constexpr uint8_t kSrFlipMask = 0x3;                 // bit0 flipX / bit1 flipY（= kInstFlipX/Y）
+// kSrEnabled / kSrFlipMask：RenderComponents.h 单一来源（flags 位常量）
 
 // 程序化动画帧 f：脉动球（色相随 f 推移）+ 轨道标记点（看旋转方向/连续性）+ 底部进度条
 //（宽度直读帧号）。最外圈 1px 保持透明：图集帧格紧密排布，线性采样会在 UV 边缘采到

@@ -132,6 +132,15 @@ private:
     /// tag "Player" > 首个挂脚本实体；进 Play 首帧吸附、之后阻尼跟随；退出回默认位。
     void UpdateGameCameraFollow(float dt);
 
+    // ---- LEMON_PLAY_DIAG=1：Play 相机手感诊断（手测第九轮）----
+    /// 逐帧打印墙钟帧耗时/相机中心/跟随目标/gameRT 尺寸；f60-120 自动注入 D 键
+    /// （走→停复现）。用于把"抖动"归因到 帧节奏/RT 重建/相机数学/写回时序 之一。
+    bool playDiag_ = false;
+    std::chrono::steady_clock::time_point playDiagPrev_{};
+    Vec2 playDiagTarget_{};
+    bool playDiagHasTarget_ = false;
+    bool playDiagPlayingSeen_ = false;
+
     // ---- M4.6b（§5 日常编辑效率）----
     void CopySelection();    // §5-1：选中子树（多根）→ 内部剪贴板（树 JSON + 根位置）
     void PasteClipboard();   // §5-1：粘贴（结构完整；根 +24/+24 相对偏移；进 Undo）
