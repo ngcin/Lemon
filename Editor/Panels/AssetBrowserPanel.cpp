@@ -3,6 +3,7 @@
 // 交互：目录树 + 缩略图网格；拖拽 sprite 进 SceneView = 建实体、进 Inspector
 // sprite 槽 = 设引用；拖 prefab 进 SceneView/Hierarchy = 实例化；右键导入/
 // 重命名（guid 随 .meta 走 → 引用不断）/删除（墓碑 + 体检红字）；双击 = 建实体。
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -31,6 +32,22 @@ uint8_t KindOf(AssetType t) {
         case AssetType::Script: return 2;
         default: return 3;
     }
+}
+
+// C3 同类：过滤忽略大小写（与 Hierarchy 搜索同语义）
+const char* StrIStr(const char* hay, const char* needle) {
+    if (!needle[0]) return hay;
+    for (const char* h = hay; *h; ++h) {
+        const char* a = h;
+        const char* b = needle;
+        while (*a && *b &&
+               std::tolower((unsigned char)*a) == std::tolower((unsigned char)*b)) {
+            ++a;
+            ++b;
+        }
+        if (!*b) return h;
+    }
+    return nullptr;
 }
 } // namespace
 
@@ -114,7 +131,7 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
             const bool outsideAssets =
                 currentDir_.empty() && d.compare(0, 6, "Assets") != 0;
             const std::string rest = outsideAssets ? d : d.substr(prefix.size());
-            if (!filter_.empty() && rest.find(filter_) == std::string::npos) continue;
+            if (!filter_.empty() && !StrIStr(rest.c_str(), filter_.c_str())) continue;
             if (col++ > 0) ImGui::SameLine();
             ImGui::PushID(d.c_str());
             ImGui::BeginGroup();
@@ -155,14 +172,15 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
     // 条目网格：根（""）= Assets/ 直下；子目录 = currentDir_ 直下（同上面包屑语义）
     const std::string entryDir = currentDir_.empty() ? "Assets" : currentDir_;
     for (const AssetEntry* e : db.EntriesInDir(entryDir)) {
-        if (!filter_.empty() && !strstr(e->FileName().c_str(), filter_.c_str())) continue;
+        if (!filter_.empty() && !StrIStr(e->FileName().c_str(), filter_.c_str())) continue;
         if (col++ > 0) ImGui::SameLine();
         DrawItem(app, *e);
         if (col >= cols) col = 0;
     }
 
-    // 空区右键：导入
-    if (ImGui::BeginPopupContextWindow("assets_bg")) {
+    // 空区右键：导入。NoOpenOverItems 同 HierarchyPanel（右键资产条目时禁开本
+    // 菜单——与 asset_ctx 同帧双触发会被本菜单盖掉，条目右键永远只见"导入"）
+    if (ImGui::BeginPopupContextWindow("assets_bg", ImGuiPopupFlags_NoOpenOverItems)) {
         if (ImGui::MenuItem("导入文件…")) app.MenuImportAsset();
         ImGui::EndPopup();
     }
@@ -236,6 +254,23 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
     const bool hovered = ImGui::IsItemHovered();
     const bool doubleClicked = hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
 
+    // 右键菜单绑缩略图（72×72 大目标）：绑在下方 12 字符文件名上时几乎点不中——
+    // NoOpenOverItems 修复后右键缩略图不再弹空白菜单，成了"无菜单"（G4–G6 手测）
+    if (ImGui::BeginPopupContextItem("asset_ctx")) {
+        if (ImGui::MenuItem("重命名…")) {
+            renamingGuid_ = e.guid;
+            renameBuf_ = e.relPath;
+        }
+        if (ImGui::MenuItem("复制 GUID"))
+            ImGui::SetClipboardText(AssetDatabase::GuidToHex(e.guid).c_str());
+        ImGui::Separator();
+        if (ImGui::MenuItem("删除（转墓碑）")) {
+            if (AssetEntry* target = ctx.Assets().FindByGuid(e.guid))
+                ctx.Assets().Remove(*target);
+        }
+        ImGui::EndPopup();
+    }
+
     // 悬浮提示：类型 / guid / 导入状态
     if (hovered) {
         uint32_t w = 0, h = 0;
@@ -266,25 +301,11 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
         }
     }
 
-    // 文件名（截断 12 字符）+ 右键菜单
+    // 文件名（截断 12 字符；右键菜单已上移绑缩略图）
     char shortName[16];
     std::snprintf(shortName, sizeof(shortName), "%.12s%s", e.FileName().c_str(),
                   e.FileName().size() > 12 ? "…" : "");
     ImGui::TextWrapped("%s", shortName);
-    if (ImGui::BeginPopupContextItem("asset_ctx")) {
-        if (ImGui::MenuItem("重命名…")) {
-            renamingGuid_ = e.guid;
-            renameBuf_ = e.relPath;
-        }
-        if (ImGui::MenuItem("复制 GUID"))
-            ImGui::SetClipboardText(AssetDatabase::GuidToHex(e.guid).c_str());
-        ImGui::Separator();
-        if (ImGui::MenuItem("删除（转墓碑）")) {
-            if (AssetEntry* target = ctx.Assets().FindByGuid(e.guid))
-                ctx.Assets().Remove(*target);
-        }
-        ImGui::EndPopup();
-    }
     ImGui::EndGroup();
     ImGui::PopID();
 }

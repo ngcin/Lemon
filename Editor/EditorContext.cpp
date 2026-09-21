@@ -367,36 +367,13 @@ void EditorContext::BreakPrefabInstance(ecs::Entity e) {
 
 ecs::Entity EditorContext::DuplicateEntity(ecs::Entity e) {
     if (e.IsNull() || !scene_->Alive(e)) return ecs::Entity::Null();
-    auto& reg = ecs::ComponentRegistry::Instance();
-    ecs::Entity copy = scene_->Create();
-    std::vector<uint64_t> selfSet{e.id, copy.id}; // EntityRef 自引用判定集
-    for (uint16_t id = 0; id < reg.Count(); ++id) {
-        const ecs::ComponentMeta& meta = reg.At(id);
-        if (!meta.hasFn || !meta.readFn || !meta.emplaceFn) continue;
-        if (!meta.hasFn(*scene_, e)) continue;
-        void* dst = meta.emplaceFn(*scene_, copy);
-        if (const void* src = meta.readFn(*scene_, e)) {
-            if (meta.sizeOf > 0) std::memcpy(dst, src, meta.sizeOf);
-        }
-    }
-    // 副本特化：新 guid；Hierarchy 不复制（副本为根）；EntityRef 指向自身 → 置空
-    if (scene_->Has<ecs::Meta>(copy)) {
-        scene_->Get<ecs::Meta>(copy).guid = GenerateGuid();
-    }
-    scene_->Remove<ecs::Hierarchy>(copy);
-    for (uint16_t id = 0; id < reg.Count(); ++id) {
-        const ecs::ComponentMeta& meta = reg.At(id);
-        if (!meta.getFn) continue;
-        void* comp = meta.getFn(*scene_, copy);
-        if (!comp) continue;
-        for (uint16_t f = 0; f < meta.fieldCount; ++f) {
-            if (meta.fields[f].type != ecs::FieldType::EntityRef) continue;
-            uint64_t* ref = (uint64_t*)((char*)comp + meta.fields[f].offset);
-            if (std::find(selfSet.begin(), selfSet.end(), *ref) != selfSet.end())
-                *ref = 0;
-        }
-    }
-    dirty = true;
+    // C8：整子树复制——走 CopySelection/PasteClipboard 同一 SaveEntityTree/
+    // LoadEntityTree 链（组件全量、子树内 EntityRef 重映射/跨树置空、guid 全换新）。
+    // 此前只平移单实体组件表（"Hierarchy 不复制"），父子链 Ctrl+D 只得根。
+    // 副本原位（对齐 Unity Ctrl+D；粘贴的 +24/+24 防叠偏移不在此路径）
+    const std::string tree = ecs::SceneArchive::SaveEntityTree(*scene_, e);
+    ecs::Entity copy = ecs::SceneArchive::LoadEntityTree(*scene_, tree);
+    if (!copy.IsNull()) dirty = true;
     return copy;
 }
 

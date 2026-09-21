@@ -81,6 +81,27 @@ public:
         }
         if (autoScroll_ && ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 4.0f)
             ImGui::SetScrollHereY(1.0f);
+        // 右键复制（J 段手测建议）：无行选择机制，"按当前过滤复制全部"覆盖贴
+        // 报错/贴日志主场景；"最近一条"取最后一条可见行
+        if (ImGui::BeginPopupContextWindow("console_ctx")) {
+            if (ImGui::MenuItem("复制全部（按过滤）")) {
+                std::string all;
+                for (const auto& l : snap)
+                    if (filter_ & (1u << (int)l.level)) {
+                        if (!all.empty()) all += '\n';
+                        all += l.text;
+                    }
+                ImGui::SetClipboardText(all.c_str());
+            }
+            if (ImGui::MenuItem("复制最近一条")) {
+                for (auto it = snap.rbegin(); it != snap.rend(); ++it)
+                    if (filter_ & (1u << (int)it->level)) {
+                        ImGui::SetClipboardText(it->text.c_str());
+                        break;
+                    }
+            }
+            ImGui::EndPopup();
+        }
         ImGui::EndChild();
         ImGui::End();
     }

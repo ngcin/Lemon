@@ -1,6 +1,7 @@
 // Lemon 编辑器 — Hierarchy 面板（M4-Editor-Plan §2.2）
 // 数据源：Scene 实体遍历 + Hierarchy 父子链（ECS/Hierarchy.h 维护）。
 // 验收点：拖拽成环被拒（SetParent 引擎侧拒绝 + Console 告警）；Play 中切数据源 M4.3。
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -32,6 +33,23 @@ const char* DisplayName(ecs::Scene& s, ecs::Entity e) {
     }
     std::snprintf(buf, sizeof(buf), "Entity_%llu", (unsigned long long)(e.id & 0xFFFFFFFFull));
     return buf;
+}
+
+// C3 手测：搜索忽略大小写（ASCII tolower 后子串匹配；非 ASCII 字节段原样比较，
+// 中文等不受影响）。AssetBrowser 过滤器同款语义。
+const char* StrIStr(const char* hay, const char* needle) {
+    if (!needle[0]) return hay;
+    for (const char* h = hay; *h; ++h) {
+        const char* a = h;
+        const char* b = needle;
+        while (*a && *b &&
+               std::tolower((unsigned char)*a) == std::tolower((unsigned char)*b)) {
+            ++a;
+            ++b;
+        }
+        if (!*b) return h;
+    }
+    return nullptr;
 }
 
 } // namespace
@@ -116,12 +134,33 @@ void HierarchyPanel::OnGui(EditorApp& app) {
             DrawNode(app, e, scene.Has<ecs::Hierarchy>(e));
     });
 
-    // 空区右键 / 拖放摘根
-    if (ImGui::BeginPopupContextWindow("hierarchy_bg")) {
-        if (ImGui::MenuItem("创建空实体")) ctx.Select(ctx.CreateEntity("Empty"), false);
-        if (ImGui::MenuItem("创建精灵")) ctx.Select(ctx.CreateSpriteEntity("Sprite"), false);
+    // 空区右键 / 拖放摘根。NoOpenOverItems：右键行条目时禁开本菜单——否则与
+    // BeginPopupContextItem(node_ctx) 同帧双触发，后开者关掉前者，行右键永远
+    // 只见"创建"两项（C5/C6 手测"没有摘根/删除"的真因；无渲染 imgui 最小程序
+    // 复现：不带 flag 时 node_ctx=0/hierarchy_bg=1，带 flag 反转）
+    if (ImGui::BeginPopupContextWindow("hierarchy_bg", ImGuiPopupFlags_NoOpenOverItems)) {
+        // C1：空区创建进 Undo（对齐"+ 创建"弹窗三行快照写法——此前漏推，
+        // 创建后 Ctrl+Z 报"栈空"）
+        if (ImGui::MenuItem("创建空实体")) {
+            const std::string before = ctx.SnapshotSceneJson();
+            ecs::Entity ne = ctx.CreateEntity("Empty");
+            ctx.Select(ne, false);
+            if (!ctx.Playing()) ctx.PushStructuralUndo("创建实体", before);
+        }
+        if (ImGui::MenuItem("创建精灵")) {
+            const std::string before = ctx.SnapshotSceneJson();
+            ecs::Entity ne = ctx.CreateSpriteEntity("Sprite");
+            ctx.Select(ne, false);
+            if (!ctx.Playing()) ctx.PushStructuralUndo("创建实体", before);
+        }
         ImGui::EndPopup();
     }
+    // C2：点空白清选（干净左击 = 非拖拽收尾、不落在任何条目上；与 SceneView
+    // 点空白清选同语义）。拖拽位移阈值 3px：行拖挂接的释放不算点击。
+    if (ImGui::IsWindowHovered() && !ImGui::IsAnyItemHovered() &&
+        ImGui::IsMouseReleased(ImGuiMouseButton_Left) &&
+        ImGui::GetIO().MouseDragMaxDistanceSqr[0] < 9.0f)
+        ctx.ClearSelection();
     if (ImGui::BeginDragDropTarget()) { // 拖到空白 = 摘根
         if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("LemonEntity")) {
             ecs::Entity dropped{};
@@ -141,7 +180,7 @@ void HierarchyPanel::OnGui(EditorApp& app) {
 bool HierarchyPanel::PassFilter(ecs::Scene& s, ecs::Entity e, const char* filter) {
     if (!filter[0]) return true;
     const ecs::Meta* m = s.TryGet<ecs::Meta>(e);
-    return m && std::strstr(m->tag, filter) != nullptr;
+    return m && StrIStr(m->tag, filter) != nullptr; // C3：忽略大小写
 }
 
 bool HierarchyPanel::SubtreeMatches(ecs::Scene& s, ecs::Entity e, const char* filter) {
@@ -272,12 +311,22 @@ void HierarchyPanel::DrawNode(EditorApp& app, ecs::Entity e, bool hasHierarchy) 
         }
         ImGui::EndDragDropTarget();
     }
+    // 弹窗 ID 按节点隔离：node_ctx 曾全节点共享一个 ID——NoOpenOverItems 修复
+    // 让菜单首次真正可见时暴露：每个节点的调用点都向同一弹窗提交内容 → 菜单
+    // 按实体数整份重复 + 同名条目 conflicting ID 报错框（Inspector 字段级/
+    // AssetBrowser DrawItem 同样靠 PushID 保唯一，本面板此前漏）
+    ImGui::PushID((const void*)(uintptr_t)e.id);
     if (ImGui::BeginPopupContextItem("node_ctx")) {
         ctx.Select(e, false);
         if (ImGui::MenuItem("重命名 (F2)")) StartRename(scene, e);
         if (ImGui::MenuItem("复制 (Ctrl+D)")) {
+            // C1 同类：右键"复制"此前漏推结构轨（Ctrl+D 键路有——不对称）
+            const std::string before = ctx.SnapshotSceneJson();
             ecs::Entity copy = ctx.DuplicateEntity(e);
-            if (!copy.IsNull()) ctx.Select(copy, false);
+            if (!copy.IsNull()) {
+                ctx.Select(copy, false);
+                if (!ctx.Playing()) ctx.PushStructuralUndo("复制实体", before);
+            }
         }
         if (ImGui::MenuItem("摘根 (Detach)")) {
             const std::string before = ctx.SnapshotSceneJson();
@@ -299,6 +348,7 @@ void HierarchyPanel::DrawNode(EditorApp& app, ecs::Entity e, bool hasHierarchy) 
         }
         ImGui::EndPopup();
     }
+    ImGui::PopID();
 
     if (nodeOpen && !first.IsNull()) {
         for (ecs::Entity c = first; !c.IsNull();) {

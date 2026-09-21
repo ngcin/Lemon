@@ -75,12 +75,16 @@ public:
     void SetGameViewFocused(bool f) { gameViewFocused_ = f; }
     const EditorLaunch& Launch() const { return *launch_; }
 
+    // 脏场景确认后的续操作（M4.2 欠账 2026-09-21 补齐：此前 SceneOp 复用退出模态，
+    // 按钮"保存并退出/丢弃并退出"硬编码 forceExit_ —— 打开/新建场景、切项目直接把
+    // 整个编辑器关了）
+    enum class PendingSceneOp { None, OpenScene, NewScene, OpenProject };
     // ---- 场景 IO 动作（菜单/快捷键共用；File 状态机内聚于此）----
     void MenuNewScene();
     void MenuOpenScene();
     void MenuSaveScene();    // 无路径 → 转 SaveAs
     void MenuSaveSceneAs();
-    bool ConfirmUnsaved();   // dirty 时弹确认框；返回 false = 用户取消
+    bool ConfirmUnsaved(PendingSceneOp after); // 脏场景确认（SceneOp 分流：确认后做 after）   // dirty 时弹确认框；返回 false = 用户取消
 
     // ---- 资产动作（M4.4）----
     void MenuImportAsset();  // 文件选择器（复制进 Assets/ + 导入）
@@ -230,6 +234,8 @@ private:
     std::string curTitle_;         // 窗口标题缓存（变更才调 SDL）
     bool smokeCloseArmedEver_ = false; // --smoke-close dirty：确认框出现过
     ConfirmContext confirmContext_ = ConfirmContext::Exit;
+    PendingSceneOp pendingSceneOp_ = PendingSceneOp::None; // SceneOp 确认后要做的场景操作
+    int8_t tabFocusPending_ = 0; // Play 进出自动切 Game/Scene 标签页（+1/-1；BuildUI 内消费）
     bool aboutOpen_ = false;
     uint32_t smokeSeeded_ = 0;     // 冒烟播种实体数（退出时守恒断言）
     SceneViewPanel* scenePanel_ = nullptr; // --smoke-drag 注入定位（按名取，非所有权）

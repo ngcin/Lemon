@@ -49,6 +49,30 @@ EditorApp::~EditorApp() = default;
 namespace {
 // C# native 资产钩子（M4.4 #8；进程一份——EditorApp 即进程单例）
 EditorApp* g_app = nullptr;
+// smoke-ui C8：Ctrl+D 已子树化——计数断言的增量 = 选中根的子树大小
+// （种子 Player 带 3 个 Mob 子节点，子树 = 4）
+uint32_t SubtreeSizeOf(ecs::Scene& s, ecs::Entity root) {
+    uint32_t n = 0;
+    ecs::Entity stack[64];
+    int top = 0;
+    if (!root.IsNull() && s.Alive(root)) stack[top++] = root;
+    while (top > 0) {
+        ecs::Entity e = stack[--top];
+        ++n;
+        const ecs::Hierarchy* h = s.TryGet<ecs::Hierarchy>(e);
+        for (ecs::Entity c = h && !h->firstChild.IsNull() && s.Alive(h->firstChild)
+                                 ? h->firstChild
+                                 : ecs::Entity::Null();
+             !c.IsNull() && s.Alive(c);) {
+            const ecs::Hierarchy* ch = s.TryGet<ecs::Hierarchy>(c);
+            const ecs::Entity nx =
+                ch && !ch->next.IsNull() && s.Alive(ch->next) ? ch->next : ecs::Entity::Null();
+            if (top < 64) stack[top++] = c;
+            c = nx;
+        }
+    }
+    return n;
+}
 uint32_t HookSpriteOf(const char* hex) {
     return g_app ? g_app->Ctx().SpriteIdOfGuidHex(hex) : 0;
 }
@@ -224,8 +248,20 @@ void EditorApp::BuildMenuBar() {
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("GameObject")) {
-        if (ImGui::MenuItem("创建空实体")) ctx_.Select(ctx_.CreateEntity("Empty"), false);
-        if (ImGui::MenuItem("创建精灵")) ctx_.Select(ctx_.CreateSpriteEntity("Sprite"), false);
+        // C1：创建三入口（+创建/空区右键/本菜单）都进结构轨——此前本菜单与
+        // 空区右键漏推快照，创建后 Ctrl+Z 报"栈空"
+        if (ImGui::MenuItem("创建空实体")) {
+            const std::string before = ctx_.SnapshotSceneJson();
+            ecs::Entity ne = ctx_.CreateEntity("Empty");
+            ctx_.Select(ne, false);
+            if (!ctx_.Playing()) ctx_.PushStructuralUndo("创建实体", before);
+        }
+        if (ImGui::MenuItem("创建精灵")) {
+            const std::string before = ctx_.SnapshotSceneJson();
+            ecs::Entity ne = ctx_.CreateSpriteEntity("Sprite");
+            ctx_.Select(ne, false);
+            if (!ctx_.Playing()) ctx_.PushStructuralUndo("创建实体", before);
+        }
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Window")) {
@@ -289,9 +325,10 @@ void EditorApp::BuildToolbar() {
                           playing ? theme::kPlayStop : theme::kAccentDim);
     if (ui::IconButton(*this, playing ? IconKind::Stop : IconKind::Play, "##play", false)) {
         if (playing) {
-            if (!ctx_.ExitPlay()) LEMON_WARN("Stop 后快照校验失败（编辑场景已按快照重建）");
-        } else {
-            ctx_.EnterPlay();
+            if (ctx_.ExitPlay()) tabFocusPending_ = -1;
+            else LEMON_WARN("Stop 后快照校验失败（编辑场景已按快照重建）");
+        } else if (ctx_.EnterPlay()) {
+            tabFocusPending_ = 1;
         }
     }
     ImGui::PopStyleColor(3);
@@ -511,17 +548,36 @@ void EditorApp::BuildShortcuts() {
         if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_S) && !playing_) MenuSaveScene();
         if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_O) && !playing_) MenuOpenScene();
         if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_D)) {
-            ecs::Entity e = ctx_.Primary();
-            if (!e.IsNull()) {
-                // 结构轨：复制前快照（此前漏推——Ctrl+Z 无法撤销复制，与右键
-                // "粘贴/删除"不对称；smoke-ui 真人链路抓到）
-                const std::string before = ctx_.SnapshotSceneJson();
+            // C8：按"选中子树的根"复制（祖先也在选中集内的跳过，同 CopySelection
+            // 过滤——此前只取 Primary 单体，选父子链只得根；DuplicateEntity 已
+            // 子树化）。根先收集再复制：迭代 Selection() 中调 Select() 会改选择
+            // 集容器（追加触发重分配 = 迭代器失效）。结构轨快照同前
+            const std::string before = ctx_.SnapshotSceneJson();
+            ecs::Scene& s = ctx_.ActiveScene();
+            std::vector<ecs::Entity> roots;
+            for (ecs::Entity e : ctx_.Selection()) {
+                if (e.IsNull() || !s.Alive(e)) continue;
+                bool ancestorSelected = false;
+                for (ecs::Entity a = e;;) {
+                    const ecs::Hierarchy* h = s.TryGet<ecs::Hierarchy>(a);
+                    if (!h || h->parent.IsNull() || !s.Alive(h->parent)) break;
+                    a = h->parent;
+                    if (ctx_.IsSelected(a)) {
+                        ancestorSelected = true;
+                        break;
+                    }
+                }
+                if (!ancestorSelected) roots.push_back(e);
+            }
+            bool any = false;
+            for (ecs::Entity e : roots) {
                 ecs::Entity copy = ctx_.DuplicateEntity(e);
                 if (!copy.IsNull()) {
-                    ctx_.Select(copy, false);
-                    if (!ctx_.Playing()) ctx_.PushStructuralUndo("复制实体", before);
+                    ctx_.Select(copy, any);
+                    any = true;
                 }
             }
+            if (any && !ctx_.Playing()) ctx_.PushStructuralUndo("复制实体", before);
         }
         // M4.6 §5-1：复制/粘贴（Edit 态专属——Undo 结构轨在 Play 禁用）；Ctrl+D 保留
         if (!ctx_.Playing() && ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_C))
@@ -550,8 +606,11 @@ void EditorApp::BuildShortcuts() {
         if (!ctx_.Playing() && ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Y))
             ctx_.Undo().Redo();
         if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_P)) {
-            if (ctx_.Playing()) ctx_.ExitPlay();
-            else ctx_.EnterPlay();
+            if (ctx_.Playing()) {
+                if (ctx_.ExitPlay()) tabFocusPending_ = -1;
+            } else if (ctx_.EnterPlay()) {
+                tabFocusPending_ = 1;
+            }
         }
     }
 }
@@ -559,6 +618,10 @@ void EditorApp::BuildShortcuts() {
 void EditorApp::BuildUI() {
     playing_ = ctx_.Playing(); // 冗余显示态每帧对齐真值（菜单/快捷键/横幅守卫共用；
                                // 失同步曾致 Play 中 Ctrl+S 把 Play 世界存进编辑场景）
+    if (tabFocusPending_ != 0) { // Play 进出自动切 Game/Scene 标签页（Unity 心智；F1 手测）
+        ImGui::SetWindowFocus(tabFocusPending_ > 0 ? "Game" : "Scene");
+        tabFocusPending_ = 0;
+    }
     testhooks::ClearAll();     // --smoke-ui 矩形登记每帧重建（防陈旧矩形误导注入）
     BuildShortcuts();
 
@@ -680,32 +743,53 @@ void EditorApp::BuildPickersAndModals() {
         quitConfirmOpen_ = false;
         quitConfirmArmed_ = true;
     }    if (ImGui::BeginPopupModal("未保存更改", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        // SceneOp（打开/新建场景、切项目前的脏确认）与退出分流：前者保存/丢弃后续做
+        // 挂起操作（M4.2 欠账——此前按钮硬编码"并退出"，选了就把整个编辑器关了）
+        const bool exiting = confirmContext_ == ConfirmContext::Exit;
         ImGui::Text("场景 %s 有未保存更改。", ctx_.SceneName().c_str());
         ImGui::Separator();
-        if (ImGui::Button("保存并退出", ImVec2(140, 0))) {
+        auto runPending = [&]() {
+            const PendingSceneOp op = pendingSceneOp_;
+            pendingSceneOp_ = PendingSceneOp::None;
+            confirmContext_ = ConfirmContext::Exit;
+            switch (op) { // dirty 已清，各入口直通（选择器/新场景）
+                case PendingSceneOp::OpenScene: MenuOpenScene(); break;
+                case PendingSceneOp::NewScene: MenuNewScene(); break;
+                case PendingSceneOp::OpenProject: MenuOpenProject(); break;
+                default: break;
+            }
+        };
+        if (ImGui::Button(exiting ? "保存并退出" : "保存", ImVec2(140, 0))) {
             if (ctx_.ScenePath().empty()) {
-                // 无路径：走另存为；完成后再退
+                // 无路径：走另存为；完成后由用户重触发（与退出路径同款简化环）
                 ImGui::CloseCurrentPopup();
-                MenuSaveSceneAs();
                 quitConfirmArmed_ = false;
+                pendingSceneOp_ = PendingSceneOp::None;
+                confirmContext_ = ConfirmContext::Exit;
                 exitRequested_ = false; // 等另存完成由用户再关（简化环）
+                MenuSaveSceneAs();
             } else {
                 ctx_.SaveScene();
                 ImGui::CloseCurrentPopup();
                 quitConfirmArmed_ = false;
-                forceExit_ = true;
+                if (exiting) forceExit_ = true;
+                else runPending();
             }
         }
         ImGui::SameLine();
-        if (ImGui::Button("丢弃并退出", ImVec2(140, 0))) {
+        if (ImGui::Button(exiting ? "丢弃并退出" : "丢弃", ImVec2(140, 0))) {
+            ctx_.dirty = false; // 丢弃 = 放弃未存改动（盘档不动）
             ImGui::CloseCurrentPopup();
             quitConfirmArmed_ = false;
-            forceExit_ = true;
+            if (exiting) forceExit_ = true;
+            else runPending();
         }
         ImGui::SameLine();
         if (ImGui::Button("取消", ImVec2(140, 0))) {
             ImGui::CloseCurrentPopup();
             quitConfirmArmed_ = false;
+            pendingSceneOp_ = PendingSceneOp::None;
+            confirmContext_ = ConfirmContext::Exit;
             exitRequested_ = false;
         }
         ImGui::EndPopup();
@@ -797,13 +881,13 @@ void EditorApp::BuildPickersAndModals() {
 
 // ---- 场景 IO 动作 ----
 void EditorApp::MenuNewScene() {
-    if (ctx_.dirty && !ConfirmUnsaved()) return;
+    if (ctx_.dirty && !ConfirmUnsaved(PendingSceneOp::NewScene)) return;
     ctx_.NewScene();
     LEMON_LOG("新建场景（untitled）");
 }
 
 void EditorApp::MenuOpenScene() {
-    if (ctx_.dirty && !ConfirmUnsaved()) return;
+    if (ctx_.dirty && !ConfirmUnsaved(PendingSceneOp::OpenScene)) return;
     std::error_code ec;
     std::string dir = std::filesystem::path(ctx_.ScenePath()).parent_path().string();
     if (dir.empty()) dir = std::filesystem::current_path(ec).string();
@@ -827,11 +911,12 @@ void EditorApp::MenuSaveSceneAs() {
     picker_.Open("另存场景", dir, ctx_.SceneName(), ".scene");
 }
 
-bool EditorApp::ConfirmUnsaved() {
+bool EditorApp::ConfirmUnsaved(PendingSceneOp after) {
     if (!ctx_.dirty) return true;
-    quitConfirmOpen_ = true; // 复用退出确认模态（语义 = 保存/丢弃/取消）
+    quitConfirmOpen_ = true; // 复用确认模态（按上下文分流文案与去向）
     confirmContext_ = ConfirmContext::SceneOp;
-    return false; // 异步：取消则不继续（保存/丢弃后的续操作 M4.2 补齐闭环）
+    pendingSceneOp_ = after; // 保存/丢弃后续做（取消则作废）
+    return false;            // 异步：模态按钮里推进（2026-09-21 补齐 M4.2 欠账）
 }
 
 // ---------------------------------------------------------------- 资产 ----
@@ -850,7 +935,7 @@ void EditorApp::MenuOpenProject() {
         LEMON_WARN("Play 中不能切换项目（先 Stop）");
         return;
     }
-    if (ctx_.dirty && !ConfirmUnsaved()) return; // 脏场景先确认（与打开场景同款异步环）
+    if (ctx_.dirty && !ConfirmUnsaved(PendingSceneOp::OpenProject)) return; // 脏场景确认（同款异步环）
     // 起点目录：已开项目 → 其父目录（同级切换常见）；否则 HOME
     namespace fs = std::filesystem;
     std::error_code ec;
@@ -1413,6 +1498,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
     // 保存/Play/重命名/挂父子/目录导航/命名布局。断言旗标逐段置位，末帧总裁决。
     ecs::Entity uiTarget{}, uiGate{};
     uint32_t uiBaseCount = 0;
+    uint32_t uiTargetSubtree = 1; // C8：Ctrl+D 子树化后的计数增量（frame5 实测）
     float uiRot0 = 0.0f, uiRot1 = 0.0f;
     Vec2 uiPt0{0, 0}, uiPt1{0, 0};
     bool uiAllOk = false, uiVerdictDone = false;
@@ -1434,7 +1520,8 @@ int EditorApp::Run(const EditorLaunch& launch) {
         // 误按一下就整体退出对编辑器太危险（原 anim-smoke 骨架遗留行为，M4.6 移除）
         const bool esc = window_->IsKeyDown(Key::Escape);
         if (esc && !escHeld_ && ctx_.Playing()) {
-            if (!ctx_.ExitPlay()) LEMON_WARN("Stop 后快照校验失败（编辑场景已按快照重建）");
+            if (ctx_.ExitPlay()) tabFocusPending_ = -1;
+            else LEMON_WARN("Stop 后快照校验失败（编辑场景已按快照重建）");
         }
         escHeld_ = esc;
         // 外部拖拽导入（M4.6 §5-3）：OS drop 文件 → 当前资产目录（无项目 = 可操作红字）
@@ -1474,6 +1561,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
         if (exitRequested_) {
             if (ctx_.dirty && !quitConfirmArmed_) {
                 quitConfirmOpen_ = true; // 退出前确认（一次）
+                confirmContext_ = ConfirmContext::Exit; // 上一次 SceneOp 不残留
                 exitRequested_ = false;
             } else if (!ctx_.dirty) {
                 running = false;
@@ -1874,6 +1962,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
                 cam.halfHeight = 360.0f;
                 cam.center = ctx_.ActiveScene().Get<ecs::Transform2D>(uiTarget).pos;
                 uiBaseCount = ctx_.ActiveScene().AliveCount();
+                uiTargetSubtree = SubtreeSizeOf(ctx_.ActiveScene(), uiTarget);
                 uiRot0 = ctx_.ActiveScene().Get<ecs::Transform2D>(uiTarget).rot;
                 // 场景路径先行落定（否则 Ctrl+S 走另存为弹窗——那是 FilePicker 冒烟）
                 fs::create_directories(fs::path(launchCopy_.projectDir) / "Scenes", ec);
@@ -1911,15 +2000,15 @@ int EditorApp::Run(const EditorLaunch& launch) {
             else if (frame == 20)
                 ui_->SetKeyChordOverride((int)ImGuiMod_Ctrl, (int)ImGuiKey_D);
             else if (frame == 22)
-                dupOk = ctx_.ActiveScene().AliveCount() == uiBaseCount + 1 &&
-                        !ctx_.Primary().IsNull();
+                dupOk = ctx_.ActiveScene().AliveCount() == uiBaseCount + uiTargetSubtree &&
+                        !ctx_.Primary().IsNull(); // C8：+子树大小（Player 带 3 Mob）
             else if (frame == 24)
                 ui_->SetKeyChordOverride((int)ImGuiMod_Ctrl, (int)ImGuiKey_Delete);
             else if (frame == 26) delOk = ctx_.ActiveScene().AliveCount() == uiBaseCount;
             else if (frame == 28)
                 ui_->SetKeyChordOverride((int)ImGuiMod_Ctrl, (int)ImGuiKey_Z);
             else if (frame == 30)
-                dupUndoOk = ctx_.ActiveScene().AliveCount() == uiBaseCount + 1;
+                dupUndoOk = ctx_.ActiveScene().AliveCount() == uiBaseCount + uiTargetSubtree;
             else if (frame == 32)
                 ui_->SetKeyChordOverride((int)ImGuiMod_Ctrl, (int)ImGuiKey_Z);
             else if (frame == 34)
@@ -1927,7 +2016,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
             else if (frame == 36)
                 ui_->SetKeyChordOverride((int)ImGuiMod_Ctrl, (int)ImGuiKey_Y);
             else if (frame == 38)
-                dupRedoOk = ctx_.ActiveScene().AliveCount() == uiBaseCount + 1;
+                dupRedoOk = ctx_.ActiveScene().AliveCount() == uiBaseCount + uiTargetSubtree;
             else if (frame == 40)
                 ui_->SetKeyChordOverride((int)ImGuiMod_Ctrl, (int)ImGuiKey_Y);
             else if (frame == 42)
