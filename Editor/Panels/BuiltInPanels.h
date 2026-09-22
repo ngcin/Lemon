@@ -23,12 +23,24 @@ using renderer::Camera2D;
 
 class ViewportRenderer;
 
+// 性能批② ui 段探针（LEMON_BENCH_UI_PROBE 开启时 HierarchyPanel 累计；
+// --bench-survivor 裁决打印"占 ui 段百分比"）。零开关零成本：环境变量不存在
+// 时 OnGui 内只剩一次 bool 读。
+struct UiPanelProbe {
+    double totalMs = 0.0;
+    uint64_t frames = 0;
+};
+UiPanelProbe HierarchyPanelProbe();
+
 class HierarchyPanel final : public IEditorPanel {
 public:
     const char* Name() const override { return "Hierarchy"; }
     void OnGui(EditorApp& app) override;
 
 private:
+    /// 单行绘制（树节点 + 图标 + 选择/重命名/拖拽/右键菜单）；返回节点展开态。
+    /// 行体与子遍历拆分 = 万级平铺列表可走 ImGuiListClipper 只画可见行（性②）
+    bool DrawNodeRow(EditorApp& app, ecs::Entity e);
     void DrawNode(EditorApp& app, ecs::Entity e, bool hasHierarchy);
     void StartRename(ecs::Scene& s, ecs::Entity e);  // M4.6 §4-7：F2/右键/叶子双击进入
     void CommitRename(EditorApp& app, ecs::Entity e, bool apply);
@@ -37,6 +49,7 @@ private:
 
     std::string filter_;
     std::unordered_set<uint64_t> openedOnce_;
+    std::vector<ecs::Entity> rootCache_; // 根收集复用容量（性②：每帧 Each 一次）
     ecs::Entity renaming_{};    // 重命名中的实体（Null = 无）
     bool renameFocus_ = false; // 重命名输入框首帧聚焦
     std::string renameBuf_;

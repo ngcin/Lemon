@@ -10,13 +10,24 @@
 
 namespace lemon::editor::testhooks {
 
-/// key → 控件矩形（屏幕点 min/max）。每帧由 UI 侧覆盖登记。
+/// key → 控件矩形（屏幕点 min/max）。每帧由 UI 侧登记。
 inline std::unordered_map<std::string, ImVec4>& Rects() {
     static std::unordered_map<std::string, ImVec4> m;
     return m;
 }
 
+/// 登记开关（性能批②）：仅 --smoke-ui 会话开。万级 Hierarchy 每行一次
+/// string 拼接 + map 落位曾占 ui 段大头——生产/压测路径整段跳过。
+/// 写读都在编辑器主线程（BuildUI 帧首设、面板 OnGui 读），无跨线程问题。
+inline bool& EnabledRef() {
+    static bool on = false;
+    return on;
+}
+inline bool Enabled() { return EnabledRef(); }
+inline void SetEnabled(bool on) { EnabledRef() = on; }
+
 inline void Stash(const char* key, ImVec2 mn, ImVec2 mx) {
+    if (!Enabled()) return; // 关闭时零成本（不建 string、不碰 map）
     Rects()[key] = ImVec4{mn.x, mn.y, mx.x, mx.y};
 }
 
@@ -30,6 +41,9 @@ inline bool Find(const char* key, ImVec2& mn, ImVec2& mx) {
 }
 
 /// 每帧 UI 构建前清空（防隐藏控件的陈旧矩形误导注入）
-inline void ClearAll() { Rects().clear(); }
+inline void ClearAll() {
+    if (!Enabled() && Rects().empty()) return;
+    Rects().clear();
+}
 
 } // namespace lemon::editor::testhooks

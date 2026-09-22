@@ -241,12 +241,13 @@ Chase 目标。
   `pump / sim / glue / ui / acquire / scene / uidraw / present` 各段均值 + segSum
   （与 frameAvg 对账；resize/acquire 失败的 continue 帧整帧不参与）。
 
-**基线（2026-09-22，本机 6C / RX 590 / MoltenVK）→ 性能批后**：
+**基线（2026-09-22，本机 6C / RX 590 / MoltenVK）→ 性能批① → 性能批②**：
 
 | 时点 | 分段 avg ms | 全帧 |
 |---|---|---|
 | 建场基线 | sim 11.22 / scene 19.31 / ui 4.13（其余 <1） | frameAvg 35.43ms fps=28 **FAIL** |
-| 性能批（同日，两跑） | sim 11.14~11.47 / **scene 1.22~1.25** / ui 4.11~4.12 | frameAvg 17.16~17.48ms fps 57~58 **PASS** |
+| 性能批①（同日，两跑） | sim 11.14~11.47 / **scene 1.22~1.25** / ui 4.11~4.12 | frameAvg 17.16~17.48ms fps 57~58 **PASS** |
+| 性能批②（同日，三跑） | sim 11.04~11.18 / scene 1.21~1.31 / **ui 0.25~0.26** | frameAvg 13.09~13.25ms fps 75~76 **PASS** |
 
 scene 段 19.31→1.25ms 的两处根因（都在编辑器侧视口层，非引擎内核）：
 1. **ExtractScene 差集销毁 O(N²)**：`seen` vector + `std::find`，1 万实体 ≈ 每帧
@@ -258,6 +259,31 @@ scene 段 19.31→1.25ms 的两处根因（都在编辑器侧视口层，非引�
 **后续观察项**（留给 M5 性能批续章）：sim 11.14ms 系统级分解（vs bench-sim 5.1ms
 的差距在哪几个系统）、frameMax≈31ms 尖刺归因（GC/生成突发？）、ui 4.11ms（万级
 Hierarchy 面板）。回归口径 = 本命令三跑稳定。
+
+**性能批②（同日，本批）**：上三项观察项全部闭案，另补跑 `--smoke` 四要素像素
+冒烟（批①欠账）。新增裁决输出：`sim系统分解`（每系统 avg/max，测量窗口 =
+预热后 ZeroProfiles 起，Stop 前捕获——Play 世界随 ExitPlay 析构）、frameMax 帧
+八段快照、每段 max@帧号、尖刺帧(>25ms)分段均值；`LEMON_BENCH_UI_PROBE=1` 额外
+打印 Hierarchy 面板占 ui 段百分比。结论：
+
+1. **sim 11.1ms = Separation 10.18ms（91%）**，其余 15 系统合计 <1ms（SpatialHash
+   0.50 / AI 0.28 / Movement 0.10）。vs bench-sim 的差距**不是编辑器回归而是负载
+   密度**：bench-survivor 玩家静止（无头无输入）+ 无死亡（无弹幕）+ Spawner
+   range 600 → 万怪压成最高密度团，邻居扫描候选数 ~7×；bench-sim 玩家持续走位 +
+   弹幕击杀搅散蜂群，**稳态** Separation 仅 ~1.4ms（其 5.1ms 判据均值大半来自
+   未收敛帧）。sim 优化属余量挖掘，路径备档：哈希项内嵌 pos 省 try_get、cell 内
+   id 排序提局部性（均行为保持、不动金档）；邻居选择策略类优化会破回放金档。
+2. **尖刺归因 = Census 缓存污染**：20~22 个尖刺/660 帧 ≈ 660/30 = SpawnSystem
+   每 30 tick 全量扫 1 万 Meta（~480KB 驱逐 L2），紧随的 Separation 当帧 10→22ms。
+   另 present 929ms@~287 一次性停顿为系统侧（autosave Play 中跳过且 5 分钟节拍，
+   已排除；驱动/合成器，非引擎代码）。ui 段修复后尖刺帧降至 2~3 个/跑，
+   frameMax 25.2~25.6ms。
+3. **ui 4.14→0.25ms（Hierarchy 3.60→0.06ms，16×）**，frameAvg 13.1ms / fps 76。
+   两处修（都在编辑器侧）：`testhooks::Stash` 门控（每行 string 拼接 + map 落位
+   曾占 ui 段 87%，仅 --smoke-ui 会话开）；万级平铺（>256 根且全叶）走
+   `ImGuiListClipper` 只画可见行（DrawNode 拆行体 DrawNodeRow + 子遍历；带父子
+   结构或过滤态仍走原递归——混合结构万级平铺的通用扁平化留 M5 观察）。
+   uidraw 随之 0.13→0.03ms（顶点量骤减）。
 
 ## 7. M2 验收结果汇总（2026-09-19，本机 6C）
 

@@ -685,6 +685,7 @@ void EditorApp::BuildUI() {
         ImGui::SetWindowFocus(tabFocusPending_ > 0 ? "Game" : "Scene");
         tabFocusPending_ = 0;
     }
+    testhooks::SetEnabled(launchCopy_.smokeUi); // 性能批②：仅注入会话登记矩形
     testhooks::ClearAll();     // --smoke-ui 矩形登记每帧重建（防陈旧矩形误导注入）
     BuildShortcuts();
 
@@ -1740,6 +1741,16 @@ int EditorApp::Run(const EditorLaunch& launch) {
     double benchPumpSum = 0.0, benchSimSum = 0.0, benchGlueSum = 0.0, benchUiSum = 0.0,
            benchAcqSum = 0.0, benchSceneSum = 0.0, benchUiDrawSum = 0.0, benchPresentSum = 0.0;
     uint64_t benchFrameN = 0;
+    // 性能批②：尖刺归因原料——每段 max（带帧号）+ 历史最坏帧的八段快照 + 尖刺帧
+    // （>25ms）内的分段和（看尖刺集体偏向哪段）
+    constexpr int kSegN = 8;
+    double benchSegMax[kSegN] = {};
+    uint64_t benchSegMaxF[kSegN] = {};
+    double benchMaxSeg[kSegN] = {}; // frameMax 刷新时刻的八段值
+    double benchSpikeSeg[kSegN] = {};
+    uint64_t benchSpikeN = 0;
+    bool benchSimProfileZeroed = false;
+    std::vector<ecs::SystemProfile> benchPlayProfiles; // Stop 前捕获（Play 世界随 ExitPlay 析构）
     while (running) {
         const auto benchT0 = std::chrono::steady_clock::now();
         using BenchClock = std::chrono::steady_clock;
@@ -2634,19 +2645,40 @@ int EditorApp::Run(const EditorLaunch& launch) {
             const auto segMs = [](BenchClock::time_point a, BenchClock::time_point b) {
                 return std::chrono::duration<double, std::milli>(b - a).count();
             };
-            benchPumpSum += segMs(benchT0, bPump);
-            benchSimSum += segMs(bPump, bSim);
-            benchGlueSum += segMs(bSim, bUi0);
-            benchUiSum += segMs(bUi0, bUi1);
-            benchAcqSum += segMs(bUi1, bAcq);
-            benchSceneSum += segMs(bAcq, bScene);
-            benchUiDrawSum += segMs(bScene, bUiDraw);
-            benchPresentSum += segMs(bUiDraw, bPresent);
+            const double segs[kSegN] = {
+                segMs(benchT0, bPump),   segMs(bPump, bSim),  segMs(bSim, bUi0),
+                segMs(bUi0, bUi1),       segMs(bUi1, bAcq),   segMs(bAcq, bScene),
+                segMs(bScene, bUiDraw),  segMs(bUiDraw, bPresent),
+            };
+            if (!benchSimProfileZeroed) { // 测量窗口起点：sim 每系统计数清零
+                benchSimProfileZeroed = true;
+                ctx_.ActiveWorld().Pipeline().ZeroProfiles();
+            }
+            benchPumpSum += segs[0];
+            benchSimSum += segs[1];
+            benchGlueSum += segs[2];
+            benchUiSum += segs[3];
+            benchAcqSum += segs[4];
+            benchSceneSum += segs[5];
+            benchUiDrawSum += segs[6];
+            benchPresentSum += segs[7];
+            for (int i = 0; i < kSegN; ++i)
+                if (segs[i] > benchSegMax[i]) {
+                    benchSegMax[i] = segs[i];
+                    benchSegMaxF[i] = frame;
+                }
             const double ms = std::chrono::duration<double, std::milli>(
                                   std::chrono::steady_clock::now() - benchT0)
                                   .count();
             benchFrameSum += ms;
-            if (ms > benchFrameMax) benchFrameMax = ms;
+            if (ms > benchFrameMax) { // 最坏帧的八段快照（frameMax 归因原料）
+                benchFrameMax = ms;
+                for (int i = 0; i < kSegN; ++i) benchMaxSeg[i] = segs[i];
+            }
+            if (ms > 25.0) { // 尖刺帧（avg≈17，+45% 起）：分段和看集体偏向
+                ++benchSpikeN;
+                for (int i = 0; i < kSegN; ++i) benchSpikeSeg[i] += segs[i];
+            }
             ++benchFrameN;
         }
         ++frame;
@@ -2655,6 +2687,8 @@ int EditorApp::Run(const EditorLaunch& launch) {
     bool playVerified = true;
     double playEnterMs = 0, playExitMs = 0;
     uint32_t playAliveAtStop = 0;
+    if (launch.benchSurvivor && ctx_.Playing())
+        benchPlayProfiles = ctx_.ActiveWorld().Pipeline().Profiles(); // ExitPlay 弃世界前留证
     if (ctx_.Playing()) { // --play：跑满帧数后 Stop（恢复编辑世界）
         playAliveAtStop = ctx_.ActiveScene().AliveCount();
         playEnterMs = ctx_.LastEnterPlayMs();
@@ -2703,6 +2737,54 @@ int EditorApp::Run(const EditorLaunch& launch) {
                     (unsigned)frame, (unsigned)kBenchWarmup, playAliveAtStop,
                     benchSimSum / segN, avg,
                     benchFrameMax, fps, pass ? "PASS" : "FAIL");
+        // 性能批②①：sim 系统级分解（测量窗口 = 预热后 ZeroProfiles 起；avg=totalMs/runs）
+        {
+            std::vector<ecs::SystemProfile> rows;
+            for (const ecs::SystemProfile& p : benchPlayProfiles)
+                if (p.runs > 0) rows.push_back(p);
+            std::sort(rows.begin(), rows.end(), [](const ecs::SystemProfile& a,
+                                                   const ecs::SystemProfile& b) {
+                return a.totalMs > b.totalMs;
+            });
+            double sysSum = 0.0;
+            for (const ecs::SystemProfile& p : rows) sysSum += p.totalMs / (double)p.runs;
+            std::printf("[bench-survivor] sim系统分解 (Σ=%.2fms vs seg sim=%.2fms):\n",
+                        sysSum, benchSimSum / segN);
+            for (const ecs::SystemProfile& p : rows)
+                std::printf("    %-24s avg=%7.3fms max=%7.3fms runs=%llu\n", p.name,
+                            p.totalMs / (double)p.runs, (double)p.maxMs,
+                            (unsigned long long)p.runs);
+        }
+        // 性能批②②：尖刺归因——最坏帧八段快照 + 尖刺帧（>25ms）分段均值 + 每段 max
+        {
+            const char* segNames[kSegN] = {"pump", "sim", "glue", "ui",
+                                           "acquire", "scene", "uidraw", "present"};
+            std::printf("[bench-survivor] frameMax=%.2fms 帧八段:", benchFrameMax);
+            for (int i = 0; i < kSegN; ++i) std::printf(" %s=%.2f", segNames[i], benchMaxSeg[i]);
+            std::printf("\n");
+            std::printf("[bench-survivor] 每段max:");
+            for (int i = 0; i < kSegN; ++i)
+                std::printf(" %s=%.2f@%llu", segNames[i], benchSegMax[i],
+                            (unsigned long long)benchSegMaxF[i]);
+            std::printf("\n");
+            if (benchSpikeN > 0) {
+                std::printf("[bench-survivor] 尖刺帧>25ms: %llu 个，其分段均值:",
+                            (unsigned long long)benchSpikeN);
+                for (int i = 0; i < kSegN; ++i)
+                    std::printf(" %s=%.2f", segNames[i], benchSpikeSeg[i] / (double)benchSpikeN);
+                std::printf("\n");
+            } else {
+                std::printf("[bench-survivor] 尖刺帧>25ms: 0 个\n");
+            }
+        }
+        // 性能批②③：ui 段内部归因（探针在 HierarchyPanel，LEMON_BENCH_UI_PROBE 开）
+        if (const UiPanelProbe hp = HierarchyPanelProbe(); hp.frames > 0)
+            std::printf("[bench-survivor] ui段探针: hierarchy=%.2fms（占 ui %.0f%%，"
+                        "LEMON_BENCH_UI_PROBE 口径含打点开销）\n",
+                        hp.totalMs / (double)hp.frames,
+                        benchUiSum > 0.0 ? 100.0 * (hp.totalMs / (double)hp.frames) /
+                                               (benchUiSum / segN)
+                                         : 0.0);
         if (!pass) exitCode = 1;
     }
     // --smoke-close 裁决（M4.6 §4-9）：独立于 --smoke——专用最小跑（无项目/无播种）

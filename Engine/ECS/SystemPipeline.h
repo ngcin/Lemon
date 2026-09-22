@@ -48,7 +48,8 @@ public:
     const std::vector<std::unique_ptr<ISystem>>& Systems() const { return systems_; }
     const std::vector<SystemProfile>& Profiles() const { return profiles_; }
     const SystemProfile* FindProfile(const char* name) const;
-    void ResetProfiles(); // F3 峰值清零（面板刷新周期用）
+    void ResetProfiles(); // F3 峰值清零（面板刷新周期用：max 基线移到 last）
+    void ZeroProfiles();  // 计数全清零（测量窗口起点；性能批② sim 分解用）
 
 private:
     std::vector<std::unique_ptr<ISystem>> systems_; // 执行序（ResolveOrder 后）

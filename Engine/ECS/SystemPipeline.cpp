@@ -93,4 +93,13 @@ void SystemPipeline::ResetProfiles() {
     for (SystemProfile& p : profiles_) p.maxMs = p.lastMs;
 }
 
+void SystemPipeline::ZeroProfiles() {
+    for (SystemProfile& p : profiles_) {
+        p.runs = 0;
+        p.totalMs = 0.0;
+        p.lastMs = 0.0f;
+        p.maxMs = 0.0f;
+    }
+}
+
 } // namespace lemon::ecs

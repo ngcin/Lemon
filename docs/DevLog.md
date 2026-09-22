@@ -39,6 +39,53 @@ sim 优化属余量挖掘非达标必需。
 
 ---
 
+## 2026-09-22 · M5 性能批②：观察项三案闭结 + ui 段 16×（fps 58→76）
+
+批① 留的三个观察项全部归因闭案，顺带把 `--smoke` 四要素像素冒烟欠账补跑。
+
+**① sim 11.1ms 系统级分解**（新增 `sim系统分解` 裁决输出：每系统 avg/max，
+测量窗口 = 预热后 `ZeroProfiles()` 起、Stop 前捕获——Play 世界随 ExitPlay 析构，
+不先拷就没了）：
+
+| 系统 | avg | 说明 |
+|---|---|---|
+| **Separation** | **10.18ms（91%）** | 唯一大头 |
+| SpatialHashRebuild | 0.50ms | — |
+| AI | 0.28ms | — |
+| 其余 13 系统 | 合计 <0.2ms | — |
+
+vs bench-sim 5.1ms 的差距**不是编辑器回归**：同机同 5 worker 下 bench-sim **稳态**
+Separation 仅 ~1.4ms（7200 帧实测 last=1.43；其 5.1ms 判据均值大半来自未收敛帧）。
+bench-survivor 玩家静止（无头无输入）+ 无死亡（无弹幕）+ Spawner range 600 →
+万怪压成最高密度团，邻居扫描候选 ~7×。sim 优化备档不动手：哈希项内嵌 pos /
+cell 内 id 排序（行为保持）；邻居策略类改动破回放金档。
+
+**② frameMax 尖刺归因**（新增：最坏帧八段快照 + 每段 max@帧号 + 尖刺帧>25ms
+分段均值）：**20~22 个尖刺/660 帧 = Census 缓存污染**——SpawnSystem 每 30 tick
+全量扫 1 万 Meta（~480KB 驱逐 L2），紧随的 Separation 当帧 10→22ms（660/30=22
+严丝合缝）。present 929ms@~287 一次性停顿 = 系统侧（autosave Play 中跳过、
+5 分钟节拍，已排除；驱动/合成器）。ui 修后尖刺降至 2~3 个/跑、frameMax 25.2ms。
+
+**③ ui 4.14→0.25ms**（`LEMON_BENCH_UI_PROBE` 探针定位：Hierarchy 3.60ms 占
+ui 段 87%）。两处修，均在编辑器侧：
+1. `testhooks::Stash` 门控（`Enabled()` 仅 --smoke-ui 会话开）——每行
+   `std::string("hier.")+tag` 拼接 + unordered_map 落位 ×1 万行；
+2. 万级平铺快路：根收集后发现全叶且 >256 → `ImGuiListClipper` 只画可见行
+   （`DrawNode` 拆 `DrawNodeRow` 行体 + 子遍历；带父子/过滤态仍走原递归，
+   混合结构万级通用扁平化留 M5 观察）。
+
+Hierarchy 3.60→0.06ms；uidraw 随顶点量骤减 0.13→0.03ms；
+**frameAvg 17.2→13.1ms，fps 58→76**（三跑 13.09/13.11/13.25 稳定）。
+
+**④ --smoke 四要素像素冒烟**（批①欠账）补跑：
+`grid=30497(≥8000) sel=169(≥20) handle=42(≥20) label=93(≥20) => OK`——
+scene 段标签裁剪改动后 overlay 通路完好。
+
+**回归**：`editor-regression.sh full` **11/11 PASS**（smoke-ui 验证 Stash 门控
+不破注入会话；ctest 3/3 金档不动）。
+
+---
+
 ## 2026-09-20 · 【P0 发现】overlay 渲染通道缺陷——网格/选框/Gizmo/标签从未画出
 
 M4.7 规划讨论中用户反馈"灰色界面完全没有网格线"，与代码行为（GridSnap 默认开）

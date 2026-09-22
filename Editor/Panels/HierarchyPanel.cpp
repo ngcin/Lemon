@@ -2,6 +2,7 @@
 // 数据源：Scene 实体遍历 + Hierarchy 父子链（ECS/Hierarchy.h 维护）。
 // 验收点：拖拽成环被拒（SetParent 引擎侧拒绝 + Console 告警）；Play 中切数据源 M4.3。
 #include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -23,6 +24,10 @@
 
 namespace lemon::editor {
 namespace {
+
+// 性能批②探针：LEMON_BENCH_UI_PROBE=1 时累计本面板整帧耗时（静态一次性读 env）
+UiPanelProbe g_hierProbe;
+const bool g_hierProbeOn = std::getenv("LEMON_BENCH_UI_PROBE") != nullptr;
 
 const char* DisplayName(ecs::Scene& s, ecs::Entity e) {
     static char buf[40];
@@ -53,6 +58,8 @@ const char* StrIStr(const char* hay, const char* needle) {
 }
 
 } // namespace
+
+UiPanelProbe HierarchyPanelProbe() { return g_hierProbe; }
 
 void HierarchyPanel::StartRename(ecs::Scene& s, ecs::Entity e) {
     renaming_ = e;
@@ -85,9 +92,19 @@ void HierarchyPanel::CommitRename(EditorApp& app, ecs::Entity e, bool apply) {
 }
 
 void HierarchyPanel::OnGui(EditorApp& app) {
+    const auto probeT0 = std::chrono::steady_clock::now();
+    const auto probeAccum = [&]() {
+        if (g_hierProbeOn) {
+            g_hierProbe.totalMs += std::chrono::duration<double, std::milli>(
+                                       std::chrono::steady_clock::now() - probeT0)
+                                       .count();
+            ++g_hierProbe.frames;
+        }
+    };
     if (!ImGui::Begin(Name(), nullptr,
                       ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar)) {
         ImGui::End();
+        probeAccum(); // 折叠帧也计（折叠时几乎为零——本身即归因信号）
         return;
     }
     EditorContext& ctx = app.Ctx();
@@ -127,12 +144,37 @@ void HierarchyPanel::OnGui(EditorApp& app) {
     // 滚动条按需出现（曾挂 AlwaysVerticalScrollbar：空列表也常驻——手测反馈移除）
     ImGui::BeginChild("tree", ImVec2(0, 0), ImGuiChildFlags_None);
 
-    scene.Each([&](ecs::Entity e) {
-        const ecs::Hierarchy* h = scene.TryGet<ecs::Hierarchy>(e);
-        if (h && !h->parent.IsNull() && scene.Alive(h->parent)) return; // 非根
-        if (PassFilter(scene, e, filter_.c_str()) || SubtreeMatches(scene, e, filter_.c_str()))
-            DrawNode(app, e, scene.Has<ecs::Hierarchy>(e));
-    });
+    if (filter_.empty()) {
+        // 性能批②：根一次收集（O(N) TryGet，~0.05ms@万级）。全部为叶（平铺海）且
+        // 超阈值 → ImGuiListClipper 只提交可见行——万级全画曾是 ui 段 87% 占比。
+        // 带父子结构的场景走原递归（clipper 行号假设每根恰好一行）。
+        constexpr size_t kClipThreshold = 256;
+        rootCache_.clear();
+        bool anyChildren = false;
+        scene.Each([&](ecs::Entity e) {
+            const ecs::Hierarchy* h = scene.TryGet<ecs::Hierarchy>(e);
+            if (h && !h->parent.IsNull() && scene.Alive(h->parent)) return; // 非根
+            rootCache_.push_back(e);
+            if (h && !h->firstChild.IsNull() && scene.Alive(h->firstChild))
+                anyChildren = true;
+        });
+        if (!anyChildren && rootCache_.size() > kClipThreshold) {
+            ImGuiListClipper clip;
+            clip.Begin((int)rootCache_.size());
+            while (clip.Step())
+                for (int i = clip.DisplayStart; i < clip.DisplayEnd; ++i)
+                    DrawNodeRow(app, rootCache_[(size_t)i]);
+        } else {
+            for (ecs::Entity e : rootCache_) DrawNode(app, e, scene.Has<ecs::Hierarchy>(e));
+        }
+    } else {
+        scene.Each([&](ecs::Entity e) {
+            const ecs::Hierarchy* h = scene.TryGet<ecs::Hierarchy>(e);
+            if (h && !h->parent.IsNull() && scene.Alive(h->parent)) return; // 非根
+            if (PassFilter(scene, e, filter_.c_str()) || SubtreeMatches(scene, e, filter_.c_str()))
+                DrawNode(app, e, scene.Has<ecs::Hierarchy>(e));
+        });
+    }
 
     // 空区右键 / 拖放摘根。NoOpenOverItems：右键行条目时禁开本菜单——否则与
     // BeginPopupContextItem(node_ctx) 同帧双触发，后开者关掉前者，行右键永远
@@ -175,6 +217,7 @@ void HierarchyPanel::OnGui(EditorApp& app) {
     }
     ImGui::EndChild();
     ImGui::End();
+    probeAccum();
 }
 
 bool HierarchyPanel::PassFilter(ecs::Scene& s, ecs::Entity e, const char* filter) {
@@ -195,11 +238,11 @@ bool HierarchyPanel::SubtreeMatches(ecs::Scene& s, ecs::Entity e, const char* fi
     return false;
 }
 
-void HierarchyPanel::DrawNode(EditorApp& app, ecs::Entity e, bool hasHierarchy) {
+bool HierarchyPanel::DrawNodeRow(EditorApp& app, ecs::Entity e) {
     EditorContext& ctx = app.Ctx();
     ecs::Scene& scene = ctx.ActiveScene();
 
-    const ecs::Hierarchy* h = hasHierarchy ? scene.TryGet<ecs::Hierarchy>(e) : nullptr;
+    const ecs::Hierarchy* h = scene.TryGet<ecs::Hierarchy>(e);
     ecs::Entity first = h && !h->firstChild.IsNull() && scene.Alive(h->firstChild)
                             ? h->firstChild
                             : ecs::Entity::Null();
@@ -350,6 +393,19 @@ void HierarchyPanel::DrawNode(EditorApp& app, ecs::Entity e, bool hasHierarchy) 
     }
     ImGui::PopID();
 
+    return nodeOpen;
+}
+
+void HierarchyPanel::DrawNode(EditorApp& app, ecs::Entity e, bool /*hasHierarchy*/) {
+    // 行体内自行 TryGet<Hierarchy>（拆分后本参数仅保留调用点签名不变）
+    EditorContext& ctx = app.Ctx();
+    ecs::Scene& scene = ctx.ActiveScene();
+
+    const bool nodeOpen = DrawNodeRow(app, e);
+    const ecs::Hierarchy* h = scene.TryGet<ecs::Hierarchy>(e);
+    const ecs::Entity first = h && !h->firstChild.IsNull() && scene.Alive(h->firstChild)
+                                  ? h->firstChild
+                                  : ecs::Entity::Null();
     if (nodeOpen && !first.IsNull()) {
         for (ecs::Entity c = first; !c.IsNull();) {
             const ecs::Hierarchy* ch = scene.TryGet<ecs::Hierarchy>(c);

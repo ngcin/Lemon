@@ -254,8 +254,8 @@ int main(int argc, char** argv) {
             std::printf("-- frame %u alive=%u events=%u/%u\n", f + 1, s.AliveCount(),
                         world.Events().Size(), world.Events().PeakSize());
             for (const SystemProfile& p : world.Pipeline().Profiles())
-                std::printf("   %-22s %7.3fms (max %7.3f)\n", p.name,
-                            p.lastMs, p.maxMs);
+                std::printf("   %-22s avg=%7.3fms last=%7.3fms (max %7.3f)\n", p.name,
+                            p.runs ? p.totalMs / (double)p.runs : 0.0, p.lastMs, p.maxMs);
         }
     }
 
