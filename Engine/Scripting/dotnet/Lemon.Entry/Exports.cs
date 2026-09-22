@@ -109,6 +109,10 @@ internal static unsafe class Exports
     [UnmanagedCallersOnly]
     public static double lemon_dm_tick(float dt) => DomainManager.Tick(dt);
 
+    /// <summary>Time 归零（编辑器进 Play = 新的一局；M5 清障①）。</summary>
+    [UnmanagedCallersOnly]
+    public static void lemon_time_reset() => Lemon.Time.Reset();
+
     // ---- M3-3 档② 批量系统 ------------------------------------------------------
 
     /// <summary>已注册批量系统数（load 后由宿主拉取注册表）。</summary>

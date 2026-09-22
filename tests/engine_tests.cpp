@@ -2312,6 +2312,76 @@ void TestEditorContextPrefabOps() {
 
     fs::remove_all(root, ec);
 }
+// ---- M5 清障②：Play 世界 SpawnFn 桥（Spawner.prefabId 低 32 位 → prefab 实例化）----
+void TestPlaySpawnPrefab() {
+    namespace fs = std::filesystem;
+    using namespace lemon::ecs;
+    using lemon::editor::EditorContext;
+    using lemon::editor::AssetType;
+
+    const fs::path root = fs::temp_directory_path() /
+                          ("lemon-test-playspawn-" + std::to_string(::getpid()));
+    std::error_code ec;
+    fs::remove_all(root, ec);
+
+    EditorContext ctx;
+    Expect(ctx.Assets().OpenProject(root.string(), 100), "ctx open project");
+
+    // Mob prefab：父 + 子（同 TestEditorContextPrefabOps 手法；源保留在编辑场景）
+    Entity mob = ctx.CreateSpriteEntity("Mob", 3);
+    Entity hat = ctx.CreateSpriteEntity("Hat", 5);
+    SceneSetParent(ctx.EditScene(), hat, mob);
+    const uint64_t pguid = ctx.MakePrefabFrom(mob);
+    Expect(pguid != 0, "prefab exported");
+
+    // Spawner 实体（prefabId = GUID 低 32 位——M5 映射约定）
+    Entity spawner = ctx.CreateEntity("Spawner");
+    Spawner& sp = ctx.EditScene().Emplace<Spawner>(spawner);
+    sp.prefabId = (uint32_t)pguid;
+    sp.interval = 0.05f;
+    sp.burst = 2;
+    sp.spawnTeam = 1;
+    sp.cooldown = 0.0f;
+    const uint32_t editAlive = ctx.EditScene().AliveCount(); // Mob+Hat+Spawner = 3
+
+    Expect(ctx.EnterPlay(), "enter play");
+    Expect(ctx.Playing() && ctx.ActiveWorld().GetSpawnFn(), "play spawn fn registered");
+    const uint32_t playAlive0 = ctx.ActiveScene().AliveCount();
+    Expect(playAlive0 == editAlive, "play world = edit snapshot (3 entities)");
+
+    // 桥单测：直接调工厂（不走 SpawnSystem）
+    {
+        const World::SpawnFn& spawn = ctx.ActiveWorld().GetSpawnFn();
+        Entity e = spawn(ctx.ActiveScene(), (uint32_t)pguid, {42, -7}, 5u);
+        Expect(!e.IsNull(), "spawn factory instantiates");
+        Expect(ctx.ActiveScene().Get<Meta>(e).prefabId == pguid, "spawn links prefab guid");
+        Expect(ctx.ActiveScene().Get<Meta>(e).team == 5u, "spawn team overrides source");
+        Expect(ctx.ActiveScene().Get<Transform2D>(e).pos == Vec2(42, -7), "spawn pos");
+        // 无效 id：0 与未知低 32 位 → Null 不崩（Spawner 的 e.IsNull() break 语义）
+        Expect(spawn(ctx.ActiveScene(), 0, {0, 0}, 1u).IsNull(), "spawn id 0 = null");
+        Expect(spawn(ctx.ActiveScene(), 0xDEADBEEFu, {0, 0}, 1u).IsNull(),
+               "spawn unknown id = null (no crash)");
+    }
+
+    // 系统集成：TickPlay 若干帧 → SpawnSystem 经工厂实际刷怪（树 = 2 实体/只）
+    for (int i = 0; i < 12; i++) ctx.TickPlay(1.0f / 60.0f);
+    uint32_t spawned = 0;
+    ctx.ActiveScene().Each([&](Entity e) {
+        if (ctx.ActiveScene().Get<Meta>(e).prefabId == pguid &&
+            ctx.ActiveScene().Get<Meta>(e).guid != ctx.EditScene().Get<Meta>(mob).guid)
+            ++spawned;
+    });
+    Expect(spawned >= 4, "Spawner ticking via factory (>= 2 bursts, tree roots)");
+    Expect(ctx.ActiveScene().AliveCount() > playAlive0, "play alive grows");
+
+    // Stop：编辑场景零状态泄漏（快照重建）
+    Expect(ctx.ExitPlay(), "exit play");
+    Expect(ctx.EditScene().AliveCount() == editAlive, "edit scene restored");
+    bool editLinked = ctx.EditScene().Get<Meta>(mob).prefabId == pguid;
+    Expect(editLinked, "edit scene prefab link intact");
+
+    fs::remove_all(root, ec);
+}
 // ---- M4.5-a：项目向导（blank 模板 06 §1 布局 + 零配置脚本工程）----
 void TestProjectWizard() {
     namespace fs = std::filesystem;
@@ -2580,6 +2650,7 @@ int main() {
     TestEntityTreeArchive();
     TestScriptBoxArchive();
     TestEditorContextPrefabOps();
+    TestPlaySpawnPrefab();
 #endif
     LEMON_LOG("engine-tests: %d checks OK", g_checks);
     return 0;

@@ -18,6 +18,8 @@ public static class GameMain
         // 对既有 script-tests 断言零影响）
         Lemon.Behaviours.Register<SpawnerBehaviour>();
         Lemon.Behaviours.Register<InputMoverBehaviour>();
+        // M5 清障①：Time API 验收（表尾追加——既有 typeId 零扰动）
+        Lemon.Behaviours.Register<TimeProbeBehaviour>();
     }
 }
 
@@ -115,6 +117,28 @@ public sealed class CountingBehaviour : Lemon.LemonBehaviour
 
     protected override void OnDestroy()
         => Lemon.Events.Push(Lemon.Interop.GameEvent.Custom, 102, default, default);
+}
+
+/// <summary>M5 清障①：Time API 验收。固定步长 dt=0.25 下三帧回报
+/// Custom 250（DeltaTime×1000）/ 500（Time×1000，帧 2）/ 3（FrameCount），
+/// 第 3 帧自毁（复用 CountingBehaviour 的"测完即走"模式，不留活实体）。</summary>
+public sealed class TimeProbeBehaviour : Lemon.LemonBehaviour
+{
+    protected override void Update()
+    {
+        // 0.25f 二进制精确 → ×1000 无舍入，C++ 侧可精确断言
+        if (Lemon.Time.FrameCount == 1)
+            Lemon.Events.Push(Lemon.Interop.GameEvent.Custom,
+                              (ushort)(Lemon.Time.DeltaTime * 1000f), default, default);
+        else if (Lemon.Time.FrameCount == 2)
+            Lemon.Events.Push(Lemon.Interop.GameEvent.Custom,
+                              (ushort)(Lemon.Time.Elapsed * 1000f), default, default);
+        else if (Lemon.Time.FrameCount == 3) {
+            Lemon.Events.Push(Lemon.Interop.GameEvent.Custom,
+                              (ushort)Lemon.Time.FrameCount, default, default);
+            gameObject.Destroy();
+        }
+    }
 }
 
 // ---- M3-2b 域生命周期入口（保留）----

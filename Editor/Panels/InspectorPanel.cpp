@@ -10,6 +10,7 @@
 
 #include "App/EditorApp.h"
 #include "Assets/AssetDatabase.h"
+#include "Components/BehaviorComponents.h"
 #include "Components/CoreComponents.h"
 #include "Components/RenderComponents.h"
 #include "Core/Log.h"
@@ -661,6 +662,26 @@ void InspectorPanel::DrawComponent(EditorApp& app, const ComponentMeta& meta, ec
             ImGui::EndTable();
         }
         DrawArraySeg(app, meta, comp);
+        // M5 清障②：Spawner.prefabId / Shooter.projectileId 反查（uint32 = prefab 资产
+        // GUID 低 32 位约定；EnterPlay 时同口径建映射）。拖拽绑定进 M5 编辑器批次
+        // （与 tag 资产化同族，等 prefab 字段级元数据）。
+        if (std::strcmp(meta.name, "Spawner") == 0 || std::strcmp(meta.name, "Shooter") == 0) {
+            const bool isSpawner = meta.name[1] == 'p'; // Spawner vs Shooter
+            const uint32_t pid = isSpawner ? ((const ecs::Spawner*)comp)->prefabId
+                                           : ((const ecs::Shooter*)comp)->projectileId;
+            const AssetEntry* pf = nullptr;
+            for (const AssetEntry& a : ctx.Assets().Entries())
+                if (a.type == AssetType::Prefab && !a.missing && (uint32_t)a.guid == pid) {
+                    pf = &a;
+                    break;
+                }
+            if (pf)
+                ImGui::TextDisabled("prefab: %s (guid %016llx)", pf->relPath.c_str(),
+                                    (unsigned long long)pf->guid);
+            else
+                ImGui::TextDisabled("prefab: %s（填 prefab 资产 GUID 低 32 位）",
+                                    pid == 0 ? "未绑定" : "无效 id");
+        }
         // 属性轨提交：交互结束帧 = before(空闲缓存) vs after(现状)；空闲帧刷新缓存。
         // 顺序纪律：提交判定必须在前——ImGui 释放帧 IsItemActive 已翻 false 而
         // IsItemDeactivated 为 true，若先判 !anyActive 会把空闲缓存刷成改后值，

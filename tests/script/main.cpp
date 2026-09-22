@@ -300,11 +300,11 @@ void TestDomainManager() {
         Expect(d2 == (double)0.1f, "hot-reload new domain fresh state");
         Expect(leaks >= 0 && leaksFn && leaksFn() == leaks, "leak count visible + consistent");
         Expect(reloadsFn && reloadsFn() >= 1, "reload count visible");
-        // 换装后新域 GameMain.Configure 已跑：behaviours 列表可拉（3 个类型）
+        // 换装后新域 GameMain.Configure 已跑：behaviours 列表可拉（4 个类型）
         auto listFn = (int (*)(char*, int))GetExport("lemon_behaviours_list");
         char buf[4096];
         int n = listFn ? listFn(buf, (int)sizeof buf) : -1;
-        Expect(n == 3, "behaviours list after hot reload (Counting/Spawner/InputMover)");
+        Expect(n == 4, "behaviours list after hot reload (Counting/Spawner/InputMover/TimeProbe)");
         // M4.6 回归（用户实测闪退根因）：相对路径进 dm_reload 曾抛 ArgumentException
         // 逃逸 UnmanagedCallersOnly → coreclr abort。拦截层必须转 0 返回且进程存活
         // （本断言能跑到 = 进程没死）。换装失败后旧域已弃——再换一次真路径恢复。
@@ -419,6 +419,12 @@ void TestBehaviourAndStructuralOps() {
     auto behAttached = (int (*)())GetExport("lemon_behaviours_attached");
     Expect(opsSubmit && behAttached, "ops/behaviour exports resolved");
 
+    // M5 清障①：Time 属于"一局"——本测试 = 新的一局（前面 TestBatch/EventBridge 已把
+    // FrameCount 推走；不归零则 TimeProbe 的 FrameCount==1 永不命中，编辑器同语义）
+    auto timeResetFn = (void (*)())GetExport("lemon_time_reset");
+    Expect(timeResetFn != nullptr, "lemon_time_reset exported");
+    timeResetFn();
+
     WorldDesc d;
     d.threadCount = 1;
     World w(d);
@@ -430,14 +436,19 @@ void TestBehaviourAndStructuralOps() {
     w.Pipeline().AddSystem(std::make_unique<ScriptEventDispatchSystem>());
     w.Pipeline().ResolveOrder();
 
-    // sink 记录 behaviour 生命周期回报（Custom 100=Awake 101=Start 102=OnDestroy 20x=Update2 读组件）
-    int awake = 0, start = 0, destroy = 0, readBack = -1;
+    // sink 记录 behaviour 生命周期回报（Custom 100=Awake 101=Start 102=OnDestroy 201=Update2 读组件）
+    // M5 清障①：TimeProbe 回报 250/500/3（DeltaTime/Time/FrameCount × 精确值，见类注释）
+    int awake = 0, start = 0, destroy = 0, readBack = 0;
+    int timeDt = 0, timeSum = 0, timeFrames = 0;
     w.SetEventSink([&](World&, const EventPacket& p) {
         if (p.type != GameEvent::Custom) return;
         if (p.user == 100) ++awake;
         else if (p.user == 101) ++start;
         else if (p.user == 102) ++destroy;
-        else if (p.user >= 200 && p.user < 300) readBack = p.user - 200;
+        else if (p.user == 201) readBack = 1; // 精确匹配（250 语义 = dt×1000，勿用区间判定）
+        else if (p.user == 250) ++timeDt;
+        else if (p.user == 500) ++timeSum;
+        else if (p.user == 3) ++timeFrames;
     });
 
     // 命令流：Create(占位) → AddComponent<Transform2D>(占位) → AttachScript(占位, typeId 0)
@@ -445,21 +456,48 @@ void TestBehaviourAndStructuralOps() {
     opsSubmit(0, 0, 0x8000000000000001ull); // Create（entity 字段=占位符）
     opsSubmit(2, (unsigned char)0 /*Transform2D id*/, 0x8000000000000001ull);
     opsSubmit(4, 0 /*CountingBehaviour typeId*/, 0x8000000000000001ull);
+    // M5 清障①：同帧挂 TimeProbe（typeId 3，表尾注册序；无组件——Update 只读 Time）
+    opsSubmit(0, 0, 0x8000000000000002ull);
+    opsSubmit(4, 3 /*TimeProbeBehaviour typeId*/, 0x8000000000000002ull);
 
-    w.Step(0.25f); // Essential 应用（Awake）→ #14（Start + Update1）→ #15（派发 Awake/Start）
-    Expect(behAttached() == 1, "behaviour attached");
+    w.Step(0.25f); // Essential 应用（Awake）→ #14（Start + Update1：Time 帧1 报 250）→ #15
+    Expect(behAttached() == 2, "behaviours attached (Counting + TimeProbe)");
     // 帧首已建实体 + 组件：直接查场景
     int withTransform = 0;
     for (auto [e, t] : s.View<Transform2D>().each()) { (void)e; (void)t; ++withTransform; }
     Expect(withTransform == 1, "structural op created entity + component");
 
-    w.Step(0.25f); // Update2：读 Transform2D（Scale.X=1 默认 → 报 201）+ Destroy 命令入队
-    w.Step(0.25f); // Essential 应用 Destroy：OnDestroy → 实体销毁
+    w.Step(0.25f); // Counting Update2：读组件（报 201）+ Destroy 命令；TimeProbe 帧2 报 500
+    w.Step(0.25f); // Counting 应用 Destroy（OnDestroy）；TimeProbe 帧3 报 3 + Destroy 命令
+    w.Step(0.25f); // TimeProbe 应用 Destroy；#15 派发帧3 事件（sink 收齐 3）
     Expect(awake == 1 && start == 1 && destroy == 1, "lifecycle Awake/Start/OnDestroy once each");
     Expect(readBack == 1, "behaviour read Transform2D via native api (scale.x default 1)");
-    Expect(behAttached() == 0, "behaviour detached");
+    Expect(timeDt == 1 && timeSum == 1 && timeFrames == 1,
+           "Time: DeltaTime=0.25 / Time=0.5@f2 / FrameCount=3 reported exactly");
+    Expect(behAttached() == 0, "behaviours detached");
     uint32_t alive = s.AliveCount();
-    Expect(alive == 0, "entity destroyed via structural op");
+    Expect(alive == 0, "entities destroyed via structural op");
+
+    // M5 清障①（续）：lemon_time_reset（编辑器重进 Play 路径）→ 新一局 Time 从零
+    timeResetFn();
+    {
+        World w2(d);
+        Scene* s2 = &w2.CreateScene("BehT2");
+        w2.SetActiveScene(s2);
+        w2.SetScriptBackend(&g_sh);
+        w2.Pipeline().AddSystem(std::make_unique<DestroyCommitSystem>());
+        w2.Pipeline().AddSystem(std::make_unique<CSharpBatchSystem>());
+        w2.Pipeline().AddSystem(std::make_unique<ScriptEventDispatchSystem>());
+        w2.Pipeline().ResolveOrder();
+        int dtSeenAgain = 0;
+        w2.SetEventSink([&](World&, const EventPacket& p) {
+            if (p.type == GameEvent::Custom && p.user == 250) ++dtSeenAgain;
+        });
+        opsSubmit(0, 0, 0x8000000000000003ull); // Create + Attach TimeProbe（新一局）
+        opsSubmit(4, 3, 0x8000000000000003ull);
+        for (int i = 0; i < 3; i++) w2.Step(0.25f); // 帧1 重新报 250（FrameCount 从 1 重计）
+        Expect(dtSeenAgain == 1, "time reset: new session restarts at FrameCount 1");
+    }
 }
 
 } // namespace

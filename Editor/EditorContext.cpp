@@ -357,12 +357,63 @@ ecs::Entity EditorContext::InstantiatePrefabAsset(uint64_t prefabGuid, Vec2 pos)
     if (!f) return ecs::Entity::Null();
     std::string json((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     ecs::Scene& s = ActiveScene(); // Play 中脚本 Instantiate.Prefab 落 Play World
+    ecs::Entity root = InstantiatePrefabJson(s, json, prefabGuid, pos);
+    if (root.IsNull()) return root;
+    dirty = !Playing(); // Play 中 = 落 Play World，不动编辑侧脏标记（决议 #5）
+    LEMON_LOG("Prefab 实例化：%s（%u 实体）", entry->relPath.c_str(), s.AliveCount());
+    return root;
+}
+
+ecs::Entity EditorContext::InstantiatePrefabJson(ecs::Scene& s, const std::string& json,
+                                                 uint64_t prefabGuid, Vec2 pos) {
+    // 无日志/无 IO/无 dirty——高频 spawn 工厂与交互路径共用（M5 清障②）
     ecs::Entity root = SceneArchive::LoadEntityTree(s, json);
     if (root.IsNull()) return root;
     if (s.Has<ecs::Transform2D>(root)) s.Get<ecs::Transform2D>(root).pos = pos;
     if (ecs::Meta* m = s.TryGet<ecs::Meta>(root)) m->prefabId = prefabGuid;
-    dirty = !Playing(); // Play 中 = 落 Play World，不动编辑侧脏标记（决议 #5）
-    LEMON_LOG("Prefab 实例化：%s（%u 实体）", entry->relPath.c_str(), s.AliveCount());
+    return root;
+}
+
+// ---- M5 清障②：Play 世界 SpawnFn 桥（Spawner/Shooter 的 prefabId → 资产实例化）----
+// 约定：Spawner.prefabId / Shooter.projectileId 的 uint32 = prefab 资产 GUID 低 32 位
+// （03 §69 组件 schema 恒 uint32；M7 烘焙引入 dense id 表时同语义替换）。进 Play 时
+// 一次性建映射 + 文本缓存（Play 世界 = 进 Play 时刻快照，资产变更不追——与
+// editSnapshot_ 同语义）。性能边界：每次 spawn 仍 parse JSON（小树几十 µs 级），
+// 怪海爆发期可用；物化模板 + 池拷贝是 03 §10 对象池的正式工作，bench-survivor
+// 实测不及格再升级。
+void EditorContext::BuildPlayPrefabCache() {
+    playPrefabCache_.clear();
+    playSpawnWarned_.clear();
+    for (const AssetEntry& e : assets_.Entries()) {
+        if (e.type != AssetType::Prefab || e.missing) continue;
+        std::ifstream f(assets_.AbsolutePath(e), std::ios::binary);
+        if (!f) continue;
+        PlayPrefabCache c;
+        c.guid = e.guid;
+        c.json.assign((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        const uint32_t id = (uint32_t)e.guid; // 低 32 位（映射约定）
+        if (!playPrefabCache_.emplace(id, std::move(c)).second)
+            LEMON_WARN("Play prefab 映射碰撞：guid %016llx 与另一 prefab 低 32 位同值"
+                       "（id %08x 取先登记者）",
+                       (unsigned long long)e.guid, id);
+    }
+}
+
+ecs::Entity EditorContext::SpawnPlayPrefab(ecs::Scene& s, uint32_t prefabId, Vec2 pos,
+                                           uint32_t team) {
+    if (prefabId == 0) return ecs::Entity::Null();
+    auto it = playPrefabCache_.find(prefabId);
+    if (it == playPrefabCache_.end()) {
+        // 去重告警（prefabId 错绑的 Spawner 每帧触发——不刷屏）
+        if (playSpawnWarned_.insert(prefabId).second)
+            LEMON_WARN("Play 刷怪失败：prefabId %08x 无对应 prefab 资产（应填资产 GUID "
+                       "低 32 位）",
+                       prefabId);
+        return ecs::Entity::Null();
+    }
+    ecs::Entity root = InstantiatePrefabJson(s, it->second.json, it->second.guid, pos);
+    // 队伍覆盖：spawnTeam/弹队语义优先于 prefab 源值（bench 工厂同款）
+    if (ecs::Meta* m = root.IsNull() ? nullptr : s.TryGet<ecs::Meta>(root)) m->team = team;
     return root;
 }
 
@@ -495,9 +546,16 @@ bool EditorContext::EnterPlay() {
         playScene_ = nullptr;
         return false;
     }
+    // M5 清障②：Play 世界刷怪工厂（Spawner/Shooter 的 prefabId 低 32 位 → prefab
+    // 资产实例化；进 Play 时刻缓存——纯运行时 World 无此桥，SpawnSystem 原告警路径保留）
+    BuildPlayPrefabCache();
+    playWorld_->SetSpawnFn([this](ecs::Scene& s, uint32_t prefabId, Vec2 pos, uint32_t team) {
+        return SpawnPlayPrefab(s, prefabId, pos, team);
+    });
     // M4.4 装配通路（#7）：脚本后端接入 + 场景 ScriptBox 按 className 解析挂载
     if (scripts_) {
         playWorld_->SetScriptBackend(scripts_);
+        scripts_->ResetScriptTime(); // M5 清障①：进 Play = 新的一局，Time 归零
         ResolvePlayScripts();
     }
     // §3.4-4：清 Undo 并禁用；选中集快照后清空

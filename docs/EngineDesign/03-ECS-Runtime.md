@@ -66,7 +66,7 @@ struct Chase         { float speed; float aggroRange; float keepRange; uint32_t 
 struct Flee          { float speed; float range; };
 struct Shooter       { uint32_t projectileId; float interval; float range; uint32_t targetTeam; };
 struct Projectile    { float speed; float lifetime; float damage; uint8_t pierce; uint8_t homing; };
-struct Spawner       { uint32_t prefabId; float interval; uint16_t burst; float range; uint32_t maxAlive; uint32_t spawnTeam; }; // 刷怪口
+struct Spawner       { uint32_t prefabId; float interval; uint16_t burst; float range; uint32_t maxAlive; uint32_t spawnTeam; }; // 刷怪口（prefabId = prefab 资产 GUID 低 32 位，M5 清障②约定；编辑器 EnterPlay 建映射并注册 SpawnFn，M7 烘焙换 dense id 表同语义）
 struct Hazard        { float dps; float tickInterval; };                 // 持续伤害区（毒泽/激光）
 struct Collectible   { uint8_t kind; /*gem/coin/heart*/ float magnetRadius; };
 struct Trigger2D     { uint32_t triggerId; bool once; };                 // 进入/离开事件

@@ -175,6 +175,7 @@ bool ScriptHost::Initialize(const char* dotnetRoot, const char* runtimeConfigPat
     eventsPullFn_ = (int (*)(ecs::EventPacket*, int))host_.GetExport(kType, "lemon_events_pull");
     scriptsTickFn_ =
         (void (*)(BatchSystemFrame*, int, float))host_.GetExport(kType, "lemon_scripts_tick");
+    timeResetFn_ = (void (*)())host_.GetExport(kType, "lemon_time_reset"); // M5 清障①（可缺席）
     scriptsAttachFn_ = (void (*)(int, uint64_t))host_.GetExport(kType, "lemon_scripts_attach");
     scriptsDestroyFn_ = (void (*)(uint64_t))host_.GetExport(kType, "lemon_scripts_destroy");
     opsPullFn_ = (int (*)(SceneOpC*, int))host_.GetExport(kType, "lemon_ops_pull");
@@ -349,7 +350,13 @@ uint64_t ScriptHost::GcAllocated() const {
             "Lemon.Entry.Exports, Lemon.Entry", "lemon_gc_allocated");
         if (!gcAllocFn_) return 0;
     }
-    return (uint64_t)gcAllocFn_();
+    return gcAllocFn_();
+}
+
+void ScriptHost::ResetScriptTime()
+{
+    // M5 清障①：编辑器 EnterPlay 调。启动期已解析指针，此处零 GetExport（GC 纪律同上）
+    if (timeResetFn_) timeResetFn_();
 }
 
 void ScriptHost::ApplyStructural(ecs::World& world, ecs::Scene& scene) {

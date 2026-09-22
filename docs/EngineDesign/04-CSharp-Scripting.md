@@ -186,7 +186,8 @@ public readonly struct Transform               // 视图结构：逐属性访问
 - `GameObject` / `Transform`（position/rotation/scale/parent）/ `Tag/Layer/CompareTag` / `SetParent(worldPositionStays)` / `GetChild/childCount`；
 - `AddComponent / GetComponent / TryGetComponent / GetComponentInChildren`（双路由）；
 - 生命周期 `Awake/OnEnable/Start/Update/LateUpdate/OnDisable/OnDestroy/OnTriggerEnter/OnTriggerExit`；
-- `Scene.Instantiate/Destroy`、`FindWithTag`、`Time.timeScale`、`SortingLayer/SortingOrder`（02 §3.1）。
+- `Scene.Instantiate/Destroy`、`FindWithTag`、`Time.timeScale`、`SortingLayer/SortingOrder`（02 §3.1）；
+- `Time.DeltaTime / Time.Elapsed / Time.FrameCount`（M5 清障① 已落地：固定步长 dt / 局累计秒 / 局帧号；域线程 TickBody 首行推进，档①②同帧同值，进 Play/换域归零。`Time.timeScale` 随 M5 导演批次接 C++ 步进）。
 
 **不对齐（语义差异，显式声明）**：
 

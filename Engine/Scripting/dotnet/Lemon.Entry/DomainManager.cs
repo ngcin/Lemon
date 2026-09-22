@@ -101,6 +101,7 @@ internal static unsafe class DomainManager
                 Lemon.Events.Reset();
                 Lemon.Behaviours.Reset();
                 Lemon.SceneOps.Reset();
+                Lemon.Time.Reset(); // M5 清障①：新局归零（编辑器重进 Play 走 lemon_time_reset 同语义）
                 asm.GetType("GameMain")?.GetMethod("Configure", BindingFlags.Public | BindingFlags.Static)
                    ?.Invoke(null, null);
                 var tick = asm.GetType("TestScript")?.GetMethod("Tick", BindingFlags.Public | BindingFlags.Static);
@@ -237,6 +238,7 @@ internal static unsafe class DomainManager
 
     private static void TickBody()
     {
+        Lemon.Time.Advance(s_tDt); // M5 清障①：首行推进（档①/档②同帧同值）
         Lemon.Behaviours.TickStartUpdate(s_tDt);
         Lemon.Entry.Batch.Tick(s_tFrames, s_tCount);
         Lemon.Behaviours.TickLateUpdate(s_tDt);

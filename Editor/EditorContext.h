@@ -5,6 +5,8 @@
 
 #include <memory>
 #include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "Assets/AssetDatabase.h"
@@ -85,6 +87,9 @@ public:
     uint64_t MakePrefabFrom(ecs::Entity e);
     /// .prefab 实例化（新 guid 集合 + prefabId 回链；pos 覆盖 root 本地位置）
     ecs::Entity InstantiatePrefabAsset(uint64_t prefabGuid, Vec2 pos);
+    /// 实例化核心（json 已在手；无 IO/日志/dirty——高频 spawn 工厂复用，M5 清障②）
+    ecs::Entity InstantiatePrefabJson(ecs::Scene& s, const std::string& json,
+                                      uint64_t prefabGuid, Vec2 pos);
     /// 实例改动写回源资产
     bool ApplyPrefabInstance(ecs::Entity e);
     /// 回到源资产态（整体：destroy + 重建于原父之下）
@@ -144,6 +149,13 @@ private:
     void BackfillGuids(); // 打开旧档（无 guid 字段）时补齐
     void ResolvePlayScripts(); // EnterPlay：ScriptBox.className → typeId → AttachBehaviour
     std::string AutosavePathFor(const std::string& sceneStem) const; // .lemon/autosave/<stem>.scene
+    // M5 清障②：Play 世界 Spawner/Shooter 工厂桥
+    struct PlayPrefabCache {
+        uint64_t guid = 0; // 完整资产 GUID（回链用）
+        std::string json;  // .prefab 文本（进 Play 时刻快照）
+    };
+    void BuildPlayPrefabCache(); // EnterPlay：Prefab 资产 → {低 32 位 → 缓存}
+    ecs::Entity SpawnPlayPrefab(ecs::Scene& s, uint32_t prefabId, Vec2 pos, uint32_t team);
 
     std::unique_ptr<ecs::World> world_;
     ecs::Scene* scene_ = nullptr;
@@ -159,6 +171,8 @@ private:
     ecs::Scene* playScene_ = nullptr;
     std::string editSnapshot_;              // 进 Play 前全量快照（§3.4-1）
     std::vector<uint64_t> savedSelectionGuids_;
+    std::unordered_map<uint32_t, PlayPrefabCache> playPrefabCache_; // M5 清障②
+    std::unordered_set<uint32_t> playSpawnWarned_; // prefabId 错绑去重告警
     bool lastExitVerified_ = false;
     double lastEnterMs_ = 0.0, lastExitMs_ = 0.0;
     UndoStack undo_;

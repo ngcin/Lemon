@@ -102,6 +102,10 @@ public:
     /// 托管累计分配字节数（GC 纪律验收；两次读数差 = 期间分配）。
     uint64_t GcAllocated() const;
 
+    /// Time 归零（编辑器进 Play = 新的一局；M5 清障①）。Play↔Edit 不换脚本域，
+    /// Time 属于"局"——必须显式归零。旧 Entry 程序集无该导出时 = 安全 no-op。
+    void ResetScriptTime();
+
     /// 直接取导出（测试/扩展用；勿在热路径调用——启动期一次取全的同一纪律）。
     CoreCLRHost& RawHost() { return host_; }
 
@@ -133,6 +137,7 @@ private:
     void (*eventsDispatchFn_)(const ecs::EventPacket*, int) = nullptr;
     int (*eventsPullFn_)(ecs::EventPacket*, int) = nullptr;
     void (*scriptsTickFn_)(BatchSystemFrame*, int, float) = nullptr;
+    void (*timeResetFn_)() = nullptr; // M5 清障①：lemon_time_reset（旧 Entry = null）
     void (*scriptsAttachFn_)(int, uint64_t) = nullptr;
     void (*scriptsDestroyFn_)(uint64_t) = nullptr;
     int (*opsPullFn_)(SceneOpC*, int) = nullptr;
