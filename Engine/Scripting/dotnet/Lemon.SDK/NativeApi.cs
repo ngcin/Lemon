@@ -6,7 +6,7 @@ using System.Runtime.InteropServices;
 namespace Lemon;
 
 /// <summary>与 C++ lemon::scripting::NativeApiVtable 逐字节一致（两侧同步改；
-/// M4.4 表尾追加 4 项——旧宿主（未注册新项）时为 null，SDK 侧判空调用）。</summary>
+/// M4.4 表尾追加 4 项、M5 批① 追加 2 项——旧宿主（未注册新项）时为 null，SDK 侧判空调用）。</summary>
 [StructLayout(LayoutKind.Sequential)]
 public unsafe struct NativeApi
 {
@@ -18,6 +18,9 @@ public unsafe struct NativeApi
     public delegate* unmanaged<byte*, uint> SpriteOfGuid;                      // M4.4：资产 GUID → spriteId
     public delegate* unmanaged<uint, float, float, ulong> SpawnSprite;         // M4.4：Instantiate.Spawn
     public delegate* unmanaged<byte*, float, float, ulong> InstantiatePrefab;  // M4.4：Prefab 实例化
+    public delegate* unmanaged<float> GetTimescale;                            // M5 批①：World.TimeScale
+    public delegate* unmanaged<float, void> SetTimescale;                      // M5 批①：World.SetTimeScale
+    public delegate* unmanaged<byte*, byte*, float, void> RtUiSet;             // M5 批①：Lemon.Ui.Set → World.RtUi
 }
 
 internal static unsafe class Native
@@ -79,5 +82,30 @@ internal static unsafe class Native
         for (int i = 0; i < n; i++) p[i] = (byte)guidHex[i];
         p[n] = 0;
         return Api.InstantiatePrefab(p, x, y);
+    }
+
+    // ---- M5 批①（timeScale ↔ Time.Scale；旧宿主未注册时：读 1 / 写丢弃）----
+
+    internal static float TimeScale() => Api.GetTimescale != null ? Api.GetTimescale() : 1f;
+
+    internal static void SetTimeScale(float s)
+    {
+        if (Api.SetTimescale != null) Api.SetTimescale(s);
+    }
+
+    // ---- M5 批①（RT UI ↔ Lemon.Ui.Set；旧宿主未注册时丢弃）----
+
+    internal static unsafe void UiSet(string key, string text, float frac)
+    {
+        if (Api.RtUiSet == null || key == null || text == null) return;
+        byte* k = stackalloc byte[16];
+        byte* t = stackalloc byte[48];
+        int kn = System.Math.Min(key.Length, 15);
+        for (int i = 0; i < kn; i++) k[i] = (byte)key[i];
+        k[kn] = 0;
+        int tn = System.Math.Min(text.Length, 47);
+        for (int i = 0; i < tn; i++) t[i] = (byte)text[i];
+        t[tn] = 0;
+        Api.RtUiSet(k, t, frac);
     }
 }

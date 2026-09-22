@@ -1,4 +1,4 @@
-// Lemon 引擎 — 03 §4 16 系统实现 + World::InstallDefaultSystems
+// Lemon 引擎 — 03 §4 17 系统实现 + World::InstallDefaultSystems
 #include "Systems/Systems.h"
 
 #include <algorithm>
@@ -346,7 +346,105 @@ void SpatialHashRebuildSystem::Tick(World& world, Scene& scene, float dt) {
     scene.Spatial().Rebuild(scene); // 单线程（03 §14 预算内；profile 触发再并行化）
 }
 
-// --------------------------------------------------------------- #9 命中 --
+// --------------------------------------------------------------- #9 拾取 ----
+void PickupSystem::Tick(World& world, Scene& scene, float dt) {
+    // M5 批①：磁吸触程双侧取大 = max(宝石 magnetRadius, 收集者 Stats.pickupRadius)
+    // —— 两源各一段查询：A 收集者广播（玩家磁力升级侧）、B 宝石自检（宝石自带
+    // 吸程侧）。收集者约定 = 持 XpProgress 的实体（VS 心智：唯玩家拾取）。
+    // 磁吸直写 pos（不经 Velocity——无 Movement/Separation 竞争，宝石免挂 Velocity）；
+    // 不用 RNG（子流零扰动）；拾取销毁两阶段，与战斗销毁同走 #17 统一提交。
+
+    // 段 A：收集者广播——pickupRadius 覆盖内的地面宝石即吸
+    {
+        auto view = scene.View<XpProgress, Transform2D>();
+        for (auto [ent, xp, tf] : view.each()) {
+            (void)xp;
+            const Stats* st = scene.TryGet<Stats>(Scene::FromEntt(ent));
+            const float r = st ? st->pickupRadius : 0.0f;
+            if (r <= 0.0f) continue; // 无 Stats/未开磁力：只剩宝石自程侧（段 B）
+            physics2d::QueryFilter f;
+            f.exclude = Scene::FromEntt(ent);
+            scene.Spatial().OverlapCircle(
+                scene, tf.pos, r, f, 0.0f,
+                [&](Entity other, const Transform2D&) {
+                    Collectible* c = scene.TryGet<Collectible>(other);
+                    if (!c || c->state != 0) return true;
+                    c->state = 1;
+                    c->target = Scene::FromEntt(ent);
+                    return true; // 全量标记，不短路
+                });
+        }
+    }
+
+    // 段 B：宝石自检——自带吸程覆盖到收集者即吸（A 覆盖不到的"宝石吸程 > 玩家
+    // 磁力"半边）；首个命中者胜（哈希 cell 序 = 确定性）
+    {
+        auto view = scene.View<Collectible, Transform2D>();
+        for (auto [ent, c, tf] : view.each()) {
+            if (c.state != 0 || c.magnetRadius <= 0.0f) continue;
+            physics2d::QueryFilter f;
+            f.exclude = Scene::FromEntt(ent);
+            scene.Spatial().OverlapCircle(
+                scene, tf.pos, c.magnetRadius, f, 0.0f,
+                [&](Entity other, const Transform2D&) {
+                    if (!scene.Has<XpProgress>(other)) return true;
+                    c.state = 1;
+                    c.target = other;
+                    return false; // 首个即止
+                });
+        }
+    }
+
+    // 段 C：飞行 + 触距入账。同 tick A/B 双磁吸（两收集者竞争）= 池序后写胜出——
+    // 确定性但任意；同屏多人拾取公平性归玩法层（分区/分宝石队）
+    {
+        auto view = scene.View<Collectible, Transform2D>();
+        for (auto [ent, c, tf] : view.each()) {
+            if (c.state != 1) continue;
+            if (!scene.Alive(c.target) || !scene.Has<Transform2D>(c.target)) {
+                c.state = 0; // 目标失活：回落地面（宝石不丢，可再吸）
+                c.target = Entity::Null();
+                continue;
+            }
+            const Vec2 toT = scene.Get<Transform2D>(c.target).pos - tf.pos;
+            const float dist = Length(toT);
+            if (dist <= kPickupTouch) {
+                // 入账按 kind 分发（引擎只入账，表现归 C#/模板层事件消费）
+                switch (c.kind) {
+                case 0: // gem → XP（同 tick 由 #12 升级环消费 → LevelUp 事件）
+                    if (XpProgress* xp = scene.TryGet<XpProgress>(c.target))
+                        xp->xp += c.value;
+                    break;
+                case 1: // coin → gold
+                    if (Inventory* inv = scene.TryGet<Inventory>(c.target))
+                        inv->gold += (uint32_t)c.value;
+                    break;
+                case 2: // heart → 治疗（上限钳制）
+                    if (Health* hp = scene.TryGet<Health>(c.target))
+                        hp->cur = std::min(hp->max, hp->cur + c.value);
+                    break;
+                default: break; // 未知 kind：只发事件不入账（自定义拾取走事件层）
+                }
+                EventPacket ev{};
+                ev.type = GameEvent::Pickup;
+                ev.src = Scene::FromEntt(ent);
+                ev.dst = c.target;
+                ev.payload[0] = (float)c.kind;
+                ev.payload[1] = c.value;
+                ev.payload[2] = tf.pos.x;
+                ev.payload[3] = tf.pos.y;
+                world.Events().Push(ev);
+                scene.Destroy(Scene::FromEntt(ent));
+                continue;
+            }
+            // 飞行：min 钳制防单步过冲穿越目标
+            const float step = std::min(c.magnetSpeed * dt, dist);
+            tf.pos += (toT / dist) * step;
+        }
+    }
+}
+
+// -------------------------------------------------------------- #10 命中 --
 void HitboxSystem::Tick(World& world, Scene& scene, float dt) {
     TeamTable& teams = world.Teams();
     auto& events = world.Events();
@@ -460,7 +558,7 @@ void HitboxSystem::Tick(World& world, Scene& scene, float dt) {
     }
 }
 
-// ------------------------------------------------------------- #10 触发器 --
+// ------------------------------------------------------------- #11 触发器 --
 void TriggerSystem::Tick(World& world, Scene& scene, float dt) {
     (void)dt;
     auto view = scene.View<Trigger2D, Transform2D>();
@@ -508,7 +606,7 @@ void TriggerSystem::Tick(World& world, Scene& scene, float dt) {
     }
 }
 
-// ------------------------------------------------------------- #11 数值 ----
+// ------------------------------------------------------------- #12 数值 ----
 void StatSystem::Tick(World& world, Scene& scene, float dt) {
     // 状态效果：倒计时，到期压缩保序移除（保序 = 确定性哈希稳定）
     {
@@ -523,14 +621,14 @@ void StatSystem::Tick(World& world, Scene& scene, float dt) {
         }
     }
     // iFrames 倒计时（M5 批⓪；此前只置不减 → 受击一次永久无敌，DevLog 2026-09-22 P0）。
-    // Hitbox(#9) 同 tick 置窗在先、此处(#11) 递减在后 → 复拍间隔恰 ceil(窗/dt) tick
+    // Hitbox(#10) 同 tick 置窗在先、此处(#12) 递减在后 → 复拍间隔恰 ceil(窗/dt) tick
     // （60Hz、0.1s 窗 = 6 tick）；逐实体独立更新 = 确定性。
     {
         auto view = scene.View<Health>();
         for (auto [ent, hp] : view.each())
             if (hp.iFrames > 0.0f) hp.iFrames = std::max(0.0f, hp.iFrames - dt);
     }
-    // 经验/升级（幂曲线；VS 曲线资产化 M5）
+    // 经验/升级（幂曲线；VS 曲线资产化 M5）。入账源 = #9 PickupSystem（gem 拾取）
     {
         auto view = scene.View<XpProgress>();
         for (auto [ent, xp] : view.each()) {
@@ -549,7 +647,7 @@ void StatSystem::Tick(World& world, Scene& scene, float dt) {
     }
 }
 
-// ------------------------------------------------------------- #12 动画 ----
+// ------------------------------------------------------------- #13 动画 ----
 void AnimatorSystem::Tick(World& world, Scene& scene, float dt) {
     (void)world;
     // M2：时间推进（含 loop 回绕）；帧号映射需 clip 资产表（M5 接入后写
@@ -564,7 +662,7 @@ void AnimatorSystem::Tick(World& world, Scene& scene, float dt) {
     }
 }
 
-// ---------------------------------------------------- #13 投射物回收 ----
+// ---------------------------------------------------- #14 投射物回收 ----
 void ProjectileLifetimeSystem::Tick(World& world, Scene& scene, float dt) {
     auto& pool = scene.Pool<Projectile>();
     const uint32_t n = (uint32_t)pool.size();
@@ -588,13 +686,13 @@ void ProjectileLifetimeSystem::Tick(World& world, Scene& scene, float dt) {
     }
 }
 
-// ---------------------------------------------------- #14 C# 批量（M3）----
+// ---------------------------------------------------- #15 C# 批量（M3）----
 void CSharpBatchSystem::Tick(World& world, Scene& scene, float dt) {
     // 桥后端（ScriptHost）构造块描述符（本线程）→ 域线程执行（ADR-010 D1）；未注入则空跑
     if (auto* backend = world.ScriptBackend()) backend->TickBatch(world, scene, dt);
 }
 
-// ---------------------------------------------------- #15 事件派发 --------
+// ---------------------------------------------------- #16 事件派发 --------
 void ScriptEventDispatchSystem::Tick(World& world, Scene& scene, float dt) {
     (void)scene; (void)dt;
     auto& events = world.Events();
@@ -609,7 +707,7 @@ void ScriptEventDispatchSystem::Tick(World& world, Scene& scene, float dt) {
     events.Clear(); // 帧末清空（03 §11）
 }
 
-// ---------------------------------------------------- #16 销毁提交 --------
+// ---------------------------------------------------- #17 销毁提交 --------
 void DestroyCommitSystem::Tick(World& world, Scene& scene, float dt) {
     (void)dt;
     // M3-6：脚本结构命令帧首应用（建/删实体、增删组件、挂脚本；先于销毁提交——
@@ -621,7 +719,9 @@ void DestroyCommitSystem::Tick(World& world, Scene& scene, float dt) {
 // ---------------------------------------------------- 默认管线安装 --------
 void World::InstallDefaultSystems() {
     auto& p = Pipeline();
-    // 注册序 = 03 §4 表序 = 系统 RNG 子流 id（改动序号 = 破坏回放兼容，禁）
+    // 注册序 = 03 §4 表序 = 系统 RNG 子流 id（改动序号 = 破坏回放兼容，禁）。
+    // PickupSystem（#9，M5 批①）不用 RNG——不占子流，中插不移位既有 id
+    // （现仅 SpawnSystem 持硬编码子流 id=2）
     p.AddSystem(std::make_unique<InputSnapshotSystem>());
     p.AddSystem(std::make_unique<DirectorSystem>());
     p.AddSystem(std::make_unique<SpawnSystem>());
@@ -630,6 +730,7 @@ void World::InstallDefaultSystems() {
     p.AddSystem(std::make_unique<SeparationSystem>());
     p.AddSystem(std::make_unique<MovementSystem>());
     p.AddSystem(std::make_unique<SpatialHashRebuildSystem>());
+    p.AddSystem(std::make_unique<PickupSystem>());
     p.AddSystem(std::make_unique<HitboxSystem>());
     p.AddSystem(std::make_unique<TriggerSystem>());
     p.AddSystem(std::make_unique<StatSystem>());

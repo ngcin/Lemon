@@ -20,11 +20,34 @@
 
 namespace lemon::ecs {
 
+// ---- Game RT UI 最小通道（M5 批① D6；M8 打包 HUD 复用同通道）------------------
+// World 级定长槽（8 × key/text/frac）：C# Lemon.Ui.Set 写入，编辑器 GameView /
+// 打包 HUD 读出。命中 key 即覆写、空槽即占、满槽忽略；text 截断 47 字符。
+// 呈现层专用——不入 StateHash（ComputeStateHash 只哈希 Scene），EnterPlay 新建
+// World 自清零。
+struct RtUiSlot {
+    char key[16] = {};
+    char text[48] = {};
+    float frac = -1.0f; // <0 纯文本；[0,1] 附进度条
+};
+
+class RtUiChannel {
+public:
+    bool Set(const char* key, const char* text, float frac);
+    void Clear() { count_ = 0; }
+    uint32_t Count() const { return count_; }
+    const RtUiSlot& At(uint32_t i) const { return slots_[i]; }
+
+private:
+    RtUiSlot slots_[8]{};
+    uint32_t count_ = 0;
+};
+
 /// 脚本桥后端（M3：Scripting/ScriptHost 实现；由宿主构造并注入 World，World 不拥有）
 struct IScriptBackend {
     virtual ~IScriptBackend() = default;
-    virtual void TickBatch(World& world, Scene& scene, float dt) = 0;       // #14 调用
-    virtual void DispatchEvents(World& world, Scene& scene) = 0;            // #15 调用
+    virtual void TickBatch(World& world, Scene& scene, float dt) = 0;       // #15 调用
+    virtual void DispatchEvents(World& world, Scene& scene) = 0;            // #16 调用
     virtual void ApplyStructural(World& world, Scene& scene) = 0;           // DestroyCommit 前调用
 };
 
@@ -69,6 +92,10 @@ public:
     TeamTable& Teams() { return teams_; }
     const TeamTable& Teams() const { return teams_; }
 
+    // ---- Game RT UI 通道（上方 RtUiChannel 说明）----
+    RtUiChannel& RtUi() { return rtUi_; }
+    const RtUiChannel& RtUi() const { return rtUi_; }
+
     // ---- 输入（InputSnapshot 系统消费的快照通道；录制/回放共用）----
     const InputState& Input() const { return input_; }
     void ApplyInput(const InputState& in) { input_ = in; }
@@ -77,6 +104,12 @@ public:
     void SetBounds(Rect bounds) { bounds_ = bounds; hasBounds_ = true; }
     bool HasBounds() const { return hasBounds_; }
     Rect Bounds() const { return bounds_; }
+
+    // ---- 时间缩放（01 §2：作用于模拟步进，不影响渲染插值；M5 批①）----
+    // =0 冻结暂停（tick 照推、RNG 不消耗——回放帧对齐保持）；clamp [0,8]。
+    // C# 侧（Time.Scale）由事件驱动 = 回放内确定性；编辑器侧改动属调试操作不入输入快照。
+    void SetTimeScale(float s) { timeScale_ = s < 0.0f ? 0.0f : (s > 8.0f ? 8.0f : s); }
+    float TimeScale() const { return timeScale_; }
 
     // ---- 外部挂钩 ----
     void SetSpawnFn(SpawnFn fn) { spawnFn_ = std::move(fn); }
@@ -111,7 +144,9 @@ private:
     SpawnFn spawnFn_;
     EventSink eventSink_;
     IScriptBackend* scriptBackend_ = nullptr;
+    RtUiChannel rtUi_;
     uint64_t tick_ = 0;
+    float timeScale_ = 1.0f;
 };
 
 } // namespace lemon::ecs

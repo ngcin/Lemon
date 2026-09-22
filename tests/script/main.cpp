@@ -300,11 +300,11 @@ void TestDomainManager() {
         Expect(d2 == (double)0.1f, "hot-reload new domain fresh state");
         Expect(leaks >= 0 && leaksFn && leaksFn() == leaks, "leak count visible + consistent");
         Expect(reloadsFn && reloadsFn() >= 1, "reload count visible");
-        // 换装后新域 GameMain.Configure 已跑：behaviours 列表可拉（4 个类型）
+        // 换装后新域 GameMain.Configure 已跑：behaviours 列表可拉（5 个类型）
         auto listFn = (int (*)(char*, int))GetExport("lemon_behaviours_list");
         char buf[4096];
         int n = listFn ? listFn(buf, (int)sizeof buf) : -1;
-        Expect(n == 4, "behaviours list after hot reload (Counting/Spawner/InputMover/TimeProbe)");
+        Expect(n == 5, "behaviours list after hot reload (+M5 批① ScaleUiProbe)");
         // M4.6 回归（用户实测闪退根因）：相对路径进 dm_reload 曾抛 ArgumentException
         // 逃逸 UnmanagedCallersOnly → coreclr abort。拦截层必须转 0 返回且进程存活
         // （本断言能跑到 = 进程没死）。换装失败后旧域已弃——再换一次真路径恢复。
@@ -500,6 +500,64 @@ void TestBehaviourAndStructuralOps() {
     }
 }
 
+// M5 批①：Time.Scale（native 表往返 + 缩放 dt 链到 Time.DeltaTime）与
+// Lemon.Ui.Set（World.RtUi 定长槽，C++ 侧读回断言）
+void TestTimeScaleAndUiChannel() {
+    using namespace lemon::ecs;
+    auto opsSubmit = (void (*)(unsigned char, unsigned char, uint64_t))GetExport("lemon_ops_submit");
+    auto timeResetFn = (void (*)())GetExport("lemon_time_reset");
+    Expect(opsSubmit && timeResetFn, "ops/time exports resolved");
+    timeResetFn(); // 本测试 = 新一局（ScaleUiProbe 按 FrameCount 分段）
+
+    WorldDesc d;
+    d.threadCount = 1;
+    World w(d);
+    Scene& s = w.CreateScene("TsT");
+    w.SetActiveScene(&s);
+    w.SetScriptBackend(&g_sh);
+    w.Pipeline().AddSystem(std::make_unique<DestroyCommitSystem>());
+    w.Pipeline().AddSystem(std::make_unique<CSharpBatchSystem>());
+    w.Pipeline().AddSystem(std::make_unique<ScriptEventDispatchSystem>());
+    w.Pipeline().ResolveOrder();
+
+    int sawSet = 0, sawDt = 0, sawReset = 0;
+    w.SetEventSink([&](World&, const EventPacket& p) {
+        if (p.type != GameEvent::Custom) return;
+        if (p.user == 305) ++sawSet;      // 帧1：C# 读回 Scale=0.5 → 300+5
+        else if (p.user == 525) ++sawDt;  // 帧2：缩放 DeltaTime 0.125 → 400+125
+        else if (p.user == 610) ++sawReset; // 帧3：复位读回 1.0 → 600+10
+    });
+
+    opsSubmit(0, 0, 0x8000000000000004ull); // Create + Attach ScaleUiProbe（typeId 4 表尾）
+    opsSubmit(4, 4, 0x8000000000000004ull);
+
+    w.Step(0.25f); // 帧1：置 Scale=0.5、报 305
+    Expect(sawSet == 1, "C# Time.Scale readback 0.5 (Custom 305)");
+    Expect(w.TimeScale() == 0.5f, "native set: World.TimeScale == 0.5");
+
+    w.Step(0.25f); // 帧2：DeltaTime = 0.25×0.5、报 525；Ui.Set("xp",...)
+    Expect(sawDt == 1, "scaled DeltaTime 0.125 reached C# (Custom 525)");
+    bool slotOk = w.RtUi().Count() == 1;
+    if (slotOk) {
+        const RtUiSlot& slot = w.RtUi().At(0);
+        slotOk = std::strcmp(slot.key, "xp") == 0 &&
+                 std::strcmp(slot.text, "LV3 45/120") == 0 &&
+                 std::fabs(slot.frac - 0.45f) < 1e-5f;
+    }
+    Expect(slotOk, "ui slot key/text/frac written via Lemon.Ui.Set");
+
+    w.Step(0.25f); // 帧3：复位 Scale=1、报 610、自毁命令
+    w.Step(0.25f); // 应用销毁 + 派发
+    Expect(sawReset == 1 && w.TimeScale() == 1.0f, "scale restored to 1.0 (Custom 610)");
+
+    // 新 World 自清零（EnterPlay 同语义——编辑器每局新建 playWorld）
+    {
+        World w2(d);
+        Expect(w2.RtUi().Count() == 0 && w2.TimeScale() == 1.0f,
+               "fresh world: ui slots clear + scale 1");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -542,6 +600,7 @@ int main() {
     TestBatchSystem();
     TestEventBridge();
     TestBehaviourAndStructuralOps();
+    TestTimeScaleAndUiChannel();
 
     // M4.6 探针（编辑器切项目场景）：同进程二次 ScriptHost 生命周期。CoreCLR 运行时
     // 进程单例——第二次 Initialize 的真实行为必须钉板（成功/失败都合法，崩 = 缺陷）。

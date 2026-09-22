@@ -43,6 +43,10 @@ struct NativeApiVtable {
     uint32_t (*spriteOfGuid)(const char*);                          // 资产 GUID → spriteId（0=无）
     uint64_t (*spawnSprite)(uint32_t, float, float);                // Instantiate.Spawn → 实体句柄
     uint64_t (*instantiatePrefab)(const char*, float, float);       // Prefab 实例化 → 句柄（0=失败）
+    // ---- M5 批①（timeScale ↔ Time.Scale；表尾追加同上约定）----
+    float (*getTimescale)();                                        // World::TimeScale
+    void (*setTimescale)(float);                                    // World::SetTimeScale（clamp [0,8]）
+    void (*rtUiSet)(const char* key, const char* text, float frac); // Lemon.Ui.Set → World::RtUi
 };
 
 /// 编辑器资产钩子（M4.4：编辑器宿主装配期经 SetEditorAssetHooks 注入；

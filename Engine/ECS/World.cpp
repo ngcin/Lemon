@@ -1,9 +1,31 @@
-// Lemon 引擎 — World 实现（16 系统安装移入 Systems/，见 Systems.cpp）
+// Lemon 引擎 — World 实现（17 系统安装移入 Systems/，见 Systems.cpp）
 #include "ECS/World.h"
+
+#include <cstdio>
+#include <cstring>
 
 #include "ECS/ComponentRegistry.h"
 
 namespace lemon::ecs {
+
+bool RtUiChannel::Set(const char* key, const char* text, float frac) {
+    if (!key || !key[0] || !text) return false;
+    uint32_t found = count_;
+    for (uint32_t i = 0; i < count_; ++i)
+        if (std::strcmp(slots_[i].key, key) == 0) {
+            found = i;
+            break;
+        }
+    if (found == count_) {
+        if (count_ >= 8) return false; // 满槽忽略（8 行 HUD 上限，文档声明）
+        ++count_;
+    }
+    RtUiSlot& s = slots_[found];
+    std::snprintf(s.key, sizeof s.key, "%s", key);
+    std::snprintf(s.text, sizeof s.text, "%s", text); // 截断 47 字符
+    s.frac = frac;
+    return true;
+}
 
 World::World(const WorldDesc& desc)
     : desc_(desc),
@@ -32,8 +54,11 @@ Scene& World::CreateScene(const char* name) {
 
 void World::Step(float fixedDt) {
     if (!active_) return; // 无活动场景 = 空步（不崩；tick 不推进）
-    pipeline_.RunStage(*this, *active_, SystemStage::Essential, fixedDt);
-    pipeline_.RunStage(*this, *active_, SystemStage::FixedTick, fixedDt);
+    // 时间缩放（M5 批①）：全 FixedTick 系统吃缩放 dt（C# Time.DeltaTime 同值）；
+    // Essential（销毁提交）不消费 dt，缩放无语义差
+    const float dt = fixedDt * timeScale_;
+    pipeline_.RunStage(*this, *active_, SystemStage::Essential, dt);
+    pipeline_.RunStage(*this, *active_, SystemStage::FixedTick, dt);
     ++tick_;
 }
 

@@ -747,6 +747,18 @@ void GameViewPanel::OnGui(EditorApp& app) {
             ImGui::TextDisabled("%s", ImGui::IsWindowFocused() && ImGui::IsWindowHovered()
                                          ? "输入已路由至 Play World（WASD/空格）"
                                          : "点击聚焦后键鼠进游戏");
+            // M5 批①：Game RT UI 通道——C# Lemon.Ui.Set 写 World.RtUi 定长槽，
+            // Play 时叠画在游戏画面左上角（M8 完整 HUD 前的最小形态；frac≥0 附进度条）
+            const lemon::ecs::RtUiChannel& rt = app.Ctx().ActiveWorld().RtUi();
+            for (uint32_t i = 0; i < rt.Count(); ++i) {
+                const lemon::ecs::RtUiSlot& slot = rt.At(i);
+                ImGui::SetCursorPos(ImVec2(off.x + 10.0f, off.y + 26.0f + i * 24.0f));
+                ImGui::TextUnformatted(slot.text);
+                if (slot.frac >= 0.0f) {
+                    ImGui::SameLine();
+                    ImGui::ProgressBar(slot.frac, ImVec2(120.0f, 10.0f), "");
+                }
+            }
         }
     }
     ImGui::EndChild();

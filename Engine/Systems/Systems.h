@@ -1,4 +1,4 @@
-// Lemon 引擎 — 03 §4 系统管线 16 系统（12 真实现 + 4 里程碑占位）
+// Lemon 引擎 — 03 §4 系统管线 17 系统（13 真实现 + 4 里程碑占位）
 // 占位（空 Tick，保管线位置/执行序/F3 可见）：Director(M5 波次)、
 // Navigation(M6 FlowField)、CSharpBatch(M3)、Extract 侧无。
 // 并行系统均为"逐实体读邻居/配置、只写自身"模式（01 §3.1 原生并行形态②/③）：
@@ -118,21 +118,32 @@ public:
     void Tick(World& world, Scene& scene, float dt) override;
 };
 
-/// #9 命中：投射物/Hazard → Team 判定 → 伤害/击退/Hit/Death 事件
+/// #9 拾取：Collectible 磁吸（双侧取大触程）→ 飞行 → 触距入账 + Pickup 事件。
+/// 收集者约定 = 持 XpProgress 的实体（VS 心智：唯玩家拾取）；磁吸直写 pos
+/// （不经 Velocity——无 Movement/Separation 竞争）；不用 RNG（子流零扰动）
+class PickupSystem final : public ISystem {
+public:
+    const char* Name() const override { return "Pickup"; }
+    void Tick(World& world, Scene& scene, float dt) override;
+
+    static constexpr float kPickupTouch = 8.0f; // 触距（px）：入账判定口径
+};
+
+/// #10 命中：投射物/Hazard → Team 判定 → 伤害/击退/Hit/Death 事件
 class HitboxSystem final : public ISystem {
 public:
     const char* Name() const override { return "Hitbox"; }
     void Tick(World& world, Scene& scene, float dt) override;
 };
 
-/// #10 触发器：Trigger2D 圆域差分 → Enter/Exit 事件（once 语义）
+/// #11 触发器：Trigger2D 圆域差分 → Enter/Exit 事件（once 语义）
 class TriggerSystem final : public ISystem {
 public:
     const char* Name() const override { return "Trigger"; }
     void Tick(World& world, Scene& scene, float dt) override;
 };
 
-/// #11 数值：StatusEffects 计时/到期 + XpProgress 升级（幂曲线，资产化 M5）
+/// #12 数值：StatusEffects 计时/到期 + XpProgress 升级（幂曲线，资产化 M5）
 class StatSystem final : public ISystem {
 public:
     const char* Name() const override { return "Stat"; }
@@ -140,28 +151,28 @@ public:
     float xpCurveK = 1.25f; // xpToNext 增长系数
 };
 
-/// #12 动画推进（M2 最小：time 推进；curFrame 帧映射接 clip 资产后补，M5）
+/// #13 动画推进（M2 最小：time 推进；curFrame 帧映射接 clip 资产后补，M5）
 class AnimatorSystem final : public ISystem {
 public:
     const char* Name() const override { return "Animator"; }
     void Tick(World& world, Scene& scene, float dt) override;
 };
 
-/// #13 投射物回收：寿命/越界 → 销毁队列（并行）
+/// #14 投射物回收：寿命/越界 → 销毁队列（并行）
 class ProjectileLifetimeSystem final : public ISystem {
 public:
     const char* Name() const override { return "ProjectileLifetime"; }
     void Tick(World& world, Scene& scene, float dt) override;
 };
 
-/// #14 C# 批量系统：M3（IForEachSystem 块回调）；占位
+/// #15 C# 批量系统：M3（IForEachSystem 块回调）；占位
 class CSharpBatchSystem final : public ISystem {
 public:
     const char* Name() const override { return "CSharpBatch"; }
     void Tick(World& world, Scene& scene, float dt) override;
 };
 
-/// #15 事件派发：帧末批量派发给事件汇后清空（M3 换 C# 桥端）
+/// #16 事件派发：帧末批量派发给事件汇后清空（M3 换 C# 桥端）
 class ScriptEventDispatchSystem final : public ISystem {
 public:
     const char* Name() const override { return "ScriptEventDispatch"; }
@@ -170,7 +181,7 @@ public:
 
 // ---- Essential -------------------------------------------------------------
 
-/// #16 销毁提交：两阶段销毁的统一提交点（Essential 阶段）
+/// #17 销毁提交：两阶段销毁的统一提交点（Essential 阶段）
 class DestroyCommitSystem final : public ISystem {
 public:
     const char* Name() const override { return "DestroyCommit"; }

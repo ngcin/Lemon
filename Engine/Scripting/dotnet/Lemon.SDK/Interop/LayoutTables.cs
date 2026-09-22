@@ -192,7 +192,11 @@ public static unsafe class LayoutTables
         { Collectible t = default; Collectible* p = &t;
           Add<Collectible>("Collectible", (uint)sizeof(Collectible), new[] {
             F("kind", FieldTypeCode.UInt8, 0, O(p, &p->Kind)),
-            F("magnetRadius", FieldTypeCode.Float, 0, O(p, &p->MagnetRadius)) }); }
+            F("state", FieldTypeCode.UInt8, FieldTypeCode.RuntimeFlag, O(p, &p->State)),
+            F("magnetRadius", FieldTypeCode.Float, 0, O(p, &p->MagnetRadius)),
+            F("magnetSpeed", FieldTypeCode.Float, 0, O(p, &p->MagnetSpeed)),
+            F("value", FieldTypeCode.Float, 0, O(p, &p->Value)),
+            F("target", FieldTypeCode.EntityRef, FieldTypeCode.RuntimeFlag, O(p, &p->Target)) }); }
         { Trigger2D t = default; Trigger2D* p = &t;
           Add<Trigger2D>("Trigger2D", (uint)sizeof(Trigger2D), new[] {
             F("triggerId", FieldTypeCode.UInt32, 0, O(p, &p->TriggerId)),

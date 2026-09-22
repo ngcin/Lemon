@@ -168,10 +168,15 @@ public struct Hazard         // 16B（M5 批⓪ 增 Radius）
 }
 
 [StructLayout(LayoutKind.Sequential)]
-public struct Collectible    // 8B
+public struct Collectible    // 24B（M5 批①：value/magnetSpeed/state/target）
 {
     public byte Kind;          // 0 gem / 1 coin / 2 heart
-    public float MagnetRadius;
+    public byte State;         // 运行时：0 地面 / 1 磁吸中
+    internal byte _pad0, _pad1; // C++ _pad[2] 衬齐
+    public float MagnetRadius; // 磁吸触程（与收集者 Stats.pickupRadius 取大）
+    public float MagnetSpeed;  // 磁吸飞行速度（px/s）
+    public float Value;        // gem→XP / coin→gold / heart→治疗量
+    public EntityHandle Target; // 运行时：磁吸目标（收集者 = 持 XpProgress 实体）
 }
 
 [StructLayout(LayoutKind.Sequential)]

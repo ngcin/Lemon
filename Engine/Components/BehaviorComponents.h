@@ -98,8 +98,12 @@ struct Hazard {
 
 struct Collectible {
     uint8_t kind = 0;           // 0 gem / 1 coin / 2 heart
-    uint8_t _pad[3] = {};
-    float magnetRadius = 48.0f;
+    uint8_t state = 0;          // 运行时：0 地面 / 1 磁吸中（PickupSystem 段 C）
+    uint8_t _pad[2] = {};
+    float magnetRadius = 48.0f; // 磁吸触程（与收集者 Stats.pickupRadius 取大——M5 批① D1）
+    float magnetSpeed = 320.0f; // 磁吸飞行速度（px/s，直写 pos 不经 Velocity）
+    float value = 1.0f;         // gem→XP / coin→gold（取整）/ heart→治疗量
+    Entity target{};            // 运行时：磁吸目标（收集者 = 持 XpProgress 实体）
 };
 
 struct Trigger2D {
@@ -126,7 +130,7 @@ static_assert(std::is_trivially_copyable_v<Shooter> && sizeof(Shooter) == 32, "S
 static_assert(std::is_trivially_copyable_v<Projectile> && sizeof(Projectile) == 48, "Projectile 布局冻结");
 static_assert(std::is_trivially_copyable_v<Spawner> && sizeof(Spawner) == 28, "Spawner 布局冻结");
 static_assert(std::is_trivially_copyable_v<Hazard> && sizeof(Hazard) == 16, "Hazard 布局冻结");
-static_assert(std::is_trivially_copyable_v<Collectible> && sizeof(Collectible) == 8, "Collectible 布局冻结");
+static_assert(std::is_trivially_copyable_v<Collectible> && sizeof(Collectible) == 24, "Collectible 布局冻结");
 static_assert(std::is_trivially_copyable_v<Trigger2D> && sizeof(Trigger2D) == 12, "Trigger2D 布局冻结");
 static_assert(std::is_trivially_copyable_v<Knockback> && sizeof(Knockback) == 12, "Knockback 布局冻结");
 

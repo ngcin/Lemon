@@ -133,10 +133,16 @@ constexpr FieldEditorMeta kEdHazard[] = {ED_RANGE(0.0f, 1e6f), ED_RANGE(0.0f, 60
                                          ED_RANGE(0.0f, 4096.0f)};
 static constexpr const char* kCollectibleKindNames[] = {"Gem", "Coin", "Heart"};
 constexpr FieldMeta kCollectible[] = {FIELD(Collectible, kind, UInt8),
-                                      FIELD(Collectible, magnetRadius, Float)};
+                                      FIELD_RT(Collectible, state, UInt8),
+                                      FIELD(Collectible, magnetRadius, Float),
+                                      FIELD(Collectible, magnetSpeed, Float),
+                                      FIELD(Collectible, value, Float),
+                                      FIELD_RT(Collectible, target, EntityRef)};
 constexpr FieldEditorMeta kEdCollectible[] = {
     {FieldHint::Enum, 0, 0, kCollectibleKindNames, 3, nullptr},
-    ED_RANGE(0.0f, 4096.0f)};
+    ED_HIDE,
+    ED_RANGE(0.0f, 4096.0f), ED_RANGE(0.0f, 2048.0f), ED_RANGE(0.0f, 1e6f),
+    ED_HIDE};
 constexpr FieldMeta kTrigger2D[] = {
     FIELD(Trigger2D, triggerId, UInt32), FIELD(Trigger2D, once, UInt8),
     FIELD_RT(Trigger2D, inside, UInt8), FIELD_RT(Trigger2D, fired, UInt8),

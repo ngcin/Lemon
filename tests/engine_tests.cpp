@@ -845,25 +845,27 @@ void TestSystemPipelineOrder() {
     world.InstallDefaultSystems();
     auto& p = world.Pipeline();
 
-    Expect(p.Systems().size() == 16, "16 systems installed");
+    Expect(p.Systems().size() == 17, "17 systems installed");
     // Essential 阶段只有 DestroyCommit；FixedTick 按表序
+    // （#9 Pickup = M5 批①，16→17）
     const char* expected[] = {"InputSnapshot", "Director",    "Spawn",
                               "AI",            "Navigation",  "Separation",
-                              "Movement",      "SpatialHashRebuild", "Hitbox",
-                              "Trigger",       "Stat",        "Animator",
-                              "ProjectileLifetime", "CSharpBatch", "ScriptEventDispatch"};
+                              "Movement",      "SpatialHashRebuild", "Pickup",
+                              "Hitbox",        "Trigger",     "Stat",
+                              "Animator",      "ProjectileLifetime", "CSharpBatch",
+                              "ScriptEventDispatch"};
     uint32_t fi = 0;
     for (const auto& s : p.Systems()) {
         if (s->Stage() == SystemStage::Essential) {
             Expect(std::string_view(s->Name()) == "DestroyCommit", "essential is destroy");
         } else {
-            Expect(fi < 15 && std::string_view(s->Name()) == expected[fi],
+            Expect(fi < 16 && std::string_view(s->Name()) == expected[fi],
                    "fixedtick order");
             ++fi;
         }
     }
-    Expect(fi == 15, "15 fixedtick systems");
-    Expect(p.Profiles().size() == 16, "profiles allocated");
+    Expect(fi == 16, "16 fixedtick systems");
+    Expect(p.Profiles().size() == 17, "profiles allocated");
 }
 
 void TestSimulationEndToEnd() {
@@ -1033,6 +1035,17 @@ void TestArchiveArraySegAndRuntimeFields() {
     pp.hits = 3;                 // RT
     pp.hitMemory[0] = 0x1234u;   // RT
 
+    // Collectible：磁吸三参数落档；state/target RT 不入档（M5 批① T1）
+    Entity ce = src.Create();
+    src.Emplace<Transform2D>(ce, Transform2D{{6, 6}});
+    Collectible& cc = src.Emplace<Collectible>(ce);
+    cc.kind = 2;
+    cc.magnetRadius = 64.0f;
+    cc.magnetSpeed = 400.0f;
+    cc.value = 3.5f;
+    cc.state = 1;        // RT
+    cc.target = Entity{1}; // RT（非空以验读档回落）
+
     std::string text = SceneArchive::Save(src);
     Expect(text.find("\"iFrames\"") == std::string::npos, "iFrames not serialized");
     Expect(text.find("\"iframeWindow\"") != std::string::npos,
@@ -1043,11 +1056,17 @@ void TestArchiveArraySegAndRuntimeFields() {
            "projectile hitRadius serialized (config)");
     Expect(text.find("\"hitMemory0\"") == std::string::npos,
            "hit memory not serialized (runtime)");
+    Expect(text.find("\"magnetSpeed\"") != std::string::npos,
+           "collectible magnetSpeed serialized (config)");
+    Expect(text.find("\"state\"") == std::string::npos,
+           "collectible state not serialized (runtime)");
+    Expect(text.find("\"target\"") == std::string::npos,
+           "collectible target not serialized (runtime)");
 
     World w2;
     Scene& dst = w2.CreateScene("seg2");
     Expect(SceneArchive::Load(dst, text), "seg scene load");
-    Expect(dst.AliveCount() == 3, "seg entity count");
+    Expect(dst.AliveCount() == 4, "seg entity count");
 
     bool found = false;
     dst.View<StatusEffects>().each([&](auto, StatusEffects& s2) {
@@ -1089,6 +1108,16 @@ void TestArchiveArraySegAndRuntimeFields() {
         Expect(p2.hits == 0 && p2.hitMemory[0] == 0, "runtime fields reset");
     });
     Expect(sawProj, "projectile entity located after load");
+    bool sawCol = false;
+    dst.View<Collectible>().each([&](auto, Collectible& c2) {
+        sawCol = true;
+        Expect(c2.kind == 2, "collectible kind roundtrip");
+        Expect(ExpectNear0(c2.magnetRadius, 64.0f), "magnetRadius roundtrip");
+        Expect(ExpectNear0(c2.magnetSpeed, 400.0f), "magnetSpeed roundtrip");
+        Expect(ExpectNear0(c2.value, 3.5f), "value roundtrip");
+        Expect(c2.state == 0 && c2.target.IsNull(), "collectible runtime fields reset");
+    });
+    Expect(sawCol, "collectible entity located after load");
 }
 
 // 恶意/畸形 .scene 不抛穿加载器（json 异常降级修复回归）
@@ -1329,6 +1358,167 @@ void TestVerifyHitMemoryAndPierce() {
     Expect(s.Get<Health>(v2).cur == 90.0f && s.Get<Health>(v3).cur == 90.0f,
            "both in-line targets hit once");
     Expect(hits == 1, "scenario-A victim out of second projectile's range");
+}
+
+// 磁吸与拾取（M5 批① T2）：双侧取大触程（gem.magnetRadius vs Stats.pickupRadius）、
+// 直写 pos 飞行、触距 8px 入账按 kind 分发、Pickup 事件、目标死亡回落。
+void TestVerifyMagnetAndPickup() {
+    World world;
+    Scene& s = world.CreateScene("pickup");
+    world.SetActiveScene(&s);
+
+    // 收集者：磁力压到 8（段 A 够不到 30px）——首段专测宝石自程侧（段 B）
+    Entity player = s.Create();
+    s.Emplace<Transform2D>(player, Transform2D{{0, 0}});
+    s.Emplace<Stats>(player).pickupRadius = 8.0f;
+    s.Emplace<XpProgress>(player);
+
+    // 宝石 30px：自程 48 内磁吸；320px/s = 5.33px/tick → 数 tick 后触距入账
+    Entity gem = s.Create();
+    s.Emplace<Transform2D>(gem, Transform2D{{30, 0}});
+    s.Emplace<Collectible>(gem, Collectible{.kind = 0, .value = 5.0f});
+
+    int pickups = 0;
+    float evKind = -1.0f, evVal = -1.0f;
+    world.SetEventSink([&](World&, const EventPacket& e) {
+        if (e.type == GameEvent::Pickup) {
+            ++pickups;
+            evKind = e.payload[0];
+            evVal = e.payload[1];
+        }
+    });
+
+    world.Pipeline().AddSystem(std::make_unique<SpatialHashRebuildSystem>());
+    world.Pipeline().AddSystem(std::make_unique<PickupSystem>());
+    world.Pipeline().AddSystem(std::make_unique<ScriptEventDispatchSystem>());
+    world.Pipeline().AddSystem(std::make_unique<DestroyCommitSystem>());
+    world.Pipeline().ResolveOrder();
+    const float dt = 1.0f / 60.0f;
+
+    world.Step(dt);
+    Expect(s.Get<Collectible>(gem).state == 1, "magnetized (self radius side)");
+    const Vec2 p1 = s.Get<Transform2D>(gem).pos;
+    Expect(p1.x < 30.0f && p1.y == 0.0f, "gem flies toward collector (direct pos write)");
+
+    for (int i = 0; i < 8 && s.Alive(gem); ++i) world.Step(dt);
+    world.Step(dt); // DestroyCommit 在 Essential（下一 tick 首）提交
+    Expect(!s.Alive(gem), "gem picked up (touch distance)");
+    Expect(pickups == 1, "one pickup event");
+    Expect(evKind == 0.0f && evVal == 5.0f, "pickup payload kind/value");
+    Expect(ExpectNear0(s.Get<XpProgress>(player).xp, 5.0f), "xp credited");
+
+    // 双侧取大（段 A）：玩家磁力 120 > 宝石自程 48 → 100px 外的宝石也吸；
+    // 负对照 200px 超两侧触程 → 原地不动
+    Entity far = s.Create();
+    s.Emplace<Transform2D>(far, Transform2D{{100, 0}});
+    s.Emplace<Collectible>(far, Collectible{.kind = 1, .value = 7.0f});
+    Entity idle = s.Create();
+    s.Emplace<Transform2D>(idle, Transform2D{{200, 0}});
+    s.Emplace<Collectible>(idle, Collectible{.kind = 0});
+    s.Emplace<Inventory>(player);
+    s.Get<Stats>(player).pickupRadius = 120.0f;
+
+    world.Step(dt);
+    Expect(s.Get<Collectible>(far).state == 1, "player stat side wins (max rule)");
+    Expect(s.Get<Transform2D>(far).pos.x < 100.0f, "far gem flying");
+    const Vec2 idlePos = s.Get<Transform2D>(idle).pos;
+    for (int i = 0; i < 4; ++i) world.Step(dt);
+    Expect(s.Get<Transform2D>(idle).pos == idlePos, "out of both radii stays idle");
+    for (int i = 0; i < 40 && s.Alive(far); ++i) world.Step(dt);
+    Expect(!s.Alive(far), "coin picked up");
+    Expect(s.Get<Inventory>(player).gold == 7u, "coin -> gold");
+
+    // heart：触距内 → 同 tick 磁吸即入账；治疗上限钳制
+    s.Emplace<Health>(player, Health{.max = 100.0f, .cur = 90.0f});
+    Entity heart = s.Create();
+    s.Emplace<Transform2D>(heart, Transform2D{{4, 0}});
+    s.Emplace<Collectible>(heart, Collectible{.kind = 2, .value = 20.0f});
+    world.Step(dt);
+    world.Step(dt); // 提交销毁
+    Expect(!s.Alive(heart), "heart picked same tick as magnetize");
+    Expect(s.Get<Health>(player).cur == 100.0f, "heal clamped at max");
+
+    // 目标死亡回落：磁吸中销毁收集者 → state 回 0、位置冻结（宝石不丢可再吸）
+    Entity gem3 = s.Create();
+    s.Emplace<Transform2D>(gem3, Transform2D{{-60, 0}}); // 自程 48 不及，靠玩家磁力 120
+    s.Emplace<Collectible>(gem3, Collectible{.kind = 0});
+    world.Step(dt);
+    Expect(s.Get<Collectible>(gem3).state == 1, "gem3 magnetized via player stat");
+    s.Destroy(player);
+    world.Step(dt); // Essential 先提交销毁 → 同 tick 段 C 检活回落
+    Expect(s.Get<Collectible>(gem3).state == 0, "falls back idle on collector death");
+    const Vec2 frozen = s.Get<Transform2D>(gem3).pos;
+    for (int i = 0; i < 3; ++i) world.Step(dt);
+    Expect(s.Get<Transform2D>(gem3).pos == frozen, "idle gem position frozen");
+}
+
+// XP 入账升级联动（M5 批① T2）：拾取同 tick 经 #12 升级环 → LevelUp 恰一次
+void TestVerifyPickupXpLevelUp() {
+    World world;
+    Scene& s = world.CreateScene("lvl");
+    world.SetActiveScene(&s);
+
+    Entity player = s.Create();
+    s.Emplace<Transform2D>(player, Transform2D{{0, 0}});
+    XpProgress& xp = s.Emplace<XpProgress>(player);
+    xp.xpToNext = 5.0f;
+    Entity gem = s.Create();
+    s.Emplace<Transform2D>(gem, Transform2D{{4, 0}}); // 触距内：同 tick 磁吸即入账
+    s.Emplace<Collectible>(gem, Collectible{.kind = 0, .value = 10.0f});
+
+    int levelUps = 0, pickups = 0;
+    world.SetEventSink([&](World&, const EventPacket& e) {
+        if (e.type == GameEvent::LevelUp) ++levelUps;
+        if (e.type == GameEvent::Pickup) ++pickups;
+    });
+    world.Pipeline().AddSystem(std::make_unique<SpatialHashRebuildSystem>());
+    world.Pipeline().AddSystem(std::make_unique<PickupSystem>());
+    world.Pipeline().AddSystem(std::make_unique<StatSystem>());
+    world.Pipeline().AddSystem(std::make_unique<ScriptEventDispatchSystem>());
+    world.Pipeline().AddSystem(std::make_unique<DestroyCommitSystem>());
+    world.Pipeline().ResolveOrder();
+
+    world.Step(1.0f / 60.0f);
+    const XpProgress& x = s.Get<XpProgress>(player);
+    Expect(pickups == 1 && levelUps == 1, "pickup + level-up same tick");
+    Expect(x.level == 2 && ExpectNear0(x.xp, 5.0f), "level 2 with carry 5");
+    Expect(ExpectNear0(x.xpToNext, 7.0f), "xpToNext = ceil(5*1.25) = 7");
+}
+
+// timeScale（M5 批① T3）：Step 内缩放 dt；=0 冻结（位置不动、tick 照推）、
+// 0.5 半速（同 tick 数位移对半）；setter clamp [0,8]
+void TestVerifyTimeScale() {
+    World world;
+    Scene& s = world.CreateScene("ts");
+    world.SetActiveScene(&s);
+
+    Entity e = s.Create();
+    s.Emplace<Transform2D>(e, Transform2D{{0, 0}});
+    s.Emplace<Velocity>(e, Velocity{.v = {100.0f, 0.0f}});
+
+    world.Pipeline().AddSystem(std::make_unique<MovementSystem>());
+    world.Pipeline().AddSystem(std::make_unique<DestroyCommitSystem>());
+    world.Pipeline().ResolveOrder();
+    const float dt = 1.0f / 60.0f;
+
+    for (int i = 0; i < 60; ++i) world.Step(dt);
+    Expect(std::fabs(s.Get<Transform2D>(e).pos.x - 100.0f) < 0.01f,
+           "full speed 1s = 100px"); // 累加容差放宽（1e-5 对 60 步过紧）
+
+    world.SetTimeScale(0.5f);
+    for (int i = 0; i < 30; ++i) world.Step(dt); // 名义 0.5s × 0.5 = +25px
+    Expect(std::fabs(s.Get<Transform2D>(e).pos.x - 125.0f) < 0.01f, "half speed +25px");
+
+    world.SetTimeScale(0.0f); // 冻结暂停：tick 照推、位置不动（RNG 不消耗口径）
+    const uint64_t tickBefore = world.TickIndex();
+    for (int i = 0; i < 10; ++i) world.Step(dt);
+    Expect(std::fabs(s.Get<Transform2D>(e).pos.x - 125.0f) < 0.01f, "frozen position holds");
+    Expect(world.TickIndex() == tickBefore + 10, "ticks advance while paused");
+
+    world.SetTimeScale(-3.0f);
+    Expect(world.TimeScale() == 0.0f, "negative clamped to 0");
+    world.SetTimeScale(99.0f);
+    Expect(world.TimeScale() == 8.0f, "overshoot clamped to 8");
 }
 
 // 双死防护：同帧两发投射物 + 一个 Hazard 打同一目标 → 恰一个 Death 事件
@@ -2878,6 +3068,9 @@ int main() {
     TestVerifyStateHashStability();
     TestVerifyIframesDecrementAndKill();
     TestVerifyHitMemoryAndPierce();
+    TestVerifyMagnetAndPickup();
+    TestVerifyPickupXpLevelUp();
+    TestVerifyTimeScale();
     TestNoDoubleDeathEvents();
     TestHierarchyChainLifecycle();
     TestVerifyFullChainFollowsAfterRoundtrip();

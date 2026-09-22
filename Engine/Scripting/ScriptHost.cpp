@@ -92,6 +92,17 @@ uint64_t NativeInstantiatePrefab(const char* guidHex, float x, float y) {
     return g_editorAssets.instantiatePrefab ? g_editorAssets.instantiatePrefab(guidHex, x, y) : 0;
 }
 
+// ---- M5 批①（timeScale：Time.Scale ↔ World；域线程 tick 窗口约定同上）----
+float NativeGetTimeScale() { return g_world ? g_world->TimeScale() : 1.0f; }
+void NativeSetTimeScale(float s) {
+    if (g_world) g_world->SetTimeScale(s);
+}
+
+// M5 批①（RT UI：Lemon.Ui.Set → World.RtUi；呈现层专用不入 StateHash）
+void NativeRtUiSet(const char* key, const char* text, float frac) {
+    if (g_world) g_world->RtUi().Set(key, text, frac);
+}
+
 const NativeApiVtable kNativeApi{NativeIsAlive,
                                  NativeHas,
                                  NativeRead,
@@ -99,7 +110,10 @@ const NativeApiVtable kNativeApi{NativeIsAlive,
                                  NativeGetInput,
                                  NativeSpriteOfGuid,
                                  NativeSpawnSprite,
-                                 NativeInstantiatePrefab};
+                                 NativeInstantiatePrefab,
+                                 NativeGetTimeScale,
+                                 NativeSetTimeScale,
+                                 NativeRtUiSet};
 } // namespace
 
 namespace {

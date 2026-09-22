@@ -20,6 +20,8 @@ public static class GameMain
         Lemon.Behaviours.Register<InputMoverBehaviour>();
         // M5 清障①：Time API 验收（表尾追加——既有 typeId 零扰动）
         Lemon.Behaviours.Register<TimeProbeBehaviour>();
+        // M5 批①：Time.Scale × Lemon.Ui.Set 验收（typeId 4，表尾注册同上约定）
+        Lemon.Behaviours.Register<ScaleUiProbeBehaviour>();
     }
 }
 
@@ -150,5 +152,30 @@ public static class TestScript
     {
         s_accum += dt;
         return s_accum;
+    }
+}
+
+/// <summary>M5 批①：Time.Scale（native 表往返）× 缩放 dt 链 × Lemon.Ui.Set 验收。
+/// Custom user 编码 = 段标签 + 精确值（二进制可精确表示，C++ 侧精确断言）：
+/// 帧1 置 Scale=0.5 → 报 300+5；帧2 缩放 DeltaTime 0.25×0.5=0.125 → 报 400+125，
+/// 同帧 Ui.Set("xp","LV3 45/120",0.45)；帧3 复位 Scale=1 → 报 600+10 后自毁。</summary>
+public sealed class ScaleUiProbeBehaviour : Lemon.LemonBehaviour
+{
+    protected override void Update()
+    {
+        if (Lemon.Time.FrameCount == 1) {
+            Lemon.Time.Scale = 0.5f;
+            Lemon.Events.Push(Lemon.Interop.GameEvent.Custom,
+                              (ushort)(300 + Lemon.Time.Scale * 10f), default, default);
+        } else if (Lemon.Time.FrameCount == 2) {
+            Lemon.Events.Push(Lemon.Interop.GameEvent.Custom,
+                              (ushort)(400 + Lemon.Time.DeltaTime * 1000f), default, default);
+            Lemon.Ui.Set("xp", "LV3 45/120", 0.45f);
+        } else if (Lemon.Time.FrameCount == 3) {
+            Lemon.Time.Scale = 1f;
+            Lemon.Events.Push(Lemon.Interop.GameEvent.Custom,
+                              (ushort)(600 + Lemon.Time.Scale * 10f), default, default);
+            gameObject.Destroy();
+        }
     }
 }

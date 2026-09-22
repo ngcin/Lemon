@@ -131,6 +131,28 @@ bool SeedBenchSurvivorScene(EditorContext& ctx) {
     psh.interval = 0.05f;
     psh.range = 2000.0f;
     psh.targetTeam = 1;
+    // 成长闭环（M5 批① 成长化）：玩家 = 收集者（XpProgress 约定）+ 磁力（段 A 触程）
+    s.Emplace<ecs::XpProgress>(player);
+    s.Emplace<ecs::Stats>(player).pickupRadius = 96.0f;
+    // 宝石模板 → prefab（中立队 2：无 Health 不参战、无 Velocity 不入分离/移动）。
+    // 模板挪出战场（(0,600) 在出生环 ≤600 边缘外圈、玩家 96 触程外，不进计量）
+    ecs::Entity gem = ctx.CreateSpriteEntity("BenchGem", 4);
+    s.Get<ecs::Meta>(gem).team = 2;
+    ecs::Collectible& gc = s.Emplace<ecs::Collectible>(gem);
+    gc.kind = 0;
+    gc.value = 1.0f;
+    s.Get<ecs::Transform2D>(gem).pos = {0.0f, 600.0f};
+    const uint64_t gguid = ctx.MakePrefabFrom(gem);
+    if (gguid == 0) return false;
+    // 玩家侧宝石 Spawner：40 颗/s 撒 400px 盘 → 磁吸/拾取/XP/LevelUp 全链路进基线
+    // 口径（地面稳态存量随局累积、capAlive 2000 封顶——PickupSystem 满载观测项）
+    ecs::Spawner& gsp = s.Emplace<ecs::Spawner>(player);
+    gsp.prefabId = (uint32_t)gguid;
+    gsp.interval = 0.2f;
+    gsp.burst = 8;
+    gsp.maxAlive = 2000;
+    gsp.spawnTeam = 2;
+    gsp.range = 400.0f;
     // Spawner：interval 0 = 每帧开闸、burst 64 → ~156 帧涨满 1 万
     ecs::Entity spawner = ctx.CreateEntity("BenchSpawner");
     ecs::Spawner& sp = s.Emplace<ecs::Spawner>(spawner);
@@ -3098,6 +3120,7 @@ void EditorApp::SeedSmokeScene() {
         hp.max = hp.cur = 100.0f;
         Stats& st = s.Emplace<Stats>(root);
         st.moveSpeed = 180.0f;
+        s.Emplace<XpProgress>(root); // 收集者标记（M5 批①：磁吸/拾取/XP 闭环可玩）
         Chase& ch = s.Emplace<Chase>(root);
         ch.speed = 120.0f;
         ch.aggroRange = 300.0f;
