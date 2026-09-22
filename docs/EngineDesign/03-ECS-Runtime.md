@@ -59,15 +59,15 @@ struct SortingOverride { int16_t order; };                               // 运�
 ### 3.3 Behavior（无代码玩法面 —— 编辑器摆放即生效）
 
 ```cpp
-struct Health        { float max, cur; float iFrames; };                 // 受击后无敌帧
+struct Health        { float max, cur; float iFrames; float iframeWindow; }; // 受击无敌（iFrames 运行时，StatSystem 递减；窗默认 0.1s → 复拍间隔 ceil(窗/dt) tick）
 struct Mover         { float speed; };                                   // 匀速朝向 velocity
 struct Patrol        { Vec2 a, b; float pauseTime; };                    // 往返巡逻
 struct Chase         { float speed; float aggroRange; float keepRange; uint32_t targetTeam; };
 struct Flee          { float speed; float range; };
 struct Shooter       { uint32_t projectileId; float interval; float range; uint32_t targetTeam; };
-struct Projectile    { float speed; float lifetime; float damage; uint8_t pierce; uint8_t homing; };
+struct Projectile    { float speed; float lifetime; float damage; float hitRadius; float knockback; uint8_t pierce; uint8_t homing; uint16_t hits; uint32_t hitMemory[4]; }; // M5批⓪：命中半径/击退强度落弹体；hitMemory=一弹一目标一次（运行时 4 槽环）
 struct Spawner       { uint32_t prefabId; float interval; uint16_t burst; float range; uint32_t maxAlive; uint32_t spawnTeam; }; // 刷怪口（prefabId = prefab 资产 GUID 低 32 位，M5 清障②约定；编辑器 EnterPlay 建映射并注册 SpawnFn，M7 烘焙换 dense id 表同语义）
-struct Hazard        { float dps; float tickInterval; };                 // 持续伤害区（毒泽/激光）
+struct Hazard        { float dps; float tickInterval; float radius; };   // 持续伤害区（毒泽/激光）；独立 tick 节拍，不与 iFrames 联动（M5 批⓪ 决策）
 struct Collectible   { uint8_t kind; /*gem/coin/heart*/ float magnetRadius; };
 struct Trigger2D     { uint32_t triggerId; bool once; };                 // 进入/离开事件
 struct Knockback     { float decay; };                                   // 受击退（割草手感核心）
@@ -98,9 +98,9 @@ struct IncrementalState { double rate, multiplier; double cached; };     // 增�
 | 6 | SeparationSystem | Transform2D/Meta.team | Velocity | ✅ | 同队分离力（软碰撞，割草不堆叠的关键） |
 | 7 | MovementSystem | Velocity/Mover/Knockback | Transform2D | ✅ | 积分 + 地形碰撞钳制（查询层） |
 | 8 | SpatialHashRebuild | Transform2D | 哈希 cell | ✅ 每 cell | 帧重建（§5）；静态层（地形）常驻 |
-| 9 | HitboxSystem | 投射物/Hazard/技能盒 | Health/事件 | — | Team 判定 → 伤害/击退/事件 onHit |
+| 9 | HitboxSystem | 投射物/Hazard/技能盒 | Health/Projectile/事件 | — | Team 判定 → 命中记忆（一弹一目标一次）→ 伤害/置无敌窗/击退（弹体配置）/Hit/Death |
 | 10 | TriggerSystem | Trigger2D + 哈希 | 事件 | — | 进入/离开配对（上一帧缓存差分） |
-| 11 | StatSystem | Stats/StatusEffects/Xp | Stats/事件 | — | buff 计时/升级结算 onLevelUp |
+| 11 | StatSystem | Stats/StatusEffects/Xp/Health | Stats/事件 | — | buff 计时/iFrames 递减/升级结算 onLevelUp |
 | 12 | AnimatorSystem | Animator2D | SpriteRenderer | ✅ | 帧推进（time+clip→spriteId） |
 | 13 | ProjectileLifetime | Projectile | 销毁队列 | ✅ | 越界/超时/穿透耗尽回收 |
 | 14 | CSharpBatchSystem | 各（只读 slice） | 命令缓冲 | — | C# `IForEachSystem` 块级回调（04 §5） |

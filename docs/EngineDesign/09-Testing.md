@@ -229,7 +229,8 @@ macOS 安全策略拒绝 lldb 原生 attach（Console.app 可见 debugserver 拒
 负载：编辑器全链（模拟 + 视口提取 + GameView 渲染 + ImGui 叠加 + present），临时项目
 程序化播种——怪 prefab（Health/Knockback/Velocity/Chase）经 SpawnFn 桥（清障②）由
 Spawner 拉满 1 万（interval 0 / burst 64 / capAlive 10000 = "导演拉满"），玩家作
-Chase 目标。
+Chase 目标；**批⓪（M5-Plan T4）起兼弹幕源**：Shooter 20 发/s + 弹体 prefab
+（dmg 12 / pierce 0），命中/击退/击杀/补怪闭环真实发生并计入 destroyed。
 
 **测量口径**（vsync 问题在此定死）：
 - 交换链按 **Immediate** 请求（mac MoltenVK 实测可拿到；拿不到回退 FIFO——此时
@@ -248,6 +249,11 @@ Chase 目标。
 | 建场基线 | sim 11.22 / scene 19.31 / ui 4.13（其余 <1） | frameAvg 35.43ms fps=28 **FAIL** |
 | 性能批①（同日，两跑） | sim 11.14~11.47 / **scene 1.22~1.25** / ui 4.11~4.12 | frameAvg 17.16~17.48ms fps 57~58 **PASS** |
 | 性能批②（同日，三跑） | sim 11.04~11.18 / scene 1.21~1.31 / **ui 0.25~0.26** | frameAvg 13.09~13.25ms fps 75~76 **PASS** |
+| 批⓪ 战斗化（同日，三跑） | **sim 9.37~9.49** / scene ~1.3 / ui 0.25 | frameAvg 11.48~11.64ms fps 86~87 **PASS** |
+
+批⓪ 战斗化后 fps 反升（76→86）非笔误：iFrames 递减修复使怪进入击杀-补充循环，
+蜂群密度被持续疏散，Separation 随之回落（sim 11.1→9.4ms）。frameMax 43~52ms
+仍为 Census 30-tick 尖刺（4 个/跑，见下），观察项维持不扩 scope。
 
 scene 段 19.31→1.25ms 的两处根因（都在编辑器侧视口层，非引擎内核）：
 1. **ExtractScene 差集销毁 O(N²)**：`seen` vector + `std::find`，1 万实体 ≈ 每帧
