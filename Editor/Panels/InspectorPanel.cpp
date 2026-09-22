@@ -228,15 +228,75 @@ bool DrawSpriteSlot(EditorApp& app, uint8_t* p, ecs::SpriteRenderer& sr) {
     return false; // 写入已就地完成（combo 尾置 → 属性轨由 Deactivated 捕获）
 }
 
-/// 单字段控件（名字列已由调用方进入）。返回是否写入。
+/// 字段字节尺寸（FieldMeta 无 size 位，按 FieldType 定长）
+size_t FieldSizeOf(ecs::FieldType t) {
+    using ecs::FieldType;
+    switch (t) {
+        case FieldType::Float:
+        case FieldType::Int32:
+        case FieldType::UInt32:
+        case FieldType::TeamRef: return 4;
+        case FieldType::Double:
+        case FieldType::UInt64:
+        case FieldType::EntityRef:
+        case FieldType::Vec2: return 8;
+        case FieldType::Int16:
+        case FieldType::UInt16: return 2;
+        case FieldType::Int8:
+        case FieldType::UInt8:
+        case FieldType::Bool: return 1;
+        case FieldType::Blob24: return 24;
+    }
+    return 0;
+}
+
+// 字段级重置默认值栈缓冲上限（超限组件不提供该按钮；Transform2D = 20B）
+constexpr uint32_t kResetBuf = 128;
+
+/// 名称列尾（紧贴值列输入框左缘）的重置图标按钮：ImDrawList 自绘 ↺（字体范围
+/// 是中文常用集，箭头区 U+2190-21FF 未编入，用字形会显示 '?'）。悬停浅底衬 +
+/// 主题色高亮。不占输入框宽度（图标落在定宽名称列的空隙里）。
+bool ResetIconButton(float size) {
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const bool pressed = ImGui::InvisibleButton("##reset", ImVec2(size, size));
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const bool hovered = ImGui::IsItemHovered();
+    if (hovered)
+        dl->AddRectFilled(pos, ImVec2(pos.x + size, pos.y + size),
+                          ImGui::GetColorU32(ImGuiCol_ButtonHovered, 0.30f), 3.0f);
+    const ImU32 col = hovered ? ImGui::ColorConvertFloat4ToU32(theme::kAccent)
+                              : ImGui::GetColorU32(ImGuiCol_Text);
+    const ImVec2 c{pos.x + size * 0.5f, pos.y + size * 0.52f};
+    const float r = size * 0.32f;
+    constexpr float kPi = 3.14159265f;
+    const float gap = 0.62f; // 弧口半角（开口朝右）
+    dl->PathArcTo(c, r, gap, 2.0f * kPi - gap, 24);
+    dl->PathStroke(col, 0, 1.6f);
+    // 箭头在弧起点（右下），切向逆时针（屏幕 y 向下 → 视觉朝上偏右）
+    const float a0 = gap;
+    const ImVec2 tip{c.x + r * std::cos(a0), c.y + r * std::sin(a0)};
+    const ImVec2 dir{std::sin(a0), -std::cos(a0)};
+    const ImVec2 perp{-dir.y, dir.x};
+    dl->AddTriangleFilled(ImVec2{tip.x + dir.x * 2.2f, tip.y + dir.y * 2.2f},
+                          ImVec2{tip.x - dir.x * 2.0f + perp.x * 3.2f,
+                                 tip.y - dir.y * 2.0f + perp.y * 3.2f},
+                          ImVec2{tip.x - dir.x * 2.0f - perp.x * 3.2f,
+                                 tip.y - dir.y * 2.0f - perp.y * 3.2f}, col);
+    return pressed;
+}
+
+/// 单字段控件（名字列已由调用方进入）。返回 Unchanged/Edited/ResetToDefault
+///（ResetToDefault = 重置按钮已直推属性轨 Undo，调用方须失效空闲快照防双入栈）。
 /// ID 纪律：所有控件标签恒 "##v"（不显示名字），唯一性靠 PushID(字段名)——
 /// 同组件内字段名唯一；组件级再由 DrawComponent PushID(组件名) 兜底跨组件同名字段。
 /// （M4.5 修复：曾经无作用域，SpriteRenderer 4 个输入同 ID 撞车 → ImGui 调试检查
 /// 标冲突后整组控件失去交互。）
-bool DrawField(EditorApp& app, const FieldMeta& f, const FieldEditorMeta& ed, void* comp,
-               const char* compName) {
+enum class FieldResult { Unchanged, Edited, ResetToDefault };
+FieldResult DrawField(EditorApp& app, const ecs::ComponentMeta& meta, ecs::Entity e,
+                      uint64_t guid, const FieldMeta& f, const FieldEditorMeta& ed, void* comp) {
     EditorContext& ctx = app.Ctx();
     uint8_t* p = (uint8_t*)comp + f.offset;
+    const char* compName = meta.name;
     // PushID 覆盖整字段（label + 控件共用字段名种子；控件 "##v" 的最终 ID 与
     // 旧版逐字一致 = hash(种子栈+f.name, "##v")）
     ImGui::PushID(f.name);
@@ -272,6 +332,37 @@ bool DrawField(EditorApp& app, const FieldMeta& f, const FieldEditorMeta& ed, vo
             ImGui::GetWindowDrawList()->AddRectFilled(
                 ImVec2(a.x, b.y - 1.0f), ImVec2(b.x, b.y),
                 ImGui::ColorConvertFloat4ToU32(theme::kAccent));
+        }
+    }
+    // 字段级重置（FieldHint::Reset，M4.8）：图标右对齐名称列尾 = 紧贴值列输入框
+    // 左缘（Unity/Godot 图标位），值列保持满宽。默认值口径 = constructFn 默认
+    // 构造后按 offset 拷字段字节（与组件级重置同源）。Undo 直推属性轨；返回
+    // ResetToDefault 由 DrawComponent 失效空闲快照，防交互帧双入栈。
+    bool resetDone = false;
+    if (ecs::HasHint(ed.hints, ecs::FieldHint::Reset) && meta.constructFn &&
+        meta.sizeOf <= kResetBuf && !ecs::HasHint(ed.hints, ecs::FieldHint::Hide) &&
+        !ecs::HasHint(ed.hints, ecs::FieldHint::AssetRef)) {
+        const float iconSz = ImGui::GetFrameHeight() - 4.0f;
+        ImGui::SameLine();
+        // slack 必须在 SameLine 之后取：文本绘制后光标已换行到列首，之前取到的
+        // 是整列宽 → 右对齐越出列右缘被单元格裁剪 = 图标不可见（实抓）
+        const float slack = ImGui::GetContentRegionAvail().x; // 名称列剩余（自文本尾起）
+        if (slack > iconSz + 6.0f) {                          // 名字占满列时不画（防叠字）
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + slack - iconSz);
+            if (ResetIconButton(iconSz)) {
+                alignas(16) uint8_t def[kResetBuf];
+                meta.constructFn(def);
+                const std::vector<uint8_t> before = ctx.SnapshotComponent(e, meta.id);
+                std::memcpy(p, def + f.offset, FieldSizeOf(f.type));
+                ctx.dirty = true;
+                if (!ctx.Playing() && guid)
+                    ctx.PushPropertyUndo(
+                        ("重置 " + std::string(meta.name) + "." + f.name).c_str(), guid,
+                        meta.id, before, ctx.SnapshotComponent(e, meta.id));
+                resetDone = true;
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s.%s 恢复默认值", meta.name, f.name);
         }
     }
     ImGui::TableNextColumn();
@@ -438,8 +529,12 @@ bool DrawField(EditorApp& app, const FieldMeta& f, const FieldEditorMeta& ed, vo
         }
     }
     ImGui::PopID();
-    if (changed) ctx.dirty = true;
-    return changed;
+    if (resetDone) return FieldResult::ResetToDefault;
+    if (changed) {
+        ctx.dirty = true;
+        return FieldResult::Edited;
+    }
+    return FieldResult::Unchanged;
 }
 
 } // namespace
@@ -645,10 +740,12 @@ void InspectorPanel::DrawComponent(EditorApp& app, const ComponentMeta& meta, ec
                 const FieldEditorMeta& ed = EdOf(meta, i);
                 if (f.flags & ecs::kFieldRuntime) { // 运行时字段：只读灰显
                     ImGui::BeginDisabled();
-                    DrawField(app, f, ed, comp, meta.name); // 禁用态控件 changed 恒 false，不会置 dirty
+                    DrawField(app, meta, e, guid, f, ed, comp); // 禁用态控件 changed 恒 false，不会置 dirty
                     ImGui::EndDisabled();
-                } else {
-                    DrawField(app, f, ed, comp, meta.name);
+                } else if (DrawField(app, meta, e, guid, f, ed, comp) ==
+                           FieldResult::ResetToDefault) {
+                    // 重置已直推属性轨；失效空闲快照防按钮 Deactivated 双入栈
+                    idleSnaps_.erase(guid ^ ((uint64_t)meta.id << 48));
                 }
                 anyActive |= ImGui::IsItemActive();
                 anyDeactivated |= ImGui::IsItemDeactivated();

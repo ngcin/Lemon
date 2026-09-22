@@ -52,6 +52,7 @@ enum class FieldHint : uint32_t {
     AssetRef = 1u << 4,  // 资产引用（GUID 槽控件；M4.4 接通）
     Hide     = 1u << 5,  // 不进 Inspector（池内冗余字段）
     Range    = 1u << 6,  // 数值夹取 [rangeMin, rangeMax]（Drag 控件）
+    Reset    = 1u << 7,  // 字段级重置按钮（Inspector 值列尾；恢复默认构造值）
 };
 inline constexpr FieldHint operator|(FieldHint a, FieldHint b) {
     return (FieldHint)((uint32_t)a | (uint32_t)b);
@@ -105,6 +106,9 @@ struct ComponentMeta {
     // 按池序分段遍历 [begin,end)（M3 桥并行构造；nullptr = 不支持）
     void (*forEachRangeFn)(class Scene&, uint32_t, uint32_t,
                            void (*)(Entity, const void*, void*), void*) = nullptr;
+    // 默认构造到调用方缓冲（placement-new；Inspector 字段级重置读默认值；
+    // nullptr = 不支持。构造口径与 emplaceFn 一致）
+    void (*constructFn)(void* mem) = nullptr;
 };
 
 class ComponentRegistry {

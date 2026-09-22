@@ -4,6 +4,7 @@
 // nullptr = 全默认。布局探针协议不受影响——探针只镜像运行时位）。
 #include <cstddef>
 #include <iterator>
+#include <new>
 
 #include "Components/BehaviorComponents.h"
 #include "Components/CoreComponents.h"
@@ -26,6 +27,7 @@ namespace {
 #define ED_RANGE(lo, hi) { FieldHint::Range, lo, hi }
 #define ED_HIDE { FieldHint::Hide }
 #define ED_TIP(tip) { FieldHint::None, 0, 0, nullptr, 0, tip }
+#define ED_RESET { FieldHint::Reset }
 #define ED_ASSET(tip) { FieldHint::AssetRef, 0, 0, nullptr, 0, tip }
 
 // ---- Core（id 0..4）----
@@ -33,7 +35,7 @@ constexpr FieldMeta kTransform2D[] = {
     FIELD(Transform2D, pos, Vec2), FIELD(Transform2D, rot, Float),
     FIELD(Transform2D, scale, Vec2)};
 constexpr FieldEditorMeta kEdTransform2D[] = {
-    ED, ED_DEG("旋转角（弧度存储，按角度编辑）"), ED};
+    ED_RESET, ED_DEG("旋转角（弧度存储，按角度编辑）"), ED};
 constexpr FieldMeta kVelocity[] = {FIELD(Velocity, v, Vec2)};
 constexpr FieldMeta kHierarchy[] = {
     FIELD(Hierarchy, parent, EntityRef), FIELD(Hierarchy, firstChild, EntityRef),
@@ -215,6 +217,10 @@ void RemoveComponent(Scene& s, Entity e) {
     s.Remove<C>(e);
 }
 template <typename C>
+void ConstructDefault(void* mem) {
+    new (mem) C(); // 字段级重置的默认值来源（与 EmplaceComponent 同构造口径）
+}
+template <typename C>
 uint32_t CountComponent(Scene& s) {
     return (uint32_t)s.View<C>().size();
 }
@@ -248,21 +254,21 @@ void ForEachComponent(Scene& s, void (*cb)(Entity, const void*, void*), void* ct
                   HasComponent<Name>, EmplaceComponent<Name>, ReadComponent<Name>,    \
                   GetComponent<Name>,                                                \
                   ForEachComponent<Name>, RemoveComponent<Name>,                      \
-                  CountComponent<Name>, ForEachComponentRange<Name>});
+                  CountComponent<Name>, ForEachComponentRange<Name>, ConstructDefault<Name>});
 #define REGISTER_ED(Name, fields, ed)                                                \
     reg.Register({#Name, 0, (uint16_t)(sizeof(fields) / sizeof(FieldMeta)),           \
                   (uint32_t)sizeof(Name), fields, ed, nullptr,                        \
                   HasComponent<Name>, EmplaceComponent<Name>, ReadComponent<Name>,    \
                   GetComponent<Name>,                                                \
                   ForEachComponent<Name>, RemoveComponent<Name>,                      \
-                  CountComponent<Name>, ForEachComponentRange<Name>});
+                  CountComponent<Name>, ForEachComponentRange<Name>, ConstructDefault<Name>});
 #define REGISTER_SEG(Name, fields, seg)                                              \
     reg.Register({#Name, 0, (uint16_t)(sizeof(fields) / sizeof(FieldMeta)),           \
                   (uint32_t)sizeof(Name), fields, nullptr, &seg,                      \
                   HasComponent<Name>, EmplaceComponent<Name>, ReadComponent<Name>,    \
                   GetComponent<Name>,                                                \
                   ForEachComponent<Name>, RemoveComponent<Name>,                      \
-                  CountComponent<Name>, ForEachComponentRange<Name>});
+                  CountComponent<Name>, ForEachComponentRange<Name>, ConstructDefault<Name>});
 
 } // namespace
 

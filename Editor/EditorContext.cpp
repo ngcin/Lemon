@@ -95,8 +95,14 @@ void EditorContext::LoadRecentScenes() {
     if (!f) return;
     try {
         nlohmann::json j = nlohmann::json::parse(f);
-        for (const auto& p : j.at("scenes"))
-            if (p.is_string()) recentScenes_.push_back(p.get<std::string>());
+        for (const auto& e : j.at("scenes")) {
+            if (!e.is_string()) continue;
+            const std::string p = e.get<std::string>();
+            if (p.empty()) continue; // 脏档清洗：自别名 UAF 曾写入空串
+            if (std::find(recentScenes_.begin(), recentScenes_.end(), p) != recentScenes_.end())
+                continue; // 脏档清洗：重复条目保序留首见
+            recentScenes_.push_back(p);
+        }
     } catch (const std::exception&) {
         recentScenes_.clear(); // 坏档丢弃（下次保存重建）
     }
@@ -105,10 +111,13 @@ void EditorContext::LoadRecentScenes() {
 
 void EditorContext::RecordRecentScene(const std::string& path) {
     if (path.empty() || assets_.ProjectRoot().empty()) return;
+    // path 可能别名 recentScenes_ 自身元素（File→最近场景菜单直传引用）；
+    // 下方 erase/insert 会毁掉该元素，必须先拷贝再动容器（否则 UAF：2026-09-22 崩溃案）
+    const std::string p = path;
     recentScenes_.erase(std::remove_if(recentScenes_.begin(), recentScenes_.end(),
-                                       [&](const std::string& p) { return p == path; }),
+                                       [&](const std::string& e) { return e == p; }),
                         recentScenes_.end());
-    recentScenes_.insert(recentScenes_.begin(), path); // 置顶
+    recentScenes_.insert(recentScenes_.begin(), p); // 置顶
     if (recentScenes_.size() > 5) recentScenes_.resize(5);
     nlohmann::json j;
     j["scenes"] = recentScenes_;

@@ -8,6 +8,7 @@
 
 #include "Core/Guid.h"
 #include "Core/Math.h"
+#include "Components/CoreComponents.h"
 #include "ECS/Hierarchy.h"
 #include "Renderer/Atlas.h"
 #include "Renderer/BitmapFont.h"
@@ -2017,6 +2018,27 @@ void TestEditorMetaSanity() {
     const ComponentMeta& tf = *reg.Find("Transform2D");
     Expect(tf.editorMeta && HasHint(tf.editorMeta[1].hints, FieldHint::Degree),
            "Transform2D.rot degree meta");
+    // M4.8 字段级重置：Reset 提示的字段必须 constructFn 可用且组件可入 Inspector 栈缓冲（128B）
+    for (uint16_t id2 = 0; id2 < reg.Count(); ++id2) {
+        const ComponentMeta& m = reg.At(id2);
+        if (!m.editorMeta) continue;
+        for (uint16_t fi = 0; fi < m.fieldCount; ++fi) {
+            if (HasHint(m.editorMeta[fi].hints, FieldHint::Reset) &&
+                (!m.constructFn || m.sizeOf > 128)) {
+                LEMON_LOG("BAD RESET META: %s.%s", m.name, m.fields[fi].name);
+                allOk = false;
+            }
+        }
+    }
+    Expect(tf.editorMeta && HasHint(tf.editorMeta[0].hints, FieldHint::Reset) &&
+               tf.constructFn,
+           "Transform2D.pos reset meta");
+    // 默认值口径（重置按钮目标值）：pos(0,0) rot 0 scale(1,1)——scale 归 1 非归 0
+    alignas(16) uint8_t def[128];
+    tf.constructFn(def);
+    const Transform2D& td = *(const Transform2D*)def;
+    Expect(td.pos == Vec2(0, 0) && td.rot == 0.0f && td.scale == Vec2(1, 1),
+           "Transform2D default = pos0/rot0/scale1");
     Expect(allOk, "editor metadata sanity");
 }
 
@@ -2382,6 +2404,51 @@ void TestPlaySpawnPrefab() {
 
     fs::remove_all(root, ec);
 }
+// ---- M4.8-b 回归：RecordRecentScene 自别名安全 + 读档洗脏档 ----
+// 2026-09-22 崩溃案：File→最近场景菜单把 recentScenes_ 元素引用直传
+// MenuOpenRecentScene→OpenScene→RecordRecentScene，后者 erase/insert 同一 vector
+// = UAF（段错误间歇发作；侥幸不崩时把 ""/重复条目写进 recent-scenes.json）。
+void TestRecentScenesAliasSafety() {
+    namespace fs = std::filesystem;
+    using lemon::editor::EditorContext;
+
+    const fs::path root = fs::temp_directory_path() /
+                          ("lemon-test-recent-" + std::to_string(::getpid()));
+    std::error_code ec;
+    fs::remove_all(root, ec);
+
+    EditorContext ctx;
+    Expect(ctx.Assets().OpenProject(root.string(), 100), "ctx open project");
+
+    const std::string a = (root / "Scenes" / "a.scene").string();
+    const std::string b = (root / "Scenes" / "b.scene").string();
+    ctx.RecordRecentScene(a);
+    ctx.RecordRecentScene(b);
+    Expect(ctx.RecentScenes().size() == 2 && ctx.RecentScenes().front() == b,
+           "two entries, b on top");
+
+    // 复现菜单点击：传 vector 元素自身的引用（此前 = UAF 案发现场）
+    ctx.RecordRecentScene(ctx.RecentScenes().back()); // 末位别名
+    Expect(ctx.RecentScenes().size() == 2 && ctx.RecentScenes().front() == a,
+           "alias of back(): moves to top, no dup");
+    ctx.RecordRecentScene(ctx.RecentScenes().front()); // 首位别名（曾确定性注入 ""）
+    Expect(ctx.RecentScenes().size() == 2 && !ctx.RecentScenes().front().empty() &&
+               ctx.RecentScenes().front() == a,
+           "alias of front(): entry intact, no empty injected");
+
+    // 读档洗脏档：预写含空串 + 重复条目的档 → 过滤空串、保序去重（首见留）
+    fs::create_directories(root / ".lemon", ec);
+    {
+        std::ofstream f(root / ".lemon" / "recent-scenes.json", std::ios::binary | std::ios::trunc);
+        f << "{\"scenes\":[\"" << a << "\", \"\", \"Scenes/b.scene\", \"" << a << "\"]}\n";
+    }
+    ctx.LoadRecentScenes();
+    Expect(ctx.RecentScenes().size() == 2, "dirty file cleaned: empty + dup dropped");
+    Expect(ctx.RecentScenes()[0] == a && ctx.RecentScenes()[1] == "Scenes/b.scene",
+           "order preserved, first occurrence wins");
+
+    fs::remove_all(root, ec);
+}
 // ---- M4.5-a：项目向导（blank 模板 06 §1 布局 + 零配置脚本工程）----
 void TestProjectWizard() {
     namespace fs = std::filesystem;
@@ -2651,6 +2718,7 @@ int main() {
     TestScriptBoxArchive();
     TestEditorContextPrefabOps();
     TestPlaySpawnPrefab();
+    TestRecentScenesAliasSafety();
 #endif
     LEMON_LOG("engine-tests: %d checks OK", g_checks);
     return 0;

@@ -85,7 +85,8 @@ public:
     void MenuNewScene();
     void MenuOpenScene();
     /// M4.8-b：最近场景一键切回（脏场景确认后继续走 pendingScenePath_）
-    void MenuOpenRecentScene(const std::string& path);
+    /// 按值收：菜单调用点直传 RecentScenes() 元素引用，OpenScene→RecordRecentScene 会改该 vector
+    void MenuOpenRecentScene(std::string path);
     void MenuSaveScene();    // 无路径 → 转 SaveAs
     void MenuSaveSceneAs();
     bool ConfirmUnsaved(PendingSceneOp after); // 脏场景确认（SceneOp 分流：确认后做 after）   // dirty 时弹确认框；返回 false = 用户取消
@@ -132,6 +133,8 @@ private:
     /// 的隐性 bug）；修错保存经 watcher 自动首装解除。无 Game/ 会话直通。
     bool TryEnterPlay();
     void BuildPickersAndModals();
+    /// 场景选择器起始目录：当前场景父目录 → 项目 Scenes/ → 项目根 → CWD（无项目）
+    std::string PickerStartDir();
     void BuildNoProjectCard(); // 无项目引导（M4.6 §4-1：中央卡 + 两按钮直达）
     void SetupDefaultLayout();
     void SeedSmokeScene();   // 冒烟播种：父子链 + 常用组件（面板验收有内容）

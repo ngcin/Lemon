@@ -229,15 +229,17 @@ void EditorApp::BuildMenuBar() {
         // M4.8-b：最近场景子菜单（文件名 + 当前标记；tooltip 全路径）
         if (ImGui::BeginMenu("最近场景", !ctx_.RecentScenes().empty() && !playing_)) {
             namespace fsr = std::filesystem;
-            for (const std::string& p : ctx_.RecentScenes()) {
-                ImGui::PushID(p.c_str());
+            const std::vector<std::string>& recents = ctx_.RecentScenes();
+            for (size_t i = 0; i < recents.size(); ++i) {
+                const std::string& p = recents[i];
+                ImGui::PushID((int)i); // 索引 ID：档内重复路径曾致同 label ID 冲突
                 std::error_code ec;
                 const bool usable = fsr::is_regular_file(p, ec); // 文件被删 → 灰显可辨
                 const bool cur = p == ctx_.ScenePath();
                 const std::string label =
                     fsr::path(p).filename().string() + (cur ? "（当前）" : "");
                 if (ImGui::MenuItem(label.c_str(), nullptr, cur, usable && !cur))
-                    MenuOpenRecentScene(p);
+                    MenuOpenRecentScene(p); // 按值收，切断对 recents 元素的引用
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", p.c_str());
                 ImGui::PopID();
             }
@@ -980,14 +982,26 @@ void EditorApp::MenuNewScene() {
 
 void EditorApp::MenuOpenScene() {
     if (ctx_.dirty && !ConfirmUnsaved(PendingSceneOp::OpenScene)) return;
-    std::error_code ec;
-    std::string dir = std::filesystem::path(ctx_.ScenePath()).parent_path().string();
-    if (dir.empty()) dir = std::filesystem::current_path(ec).string();
     pickerMode_ = PickerMode::Open;
-    picker_.Open("打开场景", dir, "", ".scene");
+    picker_.Open("打开场景", PickerStartDir(), "", ".scene");
 }
 
-void EditorApp::MenuOpenRecentScene(const std::string& path) {
+// 场景选择器起始目录：当前场景父目录 → 项目 Scenes/ → 项目根 → CWD（无项目）。
+// 新建场景无路径时此前退 CWD（= 启动目录），与打开的项目无关（2026-09-22 反馈）。
+// 注意只能传存在的目录：FilePicker 对不存在的默认目录会自退 CWD。
+std::string EditorApp::PickerStartDir() {
+    std::error_code ec;
+    const std::string cur = std::filesystem::path(ctx_.ScenePath()).parent_path().string();
+    if (!cur.empty()) return cur;
+    const std::string& root = ctx_.Assets().ProjectRoot();
+    if (!root.empty()) {
+        if (std::filesystem::is_directory(root + "/Scenes", ec)) return root + "/Scenes";
+        return root; // 老项目无 Scenes/：退项目根（勿传不存在目录）
+    }
+    return std::filesystem::current_path(ec).string();
+}
+
+void EditorApp::MenuOpenRecentScene(std::string path) {
     if (ctx_.Playing()) {
         LEMON_WARN("Play 中不能切换场景（先 Stop）");
         return;
@@ -1010,11 +1024,8 @@ void EditorApp::MenuSaveScene() {
 }
 
 void EditorApp::MenuSaveSceneAs() {
-    std::error_code ec;
-    std::string dir = std::filesystem::path(ctx_.ScenePath()).parent_path().string();
-    if (dir.empty()) dir = std::filesystem::current_path(ec).string();
     pickerMode_ = PickerMode::Save;
-    picker_.Open("另存场景", dir, ctx_.SceneName(), ".scene");
+    picker_.Open("另存场景", PickerStartDir(), ctx_.SceneName(), ".scene");
 }
 
 bool EditorApp::ConfirmUnsaved(PendingSceneOp after) {
