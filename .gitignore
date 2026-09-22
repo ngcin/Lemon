@@ -31,3 +31,7 @@ demo/
 *.nuget.g.props
 *.nuget.g.targets
 project.nuget.cache
+
+# 手测项目（用户真实测试工程，本地保留不入库）
+ats/
+etest/
