@@ -1723,10 +1723,18 @@ int EditorApp::Run(const EditorLaunch& launch) {
     // Immediate 呈现下 = 真实负载；Play Step 分段计时同步累计（诊断细分）。预热
     // 240 帧剔除（Spawner ~156 帧涨满 1 万 + 稳态余量）。
     constexpr uint64_t kBenchWarmup = 240;
-    double benchFrameSum = 0.0, benchFrameMax = 0.0, benchStepSum = 0.0;
+    double benchFrameSum = 0.0, benchFrameMax = 0.0;
+    // M5 性能批：帧段分解（把缺口拆到环节）。段界 = 帧内打时间戳、帧末统一累计——
+    // resize/acquire 失败走 continue 的帧整帧不参与（与全帧口径一致）
+    double benchPumpSum = 0.0, benchSimSum = 0.0, benchGlueSum = 0.0, benchUiSum = 0.0,
+           benchAcqSum = 0.0, benchSceneSum = 0.0, benchUiDrawSum = 0.0, benchPresentSum = 0.0;
     uint64_t benchFrameN = 0;
     while (running) {
         const auto benchT0 = std::chrono::steady_clock::now();
+        using BenchClock = std::chrono::steady_clock;
+        // 段界（epoch = 未走到该点，如非 Play 帧；累计与全帧同门不读 epoch）
+        BenchClock::time_point bPump{}, bSim{}, bUi0{}, bUi1{}, bAcq{}, bScene{}, bUiDraw{},
+            bPresent{};
         // 窗口关闭按钮 → 请求退出（消费在下方统一裁决：干净场景直接退，脏场景确认）
         if (!window_->PollEvents()) {
             if (!exitRequested_) exitRequested_ = true;
@@ -1851,14 +1859,11 @@ int EditorApp::Run(const EditorLaunch& launch) {
                 in.ax = 1.0f; // 诊断注入：D 键右走（自动化无真人点击，不经聚焦门）
             ctx_.ActiveWorld().ApplyInput(in);
             const float dt = paused_ && !singleStep_ ? 0.0f : 1.0f / 60.0f;
-            const auto benchTick0 = std::chrono::steady_clock::now();
-            ctx_.TickPlay(dt); // Pause = dt0（含 Essential 提交）
-            if (launch.benchSurvivor && frame >= kBenchWarmup)
-                benchStepSum += std::chrono::duration<double, std::milli>(
-                                    std::chrono::steady_clock::now() - benchTick0)
-                                    .count();
+            bPump = BenchClock::now(); // 段界：pump（轮询/watcher/自动备份）结束 = sim 开始
+            ctx_.TickPlay(dt);         // Pause = dt0（含 Essential 提交）
+            bSim = BenchClock::now();  // 段界：sim（世界步进）结束 = glue 开始
             singleStep_ = false;
-            UpdateGameCameraFollow(dt);
+            UpdateGameCameraFollow();
             if (playDiag_ && frame >= 2 && frame < 220) {
                 // 逐帧：墙钟帧耗时（pacing）/ 相机中心 / 跟随目标 / gameRT 尺寸（重建
                 // 翻转即 churn）。f60-120 走、121+ 停——抖动段应能在 dt 或 cam 序列现形
@@ -1880,7 +1885,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
             }
         } else {
             ctx_.TickEditor(1.0f / 60.0f); // Essential（销毁提交）+ 空 FixedTick
-            UpdateGameCameraFollow(0.0f);  // 非 Play：退出跟随时回默认位
+            UpdateGameCameraFollow();  // 非 Play：退出跟随时回默认位
         }
 
         // 冒烟悬停扫掠（M4.5）：逐帧走窗口网格 → 会话内所有可见控件至少被悬停
@@ -2540,6 +2545,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
             }
         }
 
+        bUi0 = BenchClock::now(); // 段界：glue（相机跟随/冒烟注入选中）结束 = ImGui 开始
         ui_->BeginFrame(*window_);
         BuildUI();
         if (quitConfirmArmed_) smokeCloseArmedEver_ = true; // dirty 模式断言原料
@@ -2556,20 +2562,24 @@ int EditorApp::Run(const EditorLaunch& launch) {
                 window_->SetTitle(title.c_str());
             }
         }
+        bUi1 = BenchClock::now(); // 段界：ImGui（BeginFrame+BuildUI+标题）结束
 
         rhi::AcquireResult acq = device_->AcquireNextImage();
         if (acq.deviceLost || acq.needsRecreate) {
             if (acq.deviceLost || !device_->RecreateSwapchain()) continue;
         }
         rhi::CommandList& cl = device_->BeginFrame();
+        bAcq = BenchClock::now(); // 段界：acquire+BeginFrame 结束 = 场景渲染开始
         const uint32_t w = device_->SwapchainWidth(), h = device_->SwapchainHeight();
         viewport_->Render(cl, ctx_); // 双视口离屏（BuildUI 已定 RT 尺寸/注入 overlay）
+        bScene = BenchClock::now(); // 段界：场景 RT（ExtractScene + 双视口绘制）结束
 
         const float clear[4] = {0.055f, 0.06f, 0.08f, 1.0f};
         cl.BeginPass(device_->SwapchainFormat(), w, h, clear);
         cl.SetViewportScissor(w, h);
         ui_->Render(cl);
         cl.EndPass();
+        bUiDraw = BenchClock::now(); // 段界：ImGui 渲染编码（swapchain pass）结束
 
         // ID 冲突信号轮询（M4.5）：冲突提示由 ImGui 直接画 tooltip、不走
         // ErrorCallback——帧末读 DebugDrawIdConflictsId（悬停扫掠命中 >1 同 ID 项
@@ -2593,6 +2603,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
 
         bool needRe = false, lost = false;
         device_->EndFrameAndPresent(needRe, lost);
+        bPresent = BenchClock::now(); // 段界：present（提交+呈现+可能的先前帧围栏等待）
         if (lost || needRe) {
             if (lost || !device_->RecreateSwapchain()) continue;
         }
@@ -2609,6 +2620,17 @@ int EditorApp::Run(const EditorLaunch& launch) {
                                std::chrono::steady_clock::now() - tColdStart)
                                .count();
         if (launch.benchSurvivor && ctx_.Playing() && frame >= kBenchWarmup) {
+            const auto segMs = [](BenchClock::time_point a, BenchClock::time_point b) {
+                return std::chrono::duration<double, std::milli>(b - a).count();
+            };
+            benchPumpSum += segMs(benchT0, bPump);
+            benchSimSum += segMs(bPump, bSim);
+            benchGlueSum += segMs(bSim, bUi0);
+            benchUiSum += segMs(bUi0, bUi1);
+            benchAcqSum += segMs(bUi1, bAcq);
+            benchSceneSum += segMs(bAcq, bScene);
+            benchUiDrawSum += segMs(bScene, bUiDraw);
+            benchPresentSum += segMs(bUiDraw, bPresent);
             const double ms = std::chrono::duration<double, std::milli>(
                                   std::chrono::steady_clock::now() - benchT0)
                                   .count();
@@ -2655,11 +2677,20 @@ int EditorApp::Run(const EditorLaunch& launch) {
         const double fps = avg > 0.0 ? 1000.0 / avg : 0.0;
         const bool aliveOk = playAliveAtStop >= 10000;
         const bool pass = aliveOk && avg > 0.0 && avg <= 1000.0 / 45.0;
+        const double segN = benchFrameN ? (double)benchFrameN : 1.0;
+        std::printf("[bench-survivor] 分段avg ms: pump=%.2f sim=%.2f glue=%.2f ui=%.2f "
+                    "acquire=%.2f scene=%.2f uidraw=%.2f present=%.2f | segSum=%.2f\n",
+                    benchPumpSum / segN, benchSimSum / segN, benchGlueSum / segN,
+                    benchUiSum / segN, benchAcqSum / segN, benchSceneSum / segN,
+                    benchUiDrawSum / segN, benchPresentSum / segN,
+                    (benchPumpSum + benchSimSum + benchGlueSum + benchUiSum + benchAcqSum +
+                     benchSceneSum + benchUiDrawSum + benchPresentSum) /
+                        segN);
         std::printf("[bench-survivor] frames=%u warmup=%u alive=%u stepAvg=%.2fms "
                     "frameAvg=%.2fms frameMax=%.2fms fps=%.0f present=IMMEDIATE(请求)"
                     " => %s\n",
                     (unsigned)frame, (unsigned)kBenchWarmup, playAliveAtStop,
-                    benchFrameN ? benchStepSum / (double)benchFrameN : 0.0, avg,
+                    benchSimSum / segN, avg,
                     benchFrameMax, fps, pass ? "PASS" : "FAIL");
         if (!pass) exitCode = 1;
     }
@@ -2890,7 +2921,7 @@ bool TagEquals(const char* tag, const char* want) {
 }
 } // namespace
 
-void EditorApp::UpdateGameCameraFollow(float dt) {
+void EditorApp::UpdateGameCameraFollow() {
     // M4.7 手测修复：Play 中游戏相机钉死 (640,360)，玩家 WASD 走出视野后"消失"。
     // 目标优先级（M4-Editor-Plan §2.2 GameView"场景中 Camera 实体"的标签化落地）：
     //   ① tag "Camera"——显式相机位实体（进阶：也可作空场景的固定取景）；

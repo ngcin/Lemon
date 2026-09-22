@@ -152,8 +152,15 @@ private:
     Camera2D sceneCam_{}; // 编辑相机（02 §3.5：与游戏相机同类型双实例，输入来源分离 #13）
     Camera2D gameCam_{};  // 游戏相机（M4.3 Play 中可被脚本驱动；编辑态固定默认位）
     uint64_t lastSceneStamp_ = 0;
+    uint64_t extractEpoch_ = 0; // ExtractScene 调用计数（差集判定：lastSeen != 当前纪元 → 释放）
 
-    std::unordered_map<uint64_t, uint32_t> entityToRenderable_; // Entity.id → renderable id
+    // Entity.id → renderable id + 末次见到纪元（差集 O(N)；曾用 vector+std::find 是 O(N²)，
+    // 1 万实体 ≈ 每帧 5000 万次比较——bench-survivor scene 段 19ms 的头号成分）
+    struct EntityRenderable {
+        uint32_t rid = 0;
+        uint64_t lastSeen = 0;
+    };
+    std::unordered_map<uint64_t, EntityRenderable> entityToRenderable_;
     std::vector<SpritePacket> overlay_;                         // SceneView 专属（面板注入）
     std::vector<SpritePacket> scenePackets_, gamePackets_;      // Extract 快照（合并 overlay）
 

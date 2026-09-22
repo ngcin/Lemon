@@ -220,7 +220,7 @@ RESULT 行判读：`sim avg ≤ 8ms`（08 §3 判据）；`alive` 稳定在 n �
 macOS 安全策略拒绝 lldb 原生 attach（Console.app 可见 debugserver 拒绝记录）——
 托管调试不受影响（走诊断 IPC 而非原生 ptrace）。
 
-### 6.10 bench-survivor —— M5 编辑器内压测场（2026-09-22 清障③建场，基线 FAIL 在案）
+### 6.10 bench-survivor —— M5 编辑器内压测场（2026-09-22 建场；同日性能批转 PASS）
 
 ```bash
 ./build/mac/Editor/lemon-editor --bench-survivor --frames 900   # 预热 240 + 测量 660
@@ -237,14 +237,27 @@ Chase 目标。
 - 帧时 = 全帧 steady clock（含渲染提交与 present 等待），**预热 240 帧剔除**（怪海
   ~156 帧涨满 + 稳态余量）；
 - 判据（08 §3）：`alive ≥ 10000 且 frameAvg ≤ 22.2ms（≙ ≥45fps）`；
-- 附带 `stepAvg` = Play World Step 分段（诊断细分：模拟 vs 渲染占比）。
+- **分段计时**（M5 性能批落地）：帧内打点、帧末累计，输出
+  `pump / sim / glue / ui / acquire / scene / uidraw / present` 各段均值 + segSum
+  （与 frameAvg 对账；resize/acquire 失败的 continue 帧整帧不参与）。
 
-**基线（2026-09-22，本机 6C / RX 590 / MoltenVK，三跑稳定）**：
-`alive=10003 stepAvg=9.7~11.4ms frameAvg=33.6~35.3ms frameMax≈49ms fps=28~30 => FAIL`。
-缺口 = **13ms/帧**，分解线索：stepAvg 11ms vs bench-sim 5.1ms（差 ~6ms 疑编辑器管线
-renderable 提取）；frameAvg − stepAvg ≈ 24ms 渲染+ImGui 侧（bench-mow 10 万精灵仅
-9.3ms/帧——GameView 提取/批次/双视口待 profile）。**M5 性能工作主战场**：renderable
-提取路径、批次键复查、ImGui 叠加成本——逐项 profile 后优化，回归本命令对标。
+**基线（2026-09-22，本机 6C / RX 590 / MoltenVK）→ 性能批后**：
+
+| 时点 | 分段 avg ms | 全帧 |
+|---|---|---|
+| 建场基线 | sim 11.22 / scene 19.31 / ui 4.13（其余 <1） | frameAvg 35.43ms fps=28 **FAIL** |
+| 性能批（同日，两跑） | sim 11.14~11.47 / **scene 1.22~1.25** / ui 4.11~4.12 | frameAvg 17.16~17.48ms fps 57~58 **PASS** |
+
+scene 段 19.31→1.25ms 的两处根因（都在编辑器侧视口层，非引擎内核）：
+1. **ExtractScene 差集销毁 O(N²)**：`seen` vector + `std::find`，1 万实体 ≈ 每帧
+   5000 万次比较——改纪元戳（map 值带 lastSeen，`ViewportRenderer.h`）O(N)；
+2. **Scene 视口实体名标签全量画**：1 万次 ComputeWorldTransform + snprintf +
+   TextWidth + 字形四边形——改视口 AABB 裁剪（+128px 屏幕边距）+ 预算封顶 256 +
+   谓词对齐提取（禁用/悬空精灵不画标签，原先是漏网 bug）。
+
+**后续观察项**（留给 M5 性能批续章）：sim 11.14ms 系统级分解（vs bench-sim 5.1ms
+的差距在哪几个系统）、frameMax≈31ms 尖刺归因（GC/生成突发？）、ui 4.11ms（万级
+Hierarchy 面板）。回归口径 = 本命令三跑稳定。
 
 ## 7. M2 验收结果汇总（2026-09-19，本机 6C）
 

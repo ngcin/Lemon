@@ -350,14 +350,13 @@ void ViewportRenderer::ExtractScene(EditorContext& ctx) {
     // 内核 #4：场景对象变化（新建/打开/Play 切换 → Scene 指针不同）→ 映射全失效
     const uint64_t stamp = (uint64_t)(uintptr_t)&s;
     if (stamp != lastSceneStamp_) {
-        for (auto& [id, rid] : entityToRenderable_) rm_.Destroy(rid);
+        for (auto& [id, er] : entityToRenderable_) rm_.Destroy(er.rid);
         entityToRenderable_.clear();
         lastSceneStamp_ = stamp;
     }
 
     rm_.BeginSimTick();
-    std::vector<uint64_t> seen;
-    seen.reserve(entityToRenderable_.size() + 16);
+    const uint64_t epoch = ++extractEpoch_;
     for (auto [ent, tf, sr] : s.View<ecs::Transform2D, ecs::SpriteRenderer>().each()) {
         (void)tf;
         Entity e = Scene::FromEntt(ent);
@@ -365,7 +364,6 @@ void ViewportRenderer::ExtractScene(EditorContext& ctx) {
         // 悬空引用（资产已删/未导入）：不建 renderable（Inspector 槽红显 + 体检红字；
         // GetSprite 越界断言的编辑器侧防线）。空洞号（退役资产）同理不渲染
         if (!assets_.Registry().IsValidSprite(sr.spriteId)) continue;
-        seen.push_back(e.id);
 
         // 世界变换（内核 #1 消费端；链异常回退本地，保持可渲染）
         ecs::WorldTransform2D wt{};
@@ -384,19 +382,20 @@ void ViewportRenderer::ExtractScene(EditorContext& ctx) {
                               .blend = (uint8_t)renderer::BlendKind::Alpha,
                               .filter = (uint8_t)renderer::FilterKind::Linear,
                               .flags = (uint8_t)(sr.flags & kSrFlipMask)});
-            entityToRenderable_[e.id] = rid;
+            entityToRenderable_[e.id] = {rid, epoch};
         } else {
-            rid = it->second;
+            rid = it->second.rid;
+            it->second.lastSeen = epoch;
         }
         rm_.SetSprite(rid, sr.spriteId);
         rm_.SetColor(rid, sr.colorRGBA);
         rm_.SetSort(rid, sr.sortingLayer, sr.sortOrder);
         rm_.SetTransform(rid, wt.pos, wt.rot, wt.scale);
     }
-    // 内核 #2：销毁/禁用差集 → renderable 释放
+    // 内核 #2：销毁/禁用差集 → renderable 释放（纪元比对 O(N)）
     for (auto it = entityToRenderable_.begin(); it != entityToRenderable_.end();) {
-        if (std::find(seen.begin(), seen.end(), it->first) == seen.end()) {
-            rm_.Destroy(it->second);
+        if (it->second.lastSeen != epoch) {
+            rm_.Destroy(it->second.rid);
             it = entityToRenderable_.erase(it);
         } else {
             ++it;
@@ -426,15 +425,27 @@ void ViewportRenderer::RenderViewport(rhi::CommandList& cl, uint32_t idx, Sprite
     std::vector<SpritePacket> textPackets;
     textPackets.reserve(64);
     if (withOverlay) {
-        // 实体名标签（屏幕恒定字号：字级 × 1/zoom 反缩放；锚点 = 实体底边中点下方）
+        // 实体名标签（屏幕恒定字号：字级 × 1/zoom 反缩放；锚点 = 实体底边中点下方）。
+        // M5 性能批纪律：视口外不画（世界 AABB + 屏幕边距），预算封顶 kMaxLabels——
+        // 万级实体全画既不可读也不可跑；谓词与 ExtractScene 对齐（禁用/悬空精灵无标签，
+        // 原先禁用精灵也画标签是漏网）
+        constexpr uint32_t kMaxLabels = 256;
         const float labelScale = 0.9f / cam.zoom;
         const uint32_t ink = overlay::kLabelInk; // 与冒烟像素断言共用（overlay::）
+        const float margin = 128.0f / cam.zoom; // 屏幕像素 → 世界空间边距
         auto& reg = assets_.Registry();
+        uint32_t labels = 0;
         for (auto [ent, tf, sr] : ctx.ActiveScene().View<ecs::Transform2D, ecs::SpriteRenderer>().each()) {
             (void)tf;
+            if (labels >= kMaxLabels) break;
+            if (!(sr.flags & kSrEnabled)) continue;
+            if (!reg.IsValidSprite(sr.spriteId)) continue;
             Entity e = Scene::FromEntt(ent);
             ecs::WorldTransform2D wt{};
             ecs::ComputeWorldTransform(ctx.ActiveScene(), e, wt);
+            if (wt.pos.x < view.min.x - margin || wt.pos.x > view.max.x + margin ||
+                wt.pos.y < view.min.y - margin || wt.pos.y > view.max.y + margin)
+                continue; // 视口（+边距）外
             char label[40];
             if (const ecs::Meta* m = ctx.ActiveScene().TryGet<ecs::Meta>(e); m && m->tag[0])
                 std::snprintf(label, sizeof(label), "%s", m->tag);
@@ -446,6 +457,7 @@ void ViewportRenderer::RenderViewport(rhi::CommandList& cl, uint32_t idx, Sprite
             Vec2 anchor{wt.pos.x - assets_.Font().TextWidth(label, labelScale) * 0.5f,
                         wt.pos.y + wt.scale.y * spriteH * 0.5f + 4.0f / cam.zoom};
             assets_.Font().DrawText(textPackets, label, anchor, labelScale, ink);
+            ++labels;
         }
     }
 

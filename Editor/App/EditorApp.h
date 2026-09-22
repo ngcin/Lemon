@@ -146,7 +146,7 @@ private:
     void DrawRecoveryModal();
     /// Play 中游戏相机跟随（M4.7 手测修复）：tag "Camera"（显式相机实体）>
     /// tag "Player" > 首个挂脚本实体；进 Play 首帧吸附、之后阻尼跟随；退出回默认位。
-    void UpdateGameCameraFollow(float dt);
+    void UpdateGameCameraFollow();
 
     // ---- LEMON_PLAY_DIAG=1：Play 相机手感诊断（手测第九轮）----
     /// 逐帧打印墙钟帧耗时/相机中心/跟随目标/gameRT 尺寸；f60-120 自动注入 D 键

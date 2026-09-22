@@ -115,7 +115,7 @@ packager（烘焙/打包/安装器）→ Steam 集成（steamworks 动态加载 
 |---|---|---|
 | bench-mow | 10 万实例化精灵 + 5 万粒子，无逻辑 | M1 起：≥ 60fps（基线 **107fps**，2026-09-18） |
 | bench-sim | 1 万怪全系统模拟，无渲染 | M2 起：≤ 8ms/步（基线 **avg 5.10ms** 多线程 / 19.9ms 单线程诊断档，2026-09-19） |
-| bench-survivor | vs-survivor 模板 + 导演拉满（capAlive=上限） | M5 起：≥ 45fps（编辑器内；口径 = `lemon-editor --bench-survivor`，09 §6.10。2026-09-22 建场，基线 28~30fps **FAIL 在案**，缺口 ~13ms/帧 → M5 性能批） |
+| bench-survivor | vs-survivor 模板 + 导演拉满（capAlive=上限） | M5 起：≥ 45fps（编辑器内；口径 = `lemon-editor --bench-survivor`，09 §6.10。2026-09-22 建场基线 28~30fps FAIL → 同日性能批修视口层 O(N²) 差集 + 万级标签全画，**58fps PASS**；余量观察项见 09 §6.10） |
 | 压测 A（终验） | 00 文档 §4 全量 | M8：≥ 60fps |
 
 CI 每日跑 bench-mow/bench-sim，数字写入构建报告（性能回退 > 10% 自动标红）。
