@@ -360,18 +360,22 @@ void HitboxSystem::Tick(World& world, Scene& scene, float dt) {
         bool consumed = false;
         physics2d::QueryFilter f;
         f.exclude = Scene::FromEntt(ent);
+        // hitRadius = 有效判定半径全量（SpatialHash reach = radius + probe，probe=0）
         scene.Spatial().OverlapCircle(
-            scene, tf.pos, 6.0f, f, 6.0f,
+            scene, tf.pos, pr.hitRadius, f, 0.0f,
             [&](Entity hit, const Transform2D& htf) {
                 (void)htf;
                 const Meta* hm = scene.TryGet<Meta>(hit);
                 if (!hm || !teams.Hostile(projTeam, hm->team)) return true;
                 Health* hp = scene.TryGet<Health>(hit);
                 if (!hp) return true;
-                if (hp->cur <= 0.0f) return true; // 当帧已死（防多源重复 Death 事件）
-                if (hp->iFrames > 0.0f) return true; // 无敌帧免疫
+                if (hp->cur <= 0.0f) return true;   // 当帧已死（防多源重复 Death 事件）
+                if (pr.HasHit((uint32_t)hit.id)) return true; // 命中记忆：一弹一目标一次
+                if (hp->iFrames > 0.0f) return true; // 无敌帧免疫（跨弹 rate limit）
                 hp->cur -= pr.damage;
-                hp->iFrames = 0.1f; // 帧内多弹去重（全量 iFrames 策略 M5 细化）
+                hp->iFrames = hp->iframeWindow; // 窗内免疫（含同帧多弹去重）；递减在 StatSystem
+                pr.RememberHit((uint32_t)hit.id);
+                ++pr.hits;
 
                 EventPacket ev{};
                 ev.type = GameEvent::Hit;
@@ -382,10 +386,11 @@ void HitboxSystem::Tick(World& world, Scene& scene, float dt) {
                 ev.payload[2] = htf.pos.y;
                 events.Push(ev);
 
-                // 击退（割草手感）：沿弹道方向脉冲
+                // 击退（割草手感）：沿弹道方向脉冲，强度 = 弹体配置
                 if (Knockback* kb = scene.TryGet<Knockback>(hit)) {
-                    if (const Velocity* pv = scene.Registry().try_get<Velocity>(ent))
-                        kb->impulse += Normalize(pv->v) * 60.0f;
+                    if (const Velocity* pv = scene.Registry().try_get<Velocity>(ent);
+                        pv && LengthSq(pv->v) > 0.0f)
+                        kb->impulse += Normalize(pv->v) * pr.knockback;
                 }
 
                 if (hp->cur <= 0.0f) {
@@ -398,7 +403,7 @@ void HitboxSystem::Tick(World& world, Scene& scene, float dt) {
                 }
 
                 if (pr.pierce > 0) {
-                    --pr.pierce; // 继续穿透（命中去重集 M5：iFrames 已挡同帧重复）
+                    --pr.pierce; // 继续穿透；同目标重复伤害由命中记忆挡
                 } else {
                     consumed = true;
                     return false; // 终止查询
@@ -414,7 +419,8 @@ void HitboxSystem::Tick(World& world, Scene& scene, float dt) {
         }
     }
 
-    // Hazard 持续伤害区（tick 节拍）
+    // Hazard 持续伤害区（tick 节拍）。语义决策（M5 批⓪）：独立 tickInterval 节拍，
+    // 不与 iFrames 联动（区域伤害自成拍，不挤占受击无敌窗；需联动时加 Hazard 侧字段）
     auto hzView = scene.View<Hazard, Transform2D>();
     for (auto [ent, hz, tf] : hzView.each()) {
         hz.tickPhase -= dt;
@@ -426,7 +432,7 @@ void HitboxSystem::Tick(World& world, Scene& scene, float dt) {
         physics2d::QueryFilter f;
         f.exclude = Scene::FromEntt(ent);
         scene.Spatial().OverlapCircle(
-            scene, tf.pos, 48.0f, f, 8.0f,
+            scene, tf.pos, hz.radius, f, 8.0f,
             [&](Entity hit, const Transform2D& htf) {
                 (void)htf;
                 const Meta* tm = scene.TryGet<Meta>(hit);
@@ -515,6 +521,14 @@ void StatSystem::Tick(World& world, Scene& scene, float dt) {
             }
             st.count = kept;
         }
+    }
+    // iFrames 倒计时（M5 批⓪；此前只置不减 → 受击一次永久无敌，DevLog 2026-09-22 P0）。
+    // Hitbox(#9) 同 tick 置窗在先、此处(#11) 递减在后 → 复拍间隔恰 ceil(窗/dt) tick
+    // （60Hz、0.1s 窗 = 6 tick）；逐实体独立更新 = 确定性。
+    {
+        auto view = scene.View<Health>();
+        for (auto [ent, hp] : view.each())
+            if (hp.iFrames > 0.0f) hp.iFrames = std::max(0.0f, hp.iFrames - dt);
     }
     // 经验/升级（幂曲线；VS 曲线资产化 M5）
     {

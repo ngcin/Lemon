@@ -50,10 +50,10 @@ Entity SpawnFactory(Scene& s, uint32_t prefabId, Vec2 pos, uint32_t team) {
     s.Emplace<Meta>(e).team = team;
     s.Emplace<Velocity>(e);
     if (prefabId == 1) {
-        s.Emplace<Health>(e, Health{30, 30, 0});
+        s.Emplace<Health>(e, Health{.max = 30.0f, .cur = 30.0f});
         s.Emplace<Knockback>(e);
     } else if (prefabId == 2) {
-        s.Emplace<Projectile>(e, Projectile{320, 2.5f, 12, 0, 0, 0});
+        s.Emplace<Projectile>(e, Projectile{.speed = 320.0f, .lifetime = 2.5f, .damage = 12.0f});
     } else {
         return Entity::Null();
     }
@@ -68,7 +68,7 @@ void BuildScene(World& world, Scene& s, const Config& cfg, Entity& playerOut) {
     s.Emplace<Transform2D>(playerOut, Transform2D{{0, 0}});
     s.Emplace<Meta>(playerOut).team = 0;
     s.Emplace<Velocity>(playerOut);
-    s.Emplace<Health>(playerOut, Health{500, 500, 0});
+    s.Emplace<Health>(playerOut, Health{.max = 500.0f, .cur = 500.0f});
     Shooter& sh = s.Emplace<Shooter>(playerOut);
     sh.interval = 0.05f;
     sh.range = 400;
@@ -104,7 +104,7 @@ void BuildScene(World& world, Scene& s, const Config& cfg, Entity& playerOut) {
     sp.spawnTeam = 1;
     sp.cooldown = 0.0f;
     s.Emplace<Chase>(spawner) = Chase{55, 2000, 24, 0};
-    s.Emplace<Health>(spawner, Health{30, 30, 0});
+    s.Emplace<Health>(spawner, Health{.max = 30.0f, .cur = 30.0f});
     s.Emplace<Knockback>(spawner);
     s.Emplace<Velocity>(spawner);
 }

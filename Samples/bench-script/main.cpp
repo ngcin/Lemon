@@ -132,7 +132,8 @@ int main(int argc, char** argv) {
         s.Emplace<Transform2D>(e, Transform2D{{0, 0}});
         s.Emplace<Meta>(e).team = 2;
         s.Emplace<Velocity>(e);
-        Projectile& pr = s.Emplace<Projectile>(e, Projectile{300, 3.0f, 10, 0, 0, 0});
+        Projectile& pr = s.Emplace<Projectile>(e, Projectile{.speed = 300.0f, .lifetime = 3.0f,
+                                                            .damage = 10.0f});
         pr.age = rng.Float01() * 6.0f; // 初相位（场景布置子流）
     }
 

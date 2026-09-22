@@ -13,7 +13,8 @@ namespace lemon::ecs {
 struct Health {
     float max = 100.0f;
     float cur = 100.0f;
-    float iFrames = 0.0f;   // 受击后无敌剩余秒
+    float iFrames = 0.0f;       // 受击后无敌剩余秒（运行时）
+    float iframeWindow = 0.1f;  // 受击无敌窗（秒）；复拍间隔 = ceil(窗/dt) tick
 };
 
 struct Mover {
@@ -56,7 +57,26 @@ struct Projectile {
     float age = 0.0f;           // 运行时
     uint8_t pierce = 0;         // 剩余穿透次数
     uint8_t homing = 0;
-    uint16_t hits = 0;          // 运行时：已命中数（穿透去重辅助）
+    uint16_t hits = 0;          // 运行时：累计命中数
+    // ---- M5 批⓪ 追加（尾部追加：既有聚合构造点按默认值保持正确）----
+    float hitRadius = 12.0f;    // 命中判定半径（reach 全量；原 6+6 组合的有效口径）
+    float knockback = 60.0f;    // 命中击退脉冲强度（写入目标 Knockback.impulse）
+    uint8_t hitHead = 0;        // 运行时：命中记忆环写指针
+    uint8_t _pad2[3] = {};      // 衬齐 hitMemory 对齐
+    uint32_t hitMemory[4] = {}; // 运行时：最近 4 个命中目标（低 32 位句柄，含 version）
+
+    /// 一弹一目标一次：本弹是否已命中过该目标（0=空槽不算）
+    bool HasHit(uint32_t raw) const {
+        if (raw == 0) return false;
+        for (uint32_t m : hitMemory)
+            if (m == raw) return true;
+        return false;
+    }
+    /// 记入命中记忆（4 槽环，满则覆写最旧——穿透场景足够，零堆分配）
+    void RememberHit(uint32_t raw) {
+        hitMemory[hitHead] = raw;
+        hitHead = (hitHead + 1) & 3u;
+    }
 };
 
 struct Spawner {
@@ -73,6 +93,7 @@ struct Hazard {
     float dps = 10.0f;
     float tickInterval = 0.5f;
     float tickPhase = 0.0f;     // 运行时：相位对齐
+    float radius = 48.0f;       // 持续伤害区半径（probe 8 = 目标体近似另加，见 HitboxSystem）
 };
 
 struct Collectible {
@@ -96,15 +117,15 @@ struct Knockback {
 };
 
 // ---- 布局冻结（M3 桥侧 blittable 前提：C# 镜像 struct 与此逐字节对齐，改动=破回放）----
-static_assert(std::is_trivially_copyable_v<Health> && sizeof(Health) == 12, "Health 布局冻结");
+static_assert(std::is_trivially_copyable_v<Health> && sizeof(Health) == 16, "Health 布局冻结");
 static_assert(std::is_trivially_copyable_v<Mover> && sizeof(Mover) == 4, "Mover 布局冻结");
 static_assert(std::is_trivially_copyable_v<Patrol> && sizeof(Patrol) == 24, "Patrol 布局冻结");
 static_assert(std::is_trivially_copyable_v<Chase> && sizeof(Chase) == 24, "Chase 布局冻结");
 static_assert(std::is_trivially_copyable_v<Flee> && sizeof(Flee) == 8, "Flee 布局冻结");
 static_assert(std::is_trivially_copyable_v<Shooter> && sizeof(Shooter) == 32, "Shooter 布局冻结");
-static_assert(std::is_trivially_copyable_v<Projectile> && sizeof(Projectile) == 20, "Projectile 布局冻结");
+static_assert(std::is_trivially_copyable_v<Projectile> && sizeof(Projectile) == 48, "Projectile 布局冻结");
 static_assert(std::is_trivially_copyable_v<Spawner> && sizeof(Spawner) == 28, "Spawner 布局冻结");
-static_assert(std::is_trivially_copyable_v<Hazard> && sizeof(Hazard) == 12, "Hazard 布局冻结");
+static_assert(std::is_trivially_copyable_v<Hazard> && sizeof(Hazard) == 16, "Hazard 布局冻结");
 static_assert(std::is_trivially_copyable_v<Collectible> && sizeof(Collectible) == 8, "Collectible 布局冻结");
 static_assert(std::is_trivially_copyable_v<Trigger2D> && sizeof(Trigger2D) == 12, "Trigger2D 布局冻结");
 static_assert(std::is_trivially_copyable_v<Knockback> && sizeof(Knockback) == 12, "Knockback 布局冻结");

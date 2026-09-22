@@ -614,7 +614,7 @@ void TestSceneArchive() {
     chase.speed = 88.0f;
     chase.aggroRange = 400.0f;
     chase.targetTeam = 0;
-    src.Emplace<Health>(monster, Health{200, 150, 0.5f});
+        src.Emplace<Health>(monster, Health{.max = 200.0f, .cur = 150.0f, .iFrames = 0.5f});
     Meta& meta = src.Emplace<Meta>(monster);
     std::strcpy(meta.tag, "elite-01");
 
@@ -828,10 +828,10 @@ Entity TestSpawnFactory(Scene& s, uint32_t prefabId, Vec2 pos, uint32_t team) {
     s.Emplace<Meta>(e).team = team;
     s.Emplace<Velocity>(e);
     if (prefabId == 1) { // 怪
-        s.Emplace<Health>(e, Health{50, 50, 0});
+        s.Emplace<Health>(e, Health{.max = 50.0f, .cur = 50.0f});
         s.Emplace<Chase>(e);
     } else if (prefabId == 2) { // 投射物
-        s.Emplace<Projectile>(e, Projectile{300, 3, 15, 0, 0, 0});
+        s.Emplace<Projectile>(e, Projectile{.speed = 300.0f, .lifetime = 3.0f, .damage = 15.0f});
     } else {
         return Entity::Null();
     }
@@ -926,16 +926,14 @@ void TestSimulationEndToEnd() {
     });
     Expect(projectiles > 0, "projectiles alive");
 
-    // 命中链路：给玩家血量，投射物（team 3）hostile→0 命中 → Hit/Death 事件
-    s.Emplace<Health>(player, Health{30, 30, 0});
-    for (int i = 0; i < 120; ++i) world.Step(dt);
+    // 命中链路：给玩家血量，怪队投射物 hostile→0 命中 → Hit/Death 事件。
+    // T1（M5 批⓪）后多段伤害真实致死：30 hp / 弹伤 15 → 2 击（隔 ~6 tick 无敌窗）
+    // → 玩家死亡并销毁（修复前：首击置 iFrames 后无递减 → 恒免疫、永不死）。
+    s.Emplace<Health>(player, Health{.max = 30.0f, .cur = 30.0f});
+    for (int i = 0; i < 120 && s.Alive(player); ++i) world.Step(dt);
     Expect(hitEvents > 0, "projectiles hit player");
-    Expect(s.Get<Health>(player).cur < 30.0f, "player took damage");
-    // 玩家死亡 → 销毁提交
-    if (s.Get<Health>(player).cur <= 0.0f) {
-        Expect(!s.Alive(player), "dead player destroyed");
-        Expect(deathEvents >= 1, "death events fired");
-    }
+    Expect(!s.Alive(player), "multi-hit damage killed player (T1)");
+    Expect(deathEvents >= 1, "death events fired");
 
     // 投射物寿命回收：跑足寿命周期，场上投射物数受控（生成率≈销毁率）
     for (int i = 0; i < 300; ++i) world.Step(dt);
@@ -1018,21 +1016,38 @@ void TestArchiveArraySegAndRuntimeFields() {
     eq.relicIds[2] = 9;
 
     // RT 字段（修复：此前漏标被误序列化）
-    src.Emplace<Health>(e, Health{200, 150, 0.5f}); // iFrames RT
+    src.Emplace<Health>(e, Health{.max = 200.0f, .cur = 150.0f, .iFrames = 0.5f,
+                                  .iframeWindow = 0.35f}); // iFrames RT；iframeWindow 落档
     Entity sp = src.Create();
     src.Emplace<Transform2D>(sp, Transform2D{{0, 0}});
     Spawner& spo = src.Emplace<Spawner>(sp);
     spo.cooldown = 0.42f; // RT
 
+    // Projectile：配置字段落档 roundtrip；命中记忆/计数 RT 不入档（M5 批⓪ T2）
+    Entity pe = src.Create();
+    src.Emplace<Transform2D>(pe, Transform2D{{2, 2}});
+    Projectile& pp = src.Emplace<Projectile>(pe);
+    pp.hitRadius = 9.0f;
+    pp.knockback = 120.0f;
+    pp.pierce = 2;
+    pp.hits = 3;                 // RT
+    pp.hitMemory[0] = 0x1234u;   // RT
+
     std::string text = SceneArchive::Save(src);
     Expect(text.find("\"iFrames\"") == std::string::npos, "iFrames not serialized");
+    Expect(text.find("\"iframeWindow\"") != std::string::npos,
+           "iframeWindow serialized (config field)");
     Expect(text.find("\"cooldown\"") == std::string::npos,
            "spawner cooldown not serialized");
+    Expect(text.find("\"hitRadius\"") != std::string::npos,
+           "projectile hitRadius serialized (config)");
+    Expect(text.find("\"hitMemory0\"") == std::string::npos,
+           "hit memory not serialized (runtime)");
 
     World w2;
     Scene& dst = w2.CreateScene("seg2");
     Expect(SceneArchive::Load(dst, text), "seg scene load");
-    Expect(dst.AliveCount() == 2, "seg entity count");
+    Expect(dst.AliveCount() == 3, "seg entity count");
 
     bool found = false;
     dst.View<StatusEffects>().each([&](auto, StatusEffects& s2) {
@@ -1055,9 +1070,25 @@ void TestArchiveArraySegAndRuntimeFields() {
         Expect(e2.relicIds[0] == 7 && e2.relicIds[1] == 8 && e2.relicIds[2] == 9,
                "relicIds[0..2] roundtrip");
     });
-    // RT 字段读档后回落默认值
+    // RT 字段读档后回落默认值；配置字段 roundtrip
     dst.View<Spawner>().each(
         [&](auto, Spawner& s2) { Expect(s2.cooldown == 0.0f, "cooldown reset (runtime)"); });
+    bool sawHealth = false;
+    dst.View<Health>().each([&](auto, Health& h2) {
+        sawHealth = true;
+        Expect(h2.iFrames == 0.0f, "iFrames reset (runtime)");
+        Expect(ExpectNear0(h2.iframeWindow, 0.35f), "iframeWindow roundtrip");
+    });
+    Expect(sawHealth, "health entity located after load");
+    bool sawProj = false;
+    dst.View<Projectile>().each([&](auto, Projectile& p2) {
+        sawProj = true;
+        Expect(ExpectNear0(p2.hitRadius, 9.0f), "hitRadius roundtrip");
+        Expect(ExpectNear0(p2.knockback, 120.0f), "knockback roundtrip");
+        Expect(p2.pierce == 2, "pierce roundtrip");
+        Expect(p2.hits == 0 && p2.hitMemory[0] == 0, "runtime fields reset");
+    });
+    Expect(sawProj, "projectile entity located after load");
 }
 
 // 恶意/畸形 .scene 不抛穿加载器（json 异常降级修复回归）
@@ -1158,6 +1189,148 @@ void TestWorldStepWithoutScene() {
     Expect(w.TickIndex() == 0, "no-scene step is a no-op");
 }
 
+// iFrames 递减与多段击杀（M5 批⓪ T1；DevLog 2026-09-22 P0 回归）：
+// 受击置窗 → 窗内免疫（在途弹压着重叠也不重复伤害）→ 窗尽复拍 → 第三击致死。
+// 复拍间隔 = ceil(iframeWindow/dt) tick（60Hz/0.1s 窗 ≈ 6 tick；FP 余量按 5..8 带断言）。
+void TestVerifyIframesDecrementAndKill() {
+    World world;
+    Scene& s = world.CreateScene("ifr");
+    world.SetActiveScene(&s);
+
+    Entity shooter = s.Create(); // team0 射手（弹体势力继承口径）
+    s.Emplace<Transform2D>(shooter, Transform2D{{0, 0}});
+    s.Emplace<Meta>(shooter).team = 0;
+
+    Entity victim = s.Create(); // team1 受害者：hp 30 / 弹伤 12 → 需 3 次命中
+    s.Emplace<Transform2D>(victim, Transform2D{{50, 0}});
+    s.Emplace<Meta>(victim).team = 1;
+    s.Emplace<Health>(victim, Health{.max = 30.0f, .cur = 30.0f});
+
+    auto fire = [&]() { // 在受害者处生成一发命中即毁的弹（pierce 0 = 默认）
+        Entity p = s.Create();
+        s.Emplace<Transform2D>(p, Transform2D{{50, 0}});
+        s.Emplace<Meta>(p).team = 0;
+        s.Emplace<Velocity>(p);
+        Projectile& pr = s.Emplace<Projectile>(p);
+        pr.damage = 12.0f;
+        pr.lifetime = 30.0f;
+    };
+
+    int hits = 0, deaths = 0;
+    world.SetEventSink([&](World&, const EventPacket& p) {
+        if (p.type == GameEvent::Hit && p.dst == victim) ++hits;
+        if (p.type == GameEvent::Death && p.src == victim) ++deaths;
+    });
+
+    // 命中链最小管线：哈希重建(#8) → 命中(#9) → 数值(#11 递减) → 派发 → 提交
+    world.Pipeline().AddSystem(std::make_unique<SpatialHashRebuildSystem>());
+    world.Pipeline().AddSystem(std::make_unique<HitboxSystem>());
+    world.Pipeline().AddSystem(std::make_unique<StatSystem>());
+    world.Pipeline().AddSystem(std::make_unique<ScriptEventDispatchSystem>());
+    world.Pipeline().AddSystem(std::make_unique<DestroyCommitSystem>());
+    world.Pipeline().ResolveOrder();
+
+    const float dt = 1.0f / 60.0f;
+
+    fire(); // tick0：第 1 击（18/30）+ 置窗
+    world.Step(dt);
+    Expect(hits == 1 && deaths == 0, "first hit lands");
+    Expect(s.Get<Health>(victim).cur == 18.0f, "cur after hit 1");
+    Expect(s.Get<Health>(victim).iFrames > 0.0f, "iFrames window armed");
+
+    fire(); // 在途弹 B 压着重叠 4 tick：窗内必须免疫（修复前恒免疫、修复后也不得过窗）
+    for (int i = 0; i < 4; ++i) world.Step(dt);
+    Expect(hits == 1, "immune within window (4 ticks)");
+    Expect(s.Get<Health>(victim).cur == 18.0f, "no damage within window");
+
+    bool relanded = false; // 窗尽（≈6 tick，容差 ≤4 步）：B 补上第 2 击
+    for (int i = 0; i < 4 && !relanded; ++i) {
+        world.Step(dt);
+        relanded = hits == 2;
+    }
+    Expect(relanded, "re-hit after window expiry");
+    Expect(s.Get<Health>(victim).cur == 6.0f, "cur after hit 2");
+
+    fire(); // 第 3 击：窗尽后致死（hp<=0 早退防第 4 击）
+    for (int i = 0; i < 8 && deaths == 0; ++i) world.Step(dt);
+    world.Step(dt); // DestroyCommit 在 Essential 阶段（下一 tick 首）提交本 tick 销毁
+    Expect(deaths == 1, "killed by multi-hit damage");
+    Expect(hits == 3, "exactly three hits total");
+    Expect(!s.Alive(victim), "victim destroyed");
+}
+
+// 命中记忆与穿透收口（M5 批⓪ T2）：一弹一目标一次（弹 lifetime 内不重复伤同目标）；
+// 穿透耗尽即毁。慢弹压着重叠多 tick 是回归重点——iFrames 窗尽后不得借窗复伤同目标。
+void TestVerifyHitMemoryAndPierce() {
+    World world;
+    Scene& s = world.CreateScene("pierce");
+    world.SetActiveScene(&s);
+
+    Entity shooter = s.Create();
+    s.Emplace<Transform2D>(shooter, Transform2D{{0, 0}});
+    s.Emplace<Meta>(shooter).team = 0;
+
+    // 场景 A：单怪 + 慢穿透弹压着重叠 30 tick（0.5s ≫ 0.1s 无敌窗）→ 恰一击
+    Entity victim = s.Create();
+    s.Emplace<Transform2D>(victim, Transform2D{{50, 0}});
+    s.Emplace<Meta>(victim).team = 1;
+    s.Emplace<Health>(victim, Health{.max = 100.0f, .cur = 100.0f});
+
+    Entity p = s.Create();
+    s.Emplace<Transform2D>(p, Transform2D{{50, 0}});
+    s.Emplace<Meta>(p).team = 0;
+    s.Emplace<Velocity>(p);
+    Projectile& slow = s.Emplace<Projectile>(p);
+    slow.damage = 10.0f;
+    slow.lifetime = 30.0f;
+    slow.pierce = 3;
+
+    int hits = 0;
+    world.SetEventSink([&](World&, const EventPacket& e) {
+        if (e.type == GameEvent::Hit && e.dst == victim) ++hits;
+    });
+    world.Pipeline().AddSystem(std::make_unique<SpatialHashRebuildSystem>());
+    world.Pipeline().AddSystem(std::make_unique<HitboxSystem>());
+    world.Pipeline().AddSystem(std::make_unique<StatSystem>());
+    world.Pipeline().AddSystem(std::make_unique<ScriptEventDispatchSystem>());
+    world.Pipeline().AddSystem(std::make_unique<DestroyCommitSystem>());
+    world.Pipeline().ResolveOrder();
+    const float dt = 1.0f / 60.0f;
+
+    for (int i = 0; i < 30; ++i) world.Step(dt);
+    Expect(hits == 1, "one hit per target per projectile (memory)");
+    Expect(s.Get<Projectile>(p).hits == 1, "projectile hit counter");
+    Expect(s.Get<Health>(victim).cur == 90.0f, "victim damaged exactly once");
+    Expect(s.Alive(p), "pierce not exhausted");
+
+    // 场景 B：两怪同线（4px 内）+ pierce 1 → 双伤、弹毁。
+    // 布点离场景 A 受害者 ≥16px：hitRadius 默认 12（原 6+6 有效口径），不得误伤
+    Entity v2 = s.Create();
+    s.Emplace<Transform2D>(v2, Transform2D{{66, 0}});
+    s.Emplace<Meta>(v2).team = 1;
+    s.Emplace<Health>(v2, Health{.max = 100.0f, .cur = 100.0f});
+    Entity v3 = s.Create();
+    s.Emplace<Transform2D>(v3, Transform2D{{70, 0}});
+    s.Emplace<Meta>(v3).team = 1;
+    s.Emplace<Health>(v3, Health{.max = 100.0f, .cur = 100.0f});
+
+    Entity q = s.Create();
+    s.Emplace<Transform2D>(q, Transform2D{{66, 0}});
+    s.Emplace<Meta>(q).team = 0;
+    s.Emplace<Velocity>(q);
+    Projectile& pierce1 = s.Emplace<Projectile>(q);
+    pierce1.damage = 10.0f;
+    pierce1.lifetime = 30.0f;
+    pierce1.pierce = 1;
+
+    world.Step(dt); // v2、v3 各中一击，穿透耗尽
+    world.Step(dt); // DestroyCommit 在 Essential（下一 tick 首）提交
+    Expect(!s.Alive(q), "pierce exhausted -> projectile destroyed");
+    Expect(s.Get<Health>(v2).cur == 90.0f && s.Get<Health>(v3).cur == 90.0f,
+           "both in-line targets hit once");
+    Expect(hits == 1, "scenario-A victim out of second projectile's range");
+}
+
 // 双死防护：同帧两发投射物 + 一个 Hazard 打同一目标 → 恰一个 Death 事件
 void TestNoDoubleDeathEvents() {
     World world;
@@ -1171,7 +1344,7 @@ void TestNoDoubleDeathEvents() {
     Entity victim = s.Create(); // team1 受害者
     s.Emplace<Transform2D>(victim, Transform2D{{50, 0}});
     s.Emplace<Meta>(victim).team = 1;
-    s.Emplace<Health>(victim, Health{10, 10, 0});
+    s.Emplace<Health>(victim, Health{.max = 10.0f, .cur = 10.0f});
 
     for (int i = 0; i < 2; ++i) { // 两发足以致死的弹（damage 10）
         Entity p = s.Create();
@@ -1771,7 +1944,7 @@ void TestVerifyStateHashStability() {
     Scene& s = w.CreateScene("hashst");
     Entity e = s.Create();
     s.Emplace<Transform2D>(e, Transform2D{{1, 2}});
-    s.Emplace<Health>(e, Health{10, 10, 0});
+    s.Emplace<Health>(e, Health{.max = 10.0f, .cur = 10.0f});
     uint64_t h0 = ComputeStateHash(s);
     Expect(h0 == ComputeStateHash(s), "hash: deterministic repeat");
     Entity spare = s.Create(); // 无组件实体不改变哈希
@@ -2703,6 +2876,8 @@ int main() {
     TestVerifyTriggerOnceSemantics();
     TestVerifyNullEntityRefRoundtrip();
     TestVerifyStateHashStability();
+    TestVerifyIframesDecrementAndKill();
+    TestVerifyHitMemoryAndPierce();
     TestNoDoubleDeathEvents();
     TestHierarchyChainLifecycle();
     TestVerifyFullChainFollowsAfterRoundtrip();

@@ -98,7 +98,7 @@ bool SeedBenchSurvivorScene(EditorContext& ctx) {
     ecs::Scene& s = ctx.EditScene();
     // 怪模板 → prefab（源保留在场景：多 1 只白送的怪，无碍计量）
     ecs::Entity mob = ctx.CreateSpriteEntity("BenchMob", 4);
-    s.Emplace<ecs::Health>(mob, ecs::Health{30, 30, 0});
+    s.Emplace<ecs::Health>(mob, ecs::Health{.max = 30.0f, .cur = 30.0f});
     s.Emplace<ecs::Knockback>(mob);
     s.Emplace<ecs::Velocity>(mob);
     ecs::Chase& ch = s.Emplace<ecs::Chase>(mob);
@@ -111,7 +111,26 @@ bool SeedBenchSurvivorScene(EditorContext& ctx) {
     // 玩家（Chase 目标；team 0）
     ecs::Entity player = ctx.CreateSpriteEntity("BenchPlayer", 3);
     s.Get<ecs::Meta>(player).team = 0;
-    s.Emplace<ecs::Health>(player, ecs::Health{500, 500, 0});
+    s.Emplace<ecs::Health>(player, ecs::Health{.max = 500.0f, .cur = 500.0f});
+    // 弹体模板 → prefab（M5 批⓪ 战斗化：万怪场真实战斗闭环进 destroyed 计量）。
+    // 口径与 bench-sim 对齐：dmg 12 vs hp 30 → 3 击；pierce 0 = 命中即毁。
+    // 模板弹挪出战场（出生环 ≤600 内不经过 (800,0)），寿命 2.5s 在 4s 预热内回收。
+    ecs::Entity bullet = ctx.CreateSpriteEntity("BenchBullet", 4);
+    s.Get<ecs::Meta>(bullet).team = 0;
+    s.Emplace<ecs::Velocity>(bullet);
+    ecs::Projectile& bp = s.Emplace<ecs::Projectile>(bullet);
+    bp.damage = 12.0f;
+    bp.speed = 320.0f;
+    bp.lifetime = 2.5f;
+    s.Get<ecs::Transform2D>(bullet).pos = {800.0f, 0.0f};
+    const uint64_t bguid = ctx.MakePrefabFrom(bullet);
+    if (bguid == 0) return false;
+    // 玩家射手：20 发/s 朝最近怪（命中/击退/击杀/补怪全链路在编辑器 Play 内跑通）
+    ecs::Shooter& psh = s.Emplace<ecs::Shooter>(player);
+    psh.projectileId = (uint32_t)bguid;
+    psh.interval = 0.05f;
+    psh.range = 2000.0f;
+    psh.targetTeam = 1;
     // Spawner：interval 0 = 每帧开闸、burst 64 → ~156 帧涨满 1 万
     ecs::Entity spawner = ctx.CreateEntity("BenchSpawner");
     ecs::Spawner& sp = s.Emplace<ecs::Spawner>(spawner);

@@ -74,8 +74,10 @@ constexpr FieldMeta kSortingOverride[] = {FIELD(SortingOverride, order, Int16)};
 
 // ---- Behavior（id 9..20）----
 constexpr FieldMeta kHealth[] = {FIELD(Health, max, Float), FIELD(Health, cur, Float),
-                                 FIELD_RT(Health, iFrames, Float)};
-constexpr FieldEditorMeta kEdHealth[] = {ED_RANGE(1.0f, 1e6f), ED_RANGE(0.0f, 1e6f), ED};
+                                 FIELD_RT(Health, iFrames, Float),
+                                 FIELD(Health, iframeWindow, Float)};
+constexpr FieldEditorMeta kEdHealth[] = {ED_RANGE(1.0f, 1e6f), ED_RANGE(0.0f, 1e6f), ED,
+                                         ED_RANGE(0.0f, 2.0f)};
 constexpr FieldMeta kMover[] = {FIELD(Mover, speed, Float)};
 constexpr FieldEditorMeta kEdMover[] = {ED_RANGE(0.0f, 4096.0f)};
 constexpr FieldMeta kPatrol[] = {FIELD(Patrol, a, Vec2), FIELD(Patrol, b, Vec2),
@@ -100,9 +102,22 @@ constexpr FieldMeta kProjectile[] = {
     FIELD(Projectile, speed, Float), FIELD(Projectile, lifetime, Float),
     FIELD(Projectile, damage, Float), FIELD_RT(Projectile, age, Float),
     FIELD(Projectile, pierce, UInt8), FIELD(Projectile, homing, UInt8),
-    FIELD_RT(Projectile, hits, UInt16)};
+    FIELD_RT(Projectile, hits, UInt16),
+    FIELD(Projectile, hitRadius, Float), FIELD(Projectile, knockback, Float),
+    FIELD_RT(Projectile, hitHead, UInt8),
+    // hitMemory[4]：数组无逐槽字段名，手动行（kStatusInst 同法；RT 不入档仅入状态哈希）
+    { "hitMemory0", FieldType::UInt32,
+      (uint16_t)(offsetof(Projectile, hitMemory) + 0 * sizeof(uint32_t)), kFieldRuntime },
+    { "hitMemory1", FieldType::UInt32,
+      (uint16_t)(offsetof(Projectile, hitMemory) + 1 * sizeof(uint32_t)), kFieldRuntime },
+    { "hitMemory2", FieldType::UInt32,
+      (uint16_t)(offsetof(Projectile, hitMemory) + 2 * sizeof(uint32_t)), kFieldRuntime },
+    { "hitMemory3", FieldType::UInt32,
+      (uint16_t)(offsetof(Projectile, hitMemory) + 3 * sizeof(uint32_t)), kFieldRuntime }};
 constexpr FieldEditorMeta kEdProjectile[] = {ED_RANGE(0.0f, 8192.0f), ED_RANGE(0.0f, 600.0f),
-                                             ED_RANGE(0.0f, 1e6f), ED, ED_BOOL8, ED_BOOL8, ED};
+                                             ED_RANGE(0.0f, 1e6f), ED, ED_BOOL8, ED_BOOL8, ED,
+                                             ED_RANGE(0.0f, 256.0f), ED_RANGE(0.0f, 2048.0f),
+                                             ED_HIDE, ED_HIDE, ED_HIDE, ED_HIDE, ED_HIDE};
 constexpr FieldMeta kSpawner[] = {
     FIELD(Spawner, prefabId, UInt32), FIELD(Spawner, interval, Float),
     FIELD(Spawner, burst, UInt16), FIELD(Spawner, range, Float),
@@ -112,8 +127,10 @@ constexpr FieldEditorMeta kEdSpawner[] = {ED, ED_RANGE(0.0f, 600.0f), ED, ED_RAN
                                           ED, ED, ED};
 constexpr FieldMeta kHazard[] = {FIELD(Hazard, dps, Float),
                                  FIELD(Hazard, tickInterval, Float),
-                                 FIELD_RT(Hazard, tickPhase, Float)};
-constexpr FieldEditorMeta kEdHazard[] = {ED_RANGE(0.0f, 1e6f), ED_RANGE(0.0f, 60.0f), ED};
+                                 FIELD_RT(Hazard, tickPhase, Float),
+                                 FIELD(Hazard, radius, Float)};
+constexpr FieldEditorMeta kEdHazard[] = {ED_RANGE(0.0f, 1e6f), ED_RANGE(0.0f, 60.0f), ED,
+                                         ED_RANGE(0.0f, 4096.0f)};
 static constexpr const char* kCollectibleKindNames[] = {"Gem", "Coin", "Heart"};
 constexpr FieldMeta kCollectible[] = {FIELD(Collectible, kind, UInt8),
                                       FIELD(Collectible, magnetRadius, Float)};

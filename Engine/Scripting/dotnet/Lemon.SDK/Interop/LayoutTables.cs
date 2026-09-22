@@ -128,7 +128,8 @@ public static unsafe class LayoutTables
           Add<Health>("Health", (uint)sizeof(Health), new[] {
             F("max", FieldTypeCode.Float, 0, O(p, &p->Max)),
             F("cur", FieldTypeCode.Float, 0, O(p, &p->Cur)),
-            F("iFrames", FieldTypeCode.Float, FieldTypeCode.RuntimeFlag, O(p, &p->IFrames)) }); }
+            F("iFrames", FieldTypeCode.Float, FieldTypeCode.RuntimeFlag, O(p, &p->IFrames)),
+            F("iframeWindow", FieldTypeCode.Float, 0, O(p, &p->IFrameWindow)) }); }
         { Mover t = default; Mover* p = &t;
           Add<Mover>("Mover", (uint)sizeof(Mover), new[] {
             F("speed", FieldTypeCode.Float, 0, O(p, &p->Speed)) }); }
@@ -165,7 +166,14 @@ public static unsafe class LayoutTables
             F("age", FieldTypeCode.Float, FieldTypeCode.RuntimeFlag, O(p, &p->Age)),
             F("pierce", FieldTypeCode.UInt8, 0, O(p, &p->Pierce)),
             F("homing", FieldTypeCode.UInt8, 0, O(p, &p->Homing)),
-            F("hits", FieldTypeCode.UInt16, FieldTypeCode.RuntimeFlag, O(p, &p->Hits)) }); }
+            F("hits", FieldTypeCode.UInt16, FieldTypeCode.RuntimeFlag, O(p, &p->Hits)),
+            F("hitRadius", FieldTypeCode.Float, 0, O(p, &p->HitRadius)),
+            F("knockback", FieldTypeCode.Float, 0, O(p, &p->Knockback)),
+            F("hitHead", FieldTypeCode.UInt8, FieldTypeCode.RuntimeFlag, O(p, &p->HitHead)),
+            F("hitMemory0", FieldTypeCode.UInt32, FieldTypeCode.RuntimeFlag, O(p, &p->HitMemory0)),
+            F("hitMemory1", FieldTypeCode.UInt32, FieldTypeCode.RuntimeFlag, O(p, &p->HitMemory1)),
+            F("hitMemory2", FieldTypeCode.UInt32, FieldTypeCode.RuntimeFlag, O(p, &p->HitMemory2)),
+            F("hitMemory3", FieldTypeCode.UInt32, FieldTypeCode.RuntimeFlag, O(p, &p->HitMemory3)) }); }
         { Spawner t = default; Spawner* p = &t;
           Add<Spawner>("Spawner", (uint)sizeof(Spawner), new[] {
             F("prefabId", FieldTypeCode.UInt32, 0, O(p, &p->PrefabId)),
@@ -179,7 +187,8 @@ public static unsafe class LayoutTables
           Add<Hazard>("Hazard", (uint)sizeof(Hazard), new[] {
             F("dps", FieldTypeCode.Float, 0, O(p, &p->Dps)),
             F("tickInterval", FieldTypeCode.Float, 0, O(p, &p->TickInterval)),
-            F("tickPhase", FieldTypeCode.Float, FieldTypeCode.RuntimeFlag, O(p, &p->TickPhase)) }); }
+            F("tickPhase", FieldTypeCode.Float, FieldTypeCode.RuntimeFlag, O(p, &p->TickPhase)),
+            F("radius", FieldTypeCode.Float, 0, O(p, &p->Radius)) }); }
         { Collectible t = default; Collectible* p = &t;
           Add<Collectible>("Collectible", (uint)sizeof(Collectible), new[] {
             F("kind", FieldTypeCode.UInt8, 0, O(p, &p->Kind)),

@@ -94,9 +94,9 @@ public struct SortingOverride // 2B
 
 // ---- Behavior（注册 id 9..20）----
 [StructLayout(LayoutKind.Sequential)]
-public struct Health         // 12B
+public struct Health         // 16B（M5 批⓪ 增 IFrameWindow）
 {
-    public float Max, Cur, IFrames;
+    public float Max, Cur, IFrames, IFrameWindow; // iFrames 运行时
 }
 
 [StructLayout(LayoutKind.Sequential)]
@@ -138,11 +138,15 @@ public struct Shooter        // 32B
 }
 
 [StructLayout(LayoutKind.Sequential)]
-public struct Projectile     // 20B
+public struct Projectile     // 48B（M5 批⓪：hitRadius/knockback + 命中记忆）
 {
     public float Speed, Lifetime, Damage, Age; // age 运行时
     public byte Pierce, Homing;
     public ushort Hits;                         // 运行时
+    public float HitRadius, Knockback;
+    public byte HitHead;                        // 运行时
+    internal byte _pad2a, _pad2b, _pad2c;       // C++ _pad2[3] 衬齐
+    public uint HitMemory0, HitMemory1, HitMemory2, HitMemory3; // 运行时（C++ hitMemory[4]）
 }
 
 [StructLayout(LayoutKind.Sequential)]
@@ -158,9 +162,9 @@ public struct Spawner        // 28B
 }
 
 [StructLayout(LayoutKind.Sequential)]
-public struct Hazard         // 12B
+public struct Hazard         // 16B（M5 批⓪ 增 Radius）
 {
-    public float Dps, TickInterval, TickPhase; // tickPhase 运行时
+    public float Dps, TickInterval, TickPhase, Radius; // tickPhase 运行时
 }
 
 [StructLayout(LayoutKind.Sequential)]
