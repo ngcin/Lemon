@@ -28,6 +28,7 @@
 #include "Components/CoreComponents.h"
 #include "Components/GameplayComponents.h"
 #include "Components/RenderComponents.h"
+#include <unistd.h> // getpid（bench-survivor tempdir）
 #include "ECS/Hierarchy.h"
 #include "Core/Log.h"
 #include "EditorContext.h"
@@ -81,6 +82,49 @@ uint64_t HookInstantiate(const char* hex, float x, float y) {
     ecs::Entity e = g_app->Ctx().InstantiatePrefabAsset(AssetDatabase::HexToGuid(hex),
                                                         Vec2{x, y});
     return e.IsNull() ? 0 : e.id;
+}
+
+// ---- M5 清障③：bench-survivor 压测场景播种（08 §3：编辑器内 1 万怪 ≥45fps）----
+// 临时项目 + 程序化播种（怪 prefab 走清障② SpawnFn 桥；Spawner capAlive 顶格 =
+// "导演拉满"）。恒用 tempdir：MakePrefabFrom 会往项目写 Prefabs/——不污染用户工程。
+bool SeedBenchSurvivorScene(EditorContext& ctx) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path root = fs::temp_directory_path() /
+                          ("lemon-bench-survivor-" + std::to_string(::getpid()));
+    fs::remove_all(root, ec);
+    if (!ctx.Assets().OpenProject(root.string(), 100)) return false;
+
+    ecs::Scene& s = ctx.EditScene();
+    // 怪模板 → prefab（源保留在场景：多 1 只白送的怪，无碍计量）
+    ecs::Entity mob = ctx.CreateSpriteEntity("BenchMob", 4);
+    s.Emplace<ecs::Health>(mob, ecs::Health{30, 30, 0});
+    s.Emplace<ecs::Knockback>(mob);
+    s.Emplace<ecs::Velocity>(mob);
+    ecs::Chase& ch = s.Emplace<ecs::Chase>(mob);
+    ch.speed = 70.0f;
+    ch.aggroRange = 2000.0f;
+    ch.keepRange = 24.0f;
+    ch.targetTeam = 0;
+    const uint64_t pguid = ctx.MakePrefabFrom(mob);
+    if (pguid == 0) return false;
+    // 玩家（Chase 目标；team 0）
+    ecs::Entity player = ctx.CreateSpriteEntity("BenchPlayer", 3);
+    s.Get<ecs::Meta>(player).team = 0;
+    s.Emplace<ecs::Health>(player, ecs::Health{500, 500, 0});
+    // Spawner：interval 0 = 每帧开闸、burst 64 → ~156 帧涨满 1 万
+    ecs::Entity spawner = ctx.CreateEntity("BenchSpawner");
+    ecs::Spawner& sp = s.Emplace<ecs::Spawner>(spawner);
+    sp.prefabId = (uint32_t)pguid; // 低 32 位（M5 清障②映射约定）
+    sp.interval = 0.0f;
+    sp.burst = 64;
+    sp.maxAlive = 10000;
+    sp.spawnTeam = 1;
+    sp.range = 600.0f;
+    sp.cooldown = 0.0f;
+    LEMON_LOG("bench-survivor 播种：prefab guid %016llx（低 32 位 %08x）",
+              (unsigned long long)pguid, sp.prefabId);
+    return true;
 }
 
 // ImGui 错误汇（1.92 内部回调口；DockBuilder 同源引用 imgui_internal）：ID 冲突/
@@ -1467,7 +1511,9 @@ int EditorApp::Run(const EditorLaunch& launch) {
     device_ = rhi::Device::Create(dd);
     rhi::SwapchainDesc sd;
     sd.nativeWindow = window_->NativeHandle();
-    sd.present = rhi::PresentModePref::Fifo; // 编辑器 vsync（05 §9）
+    sd.present = launch.benchSurvivor
+                     ? rhi::PresentModePref::Immediate // M5 压测口径：禁 vsync（否则帧时被 60Hz 钉住测不出 45fps 档）
+                     : rhi::PresentModePref::Fifo;     // 编辑器 vsync（05 §9）
     if (!device_->CreateSwapchain(sd)) return 1;
     device_->EnableTimestamps(); // Profiler 面板 GPU 列（02 §3.5）
 
@@ -1589,6 +1635,15 @@ int EditorApp::Run(const EditorLaunch& launch) {
         }
         if (!ctx_.EnterPlay()) return 1;
     }
+    // --bench-survivor（M5 清障③）：播种压测场景（tempdir 项目 + 1 万怪 Spawner）并进
+    // Play。无 Game/（tempdir）——无脚本属合法形态，不走 PlayBlockedByScripts 守卫。
+    if (launch.benchSurvivor) {
+        if (!SeedBenchSurvivorScene(ctx_)) {
+            LEMON_ERROR("bench-survivor 播种失败（临时项目/prefab 导出）");
+            return 1;
+        }
+        if (!ctx_.EnterPlay()) return 1;
+    }
 
     // --save-scene：场景就绪即保存退出（CLI roundtrip 验收：save → --scene 重开）
     if (!launch.saveScene.empty()) {
@@ -1611,6 +1666,11 @@ int EditorApp::Run(const EditorLaunch& launch) {
     }
     if (launch.smokeUi && launch.frames < 160) {
         LEMON_ERROR("--smoke-ui 需要 --frames N（N>=160 看门狗）");
+        return 2;
+    }
+    if (launch.benchSurvivor && launch.frames < 600) {
+        LEMON_ERROR("--bench-survivor 需要 --frames N（N>=600：怪海涨满 ~240 帧预热 + "
+                    "测量窗 ≥360）");
         return 2;
     }
     // ---- 主循环（anim-smoke 基线骨架；编辑 Step = Essential）----
@@ -1659,7 +1719,14 @@ int EditorApp::Run(const EditorLaunch& launch) {
     // 终验冷启动口径 = 编辑器主循环首帧（向导建项目 + Game 首次编译是创建期工作，
     // 另由 final-wizard/编译日志计量——不混入 §6 #3 判定）
     const auto tColdStart = launch.finalTest ? std::chrono::steady_clock::now() : tStart;
+    // --bench-survivor 帧时统计（M5 清障③）：全帧耗时含渲染提交与 present 等待——
+    // Immediate 呈现下 = 真实负载；Play Step 分段计时同步累计（诊断细分）。预热
+    // 240 帧剔除（Spawner ~156 帧涨满 1 万 + 稳态余量）。
+    constexpr uint64_t kBenchWarmup = 240;
+    double benchFrameSum = 0.0, benchFrameMax = 0.0, benchStepSum = 0.0;
+    uint64_t benchFrameN = 0;
     while (running) {
+        const auto benchT0 = std::chrono::steady_clock::now();
         // 窗口关闭按钮 → 请求退出（消费在下方统一裁决：干净场景直接退，脏场景确认）
         if (!window_->PollEvents()) {
             if (!exitRequested_) exitRequested_ = true;
@@ -1784,7 +1851,12 @@ int EditorApp::Run(const EditorLaunch& launch) {
                 in.ax = 1.0f; // 诊断注入：D 键右走（自动化无真人点击，不经聚焦门）
             ctx_.ActiveWorld().ApplyInput(in);
             const float dt = paused_ && !singleStep_ ? 0.0f : 1.0f / 60.0f;
+            const auto benchTick0 = std::chrono::steady_clock::now();
             ctx_.TickPlay(dt); // Pause = dt0（含 Essential 提交）
+            if (launch.benchSurvivor && frame >= kBenchWarmup)
+                benchStepSum += std::chrono::duration<double, std::milli>(
+                                    std::chrono::steady_clock::now() - benchTick0)
+                                    .count();
             singleStep_ = false;
             UpdateGameCameraFollow(dt);
             if (playDiag_ && frame >= 2 && frame < 220) {
@@ -2536,6 +2608,14 @@ int EditorApp::Run(const EditorLaunch& launch) {
             firstFrameMs = std::chrono::duration<double, std::milli>(
                                std::chrono::steady_clock::now() - tColdStart)
                                .count();
+        if (launch.benchSurvivor && ctx_.Playing() && frame >= kBenchWarmup) {
+            const double ms = std::chrono::duration<double, std::milli>(
+                                  std::chrono::steady_clock::now() - benchT0)
+                                  .count();
+            benchFrameSum += ms;
+            if (ms > benchFrameMax) benchFrameMax = ms;
+            ++benchFrameN;
+        }
         ++frame;
     }
 
@@ -2569,6 +2649,20 @@ int EditorApp::Run(const EditorLaunch& launch) {
     }
     // --smoke-ui 裁决（裁决行已在帧 154 打印；此处只定退出码）
     if (launch.smokeUi && !uiAllOk) exitCode = 1;
+    // --bench-survivor 裁决（M5 清障③；08 §3 判据：编辑器内 1 万怪 ≥45fps）
+    if (launch.benchSurvivor) {
+        const double avg = benchFrameN ? benchFrameSum / (double)benchFrameN : 0.0;
+        const double fps = avg > 0.0 ? 1000.0 / avg : 0.0;
+        const bool aliveOk = playAliveAtStop >= 10000;
+        const bool pass = aliveOk && avg > 0.0 && avg <= 1000.0 / 45.0;
+        std::printf("[bench-survivor] frames=%u warmup=%u alive=%u stepAvg=%.2fms "
+                    "frameAvg=%.2fms frameMax=%.2fms fps=%.0f present=IMMEDIATE(请求)"
+                    " => %s\n",
+                    (unsigned)frame, (unsigned)kBenchWarmup, playAliveAtStop,
+                    benchFrameN ? benchStepSum / (double)benchFrameN : 0.0, avg,
+                    benchFrameMax, fps, pass ? "PASS" : "FAIL");
+        if (!pass) exitCode = 1;
+    }
     // --smoke-close 裁决（M4.6 §4-9）：独立于 --smoke——专用最小跑（无项目/无播种）
     if (!launch.smokeClose.empty()) {
         const bool exitedEarly = launch.frames > 0 && frame < (uint64_t)launch.frames;

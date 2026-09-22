@@ -220,6 +220,32 @@ RESULT 行判读：`sim avg ≤ 8ms`（08 §3 判据）；`alive` 稳定在 n �
 macOS 安全策略拒绝 lldb 原生 attach（Console.app 可见 debugserver 拒绝记录）——
 托管调试不受影响（走诊断 IPC 而非原生 ptrace）。
 
+### 6.10 bench-survivor —— M5 编辑器内压测场（2026-09-22 清障③建场，基线 FAIL 在案）
+
+```bash
+./build/mac/Editor/lemon-editor --bench-survivor --frames 900   # 预热 240 + 测量 660
+```
+
+负载：编辑器全链（模拟 + 视口提取 + GameView 渲染 + ImGui 叠加 + present），临时项目
+程序化播种——怪 prefab（Health/Knockback/Velocity/Chase）经 SpawnFn 桥（清障②）由
+Spawner 拉满 1 万（interval 0 / burst 64 / capAlive 10000 = "导演拉满"），玩家作
+Chase 目标。
+
+**测量口径**（vsync 问题在此定死）：
+- 交换链按 **Immediate** 请求（mac MoltenVK 实测可拿到；拿不到回退 FIFO——此时
+  fps 被 60Hz 钉住，frameAvg 恒 ~16.7ms 即为信号，数字作废）；
+- 帧时 = 全帧 steady clock（含渲染提交与 present 等待），**预热 240 帧剔除**（怪海
+  ~156 帧涨满 + 稳态余量）；
+- 判据（08 §3）：`alive ≥ 10000 且 frameAvg ≤ 22.2ms（≙ ≥45fps）`；
+- 附带 `stepAvg` = Play World Step 分段（诊断细分：模拟 vs 渲染占比）。
+
+**基线（2026-09-22，本机 6C / RX 590 / MoltenVK，三跑稳定）**：
+`alive=10003 stepAvg=9.7~11.4ms frameAvg=33.6~35.3ms frameMax≈49ms fps=28~30 => FAIL`。
+缺口 = **13ms/帧**，分解线索：stepAvg 11ms vs bench-sim 5.1ms（差 ~6ms 疑编辑器管线
+renderable 提取）；frameAvg − stepAvg ≈ 24ms 渲染+ImGui 侧（bench-mow 10 万精灵仅
+9.3ms/帧——GameView 提取/批次/双视口待 profile）。**M5 性能工作主战场**：renderable
+提取路径、批次键复查、ImGui 叠加成本——逐项 profile 后优化，回归本命令对标。
+
 ## 7. M2 验收结果汇总（2026-09-19，本机 6C）
 
 | 判据（08 §3） | 结果 | 实测 |

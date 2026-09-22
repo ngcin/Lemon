@@ -49,6 +49,8 @@ struct EditorLaunch {
     bool smokeDrag = false;  // --smoke-drag：视口拖拽注入冒烟（M4.7c 交互回归）
     bool smokeUi = false;    // --smoke-ui：真人会话注入冒烟（快捷键/Undo/保存/Play/重命名/
                              // 挂父子/目录导航/命名布局；M4.7d 收尾轮）
+    bool benchSurvivor = false; // --bench-survivor：M5 压测基线（临时项目 + 1 万怪刷怪
+                                // 场景 + Immediate 呈现 + 帧时统计；08 §3 判据 ≥45fps）
 };
 
 /// 工具标识（Q 选择 / W 移动 / E 旋转 / R 缩放；Godot 式 Select 模式 = 8 向手柄）

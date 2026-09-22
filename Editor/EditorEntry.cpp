@@ -26,7 +26,7 @@ int usageExit(const char* why) {
                 "[--screenshot out.png] [--project dir] [--scene f.scene] "
                 "[--save-scene f.scene] [--play] [--script Game.dll] [--final] "
                 "[--no-reopen] [--smoke-close clean|dirty] [--smoke-drag] "
-                "[--smoke-ui]\n");
+                "[--smoke-ui] [--bench-survivor]\n");
     return 2;
 }
 
@@ -73,6 +73,8 @@ int main(int argc, char** argv) {
             launch.smokeDrag = true; // 视口拖拽注入冒烟（M4.7c 交互回归）
         else if (!std::strcmp(argv[i], "--smoke-ui"))
             launch.smokeUi = true; // 真人会话注入冒烟（快捷键/Undo/保存/重命名/导航等）
+        else if (!std::strcmp(argv[i], "--bench-survivor"))
+            launch.benchSurvivor = true; // M5 压测基线（1 万怪刷怪 + Immediate + 帧时）
         else
             return usageExit((std::string("unknown arg: ") + argv[i]).c_str());
     }
