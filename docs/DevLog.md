@@ -5,6 +5,47 @@
 
 ---
 
+## 2026-09-22 · M5 批① 成长闭环：磁吸拾取 + XP 入账 + timeScale + Game RT UI（T1–T6 完）
+
+计划与逐任务分解见 `EngineDesign/M5-Plan.md` §6–§10。
+
+**管线 16→17 系统**：PickupSystem 插 #9（哈希重建后、Hitbox 前；不用 RNG、子流零扰动）。
+三段逻辑：A 收集者广播（Stats.pickupRadius）→ B 宝石自检（magnetRadius）→ C 飞行
+（直写 pos，min 钳制防过冲）+ 触距 8px 入账（gem→XP/coin→gold/heart→治疗）+ Pickup
+事件（payload = kind/value/xy）。收集者约定 = 持 XpProgress 实体；触程双侧取大
+`max(magnetRadius, pickupRadius)`；目标失活回落 idle（宝石不丢）。
+
+**组件重布局**：Collectible 8→24B（magnetSpeed/value + RT state/target；全库唯一构造
+点为无参 Emplace，零构造风险）；目录/C# 镜像/布局探针三件套同步。
+
+**timeScale**：`World::Step` 内 `dt = fixedDt × scale`（clamp [0,8]；=0 冻结但 tick 照推、
+RNG 不消耗——回放帧对齐保持）；C# `Time.Scale` 经 NativeApiVtable 表尾追加
+get/setTimescale（M4.4 尾追模式，旧宿主判空零扰动）；DeltaTime 自动为缩放值
+（TickBatch 传入的即缩放后 dt）。
+
+**Game RT UI 通道**：World 级 RtUiChannel（8 × key16/text48/frac 定长槽，命中覆写/满槽
+忽略/截断 47 字符；不入 StateHash——StateHash 只哈希 Scene）；C# `Lemon.Ui.Set`
+（vtable rtUiSet，共尾追 3 项）；GameView Play 时左上角叠画（text + frac≥0 进度条）。
+M8 打包 HUD 复用同通道。
+
+**验收数字**：
+- ctest 3/3：engine-tests **13098 checks**（+49：磁吸收敛/双侧取大/三 kind 入账/升级
+  联动/目标死亡回落/归档 RT + timeScale 冻结半速钳制）；script-tests **1340 checks**
+  （+TestTimeScaleAndUiChannel：Scale native 往返 + 缩放 dt 链 + Ui.Set 槽读回）
+- **金回放零重录**：批⓪旧档原样 replay 三档（sim mt/st + script）**mismatches=0**——
+  新系统在无宝石场景空转 = 状态哈希流不变，机械证明行为零漂移（09 §6.8 先例注）
+- bench-survivor 成长化（玩家 XpProgress+磁力 96 / 宝石 Spawner 40 颗/s cap 2000）：
+  三跑 **61/64/64 fps PASS**（frameAvg 15.53~16.29ms）；增量归因 Pickup avg
+  **1.87ms**（万怪密团内磁吸扫描候选数为主成本）+ Separation 随 alive 10467 微涨——
+  判据余量充足，Pickup 密核扫描列 09 §6.10 观察项
+- editor-regression full **11/11**
+
+**过程发现（登记不扩 scope）**：`--smoke-ui` rename/scrub 子断言约 2/6 飘忽——基线
+（批⓪ stash 复测）同样复现，**既有问题非本批引入**，批⓪ 的 11/11 为侥幸通过；已登记
+09 §8（门禁口径 = 重跑至全绿；根治属编辑器测试基建，M5 待办）。
+
+---
+
 ## 2026-09-22 · M5 批⓪ 战斗闭环：iFrames 递减 + 命中记忆 + 战斗参数组件化（T1–T5 完）
 
 计划与逐任务分解见 `EngineDesign/M5-Plan.md`。三件套 ctest 3/3（13049 检查）、

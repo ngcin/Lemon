@@ -90,7 +90,7 @@ sequenceDiagram
 | 双缓冲帧数据 | `std::array<FrameArena<RenderableTransform>, 2>` 预分配（初始容量 10 万，可增长）+ `packetBuffers` 双缓冲 + `activeBufferIndex` 原子切换 | 移植 Luma RenderableManager；渲染线程永不触碰模拟线程正在写的数据 |
 | 插值 alpha 缓存 | `frameVersion` 原子版本 + `m_lastBuiltAlpha` 比较，alpha 未变（帧率=模拟率）时跳过 packet 重建 | Luma 同款细节优化，144Hz 屏上省一半重建 |
 | 渲染在途帧数 | 2 帧在途（triple buffer 语义），低余量时自动降到 1 | 输入延迟与吞吐的平衡点，M0 spike 实测后定死 |
-| 时间缩放 | `Time.timeScale`（导演慢动作/暂停）作用于模拟步进，不影响渲染插值 | VS 类"升级选卡暂停"刚需 |
+| 时间缩放 | `Time.timeScale`（导演慢动作/暂停）作用于模拟步进，不影响渲染插值 | VS 类"升级选卡暂停"刚需。**M5 批① 已落地**：`World::Step` 内缩放 dt（clamp [0,8]，=0 冻结但 tick 照推），C# `Time.Scale` 经 native 表读写 |
 
 ## 3. 线程模型与系统调度
 

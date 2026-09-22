@@ -187,7 +187,7 @@ public readonly struct Transform               // 视图结构：逐属性访问
 - `AddComponent / GetComponent / TryGetComponent / GetComponentInChildren`（双路由）；
 - 生命周期 `Awake/OnEnable/Start/Update/LateUpdate/OnDisable/OnDestroy/OnTriggerEnter/OnTriggerExit`；
 - `Scene.Instantiate/Destroy`、`FindWithTag`、`Time.timeScale`、`SortingLayer/SortingOrder`（02 §3.1）；
-- `Time.DeltaTime / Time.Elapsed / Time.FrameCount`（M5 清障① 已落地：固定步长 dt / 局累计秒 / 局帧号；域线程 TickBody 首行推进，档①②同帧同值，进 Play/换域归零。`Time.timeScale` 随 M5 导演批次接 C++ 步进）。
+- `Time.DeltaTime / Time.Elapsed / Time.FrameCount`（M5 清障① 已落地：固定步长 dt / 局累计秒 / 局帧号；域线程 TickBody 首行推进，档①②同帧同值，进 Play/换域归零）。`Time.Scale`（M5 批① 已落地：经 native 表 `get/setTimescale` 读写 `World::TimeScale`——C++ `Step` 内缩放 dt、clamp [0,8]，DeltaTime 拿到的即缩放值，=0 冻结暂停但 FrameCount 照推）。
 
 **不对齐（语义差异，显式声明）**：
 
@@ -208,6 +208,10 @@ public readonly struct Transform               // 视图结构：逐属性访问
 - 全部 API 落在两条通道上：低频控制类（Scene/Assets/Instantiate）走句柄 + GUID；数据类（Get/Set/Chunk）走 blittable slice。
 - **不自动生成整套绑定**（排除 XPremo 式全家桶）：SDK 手写（API 面小而稳，~150 个导出），后期用 Source Generator 只生成"组件 struct ↔ 注册表"的镜像（Inspector/序列化共用，见 05 §5）。
   **分期落地（ADR-010 D4）**：M3 已交付 headless 核心子集（Chunk / 组件 CRUD / 事件 drain+push / RNG / Time / Log / SceneOps / LemonBehaviour 生命周期 / 异常隔离，实测 1264 checks）；Input / Audio / Assets / Instantiate(prefab) / LemonAwait / Profiler 随 M4/M5 消费者落地。
+- **native 函数表**（`NativeApiVtable` ↔ `NativeApi.cs` 逐字节一致；表尾追加 = 旧宿主零扰动，SDK 侧判空）：
+  M4.4 追加 4 项（GetInput/SpriteOfGuid/SpawnSprite/InstantiatePrefab）；**M5 批① 追加 3 项**——
+  `get/setTimescale`（Time.Scale ↔ World）+ `rtUiSet`（Lemon.Ui.Set → World.RtUi 定长 8 槽，
+  GameView Play 叠加画，M8 打包 HUD 复用）。
 
 ## 4. 事件队列桥（C++ → C# 批量派发）
 

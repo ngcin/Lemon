@@ -50,6 +50,9 @@ v1 面板清单：
 
 > M4 决议（2026-09-19）：**面板集冻结为核心 7**（Hierarchy/Inspector/SceneView/GameView/AssetBrowser/Console/Profiler），上表 TilePalette/AnimationEditor/ParticleEditor/TeamEditor/DirectorEditor 后移 M5/M6；**窗口形态 = 单 OS 窗口 docking**（multi-viewport 与 GameView 分屏推 M5+）。见 M4-Editor-Plan §1/§8。
 > M4.7c 修订（2026-09-21）：GameView **Aspect 下拉**（Free/16:9/4:3/1:1 letterbox）已交付；分屏与 multi-viewport 维持 M5+。
+> M5 批①（2026-09-22）：GameView **Game RT UI 通道**已交付——Play 时画 `World.RtUi` 定长 8 槽
+> （C# `Lemon.Ui.Set(key, text, frac)` 写入；左上角文本 + frac≥0 附进度条）。M8 完整 HUD
+> 前的最小形态；通道引擎级（World 持有，非编辑器私产——打包游戏同通道复用）。
 
 ## 3. 交互内核三件套（直接拷贝 Editor-RPG2D，注明出处）
 

@@ -188,6 +188,11 @@ RESULT 行判读：`sim avg ≤ 8ms`（08 §3 判据）；`alive` 稳定在 n �
 都必须逐帧一致；单线程档同时是"逻辑 bug vs 并行 bug"的诊断隔离基准。
 文件格式 `LREPLAY1`（文本可 diff）；改系统注册序/RNG 实现/哈希字段 = 破坏回放兼容。
 
+> **零重录先例（M5 批①，2026-09-22）**：管线**中插**新系统（PickupSystem #9）而
+> 既有基准场景无其驱动组件（Collectible/XpProgress 皆空）→ 系统空转 → 状态哈希流
+> 不变 → **批⓪金档原样 `--replay` 三档 mismatches=0**（sim mt/st + script）。即：
+> 行为零漂移的系统插入可以且应当用旧档回放作机械证明，而非默认重录。
+
 ### 6.9 bench-script —— M3 脚本验收场（无渲染，CoreCLR 域线程）
 
 ```bash
@@ -250,10 +255,18 @@ Chase 目标；**批⓪（M5-Plan T4）起兼弹幕源**：Shooter 20 发/s + �
 | 性能批①（同日，两跑） | sim 11.14~11.47 / **scene 1.22~1.25** / ui 4.11~4.12 | frameAvg 17.16~17.48ms fps 57~58 **PASS** |
 | 性能批②（同日，三跑） | sim 11.04~11.18 / scene 1.21~1.31 / **ui 0.25~0.26** | frameAvg 13.09~13.25ms fps 75~76 **PASS** |
 | 批⓪ 战斗化（同日，三跑） | **sim 9.37~9.49** / scene ~1.3 / ui 0.25 | frameAvg 11.48~11.64ms fps 86~87 **PASS** |
+| 批① 成长化（同日，三跑） | sim 12.84~13.92（Pickup 1.87）/ scene ~1.5 / ui 0.26 | frameAvg 15.53~16.29ms fps 61~64 **PASS** |
 
 批⓪ 战斗化后 fps 反升（76→86）非笔误：iFrames 递减修复使怪进入击杀-补充循环，
 蜂群密度被持续疏散，Separation 随之回落（sim 11.1→9.4ms）。frameMax 43~52ms
 仍为 Census 30-tick 尖刺（4 个/跑，见下），观察项维持不扩 scope。
+
+批① 成长化增量归因（系统分解实测）：**PickupSystem avg 1.87ms**（玩家 96px 磁力
+查询 + ~450 颗地面宝石自程查询，均扫过万怪密团 cell——候选数是主成本）+ Separation
+10.78ms（alive 10467 = 万怪 + ~460 宝石存量，随存量缓涨）。宝石 Spawner capAlive
+2000 封顶存量；判据余量充足（16.3 vs 22.2ms），**Pickup 密核扫描列 M5 观察项**
+（优化方向备档：宝石侧查询降频/惰性自检属行为变更需单独批；哈希项内嵌 pos 同
+Separation 备档路径）。frameMax 29~60ms 仍为 Census 尖刺口径。
 
 scene 段 19.31→1.25ms 的两处根因（都在编辑器侧视口层，非引擎内核）：
 1. **ExtractScene 差集销毁 O(N²)**：`seen` vector + `std::find`，1 万实体 ≈ 每帧
@@ -332,6 +345,11 @@ Hierarchy 面板）。回归口径 = 本命令三跑稳定。
 
 ## 8. 已知未覆盖（记录在案）
 
+- **editor-regression smoke-ui 飘忽（既有，M5 批① 期间定位）**：`--smoke-ui` 的
+  rename/scrub 子断言（帧序号注入的像素坐标点击/拖擦）约 2/6 概率 miss——基线
+  （批⓪ 代码 stash 复测）同样复现，非批① 引入；批⓪ 的 11/11 为侥幸通过。门禁口径
+  = 重跑至全绿（飘忽在子断言级，非产品缺陷）；根治属编辑器测试基建（坐标注入改
+  控件命中断言/重试语义），登记 M5 待办。
 - Dock 最小化时 acquire 的 0 尺寸分支（resize 压测已覆盖退化尺寸的相邻路径）。
 - 多窗口（M1 范围外；M4 决议 #7 定单窗口 docking 交付，multi-viewport 补课顺延 **M5+**）。
 - Windows 平台（CMake 预设 `win` 待加，见 README）。
