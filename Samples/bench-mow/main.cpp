@@ -45,6 +45,9 @@ int main(int argc, char** argv) {
     }
     std::printf("[lemon] bench-mow: sprites=%u particles=%u zoom=%.2f resizeTest=%d\n", sprites,
                 particles, zoom, resizeTest);
+    if (frames <= 0) // BUG-5：frames=0 = 无限跑，无人值守（CI/脚本编排）须显式给 --frames
+        std::printf("[lemon] no --frames given: runs until window close / ESC "
+                    "(unattended runs need --frames N)\n");
 
     auto window = Window::Create({.title = "Lemon bench-mow (M1 acceptance)", .width = 1280, .height = 720});
     if (!window) return 1;

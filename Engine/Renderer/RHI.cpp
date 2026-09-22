@@ -37,6 +37,7 @@ static const char* VkResultName(VkResult r) {
         case VK_SUBOPTIMAL_KHR: return "SUBOPTIMAL";
         case VK_ERROR_OUT_OF_DATE_KHR: return "OUT_OF_DATE";
         case VK_ERROR_DEVICE_LOST: return "DEVICE_LOST";
+        case VK_ERROR_INITIALIZATION_FAILED: return "INITIALIZATION_FAILED"; // 损坏缓存档
         case VK_TIMEOUT: return "TIMEOUT";
         default: return "OTHER";
     }
@@ -507,7 +508,22 @@ struct Device::Impl {
                 }
             }
         }
-        VK_CHECK(vkCreatePipelineCache(device, &ci, nullptr, &pipelineCache));
+        VkResult r = vkCreatePipelineCache(device, &ci, nullptr, &pipelineCache);
+        if (r != VK_SUCCESS && ci.initialDataSize > 0) {
+            // 磁盘缓存损坏（截断/异机数据）在 Vulkan 语义里是可恢复的缓存未命中：
+            // 弃档 + 空缓存重建，不让启动断言崩溃（BUG-1，2026-09-23 测试轮）
+            LEMON_WARN("pipeline cache data rejected (%s) — discarding %s, rebuilding",
+                       VkResultName(r), desc.pipelineCachePath);
+            std::error_code ec;
+            std::filesystem::remove(std::filesystem::path(desc.pipelineCachePath), ec);
+            ci.initialDataSize = 0;
+            ci.pInitialData = nullptr;
+            r = vkCreatePipelineCache(device, &ci, nullptr, &pipelineCache);
+        }
+        if (r != VK_SUCCESS) {
+            LEMON_ASSERT(false, "Vulkan error %s(%d) at %s:%d", VkResultName(r), (int)r,
+                         __FILE__, __LINE__);
+        }
     }
 
     // ---------------------------------------------------------------- 交换链
@@ -1261,8 +1277,28 @@ void Device::SavePipelineCache() {
     std::error_code ec;
     std::filesystem::path p(m->desc.pipelineCachePath);
     if (p.has_parent_path()) std::filesystem::create_directories(p.parent_path(), ec);
-    std::ofstream f(p, std::ios::binary);
-    f.write(data.data(), (std::streamsize)size);
+    // 临时文件 + rename 原子替换：写入中途被杀/断电不留半截档（BUG-1 诱因），
+    // rename 前完整落盘并关闭，目标路径任一时刻都是完整缓存或旧档
+    std::filesystem::path tmp = p;
+    tmp += ".tmp";
+    bool written = false;
+    {
+        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+        f.write(data.data(), (std::streamsize)size);
+        f.flush();
+        written = f.good();
+    }
+    if (!written) {
+        LEMON_WARN("pipeline cache write failed (%s bytes=%zu)", m->desc.pipelineCachePath, size);
+        std::filesystem::remove(tmp, ec);
+        return;
+    }
+    std::filesystem::rename(tmp, p, ec);
+    if (ec) {
+        LEMON_WARN("pipeline cache rename failed: %s", ec.message().c_str());
+        std::filesystem::remove(tmp, ec);
+        return;
+    }
     m->pipelineCacheDirty = false;
     LEMON_LOG("pipeline cache saved: %s (%zu bytes)", m->desc.pipelineCachePath, size);
 }

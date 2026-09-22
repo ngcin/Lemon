@@ -49,7 +49,9 @@ void ProfilerPanel::OnGui(EditorApp& app) {
     ImGui::TableSetupColumn("max", ImGuiTableColumnFlags_WidthFixed, 70);
     ImGui::TableSetupColumn("runs", ImGuiTableColumnFlags_WidthFixed, 80);
     ImGui::TableHeadersRow();
-    for (const ecs::SystemProfile& p : ctx.World().Pipeline().Profiles()) {
+    // ActiveWorld：Play 中 = Play World（真正在 Step 的世界），否则 = 编辑世界
+    // （BUG-2：读 World() 恒为不 Step 的编辑世界，Play 时系统表恒空）
+    for (const ecs::SystemProfile& p : ctx.ActiveWorld().Pipeline().Profiles()) {
         if (p.runs == 0) continue;
         ImGui::TableNextRow();
         ImGui::TableNextColumn();
@@ -85,7 +87,7 @@ void ProfilerPanel::OnGui(EditorApp& app) {
     } else {
         ImGui::TextDisabled("GC：无脚本宿主（--script / 项目 Game/）");
     }
-    if (ImGui::Button("Reset Peaks")) ctx.World().Pipeline().ResetProfiles();
+    if (ImGui::Button("Reset Peaks")) ctx.ActiveWorld().Pipeline().ResetProfiles();
     ImGui::SameLine();
     ImGui::Checkbox("GPU 列", &showGpu_);
     ImGui::End();

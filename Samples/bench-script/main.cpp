@@ -1,16 +1,17 @@
 // Lemon M3 终验收官程序 bench-script（08 §3 验收场，ADR-010 修订版）
 // C# 驱动"环绕弹幕"：档② BoomerangSystem 推 N 弹绕玩家轨道 + 档① PlayerBehaviour
 // 走位 + 毒脚本 PoisonSystem（异常隔离活体）。无渲染。
-// 验收判据：
-//   1) 整步 ≤ 8ms；C# 批量净时间 ≤ C++ 等效 × 1.5（--cpp-compare）
+// 验收判据（ADR-010 D5 修订版）：
+//   1) 整步 ≤ 8ms；C# 批量净时间 ≤ C++ 等效 × 1.5 **仅对 --n ≥100k 档硬判**
+//      （小规模被 ~66µs 固定域线程往返支配，只打印不 FAIL，见 ADR-010 D5 分档表）
 //   2) 确定性回放双档 PASS（--record/--replay，StateHash 逐帧）
 //   3) 毒脚本不崩引擎、60 帧自动禁用（stderr 红字计数）
 //   4) 示例脚本托管分配 = 0（GC 采样窗 16 帧逐窗核对，硬 0 无豁免。可行性前提：
 //      main 起点关 tiered compilation——分层记账会注入 ~8.2KB×N 次分配（30k 实测
 //      3 次/300 帧；TC=0 时 0/10）；关分层不降稳态码质（Tier1 全优化从头编译，
 //      120 帧预热后与分层稳态等价））
-//   5) C# 批量净时 ≤ C++ 等效 × 1.5（--cpp-compare；净时只统计测量段——预热段
-//      Tier0 慢帧会污染均值，M3-7 实测噪声源）
+//   5) C# 批量净时 ≤ C++ 等效 × 1.5（--cpp-compare，100k 硬判档；净时只统计测量段
+//      ——预热段 Tier0 慢帧会污染均值，M3-7 实测噪声源）
 // 用法：lemon-bench-script [--n N] [--frames N] [--threads N] [--seed S]
 //                          [--stats] [--cpp-compare] [--record F] [--replay F]
 // 回放格式：LREPLAY1 文本（无输入行——场景确定性驱动，仅逐帧哈希行，可 diff）。
@@ -241,11 +242,17 @@ int main(int argc, char** argv) {
         nzMax = std::max(nzMax, tail);
     }
     const bool gcOk = gcDelta == 0;
+    // ADR-010 D5 分档：≤1.5× 硬判仅 100k 档；小规模比值被固定往返支配，只记录不 FAIL
+    // （BUG-4：此前任意 n 无差别 1.5× 硬判，按 09 §6.9 示例命令跑 5k 档恒 FAIL）
+    const bool ratioHardGate = cfg.bullets >= 100000;
     std::printf("\n[lemon] ===== bench-script 结果 =====\n");
     std::printf("  步长        : avg %.3fms / max %.3fms（判据 ≤8ms：%s）\n", avg, maxMs,
                 avg <= 8.0 ? "PASS" : "FAIL");
     std::printf("  C# 批量净时 : %.3fms%s\n", csNet,
-                cfg.cppCompare ? (ratio <= 1.5 ? "（≤1.5x PASS）" : "（>1.5x FAIL）") : "");
+                cfg.cppCompare ? (ratio <= 1.5 ? "（≤1.5x PASS）"
+                                     : ratioHardGate ? "（>1.5x FAIL，100k 硬判档）"
+                                                     : "（>1.5x，非 100k 档仅记录）")
+                               : "");
     std::printf("  托管分配    : 总 %llu B，非零窗 %d 个（最大窗 %llu B）（稳态判据：%s）\n",
                 (unsigned long long)gcDelta, nzWins, (unsigned long long)nzMax,
                 gcOk ? "PASS" : "FAIL");
@@ -257,7 +264,7 @@ int main(int argc, char** argv) {
     if (repFp) std::fclose(repFp);
 
     bool ok = avg <= 8.0 && gcOk && (!replaying || mismatches == 0) &&
-              (!cfg.cppCompare || ratio <= 1.5);
+              (!cfg.cppCompare || !ratioHardGate || ratio <= 1.5);
     std::printf("RESULT bench-script %s\n", ok ? "PASS" : "FAIL");
     return ok ? 0 : 1;
 }

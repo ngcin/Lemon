@@ -88,8 +88,8 @@ bench-script 专属：`--n N`（弹数）、`--cpp-compare`（C# 净时 vs 同�
 15 万实例（默认 10 万精灵 + 5 万粒子）+ HUD 位图文本 + 双图集 + 相机剔除窗口运动。
 
 ```bash
-./build/mac/Samples/bench-mow/lemon-bench-mow --immediate     # 正式数字（无帧率上限）
-./build/mac/Samples/bench-mow/lemon-bench-mow --validate      # 正确性（vsync 锁 60）
+./build/mac/Samples/bench-mow/lemon-bench-mow --immediate --frames 900   # 正式数字（无帧率上限；--frames 缺省 = 跑到窗口关闭，无人值守必加）
+./build/mac/Samples/bench-mow/lemon-bench-mow --validate --frames 900    # 正确性（vsync 锁 60）
 ```
 
 flags：`--sprites/--particles N`、`--zoom F`（相机拉近，F=2.58 ≈ 压测 A 的 15% 可见语境）、

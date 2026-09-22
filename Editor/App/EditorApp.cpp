@@ -256,6 +256,9 @@ void EditorApp::SetupDefaultLayout() {
     ImGui::DockBuilderDockWindow("Inspector", rightId);
     ImGui::DockBuilderDockWindow("Scene", mainId);
     ImGui::DockBuilderDockWindow("Game", mainId);      // 同区域 = 标签页
+    // Profiler 补进 bottom 区（BUG-3：此前未停靠 → 首启以浮窗随机遮挡
+    // Hierarchy）；先于 Console/Assets 停靠 = 不抢当前标签，默认隐藏页
+    ImGui::DockBuilderDockWindow("Profiler", bottomId);
     ImGui::DockBuilderDockWindow("Console", bottomId);
     ImGui::DockBuilderDockWindow("Assets", bottomId);  // 同区域 = 标签页
     ImGui::DockBuilderFinish(dock);
@@ -2228,8 +2231,8 @@ int EditorApp::Run(const EditorLaunch& launch) {
             } else if (frame == 4) {
                 namespace fs = std::filesystem;
                 std::error_code ec;
-                // Profiler 非默认布局成员（浮动位置随 ini 漂移，会随机遮挡底部
-                // dock 区域的注入目标）——真人回归里显式关掉保证确定性
+                // Profiler 已进默认布局 bottom 隐藏标签（BUG-3 修复），不再浮动遮挡；
+                // 注入会话仍显式关掉，保证底部 dock 区域注入目标确定
                 for (auto& e : panels_.Entries())
                     if (std::strcmp(e.panel->Name(), "Profiler") == 0) e.open = false;
                 // 目录导航段原料：Assets/sub/ + 资产副本（重扫保确定性）
