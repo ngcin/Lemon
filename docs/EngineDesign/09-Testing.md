@@ -268,11 +268,13 @@ Hierarchy 面板）。回归口径 = 本命令三跑稳定。
 
 1. **sim 11.1ms = Separation 10.18ms（91%）**，其余 15 系统合计 <1ms（SpatialHash
    0.50 / AI 0.28 / Movement 0.10）。vs bench-sim 的差距**不是编辑器回归而是负载
-   密度**：bench-survivor 玩家静止（无头无输入）+ 无死亡（无弹幕）+ Spawner
-   range 600 → 万怪压成最高密度团，邻居扫描候选数 ~7×；bench-sim 玩家持续走位 +
-   弹幕击杀搅散蜂群，**稳态** Separation 仅 ~1.4ms（其 5.1ms 判据均值大半来自
-   未收敛帧）。sim 优化属余量挖掘，路径备档：哈希项内嵌 pos 省 try_get、cell 内
-   id 排序提局部性（均行为保持、不动金档）；邻居选择策略类优化会破回放金档。
+   密度**：bench-survivor 玩家静止（无头无输入）+ Spawner range 600 → 万怪压成
+   最高密度团，邻居扫描候选数 ~7×；bench-sim 玩家持续走位拖拽蜂群 + range 1500
+   始终较散，**稳态** Separation 仅 ~1.4ms（其 5.1ms 判据均值大半来自
+   未收敛帧；两侧怪均不死——iFrames 无递减缺陷，见 DevLog 2026-09-22 P0 条目，
+   destroyed 计数实为投射物寿命回收）。sim 优化属余量挖掘，路径备档：哈希项内嵌
+   pos 省 try_get、cell 内 id 排序提局部性（均行为保持、不动金档）；邻居选择
+   策略类优化会破回放金档。
 2. **尖刺归因 = Census 缓存污染**：20~22 个尖刺/660 帧 ≈ 660/30 = SpawnSystem
    每 30 tick 全量扫 1 万 Meta（~480KB 驱逐 L2），紧随的 Separation 当帧 10→22ms。
    另 present 929ms@~287 一次性停顿为系统侧（autosave Play 中跳过且 5 分钟节拍，
