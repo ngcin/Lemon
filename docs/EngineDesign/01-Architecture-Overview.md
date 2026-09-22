@@ -236,5 +236,5 @@ CI 门槛（从 M1 起生效）：Win+mac 全量编译绿 → 单测绿 → benc
 | ADR-005 | 编辑器 ImGui docking + 与运行时同源双入口 | 已采纳 |
 | ADR-006 | 无第三方物理库，自研查询层 | 已采纳 |
 | ADR-007 | JSON+schema+RLE 作为唯一数据格式 | 已采纳（06 细化） |
-| ADR-008 | 运行时 UI 方案（ImGui HUD 起步 → RmlUi/自研/UGUI 式组件评估） | 开放，M5 决策点（06 §9） |
+| ADR-008 | 运行时 UI：v1 ImGui HUD；v1.x 富 UI 首选 RmlUi（spike 已验收，自研 RenderInterface 接引擎 RHI） | 已采纳（`docs/ADR/ADR-008-Runtime-UI-Strategy.md`，06 §8） |
 | ADR-009 | Prowl2D 升格为理念/API 蓝本；C# 门面 Unity 命名级对齐（GameObject 正名 / LemonBehaviour / 双路由 AddComponent） | 已采纳（`docs/ADR/ADR-009-Prowl2D-Blueprint-and-Unity-API-Alignment.md`） |

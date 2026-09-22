@@ -35,3 +35,7 @@ project.nuget.cache
 # 手测项目（用户真实测试工程，本地保留不入库）
 ats/
 etest/
+
+# 手测散落场景（根级 Scenes/ 由手测以相对路径写出；正式示例工程在各自项目目录内）
+/Scenes/
+spike/04-rmlui/spike-screenshot.bmp

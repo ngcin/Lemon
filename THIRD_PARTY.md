@@ -13,6 +13,8 @@
 | .NET hosting 头（hostfxr.h / coreclr_delegates.h） | 10.0.12 | MIT (.NET Foundation) | vendored（`Engine/Scripting/host/`，源自 dotnet/runtime） | hostfxr 引导（M3；CoreCLRHost.cpp 专用，不出 Scripting 目录） | M3 |
 | Dear ImGui（docking 分支） | v1.92.9b-docking | MIT | CPM 锁 tag（`cmake/Dependencies.cmake`；包装目标 `lemon-imgui` 只在 Editor/） | 编辑器 UI（M4；ADR-005；ImGui 头不出 Editor/，`tests/imgui_isolation.cmake` 断言） | M4.0 |
 | stb（stb_image / stb_image_write） | master@2c980bb | 公有领域 | CPM 锁 commit | PNG 解码（M4.4 导入器）+ 截屏写盘（编辑器冒烟） | M4.0 |
+| RmlUi | 6.3 | MIT | CPM 锁 tag（spike/04-rmlui 消费；**spike 期**——验收过 ADR-008 才转正式依赖） | 运行时 UI（M5 ADR-008 spike：官方 SDL_VK 后端整体验证） | M5 |
+| FreeType | 2.14.3（系统 brew） | FreeType License (MIT 兼容) | find_package(Freetype)（RmlUi 依赖） | 字体光栅（RmlUi FreeType 引擎） | M5 |
 
 ## 保留的第三方版权声明
 
@@ -24,6 +26,9 @@
 - **Dear ImGui (MIT)**：Copyright (c) 2014-2025 Omar Cornut — 以源码链入（lemon-imgui
   静态库，仅编辑器目标）；发布物致谢页保留。
 - **stb (Public Domain)**：Sean Barrett — 无署名义务，致谢页列出以示尊重。
+- **RmlUi (MIT)**：Copyright (c) 2008-2014 CodePoint Ltd, Shift Technology Ltd;
+  Copyright (c) 2019-2026 The RmlUi Team——spike/04-rmlui 消费其源码（含
+  Backends）；正式引入后发布物致谢页保留。
 - **CPM.cmake (MIT)**：Copyright (c) 2019-2024 Lars Melchior — 构建期工具，不进发布物。
 - **nlohmann/json (MIT)**：Copyright (c) 2013-2024 Niels Lohmann — 头文件库链入，
   发布物致谢页保留。

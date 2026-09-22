@@ -1,0 +1,48 @@
+<rml>
+<head>
+    <title>Lemon RmlUi Spike</title>
+    <style>
+        body {
+            position: absolute;
+            left: 0; top: 0; right: 0; bottom: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background: #1a1c22;
+            font-family: Hiragino Sans GB;
+            color: #e8e8e8;
+        }
+        .panel {
+            width: 480px; margin-top: 120px;
+            padding: 32px;
+            background: #262a33;
+            border: 2px #4a90d9;
+            border-radius: 8px;
+        }
+        h1 {
+            font-size: 28px; color: #7fd17f;
+            margin-bottom: 12px;
+        }
+        p { font-size: 16px; color: #b8bcc4; }
+        button {
+            display: block; width: 200px; margin-top: 24px;
+            padding: 10px;
+            background: #4a90d9; color: #ffffff;
+            font-size: 16px; text-align: center;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover { background: #6aaee9; }
+        button:active { background: #3a7ac0; }
+    </style>
+</head>
+<body>
+    <div class="panel">
+        <h1>柠檬引擎 · RmlUi Spike</h1>
+        <p>官方 SDL3 + Vulkan 后端整体接入验证。此文字含中文与标点——若正常显示即字体判据通过。</p>
+        <p>点击下方按钮，终端应打印 CLICK 日志（事件判据）。</p>
+        <button id="start">开始游戏</button>
+        <button id="quit">退出演示</button>
+    </div>
+</body>
+</rml>

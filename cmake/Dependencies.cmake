@@ -73,3 +73,24 @@ CPMAddPackage(
   EXCLUDE_FROM_ALL YES
   DOWNLOAD_ONLY YES
 )
+
+# ---------------------------------------------------------------------------
+# RmlUi — 运行时 UI（M5 ADR-008 spike；锁 tag 6.3）
+# 纪律（AGENTS）：已登记 THIRD_PARTY.md + 07 移植矩阵。spike/04-rmlui 消费
+# rmlui_backend_SDL_VK（官方 SDL3+Vulkan 后端，MIT 头须保留版权声明）。
+# FreeType 用系统 brew 件（2.14.3）。spike 未过验收前不进 Engine/ 正式依赖。
+CPMAddPackage(
+  NAME RmlUi
+  GITHUB_REPOSITORY mikke89/RmlUi
+  GIT_TAG 6.3
+  OPTIONS
+    "BUILD_SHARED_LIBS OFF"
+    "RMLUI_SAMPLES OFF"
+    "RMLUI_TESTS OFF"
+    "RMLUI_SHELL ON"           # 拉入 Backends/ 目标（rmlui_backend_SDL_VK）
+    "RMLUI_BACKEND SDL_VK"     # 后端自动选择（auto→GL3 会要 SDL3_image）
+    "RMLUI_PRECOMPILED_HEADERS OFF"
+    "RMLUI_COMPILER_OPTIONS OFF"
+    "RMLUI_THIRDPARTY_CONTAINERS ON"
+  EXCLUDE_FROM_ALL YES
+)

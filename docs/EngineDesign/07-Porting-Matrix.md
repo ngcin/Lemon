@@ -14,6 +14,7 @@
 | yami-rpg-editor | **MIT**（仓库根 `LICENSE`，© 2025 Yami & Xuran & Contributors；经用户确认） | 代码法律上可拷，但 JS/TS 对 C++ 内核无拷贝价值 → 维持 C 级（schema/思想移植）；**默认素材可直接采用**（含随模板再分发），在 `THIRD_PARTY.md` 与发布物致谢页保留 MIT 声明 |
 | 2DGameEngine | 无 LICENSE | 禁止拷贝；仅算法思想（已被 Prowl2D 规划定性，沿用） |
 | Looper | 本地副本缺 LICENSE 文件 | **暂按 D 级对照**；动工前向上游仓库核实许可后再升级 |
+| rbfx（Urho3D 分支） | MIT（仓库根 `LICENSE`） | 可拷代码（保留版权声明）；当前定位 **D 级对照**——RmlUi↔引擎渲染层适配与多实例 UI 子系统结构的长期维护范例（ADR-008 接入形态依据） |
 | Prowl2D（自有） | 自有 | **理念/API 蓝本（ADR-009）**：设计思路、工作流与 API 风格任意复用；经验/结论任意复用；代码自有可拷但语言不同复用价值低 |
 
 > 通用纪律：所有 A/B 级移植在 `Lemon/THIRD_PARTY.md` 登记（来源仓库/commit/许可/改动摘要）。
@@ -125,7 +126,7 @@
 | **M2 ECS** | MoteurJV 组件目录（C ✅ 27 组件+注册表）、yami Team schema（C ✅ 内联默认表）/RLE codec（M6）/分区自适应（M6）、Luma JobSystem（B ✅ 值语义修正）+ 系统调度（C ✅）、F3 清单（C ✅ 统计层+--stats 文本）；新增第三方 nlohmann/json v3.11.3（.scene 序列化，THIRD_PARTY 已登记） |
 | **M3 脚本** | Luma CoreCLRHost 全量 + ScriptLoadContext（B）、yami 生命周期形状（C）、Prowl2D SceneDispatcher 调度 / 命名级 API 面 / MainThreadContext（C）、Prowl Roslyn（C，后期） |
 | **M4 编辑器** | Luma 面板框架与面板集（B）、MoteurJV Play 快照（C）、Prowl2D Undo 双轨 / PrefabLink + Inspector override（C）、Editor-RPG2D 模式栈/焦点仲裁/放行约定（A）、yami GUID+manifest（C）；新增第三方 Dear ImGui v1.92.9b-docking（MIT，编辑器 UI，THIRD_PARTY 已登记，M4.0）+ stb（公有领域，PNG 导入/截屏，M4.0） |
-| **M5 VS 模板** | duality SpriteAnimator 思想（C）、yami 存档接口（C）、yami 默认素材底包（MIT 直用） |
+| **M5 VS 模板** | duality SpriteAnimator 思想（C）、yami 存档接口（C）、yami 默认素材底包（MIT 直用）；新增第三方 **RmlUi 6.3**（MIT，v1.x 富 UI 首选，spike-04 三判据验收通过，ADR-008；CPM 锁 tag，THIRD_PARTY 已登记）+ **rbfx**（MIT fork，RmlUi↔引擎渲染层适配 D 级对照，ADR-008 接入形态依据）；FreeType 走系统 brew 2.14.3（RmlUi 字体引擎，暂不 vendored） |
 | **M6 TD 模板** | duality Tilemaps（B）、Editor-RPG2D 放置状态机/自动瓦片/chunk 烘焙（B） |
 | **M7 发布** | yami Deployment 清单（C）、Editor-RPG2D 序列化骨架（C） |
 | **M8 光照** | Luma 延迟光照裁剪版（B，含 WGSL→GLSL 直译） |
