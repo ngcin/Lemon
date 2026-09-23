@@ -434,7 +434,7 @@ void ScriptHost::ApplyStructural(ecs::World& world, ecs::Scene& scene) {
     }
 }
 
-void ScriptHost::DispatchEvents(ecs::World& world, ecs::Scene&) {
+void ScriptHost::DispatchEvents(ecs::World& world, ecs::Scene& scene) {
     // M3-4：#15 头部先拉脚本 pending 入队（当帧派发），再两段零拷贝转发 C#
     if (eventsPullFn_ && pullBuf_.empty()) pullBuf_.resize(256);
     while (eventsPullFn_) {
@@ -447,10 +447,18 @@ void ScriptHost::DispatchEvents(ecs::World& world, ecs::Scene&) {
     auto& q = world.Events();
     const ecs::EventPacket* seg = nullptr;
     uint32_t n = 0;
+    // M5 批②：事件回调与 Update 同一 native 窗口（g_world/g_scene）——订阅方在
+    // WaveStart 等回调内可调 Ui.Set/Time.Scale/Instantiate。此前窗口只盖 TickBatch，
+    // #16 派发期的回调内 native 调用会静默空转（批① xp 样例恰在 Update 内调用
+    // 故未暴露）。
+    g_world = &world;
+    g_scene = &scene;
     q.HeadSpan(seg, n);
     if (n) eventsDispatchFn_(seg, (int)n);
     q.TailSpan(seg, n);
     if (n) eventsDispatchFn_(seg, (int)n);
+    g_world = nullptr;
+    g_scene = nullptr;
 }
 
 } // namespace lemon::scripting

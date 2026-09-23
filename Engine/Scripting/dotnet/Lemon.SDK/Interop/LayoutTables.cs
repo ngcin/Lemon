@@ -241,6 +241,24 @@ public static unsafe class LayoutTables
             F("multiplier", FieldTypeCode.Double, 0, O(p, &p->Multiplier)),
             F("cached", FieldTypeCode.Double, 0, O(p, &p->Cached)) }); }
 
+        // ---- M5 批②（id 27；字段顺序=ComponentCatalog.cpp kWaveDirector，禁重排）----
+        { WaveDirector t = default; WaveDirector* p = &t;
+          ushort cdBase = O(p, p->_cd), spBase = O(p, p->_spawned);
+          Add<WaveDirector>("WaveDirector", (uint)sizeof(WaveDirector), new[] {
+            F("spawnTeam", FieldTypeCode.TeamRef, 0, O(p, &p->SpawnTeam)),
+            F("capAlive", FieldTypeCode.Int32, 0, O(p, &p->CapAlive)),
+            F("waveCount", FieldTypeCode.UInt8, 0, O(p, &p->WaveCount)),
+            F("time", FieldTypeCode.Float, 1, O(p, &p->Time)),
+            F("waveIndex", FieldTypeCode.UInt8, 1, O(p, &p->WaveIndex)),
+            F("cd0", FieldTypeCode.Float, 1, cdBase),
+            F("cd1", FieldTypeCode.Float, 1, (ushort)(cdBase + 4)),
+            F("cd2", FieldTypeCode.Float, 1, (ushort)(cdBase + 8)),
+            F("cd3", FieldTypeCode.Float, 1, (ushort)(cdBase + 12)),
+            F("spawned0", FieldTypeCode.UInt16, 1, spBase),
+            F("spawned1", FieldTypeCode.UInt16, 1, (ushort)(spBase + 2)),
+            F("spawned2", FieldTypeCode.UInt16, 1, (ushort)(spBase + 4)),
+            F("spawned3", FieldTypeCode.UInt16, 1, (ushort)(spBase + 6)) }); }
+
         // ---- 数组段（元素字段行挂 Fields 尾部；对照 ArraySegMeta）----
         var segs = new List<SegLayoutRow>();
         { StatusEffects t = default; StatusEffects* p = &t;
@@ -267,6 +285,25 @@ public static unsafe class LayoutTables
           segs.Add(new SegLayoutRow { NameHash = Fnv64("Equipment"),
               SegOffset = O(p, p->RelicIds), ElemSize = (ushort)sizeof(uint),
               CountOffset = 0xFFFF, MaxCount = 3, ElemFieldFirst = 0, ElemFieldCount = 0 }); }
+        // M5 批②：WaveDirector 波次表段（元素 = WaveDef；entries[4] 扁平行 e{0..3}*）
+        { WaveDirector t = default; WaveDirector* p = &t;
+          ushort elemFirst = (ushort)f.Count;
+          { WaveDef w = default; WaveDef* q = &w;
+            f.Add(F("startTime", FieldTypeCode.Float, 0, O(q, &w.StartTime)));
+            f.Add(F("rampMult", FieldTypeCode.Float, 0, O(q, &w.RampMult)));
+            f.Add(F("entryCount", FieldTypeCode.UInt8, 0, O(q, &w.EntryCount)));
+            ushort entriesBase = O(q, q->_entries);
+            for (int i = 0; i < 4; i++) {
+                ushort eb = (ushort)(entriesBase + i * sizeof(WaveEntry));
+                { WaveEntry e = default; WaveEntry* r = &e;
+                    f.Add(F($"e{i}prefab", FieldTypeCode.UInt32, 0, (ushort)(eb + O(r, &e.PrefabId))));
+                    f.Add(F($"e{i}count", FieldTypeCode.UInt16, 0, (ushort)(eb + O(r, &e.Count))));
+                    f.Add(F($"e{i}interval", FieldTypeCode.Float, 0, (ushort)(eb + O(r, &e.Interval))));
+                    f.Add(F($"e{i}range", FieldTypeCode.Float, 0, (ushort)(eb + O(r, &e.Range)))); } } }
+          segs.Add(new SegLayoutRow { NameHash = Fnv64("WaveDirector"),
+              SegOffset = O(p, p->_waves), ElemSize = (ushort)sizeof(WaveDef),
+              CountOffset = O(p, &p->WaveCount), MaxCount = 16,
+              ElemFieldFirst = elemFirst, ElemFieldCount = 19 }); }
 
         Comps = c.ToArray();
         Fields = f.ToArray();

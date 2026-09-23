@@ -63,7 +63,8 @@ public:
 private:
     void DrawComponent(EditorApp& app, const ecs::ComponentMeta& meta, ecs::Entity e);
     void DrawFields(EditorApp& app, const ecs::ComponentMeta& meta, void* comp, ecs::Entity e);
-    void DrawArraySeg(EditorApp& app, const ecs::ComponentMeta& meta, const void* comp);
+    void DrawArraySeg(EditorApp& app, const ecs::ComponentMeta& meta, void* comp,
+                      bool& anyActive, bool& anyDeactivated);
 
     std::unordered_set<uint64_t> openedHeaders_;
     // 属性轨空闲缓存（M4.7d 修：按 组件键→快照 多槽——原单槽被"排最后的组件"

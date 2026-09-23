@@ -758,7 +758,7 @@ void InspectorPanel::DrawComponent(EditorApp& app, const ComponentMeta& meta, ec
             g_scrubActive = g_scrubEnded = false;
             ImGui::EndTable();
         }
-        DrawArraySeg(app, meta, comp);
+        DrawArraySeg(app, meta, comp, anyActive, anyDeactivated);
         // M5 清障②：Spawner.prefabId / Shooter.projectileId 反查（uint32 = prefab 资产
         // GUID 低 32 位约定；EnterPlay 时同口径建映射）。拖拽绑定进 M5 编辑器批次
         // （与 tag 资产化同族，等 prefab 字段级元数据）。
@@ -811,8 +811,16 @@ void InspectorPanel::DrawComponent(EditorApp& app, const ComponentMeta& meta, ec
     }
 }
 
-void InspectorPanel::DrawArraySeg(EditorApp& app, const ComponentMeta& meta, const void* comp) {
+// M5 批②：可编辑数组段（WaveDirector 波次表的作者路径；StatusEffects/Inventory
+// 调试编辑同受益）。元素级无 FieldEditorMeta（ArraySegMeta 不带编辑器元数据）——
+// 控件按 FieldType 裸派发，Range/Enum/prefab 反查等精细化归 M6 波次表编辑器。
+// 控件 active/deactivated 汇入 DrawComponent 属性轨（M4.7d 顺序纪律：调用方提交
+// 判定在本调用之后，Undo 快照为组件级字节——seg 字节天然覆盖）。定长标量数组
+// （Equipment.relicIds，elemFields=nullptr）维持只读。
+void InspectorPanel::DrawArraySeg(EditorApp& app, const ComponentMeta& meta, void* comp,
+                                  bool& anyActive, bool& anyDeactivated) {
     if (!meta.arraySeg) return;
+    EditorContext& ctx = app.Ctx();
     const ecs::ArraySegMeta& seg = *meta.arraySeg;
     uint8_t count = seg.countOffset == 0xFFFF
                         ? (uint8_t)seg.maxCount
@@ -823,28 +831,51 @@ void InspectorPanel::DrawArraySeg(EditorApp& app, const ComponentMeta& meta, con
         return;
     for (uint8_t i = 0; i < count && i < seg.maxCount; ++i) {
         ImGui::TableNextRow();
-        const uint8_t* elem = (const uint8_t*)comp + seg.offset + (size_t)i * seg.elemSize;
+        ImGui::PushID(i);
+        uint8_t* elem = (uint8_t*)comp + seg.offset + (size_t)i * seg.elemSize;
         if (seg.elemFields) {
             for (uint16_t f = 0; f < seg.elemFieldCount; ++f) {
                 ImGui::TableNextColumn();
                 const FieldMeta& ef = seg.elemFields[f];
+                ImGui::PushID(ef.name);
+                uint8_t* p = elem + ef.offset;
+                bool changed = false;
                 switch (ef.type) {
-                    case FieldType::UInt16:
-                        ImGui::Text("%u", *(const uint16_t*)(elem + ef.offset)); break;
-                    case FieldType::UInt32:
-                        ImGui::Text("%u", *(const uint32_t*)(elem + ef.offset)); break;
                     case FieldType::Float:
-                        ImGui::Text("%.2f", *(const float*)(elem + ef.offset)); break;
-                    default: ImGui::TextUnformatted("?"); break;
+                        changed = ImGui::DragFloat("##v", (float*)p, 0.05f, 0.0f, 0.0f,
+                                                   "%.3f"); // Ctrl+点击可键入（ImGui 惯例）
+                        break;
+                    case FieldType::Int32:
+                        changed = ImGui::InputScalar("##v", ImGuiDataType_S32, p);
+                        break;
+                    case FieldType::UInt32:
+                        changed = ImGui::InputScalar("##v", ImGuiDataType_U32, p);
+                        break;
+                    case FieldType::UInt16:
+                        changed = ImGui::InputScalar("##v", ImGuiDataType_U16, p);
+                        break;
+                    case FieldType::UInt8:
+                        changed = ImGui::InputScalar("##v", ImGuiDataType_U8, p);
+                        break;
+                    case FieldType::Bool:
+                        changed = ImGui::Checkbox("##v", (bool*)p);
+                        break;
+                    default:
+                        ImGui::TextUnformatted("?"); // Vec2/Double 等暂只读（现无 seg 用到）
+                        break;
                 }
+                if (changed) ctx.dirty = true;
+                anyActive |= ImGui::IsItemActive();
+                anyDeactivated |= ImGui::IsItemDeactivated();
+                ImGui::PopID();
             }
         } else {
             ImGui::TableNextColumn();
-            ImGui::Text("%u", *(const uint32_t*)elem);
+            ImGui::Text("%u", *(const uint32_t*)elem); // 定长标量数组：只读
         }
+        ImGui::PopID();
     }
     ImGui::EndTable();
-    (void)app;
 }
 
 } // namespace lemon::editor

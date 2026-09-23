@@ -184,6 +184,28 @@ constexpr FieldMeta kIncrementalState[] = {
     FIELD(IncrementalState, rate, Double), FIELD(IncrementalState, multiplier, Double),
     FIELD(IncrementalState, cached, Double)};
 
+// ---- M5 批②（id 27..；登记序=组件 id 只增不改序）----
+// 波次表本体在数组段 kWaveDirectorSeg（16 波 × 76B 元素）；RT 行手工命名仿
+// hitMem0..3 模式（数组无逐槽字段名）。字段顺序 = C# LayoutTables 1:1，禁重排。
+constexpr FieldMeta kWaveDirector[] = {
+    FIELD(WaveDirector, spawnTeam, TeamRef), FIELD(WaveDirector, capAlive, Int32),
+    FIELD(WaveDirector, waveCount, UInt8),
+    FIELD_RT(WaveDirector, time, Float), FIELD_RT(WaveDirector, waveIndex, UInt8),
+    { "cd0", FieldType::Float, (uint16_t)(offsetof(WaveDirector, waveCooldown) + 0 * sizeof(float)), kFieldRuntime },
+    { "cd1", FieldType::Float, (uint16_t)(offsetof(WaveDirector, waveCooldown) + 1 * sizeof(float)), kFieldRuntime },
+    { "cd2", FieldType::Float, (uint16_t)(offsetof(WaveDirector, waveCooldown) + 2 * sizeof(float)), kFieldRuntime },
+    { "cd3", FieldType::Float, (uint16_t)(offsetof(WaveDirector, waveCooldown) + 3 * sizeof(float)), kFieldRuntime },
+    { "spawned0", FieldType::UInt16, (uint16_t)(offsetof(WaveDirector, waveSpawned) + 0 * sizeof(uint16_t)), kFieldRuntime },
+    { "spawned1", FieldType::UInt16, (uint16_t)(offsetof(WaveDirector, waveSpawned) + 1 * sizeof(uint16_t)), kFieldRuntime },
+    { "spawned2", FieldType::UInt16, (uint16_t)(offsetof(WaveDirector, waveSpawned) + 2 * sizeof(uint16_t)), kFieldRuntime },
+    { "spawned3", FieldType::UInt16, (uint16_t)(offsetof(WaveDirector, waveSpawned) + 3 * sizeof(uint16_t)), kFieldRuntime }};
+constexpr FieldEditorMeta kEdWaveDirector[] = {
+    ED, ED_RANGE(0, 1000000.0f),
+    ED_TIP("有效波数 0..16（表格见下方数组段；期望 startTime 升序）"),
+    ED_HIDE, ED_HIDE,
+    ED_HIDE, ED_HIDE, ED_HIDE, ED_HIDE,
+    ED_HIDE, ED_HIDE, ED_HIDE, ED_HIDE};
+
 #undef FIELD
 #undef FIELD_RT
 #undef ED
@@ -216,6 +238,27 @@ constexpr ArraySegMeta kInventorySeg = {
 constexpr ArraySegMeta kEquipmentSeg = {
     "Equipment", "relicIds", SEG_OFF(Equipment, relicIds),
     (uint16_t)sizeof(uint32_t), 0xFFFF, 3, nullptr, 0}; // 定长标量数组
+// M5 批②：波次表段（元素 = WaveDef；entries[4] 单层数组段不支持嵌套 → 扁平
+// e{0..3}{prefab,count,interval,range} 行，一处定义 16 波共用）
+constexpr FieldMeta kWaveDefElem[] = {
+    { "startTime", FieldType::Float, (uint16_t)offsetof(WaveDef, startTime), 0 },
+    { "rampMult", FieldType::Float, (uint16_t)offsetof(WaveDef, rampMult), 0 },
+    { "entryCount", FieldType::UInt8, (uint16_t)offsetof(WaveDef, entryCount), 0 },
+#define WAVE_E(i, sfx, mem, t) { "e" #i #sfx, FieldType::t, \
+    (uint16_t)(offsetof(WaveDef, entries) + i * sizeof(WaveEntry) + offsetof(WaveEntry, mem)), 0 }
+    WAVE_E(0, prefab, prefabId, UInt32), WAVE_E(0, count, count, UInt16),
+    WAVE_E(0, interval, interval, Float), WAVE_E(0, range, range, Float),
+    WAVE_E(1, prefab, prefabId, UInt32), WAVE_E(1, count, count, UInt16),
+    WAVE_E(1, interval, interval, Float), WAVE_E(1, range, range, Float),
+    WAVE_E(2, prefab, prefabId, UInt32), WAVE_E(2, count, count, UInt16),
+    WAVE_E(2, interval, interval, Float), WAVE_E(2, range, range, Float),
+    WAVE_E(3, prefab, prefabId, UInt32), WAVE_E(3, count, count, UInt16),
+    WAVE_E(3, interval, interval, Float), WAVE_E(3, range, range, Float)};
+#undef WAVE_E
+constexpr ArraySegMeta kWaveDirectorSeg = {
+    "WaveDirector", "waves", SEG_OFF(WaveDirector, waves),
+    (uint16_t)sizeof(WaveDef), SEG_OFF(WaveDirector, waveCount), 16,
+    kWaveDefElem, (uint16_t)(sizeof(kWaveDefElem) / sizeof(FieldMeta))};
 #undef SEG_OFF
 
 // 运行时构造钩子（模板自动生成；SceneArchive 按元数据访问组件）
@@ -292,6 +335,14 @@ void ForEachComponent(Scene& s, void (*cb)(Entity, const void*, void*), void* ct
                   GetComponent<Name>,                                                \
                   ForEachComponent<Name>, RemoveComponent<Name>,                      \
                   CountComponent<Name>, ForEachComponentRange<Name>, ConstructDefault<Name>});
+// M5 批②：编辑器元数据 + 数组段并持（WaveDirector 首例）
+#define REGISTER_ED_SEG(Name, fields, ed, seg)                                       \
+    reg.Register({#Name, 0, (uint16_t)(sizeof(fields) / sizeof(FieldMeta)),           \
+                  (uint32_t)sizeof(Name), fields, ed, &seg,                           \
+                  HasComponent<Name>, EmplaceComponent<Name>, ReadComponent<Name>,    \
+                  GetComponent<Name>,                                                \
+                  ForEachComponent<Name>, RemoveComponent<Name>,                      \
+                  CountComponent<Name>, ForEachComponentRange<Name>, ConstructDefault<Name>});
 
 } // namespace
 
@@ -328,6 +379,7 @@ void RegisterAllComponents() {
     REGISTER_SEG(Equipment, kEquipment, kEquipmentSeg)
     REGISTER_ED(XpProgress, kXpProgress, kEdXpProgress)
     REGISTER(IncrementalState, kIncrementalState)
+    REGISTER_ED_SEG(WaveDirector, kWaveDirector, kEdWaveDirector, kWaveDirectorSeg)
 }
 
 } // namespace lemon::ecs

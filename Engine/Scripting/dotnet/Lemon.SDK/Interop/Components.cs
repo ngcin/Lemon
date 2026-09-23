@@ -272,6 +272,40 @@ public struct IncrementalState // 24B（M6+ 占位）
     public double Rate, Multiplier, Cached;
 }
 
+// ---- M5 批②：导演波次表（BehaviorComponents.h 三件套镜像；id 27 表尾）----
+[StructLayout(LayoutKind.Sequential)]
+public unsafe struct WaveEntry // 16B
+{
+    public uint PrefabId;
+    public ushort Count;
+    fixed byte _pad[2];       // C++ _pad（零化）
+    public float Interval, Range;
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public unsafe struct WaveDef // 76B
+{
+    public float StartTime, RampMult;
+    public byte EntryCount;
+    fixed byte _pad[3];
+    internal fixed byte _entries[4 * 16]; // C++ WaveEntry entries[4]（64B，不透明镜像）
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public unsafe struct WaveDirector // 1260B
+{
+    public uint SpawnTeam;
+    public int CapAlive;
+    public byte WaveCount;
+    fixed byte _pad[3];
+    internal fixed byte _waves[16 * 76]; // C++ WaveDef waves[16]（1216B，不透明镜像）
+    public float Time;                   // 运行时：局内时刻
+    internal fixed float _cd[4];         // 运行时：waveCooldown[4]
+    internal fixed ushort _spawned[4];   // 运行时：waveSpawned[4]
+    public byte WaveIndex;               // 运行时：已生效波数
+    fixed byte _pad2[3];
+}
+
 // ---- 事件包镜像（Events.h：48B 固定布局，桥侧 blittable）----
 public enum GameEvent : ushort
 {

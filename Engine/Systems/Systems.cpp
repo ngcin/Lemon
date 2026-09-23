@@ -81,9 +81,108 @@ void InputSnapshotSystem::Tick(World& world, Scene& scene, float dt) {
 }
 
 // --------------------------------------------------------------- #2 导演 --
+// M5 批②（03 §8 修订形态）：波次表 = WaveDirector 组件（数据驱动，数组段序列化）；
+// 导演 = 第二条刷怪通道——直接经 World::GetSpawnFn() 出生（Spawner 保留常驻环境
+// 刷怪语义，互不派发）。决策 M5-Plan §11.2 D2–D6：
+//   * time 吃缩放 dt（批① D5：timeScale=0 冻结波次、RNG 不消耗）；
+//   * 波重叠 = 后波接管（同 tick 多波到期按表序全部生效，仅最后一波持运行时）；
+//   * capAlive 与 SpawnSystem 同款 30 tick 普查 + 乐观自增（"约"语义压测红线）；
+//   * RNG 子流 1（导演注册序；Spawn 的 2 不受扰）。多导演共享子流按池序消费
+//     （确定性但任意）；prefab 失败（工厂返 Null）即废止该条目，不逐 tick 重试。
+void DirectorSystem::Census(Scene& scene) {
+    // per-team 存量普查（O(n)，30 tick 一次；死亡滞后半秒级——闸门语义"约"）
+    teamCounts_.assign(64, 0);
+    auto view = scene.View<Meta>();
+    for (auto [ent, meta] : view.each()) ++teamCounts_[meta.team & 63];
+}
+
 void DirectorSystem::Tick(World& world, Scene& scene, float dt) {
-    // M5：波次表/budget 曲线/capAlive 压测保护（03 §8）。M2 占位。
-    (void)world; (void)scene; (void)dt;
+    if (censusCountdown_ == 0) {
+        Census(scene);
+        censusCountdown_ = kCensusInterval;
+    } else {
+        --censusCountdown_;
+    }
+
+    const World::SpawnFn& spawn = world.GetSpawnFn();
+    if (!spawn) {
+        if (!warnedNoFactory_ && scene.Pool<WaveDirector>().size() > 0) {
+            LEMON_WARN("WaveDirector present but no spawn factory registered");
+            warnedNoFactory_ = true;
+        }
+        return;
+    }
+
+    Rng& rng = world.SystemRng(1); // 子流 id = 本系统注册序（Spawn 持 2）
+    const float minInterval = dt > 0.0f ? dt : (1.0f / 60.0f); // 每条目每 tick 至多 1 生
+
+    for (auto [ent, wd, tf] : scene.View<WaveDirector, Transform2D>().each()) {
+        // 容量防御钳（Inspector/JSON 手改超容；读档侧 ReadArraySeg 另有一道）
+        const uint8_t waveCount = wd.waveCount > 16 ? 16 : wd.waveCount;
+
+        wd.time += dt;
+        // 波推进：表序=生效序；后波接管（前波未完成条目废止——顺序相位语义）
+        while (wd.waveIndex < waveCount &&
+               wd.time >= wd.waves[wd.waveIndex].startTime) {
+            const WaveDef& w = wd.waves[wd.waveIndex];
+            uint8_t ec = w.entryCount > 4 ? 4 : w.entryCount;
+            float planned = 0.0f;
+            for (uint8_t i = 0; i < ec; ++i) planned += (float)w.entries[i].count;
+
+            EventPacket ev{};
+            ev.type = GameEvent::WaveStart;
+            ev.src = Scene::FromEntt(ent);
+            ev.payload[0] = (float)wd.waveIndex; // 波序号（0 起）
+            ev.payload[1] = planned;             // 本波计划总数 Σcount（0 = 纯宣告波）
+            ev.payload[2] = w.startTime;
+            world.Events().Push(ev);
+
+            for (uint8_t i = 0; i < 4; ++i) { // 运行时随波重置
+                wd.waveCooldown[i] = 0.0f;
+                wd.waveSpawned[i] = 0;
+            }
+            ++wd.waveIndex;
+        }
+        if (wd.waveIndex == 0) continue; // 首波未到点
+        const WaveDef& wave = wd.waves[wd.waveIndex - 1];
+        const uint8_t entryCount = wave.entryCount > 4 ? 4 : wave.entryCount;
+
+        // capAlive 闸门（0 = 不限；普查计数 + 下方乐观自增）
+        uint32_t& alive = teamCounts_[wd.spawnTeam & 63];
+        const bool capped = wd.capAlive > 0 && (int32_t)alive >= wd.capAlive;
+
+        for (uint8_t i = 0; i < entryCount; ++i) {
+            const WaveEntry& e = wave.entries[i];
+            if (wd.waveSpawned[i] >= e.count) continue; // 本条目已交货
+            wd.waveCooldown[i] -= dt;
+            if (wd.waveCooldown[i] > 0.0f) continue;
+            if (capped) {
+                wd.waveCooldown[i] = 0.0f; // 持币待发：腾位后下一 tick 补生
+                continue;
+            }
+            Vec2 offset = e.range > 0.0f ? rng.UnitVec2() * e.range * rng.Float01()
+                                         : Vec2::Zero();
+            const Vec2 pos = tf.pos + offset;
+            Entity spawned = spawn(scene, e.prefabId, pos, wd.spawnTeam);
+            if (spawned.IsNull()) { // 工厂不认此 prefab：废止条目（不逐 tick 重试）
+                wd.waveSpawned[i] = e.count;
+                continue;
+            }
+            ++wd.waveSpawned[i];
+            ++alive; // 乐观自增（普查刷新前的本 tick 内闸门）
+
+            EventPacket p{};
+            p.type = GameEvent::Spawn; // 与 SpawnSystem 同口径
+            p.src = spawned;
+            p.payload[0] = pos.x;
+            p.payload[1] = pos.y;
+            world.Events().Push(p);
+
+            const float interval =
+                wave.rampMult > 0.0f ? e.interval / wave.rampMult : e.interval;
+            wd.waveCooldown[i] += interval > minInterval ? interval : minInterval;
+        }
+    }
 }
 
 // --------------------------------------------------------------- #3 出生 --
@@ -720,8 +819,8 @@ void DestroyCommitSystem::Tick(World& world, Scene& scene, float dt) {
 void World::InstallDefaultSystems() {
     auto& p = Pipeline();
     // 注册序 = 03 §4 表序 = 系统 RNG 子流 id（改动序号 = 破坏回放兼容，禁）。
-    // PickupSystem（#9，M5 批①）不用 RNG——不占子流，中插不移位既有 id
-    // （现仅 SpawnSystem 持硬编码子流 id=2）
+    // PickupSystem（#9，M5 批①）不用 RNG——不占子流，中插不移位既有 id。
+    // 子流占用：Director=1（M5 批②起）、Spawn=2；其余系统不消费
     p.AddSystem(std::make_unique<InputSnapshotSystem>());
     p.AddSystem(std::make_unique<DirectorSystem>());
     p.AddSystem(std::make_unique<SpawnSystem>());

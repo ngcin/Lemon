@@ -22,6 +22,8 @@ public static class GameMain
         Lemon.Behaviours.Register<TimeProbeBehaviour>();
         // M5 批①：Time.Scale × Lemon.Ui.Set 验收（typeId 4，表尾注册同上约定）
         Lemon.Behaviours.Register<ScaleUiProbeBehaviour>();
+        // M5 批②：WaveStart 订阅 → Ui.Set 波次行（typeId 5，表尾注册同上约定）
+        Lemon.Behaviours.Register<WaveBannerBehaviour>();
     }
 }
 
@@ -177,5 +179,21 @@ public sealed class ScaleUiProbeBehaviour : Lemon.LemonBehaviour
                               (ushort)(600 + Lemon.Time.Scale * 10f), default, default);
             gameObject.Destroy();
         }
+    }
+}
+
+/// <summary>M5 批②：WaveStart 订阅样例（引擎事件 → Game RT UI 的最小闭环）。
+/// 收到 WaveStart（P0=波序号 0 起、P1=本波计划总数）→ Ui.Set 波次横幅行；
+/// C++ 侧（script-tests TestWaveStartToUi）人工推包后断言 RtUi 槽。</summary>
+public sealed class WaveBannerBehaviour : Lemon.LemonBehaviour
+{
+    public WaveBannerBehaviour()
+    {
+        Lemon.Events.Subscribe(Lemon.Interop.GameEvent.WaveStart, m =>
+        {
+            int index = (int)m.P0;
+            int planned = (int)m.P1;
+            Lemon.Ui.Set("wave", $"WAVE {index + 1} x{planned}", -1f);
+        });
     }
 }

@@ -120,6 +120,37 @@ struct Knockback {
     float decay = 8.0f;
 };
 
+// ---- M5 批②：导演波次表（03 §8；数据驱动=组件内联 + 数组段序列化，见 03 §8 修订注）
+// 导演 = 第二条刷怪通道（直接经 World::GetSpawnFn 出生，D2）；Spawner 保留常驻
+// 环境刷怪语义。全 pad 显式 = {}：数组段按元素原始字节入状态哈希，零化保证确定性。
+struct WaveEntry {                  // 一条刷怪条目
+    uint32_t prefabId = 0;          // prefab guid 低 32 位（Spawner/Shooter 同口径）
+    uint16_t count = 8;             // 本条目总出生数
+    uint8_t _pad[2] = {};
+    float interval = 0.5f;          // 出生间隔秒（受 WaveDef.rampMult 加速）
+    float range = 200.0f;           // 出生环半径（绕导演实体 Transform2D）
+};
+struct WaveDef {                    // 一波（波表元素，76B）
+    float startTime = 0.0f;         // 波开始局内时刻秒（表序=生效序，期望升序）
+    float rampMult = 1.0f;          // 节奏倍率（entry.interval / rampMult）
+    uint8_t entryCount = 0;         // 有效条目数 ≤4（消费处防御钳）
+    uint8_t _pad[3] = {};
+    WaveEntry entries[4];           // 定长 4（元素字段表扁平登记 e0..e3）
+};
+struct WaveDirector {               // 导演（挂此组件 + Transform2D = 出生中心）
+    uint32_t spawnTeam = 1;         // 波次出生队伍（capAlive 计数同队）
+    int32_t capAlive = 0;           // 同队存活上限（0=不限；压测红线，30 tick 普查"约"语义）
+    uint8_t waveCount = 0;          // 有效波数 ≤16
+    uint8_t _pad[3] = {};
+    WaveDef waves[16];              // 波次表（ArraySegMeta 序列化/哈希/Inspector）
+    // ---- 运行时（不入档、入状态哈希）----
+    float time = 0.0f;              // 局内时刻（缩放 dt 累计——timeScale=0 冻结波次）
+    float waveCooldown[4] = {};     // 当前波各条目距下次出生
+    uint16_t waveSpawned[4] = {};   // 当前波各条目已出生
+    uint8_t waveIndex = 0;          // 已生效波数（活跃波 = waves[waveIndex-1]）
+    uint8_t _pad2[3] = {};
+};
+
 // ---- 布局冻结（M3 桥侧 blittable 前提：C# 镜像 struct 与此逐字节对齐，改动=破回放）----
 static_assert(std::is_trivially_copyable_v<Health> && sizeof(Health) == 16, "Health 布局冻结");
 static_assert(std::is_trivially_copyable_v<Mover> && sizeof(Mover) == 4, "Mover 布局冻结");
@@ -133,5 +164,9 @@ static_assert(std::is_trivially_copyable_v<Hazard> && sizeof(Hazard) == 16, "Haz
 static_assert(std::is_trivially_copyable_v<Collectible> && sizeof(Collectible) == 24, "Collectible 布局冻结");
 static_assert(std::is_trivially_copyable_v<Trigger2D> && sizeof(Trigger2D) == 12, "Trigger2D 布局冻结");
 static_assert(std::is_trivially_copyable_v<Knockback> && sizeof(Knockback) == 12, "Knockback 布局冻结");
+// M5 批②：波次表三件套（16 / 76 / 1260）
+static_assert(std::is_trivially_copyable_v<WaveEntry> && sizeof(WaveEntry) == 16, "WaveEntry 布局冻结");
+static_assert(std::is_trivially_copyable_v<WaveDef> && sizeof(WaveDef) == 76, "WaveDef 布局冻结");
+static_assert(std::is_trivially_copyable_v<WaveDirector> && sizeof(WaveDirector) == 1260, "WaveDirector 布局冻结");
 
 } // namespace lemon::ecs

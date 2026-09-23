@@ -78,14 +78,14 @@ int (*lemonEventPacketLayout)(uint16_t*, uint16_t*, uint16_t*, uint16_t*, uint16
 void TestLayoutAgainstRegistry() {
     lemon::ecs::RegisterAllComponents();
     auto& reg = lemon::ecs::ComponentRegistry::Instance();
-    Expect(reg.Count() == 27, "registry count 27");
+    Expect(reg.Count() == 28, "registry count 28（M5 批② + WaveDirector）");
 
     std::vector<CompLayoutRow> comps(64);
     std::vector<FieldLayoutRow> fields(256);
     std::vector<SegLayoutRow> segs(8);
     int n = lemonSdkLayout(comps.data(), (int)comps.size(), fields.data(), (int)fields.size(),
                            segs.data(), (int)segs.size());
-    Expect(n == 27, "sdk layout comp count");
+    Expect(n == 28, "sdk layout comp count");
 
     uint32_t totalFields = 0;
     for (int i = 0; i < n; i++) {
@@ -300,11 +300,11 @@ void TestDomainManager() {
         Expect(d2 == (double)0.1f, "hot-reload new domain fresh state");
         Expect(leaks >= 0 && leaksFn && leaksFn() == leaks, "leak count visible + consistent");
         Expect(reloadsFn && reloadsFn() >= 1, "reload count visible");
-        // 换装后新域 GameMain.Configure 已跑：behaviours 列表可拉（5 个类型）
+        // 换装后新域 GameMain.Configure 已跑：behaviours 列表可拉（6 个类型）
         auto listFn = (int (*)(char*, int))GetExport("lemon_behaviours_list");
         char buf[4096];
         int n = listFn ? listFn(buf, (int)sizeof buf) : -1;
-        Expect(n == 5, "behaviours list after hot reload (+M5 批① ScaleUiProbe)");
+        Expect(n == 6, "behaviours list after hot reload (+M5 批② WaveBanner)");
         // M4.6 回归（用户实测闪退根因）：相对路径进 dm_reload 曾抛 ArgumentException
         // 逃逸 UnmanagedCallersOnly → coreclr abort。拦截层必须转 0 返回且进程存活
         // （本断言能跑到 = 进程没死）。换装失败后旧域已弃——再换一次真路径恢复。
@@ -558,6 +558,44 @@ void TestTimeScaleAndUiChannel() {
     }
 }
 
+// M5 批②：WaveStart → C# 订阅 → Ui.Set 波次行（引擎事件→RT UI 最小闭环；
+// WaveBannerBehaviour typeId 5 表尾注册，构造期 Subscribe）
+void TestWaveStartToUi() {
+    using namespace lemon::ecs;
+    auto opsSubmit = (void (*)(unsigned char, unsigned char, uint64_t))GetExport("lemon_ops_submit");
+    Expect(opsSubmit, "ops export resolved");
+
+    WorldDesc d;
+    d.threadCount = 1;
+    World w(d);
+    Scene& s = w.CreateScene("Wav");
+    w.SetActiveScene(&s);
+    w.SetScriptBackend(&g_sh);
+    w.Pipeline().AddSystem(std::make_unique<DestroyCommitSystem>());
+    w.Pipeline().AddSystem(std::make_unique<CSharpBatchSystem>());
+    w.Pipeline().AddSystem(std::make_unique<ScriptEventDispatchSystem>());
+    w.Pipeline().ResolveOrder();
+
+    opsSubmit(0, 0, 0x8000000000000005ull); // Create + Attach WaveBannerBehaviour（typeId 5）
+    opsSubmit(4, 5, 0x8000000000000005ull);
+
+    // 人工推 WaveStart 包（引擎侧 DirectorSystem 同款契约：[0]=波序号 [1]=计划数）
+    EventPacket p{};
+    p.type = GameEvent::WaveStart;
+    p.payload[0] = 2.0f; // 第 3 波（0 起）
+    p.payload[1] = 45.0f;
+    w.Events().Push(p);
+
+    w.Step(0.25f); // 帧末派发 → C# 订阅 → Ui.Set
+    bool slotOk = w.RtUi().Count() == 1;
+    if (slotOk) {
+        const RtUiSlot& slot = w.RtUi().At(0);
+        slotOk = std::strcmp(slot.key, "wave") == 0 &&
+                 std::strcmp(slot.text, "WAVE 3 x45") == 0 && slot.frac < 0.0f;
+    }
+    Expect(slotOk, "WaveStart -> Ui.Set wave banner (key/text/text-only)");
+}
+
 } // namespace
 
 int main() {
@@ -601,6 +639,7 @@ int main() {
     TestEventBridge();
     TestBehaviourAndStructuralOps();
     TestTimeScaleAndUiChannel();
+    TestWaveStartToUi();
 
     // M4.6 探针（编辑器切项目场景）：同进程二次 ScriptHost 生命周期。CoreCLR 运行时
     // 进程单例——第二次 Initialize 的真实行为必须钉板（成功/失败都合法，崩 = 缺陷）。

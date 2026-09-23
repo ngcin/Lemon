@@ -153,16 +153,41 @@ bool SeedBenchSurvivorScene(EditorContext& ctx) {
     gsp.maxAlive = 2000;
     gsp.spawnTeam = 2;
     gsp.range = 400.0f;
-    // Spawner：interval 0 = 每帧开闸、burst 64 → ~156 帧涨满 1 万
+    // Spawner：interval 0 = 每帧开闸、burst 64 → ~125 帧涨满 8000（M5 批② 导演化：
+    // 闸门 10000→8000，让 2000 头寸给 BenchDirector 波次——导演通道进压测口径）
     ecs::Entity spawner = ctx.CreateEntity("BenchSpawner");
     ecs::Spawner& sp = s.Emplace<ecs::Spawner>(spawner);
     sp.prefabId = (uint32_t)pguid; // 低 32 位（M5 清障②映射约定）
     sp.interval = 0.0f;
     sp.burst = 64;
-    sp.maxAlive = 10000;
+    sp.maxAlive = 8000;
     sp.spawnTeam = 1;
     sp.range = 600.0f;
     sp.cooldown = 0.0f;
+    // 导演（M5 批②）：3 波 × 4 条目（2×60/s + 2×30/s = 180/s/波），1s 起波每 5s
+    // 一波。注意波重叠 = 后波接管（前波条目废止）→ 计划容量按"仅末波满速"算：
+    // 15s（900 帧）窗口 ≈ 2520 出生 − 战斗击杀 ≈ 2200 净增，teamAlive 顶到
+    // capAlive 10000——alive>8000 即导演通道实证（波表数据驱动，Inspector 可编辑）
+    ecs::Entity director = ctx.CreateEntity("BenchDirector");
+    s.Get<ecs::Transform2D>(director).pos = Vec2{0.0f, 0.0f};
+    ecs::WaveDirector& wd = s.Emplace<ecs::WaveDirector>(director);
+    wd.spawnTeam = 1;
+    wd.capAlive = 10000;
+    wd.waveCount = 3;
+    for (int w = 0; w < 3; ++w) {
+        ecs::WaveDef& def = wd.waves[w];
+        def.startTime = 1.0f + 5.0f * (float)w;
+        def.rampMult = 1.0f;
+        def.entryCount = 4;
+        def.entries[0] = ecs::WaveEntry{.prefabId = (uint32_t)pguid, .count = 999,
+                                        .interval = 1.0f / 60.0f, .range = 550.0f};
+        def.entries[1] = ecs::WaveEntry{.prefabId = (uint32_t)pguid, .count = 999,
+                                        .interval = 1.0f / 60.0f, .range = 400.0f};
+        def.entries[2] = ecs::WaveEntry{.prefabId = (uint32_t)pguid, .count = 999,
+                                        .interval = 1.0f / 30.0f, .range = 300.0f};
+        def.entries[3] = ecs::WaveEntry{.prefabId = (uint32_t)pguid, .count = 999,
+                                        .interval = 1.0f / 30.0f, .range = 200.0f};
+    }
     LEMON_LOG("bench-survivor 播种：prefab guid %016llx（低 32 位 %08x）",
               (unsigned long long)pguid, sp.prefabId);
     return true;
@@ -2731,8 +2756,17 @@ int EditorApp::Run(const EditorLaunch& launch) {
     bool playVerified = true;
     double playEnterMs = 0, playExitMs = 0;
     uint32_t playAliveAtStop = 0;
-    if (launch.benchSurvivor && ctx_.Playing())
+    uint32_t benchTeam1Alive = 0, benchWavesStarted = 0;
+    if (launch.benchSurvivor && ctx_.Playing()) {
         benchPlayProfiles = ctx_.ActiveWorld().Pipeline().Profiles(); // ExitPlay 弃世界前留证
+        // 导演化证据（M5 批②）：waveIndex=已生效波数；team1 存活突破 Spawner 8000
+        // 闸门即导演出生实证（两通道同队，闸门语义见 03 §8 修订注）
+        ctx_.ActiveScene().View<ecs::Meta>().each([&](auto, ecs::Meta& m) {
+            if (m.team == 1) ++benchTeam1Alive;
+        });
+        ctx_.ActiveScene().View<ecs::WaveDirector>().each(
+            [&](auto, ecs::WaveDirector& w) { benchWavesStarted += w.waveIndex; });
+    }
     if (ctx_.Playing()) { // --play：跑满帧数后 Stop（恢复编辑世界）
         playAliveAtStop = ctx_.ActiveScene().AliveCount();
         playEnterMs = ctx_.LastEnterPlayMs();
@@ -2765,7 +2799,9 @@ int EditorApp::Run(const EditorLaunch& launch) {
         const double avg = benchFrameN ? benchFrameSum / (double)benchFrameN : 0.0;
         const double fps = avg > 0.0 ? 1000.0 / avg : 0.0;
         const bool aliveOk = playAliveAtStop >= 10000;
-        const bool pass = aliveOk && avg > 0.0 && avg <= 1000.0 / 45.0;
+        // 导演化批（M5 批②）：波次 ≥3 生效 + team1 突破 Spawner 8000 闸门
+        const bool directorOk = benchWavesStarted >= 3 && benchTeam1Alive > 8000;
+        const bool pass = aliveOk && avg > 0.0 && avg <= 1000.0 / 45.0 && directorOk;
         const double segN = benchFrameN ? (double)benchFrameN : 1.0;
         std::printf("[bench-survivor] 分段avg ms: pump=%.2f sim=%.2f glue=%.2f ui=%.2f "
                     "acquire=%.2f scene=%.2f uidraw=%.2f present=%.2f | segSum=%.2f\n",
@@ -2777,10 +2813,12 @@ int EditorApp::Run(const EditorLaunch& launch) {
                         segN);
         std::printf("[bench-survivor] frames=%u warmup=%u alive=%u stepAvg=%.2fms "
                     "frameAvg=%.2fms frameMax=%.2fms fps=%.0f present=IMMEDIATE(请求)"
+                    " director(waves=%u teamAlive=%u/闸8000)"
                     " => %s\n",
                     (unsigned)frame, (unsigned)kBenchWarmup, playAliveAtStop,
                     benchSimSum / segN, avg,
-                    benchFrameMax, fps, pass ? "PASS" : "FAIL");
+                    benchFrameMax, fps, benchWavesStarted, benchTeam1Alive,
+                    pass ? "PASS" : "FAIL");
         // 性能批②①：sim 系统级分解（测量窗口 = 预热后 ZeroProfiles 起；avg=totalMs/runs）
         {
             std::vector<ecs::SystemProfile> rows;

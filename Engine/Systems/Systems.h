@@ -50,11 +50,20 @@ public:
     void Tick(World& world, Scene& scene, float dt) override;
 };
 
-/// #2 刷怪导演：M5（波次表/budget/capAlive）；M2 占位
+/// #2 刷怪导演：波次表（WaveDirector 组件，数据驱动）→ 直接经 SpawnFn 出生 +
+/// WaveStart/Spawn 事件；capAlive 同队闸门（30 tick 普查"约"语义）。M5 批②。
 class DirectorSystem final : public ISystem {
 public:
     const char* Name() const override { return "Director"; }
     void Tick(World& world, Scene& scene, float dt) override;
+
+    static constexpr uint32_t kCensusInterval = 30; // 普查周期（tick；SpawnSystem 同款）
+
+private:
+    void Census(Scene& scene);
+    std::vector<uint32_t> teamCounts_;
+    uint32_t censusCountdown_ = 0; // 0 = 本 tick 普查（首 tick 必普查）
+    bool warnedNoFactory_ = false; // 无工厂告警一次（仅场景确有导演时）
 };
 
 /// #3 出生系统：Spawner cooldown → 预制体工厂实例化 + Spawn 事件；

@@ -468,6 +468,7 @@ void TestRingQueue() {
 #include "Components/RenderComponents.h"
 #include "ECS/ComponentRegistry.h"
 #include "ECS/Scene.h"
+#include "ECS/StateHash.h"
 #include "ECS/World.h"
 
 using namespace lemon::ecs;
@@ -543,7 +544,7 @@ void TestWorldServices() {
 void TestComponentRegistry() {
     RegisterAllComponents();
     auto& reg = ComponentRegistry::Instance();
-    Expect(reg.Count() == 27, "catalog count (5 core + 4 render + 12 behavior + 6 gameplay)");
+    Expect(reg.Count() == 28, "catalog count (5 core + 4 render + 12 behavior + 6 gameplay + M5 批② WaveDirector)");
 
     // 按 name 可查、id 稳定
     const ComponentMeta* tf = reg.Find("Transform2D");
@@ -592,7 +593,7 @@ void TestVerifyWorldAutoRegistersCatalog() {
     // ISSUE-9 回归：World 构造即登记组件目录——bench-sim 曾漏调 RegisterAllComponents，
     // StateHash 遍历空注册表逐帧恒等，M2 回放验收恒真空转（M3-0 修复，2026-09-19）
     World world;
-    Expect(ComponentRegistry::Instance().Count() == 27, "world ctor auto-registers catalog");
+    Expect(ComponentRegistry::Instance().Count() == 28, "world ctor auto-registers catalog");
 }
 
 } // namespace
@@ -1483,6 +1484,275 @@ void TestVerifyPickupXpLevelUp() {
     Expect(pickups == 1 && levelUps == 1, "pickup + level-up same tick");
     Expect(x.level == 2 && ExpectNear0(x.xp, 5.0f), "level 2 with carry 5");
     Expect(ExpectNear0(x.xpToNext, 7.0f), "xpToNext = ceil(5*1.25) = 7");
+}
+
+// ---- M5 批②：导演波次（WaveDirector 组件 + DirectorSystem；M5-Plan §11.2）----
+namespace { // 导演测试共用：计数工厂（prefab 1 = 最小怪：Transform+Meta）
+struct WaveSpawnCounter {
+    int spawns = 0;
+    Vec2 lastPos{999, 999};
+    uint32_t lastTeam = 99;
+    Entity operator()(Scene& sc, uint32_t prefabId, Vec2 pos, uint32_t team) {
+        if (prefabId != 1) return Entity::Null();
+        Entity e = sc.Create();
+        sc.Emplace<Transform2D>(e, Transform2D{pos});
+        sc.Emplace<Meta>(e).team = team;
+        ++spawns;
+        lastPos = pos;
+        lastTeam = team;
+        return e;
+    }
+};
+void InstallDirectorPipeline(World& w) {
+    w.Pipeline().AddSystem(std::make_unique<DirectorSystem>());
+    w.Pipeline().AddSystem(std::make_unique<ScriptEventDispatchSystem>());
+    w.Pipeline().AddSystem(std::make_unique<DestroyCommitSystem>());
+    w.Pipeline().ResolveOrder();
+}
+} // namespace
+
+// 波推进时刻 / WaveStart 契约 / 出生环与队伍覆盖 / 晚波不生效（D3/D5/D6）
+void TestWaveDirectorWavesAndEvent() {
+    World world;
+    Scene& s = world.CreateScene("wdir");
+    world.SetActiveScene(&s);
+    WaveSpawnCounter ctr;
+    world.SetSpawnFn([&ctr](Scene& sc, uint32_t id, Vec2 pos, uint32_t team) {
+        return ctr(sc, id, pos, team);
+    });
+
+    Entity dir = s.Create();
+    s.Emplace<Transform2D>(dir, Transform2D{{100, 0}});
+    WaveDirector& wd = s.Emplace<WaveDirector>(dir);
+    wd.spawnTeam = 1;
+    wd.waveCount = 3;
+    wd.waves[0] = WaveDef{.startTime = 0.5f};
+    wd.waves[0].entryCount = 1;
+    wd.waves[0].entries[0] = WaveEntry{.prefabId = 1, .count = 3, .interval = 0.1f, .range = 50.0f};
+    wd.waves[1] = WaveDef{.startTime = 1.5f};
+    wd.waves[1].entryCount = 1;
+    wd.waves[1].entries[0] = WaveEntry{.prefabId = 1, .count = 2, .interval = 0.1f, .range = 50.0f};
+    wd.waves[2] = WaveDef{.startTime = 99.0f}; // 窗口外：永不生效
+    wd.waves[2].entryCount = 1;
+    wd.waves[2].entries[0] = WaveEntry{.prefabId = 1, .count = 7, .interval = 0.1f, .range = 50.0f};
+
+    int waveStarts = 0;
+    float planned0 = -1.0f, index1 = -1.0f;
+    world.SetEventSink([&](World&, const EventPacket& e) {
+        if (e.type != GameEvent::WaveStart) return;
+        ++waveStarts;
+        if (e.payload[0] < 0.5f) planned0 = e.payload[1];
+        else index1 = e.payload[0];
+    });
+    InstallDirectorPipeline(world);
+
+    const float dt = 1.0f / 60.0f;
+    for (int i = 0; i < 30; ++i) world.Step(dt);
+    Expect(waveStarts == 1, "wave 0 fires at t=0.5s (tick 30)");
+    for (int i = 30; i < 120; ++i) world.Step(dt);
+    Expect(waveStarts == 2, "wave 1 at t=1.5s; wave 2 (99s) never");
+    Expect(ctr.spawns == 5, "3 + 2 spawned; late wave not started");
+    Expect(planned0 == 3.0f && index1 == 1.0f, "payload [0]=wave index [1]=planned total");
+    Expect(Length(ctr.lastPos - Vec2{100, 0}) <= 50.0f + 1e-4f, "spawn within entry range ring");
+    Expect(ctr.lastTeam == 1, "spawn team override");
+    Expect(s.Get<WaveDirector>(dir).waveIndex == 2, "wave cursor = started waves");
+}
+
+// rampMult 加速（interval/rampMult）+ 波重叠 = 后波接管（D3）
+void TestWaveDirectorRampAndOverlap() {
+    const float dt = 1.0f / 60.0f;
+    // ramp 2：interval 0.1 → 有效 0.05s = 3 tick/生 → 12 tick 内 4 生（基线仅 2）
+    {
+        World world;
+        Scene& s = world.CreateScene("ramp2");
+        world.SetActiveScene(&s);
+        WaveSpawnCounter ctr;
+        world.SetSpawnFn([&ctr](Scene& sc, uint32_t id, Vec2 pos, uint32_t team) {
+            return ctr(sc, id, pos, team);
+        });
+        Entity dir = s.Create();
+        s.Emplace<Transform2D>(dir, Transform2D{{0, 0}});
+        WaveDirector& wd = s.Emplace<WaveDirector>(dir);
+        wd.waveCount = 1;
+        wd.waves[0] = WaveDef{.startTime = 0.0f, .rampMult = 2.0f};
+        wd.waves[0].entryCount = 1;
+        wd.waves[0].entries[0] = WaveEntry{.prefabId = 1, .count = 4, .interval = 0.1f};
+        InstallDirectorPipeline(world);
+        for (int i = 0; i < 12; ++i) world.Step(dt);
+        Expect(ctr.spawns == 4, "rampMult 2: 4 spawns in 12 ticks (3-tick cadence)");
+    }
+    // 双波同 tick 到期：WaveStart ×2 但仅后波持有运行时（前波条目废止）
+    {
+        World world;
+        Scene& s = world.CreateScene("ovl");
+        world.SetActiveScene(&s);
+        WaveSpawnCounter ctr;
+        world.SetSpawnFn([&ctr](Scene& sc, uint32_t id, Vec2 pos, uint32_t team) {
+            return ctr(sc, id, pos, team);
+        });
+        Entity dir = s.Create();
+        s.Emplace<Transform2D>(dir, Transform2D{{0, 0}});
+        WaveDirector& wd = s.Emplace<WaveDirector>(dir);
+        wd.waveCount = 2;
+        wd.waves[0].startTime = 0.0f;
+        wd.waves[0].entryCount = 1;
+        wd.waves[0].entries[0] = WaveEntry{.prefabId = 1, .count = 5, .interval = 0.1f};
+        wd.waves[1].startTime = 0.0f; // 同 tick 到期 → 接管
+        wd.waves[1].entryCount = 1;
+        wd.waves[1].entries[0] = WaveEntry{.prefabId = 1, .count = 2, .interval = 0.1f};
+        int waveStarts = 0;
+        world.SetEventSink([&](World&, const EventPacket& e) {
+            if (e.type == GameEvent::WaveStart) ++waveStarts;
+        });
+        InstallDirectorPipeline(world);
+        for (int i = 0; i < 60; ++i) world.Step(dt);
+        Expect(waveStarts == 2, "both overlapping waves announce");
+        Expect(ctr.spawns == 2, "later wave takes over; earlier entries dropped");
+    }
+}
+
+// capAlive 同队闸门：普查 + 乐观自增 → 精确停在闸值（D4）
+void TestWaveDirectorCapAlive() {
+    World world;
+    Scene& s = world.CreateScene("cap");
+    world.SetActiveScene(&s);
+    WaveSpawnCounter ctr;
+    world.SetSpawnFn([&ctr](Scene& sc, uint32_t id, Vec2 pos, uint32_t team) {
+        return ctr(sc, id, pos, team);
+    });
+    Entity dir = s.Create();
+    s.Emplace<Transform2D>(dir, Transform2D{{0, 0}});
+    WaveDirector& wd = s.Emplace<WaveDirector>(dir);
+    wd.spawnTeam = 1;
+    wd.capAlive = 2;
+    wd.waveCount = 1;
+    wd.waves[0].startTime = 0.0f;
+    wd.waves[0].entryCount = 1;
+    wd.waves[0].entries[0] = WaveEntry{.prefabId = 1, .count = 10, .interval = 1.0f / 60.0f};
+    InstallDirectorPipeline(world);
+
+    const float dt = 1.0f / 60.0f;
+    for (int i = 0; i < 120; ++i) world.Step(dt);
+    uint32_t alive = 0;
+    s.View<Meta>().each([&](auto, Meta& m) {
+        if (m.team == 1) ++alive;
+    });
+    Expect(ctr.spawns == 2, "capAlive 2: exactly 2 births, no retry churn");
+    Expect(alive == 2, "team alive holds at cap");
+}
+
+// timeScale=0 冻结波次（time 停、零事件零出生、RNG 不消耗；恢复即照发——D3×批① D5）
+void TestWaveDirectorTimeScaleFreeze() {
+    World world;
+    Scene& s = world.CreateScene("frz");
+    world.SetActiveScene(&s);
+    WaveSpawnCounter ctr;
+    world.SetSpawnFn([&ctr](Scene& sc, uint32_t id, Vec2 pos, uint32_t team) {
+        return ctr(sc, id, pos, team);
+    });
+    Entity dir = s.Create();
+    s.Emplace<Transform2D>(dir, Transform2D{{0, 0}});
+    WaveDirector& wd = s.Emplace<WaveDirector>(dir);
+    wd.waveCount = 1;
+    wd.waves[0].startTime = 0.5f;
+    wd.waves[0].entryCount = 1;
+    wd.waves[0].entries[0] = WaveEntry{.prefabId = 1, .count = 3, .interval = 0.1f};
+    int waveStarts = 0;
+    world.SetEventSink([&](World&, const EventPacket& e) {
+        if (e.type == GameEvent::WaveStart) ++waveStarts;
+    });
+    InstallDirectorPipeline(world);
+
+    const float dt = 1.0f / 60.0f;
+    world.SetTimeScale(0.0f);
+    for (int i = 0; i < 60; ++i) world.Step(dt);
+    Expect(waveStarts == 0 && ctr.spawns == 0, "frozen: no wave, no spawn");
+    Expect(s.Get<WaveDirector>(dir).time == 0.0f, "director time frozen at 0");
+
+    world.SetTimeScale(1.0f);
+    for (int i = 0; i < 30; ++i) world.Step(dt);
+    Expect(waveStarts == 1 && ctr.spawns >= 1, "resume: wave fires on schedule");
+}
+
+// 波表 roundtrip；运行时（time/waveIndex/cd/spawned）不入档（T1 登记表护栏）
+void TestWaveDirectorArchive() {
+    World world;
+    Scene& src = world.CreateScene("warc");
+    Entity e = src.Create();
+    src.Emplace<Transform2D>(e, Transform2D{{7, 8}});
+    WaveDirector& wd = src.Emplace<WaveDirector>(e);
+    wd.spawnTeam = 3;
+    wd.capAlive = 777;
+    wd.waveCount = 2;
+    wd.waves[0].startTime = 1.25f;
+    wd.waves[0].rampMult = 2.5f;
+    wd.waves[0].entryCount = 2;
+    wd.waves[0].entries[0] = WaveEntry{.prefabId = 0xAABBCCDDu, .count = 11, .interval = 0.05f, .range = 333.0f};
+    wd.waves[0].entries[1] = WaveEntry{.prefabId = 7, .count = 1, .interval = 0.2f, .range = 40.0f};
+    wd.waves[1].startTime = 30.0f;
+    wd.waves[1].entryCount = 1;
+    wd.waves[1].entries[0] = WaveEntry{.prefabId = 9, .count = 5, .interval = 0.1f, .range = 60.0f};
+    // RT 污染（读档必须回落默认）
+    wd.time = 9.9f;
+    wd.waveIndex = 1;
+    wd.waveCooldown[1] = 0.42f;
+    wd.waveSpawned[2] = 3;
+
+    const std::string text = SceneArchive::Save(src);
+    Expect(text.find("\"waves\"") != std::string::npos, "wave table serialized");
+    Expect(text.find("\"e0prefab\"") != std::string::npos, "flattened entry keys serialized");
+    Expect(text.find("\"cd0\"") == std::string::npos, "cooldown RT not serialized");
+    Expect(text.find("\"waveIndex\"") == std::string::npos, "waveIndex RT not serialized");
+
+    World w2;
+    Scene& dst = w2.CreateScene("warc2");
+    Expect(SceneArchive::Load(dst, text), "wave scene load");
+    dst.View<WaveDirector>().each([&](auto, WaveDirector& r) {
+        Expect(r.spawnTeam == 3 && r.capAlive == 777, "director config roundtrip");
+        Expect(r.waveCount == 2, "wave count roundtrip");
+        Expect(r.waves[0].startTime == 1.25f && r.waves[0].rampMult == 2.5f, "wave 0 header");
+        Expect(r.waves[0].entries[0].prefabId == 0xAABBCCDDu &&
+                   r.waves[0].entries[0].count == 11 &&
+                   r.waves[0].entries[0].interval == 0.05f &&
+                   r.waves[0].entries[0].range == 333.0f, "entry 0 roundtrip");
+        Expect(r.waves[0].entryCount == 2 && r.waves[0].entries[1].count == 1, "entry 1 roundtrip");
+        Expect(r.waves[1].startTime == 30.0f && r.waves[1].entries[0].prefabId == 9, "wave 1 roundtrip");
+        Expect(r.time == 0.0f && r.waveIndex == 0 && r.waveCooldown[1] == 0.0f &&
+                   r.waveSpawned[2] == 0, "runtime fields default after load");
+    });
+}
+
+// 孪生世界同种子：RNG 子流 1 消费序 + seg 原始字节零化 → StateHash 相等（§13 护栏）
+void TestWaveDirectorDeterminism() {
+    auto run = [](uint64_t& hashOut, int& spawnsOut) {
+        World world;
+        Scene& s = world.CreateScene("det");
+        world.SetActiveScene(&s);
+        WaveSpawnCounter ctr;
+        world.SetSpawnFn([&ctr](Scene& sc, uint32_t id, Vec2 pos, uint32_t team) {
+            return ctr(sc, id, pos, team);
+        });
+        Entity dir = s.Create();
+        s.Emplace<Transform2D>(dir, Transform2D{{10, -5}});
+        WaveDirector& wd = s.Emplace<WaveDirector>(dir);
+        wd.waveCount = 2;
+        wd.waves[0].startTime = 0.0f;
+        wd.waves[0].entryCount = 1;
+        wd.waves[0].entries[0] = WaveEntry{.prefabId = 1, .count = 8, .interval = 0.05f, .range = 50.0f};
+        wd.waves[1].startTime = 1.0f;
+        wd.waves[1].entryCount = 1;
+        wd.waves[1].entries[0] = WaveEntry{.prefabId = 1, .count = 4, .interval = 0.1f, .range = 30.0f};
+        InstallDirectorPipeline(world);
+        for (int i = 0; i < 300; ++i) world.Step(1.0f / 60.0f);
+        hashOut = ComputeStateHash(s);
+        spawnsOut = ctr.spawns;
+    };
+    uint64_t ha = 0, hb = 0;
+    int sa = 0, sb = 0;
+    run(ha, sa);
+    run(hb, sb);
+    Expect(sa == 12 && sa == sb, "both worlds spawn full wave tables (RNG path exercised)");
+    Expect(ha == hb, "twin worlds: identical state hash");
 }
 
 // timeScale（M5 批① T3）：Step 内缩放 dt；=0 冻结（位置不动、tick 照推）、
@@ -3070,6 +3340,12 @@ int main() {
     TestVerifyHitMemoryAndPierce();
     TestVerifyMagnetAndPickup();
     TestVerifyPickupXpLevelUp();
+    TestWaveDirectorWavesAndEvent();
+    TestWaveDirectorRampAndOverlap();
+    TestWaveDirectorCapAlive();
+    TestWaveDirectorTimeScaleFreeze();
+    TestWaveDirectorArchive();
+    TestWaveDirectorDeterminism();
     TestVerifyTimeScale();
     TestNoDoubleDeathEvents();
     TestHierarchyChainLifecycle();
