@@ -46,7 +46,7 @@ int NativeWrite(uint64_t e, uint8_t id, const void* src, uint32_t size) {
     return (int)m.sizeOf;
 }
 
-// ---- M4.4 SDK 增量（M4-Editor-Plan §4-8）----
+// ---- M4.4 SDK 增量（M4.md §4-8）----
 // 编辑器资产钩子（进程级；编辑器宿主装配期注入，纯运行时为空）
 EditorAssetHooks g_editorAssets{nullptr, nullptr};
 } // namespace

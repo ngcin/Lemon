@@ -1,4 +1,4 @@
-// Lemon 编辑器 — Profiler 面板（M4-Editor-Plan §2.2）
+// Lemon 编辑器 — Profiler 面板（M4.md §2.2）
 // 数据源与 --stats/F3 同源：SystemPipeline::Profiles + RHI LastFrameTiming +
 // ScriptHost::GcAllocated（M4.3 脚本域接入后显示；GC 红字口径 = 每帧托管分配 > 0）。
 #include <cstring>

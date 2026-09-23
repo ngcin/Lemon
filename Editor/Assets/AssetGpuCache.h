@@ -1,4 +1,4 @@
-// Lemon 编辑器 — 资产 GPU 缓存（M4-Editor-Plan §5 M4.4 导入器；06 §2.2 sprite 族）
+// Lemon 编辑器 — 资产 GPU 缓存（M4.md §5 M4.4 导入器；06 §2.2 sprite 族）
 // PNG/JPG 解码（stb_image）→ 每文件独立纹理页（bindless 槽 2..；一页一 sprite
 // 全幅 uv——切片/图集打包 M5+/M6）→ AtlasRegistry 登记（spriteId 由 AssetDatabase
 // 持久分配；导入顺序 = spriteId 升序 → 与追加式登记天然对齐）。

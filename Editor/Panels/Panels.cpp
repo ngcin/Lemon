@@ -16,7 +16,7 @@ namespace lemon::editor {
 namespace {
 
 // -------------------------------------------------------------- Console ----
-// 实装：引擎日志环 + 分级过滤/清空/自动滚动（M4-Editor-Plan §2.2；M4.3 补脚本异常源标记）
+// 实装：引擎日志环 + 分级过滤/清空/自动滚动（M4.md §2.2；M4.3 补脚本异常源标记）
 // M4.7a：徽标计数常显（Info/Warn/Error 行数随过滤勾标注出，非零警示级着色）
 class ConsolePanel final : public IEditorPanel {
 public:

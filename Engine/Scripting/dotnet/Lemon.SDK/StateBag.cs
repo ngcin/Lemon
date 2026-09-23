@@ -1,4 +1,4 @@
-// Lemon.SDK — 热重载状态迁移包（04 §6 协议；M4-Editor-Plan §3.7）
+// Lemon.SDK — 热重载状态迁移包（04 §6 协议；M4.md §3.7）
 // 跨域存活：StateBag 定义于 Lemon.SDK（常驻 ALC），旧域 OnHotReloadOut 写入、
 // 新域 OnHotReloadIn 读取，字典本体在换装间由 Behaviours 静态持有。
 // 值白名单（04 §6 回填口径）：基元值类型（int/uint/long/ulong/float/double/bool/byte）

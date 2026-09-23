@@ -38,7 +38,7 @@ struct NativeApiVtable {
     int (*hasComponent)(uint64_t, uint8_t);
     int (*readComponent)(uint64_t, uint8_t, void*, uint32_t);
     int (*writeComponent)(uint64_t, uint8_t, const void*, uint32_t);
-    // ---- M4.4 SDK 最小增量（M4-Editor-Plan §4-8；表尾追加 = 旧宿主零扰动）----
+    // ---- M4.4 SDK 最小增量（M4.md §4-8；表尾追加 = 旧宿主零扰动）----
     void (*getInput)(uint64_t* buttons, float* ax, float* ay);      // 当前 InputState 快照
     uint32_t (*spriteOfGuid)(const char*);                          // 资产 GUID → spriteId（0=无）
     uint64_t (*spawnSprite)(uint32_t, float, float);                // Instantiate.Spawn → 实体句柄
@@ -94,7 +94,7 @@ public:
     /// 用户程序集装载（可回收 ALC + GameMain.Configure）+ 拉取批量系统注册表。
     bool LoadUserAssembly(const char* path);
 
-    // ---- M4.5 热重载（ADR-010 A 线整域重建；M4-Editor-Plan §3.7）----
+    // ---- M4.5 热重载（ADR-010 A 线整域重建；M4.md §3.7）----
     struct HotReloadInfo {
         bool ok = false;       // 新域可用
         int reloadCount = 0;   // 累计换装次数

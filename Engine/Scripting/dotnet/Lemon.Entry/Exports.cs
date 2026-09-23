@@ -98,7 +98,7 @@ internal static unsafe class Exports
         }
     }
 
-    /// <summary>换装次数 / 累计泄漏次数（Profiler 常驻显示；M4-Editor-Plan §3.7）。</summary>
+    /// <summary>换装次数 / 累计泄漏次数（Profiler 常驻显示；M4.md §3.7）。</summary>
     [UnmanagedCallersOnly]
     public static int lemon_hr_reloads() => DomainManager.ReloadCount;
 

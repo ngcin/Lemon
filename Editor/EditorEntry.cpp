@@ -1,4 +1,4 @@
-// Lemon 编辑器 — 入口（M4-Editor-Plan §1.1：lemon-editor 可执行目标；同源双入口 ADR-005）
+// Lemon 编辑器 — 入口（M4.md §1.1：lemon-editor 可执行目标；同源双入口 ADR-005）
 // 用法：
 //   lemon-editor                                   # 交互编辑
 //   lemon-editor --validate                        # Vulkan 验证层常开

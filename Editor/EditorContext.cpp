@@ -427,7 +427,7 @@ ecs::Entity EditorContext::SpawnPlayPrefab(ecs::Scene& s, uint32_t prefabId, Vec
 }
 
 // ---- M5 批③：Play 世界 clip 表（.clip JSON → ClipTable；06 §2.2 / 03 §5）----
-// 格式（M5-Plan §16.2 D2）：
+// 格式（M5.md §16.2 D2）：
 //   { "schemaVersion": 1, "fps": 8, "loop": true,
 //     "frames": [ {"sheet": "<guidHex>", "cell": 0}, ... ] }
 // 帧引用 = 精灵表资产 GUID + 切片序号（行优先）——不直接存 spriteId（manifest 重排

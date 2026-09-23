@@ -1,4 +1,4 @@
-// Lemon.SDK — Assets 查询 + Instantiate/Spawn（M4-Editor-Plan §4-8 最小增量）
+// Lemon.SDK — Assets 查询 + Instantiate/Spawn（M4.md §4-8 最小增量）
 // Assets.SpriteOf：编辑器资产库 GUID → spriteId（纯运行时无资产库 = 0，调用方自查）。
 // Instantiate：Spawn 就地建实体（当帧已构造的批量块不受影响，下帧对系统可见——
 // 与 SceneOps 命令缓冲同一跨帧语义）；Prefab 走编辑器资产库（运行时打包后接

@@ -1,4 +1,4 @@
-// Lemon.SDK — Input 语义读取（M4-Editor-Plan §4-8 最小增量 / ADR-010 D4 分期）
+// Lemon.SDK — Input 语义读取（M4.md §4-8 最小增量 / ADR-010 D4 分期）
 // 读 World 当前 InputState 快照（编辑器 GameView 门控注入 / 运行时平台采样）。
 // 位分配与 lemon::ecs::InputState 一致（bit0=up 1=down 2=left 3=right 4=attack）；
 // 完整输入动作表/手柄 M5（03 §4）。

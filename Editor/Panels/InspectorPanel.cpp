@@ -1,4 +1,4 @@
-// Lemon 编辑器 — Inspector 面板（M4-Editor-Plan §2.2；内核 #6 消费端）
+// Lemon 编辑器 — Inspector 面板（M4.md §2.2；内核 #6 消费端）
 // 反射驱动：ComponentRegistry 字段表 + FieldEditorMeta 特性 → 控件；新增登记组件
 // 零编辑器代码出现在此（验收点）。编辑直写组件 + ctx.dirty；
 // Undo 属性轨 M4.2 接入（IsItemActivated/Deactivated 拖拽合并）。
@@ -632,7 +632,7 @@ void InspectorPanel::OnGui(EditorApp& app) {
         ImGui::TextDisabled("id %llu  guid %016llx", (unsigned long long)e.id,
                             (unsigned long long)m->guid);
 
-        // Prefab 头栏（M4-Editor-Plan §3.9 最小集：Apply/Revert/Break；逐字段
+        // Prefab 头栏（M4.md §3.9 最小集：Apply/Revert/Break；逐字段
         // override 高亮 = 砍单候补 #1，M5）
         if (m->prefabId) {
             const AssetEntry* pf = ctx.Assets().FindByGuid(m->prefabId);

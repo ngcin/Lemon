@@ -83,7 +83,7 @@ void InputSnapshotSystem::Tick(World& world, Scene& scene, float dt) {
 // --------------------------------------------------------------- #2 导演 --
 // M5 批②（03 §8 修订形态）：波次表 = WaveDirector 组件（数据驱动，数组段序列化）；
 // 导演 = 第二条刷怪通道——直接经 World::GetSpawnFn() 出生（Spawner 保留常驻环境
-// 刷怪语义，互不派发）。决策 M5-Plan §11.2 D2–D6：
+// 刷怪语义，互不派发）。决策 M5.md §11.2 D2–D6：
 //   * time 吃缩放 dt（批① D5：timeScale=0 冻结波次、RNG 不消耗）；
 //   * 波重叠 = 后波接管（同 tick 多波到期按表序全部生效，仅最后一波持运行时）；
 //   * capAlive 与 SpawnSystem 同款 30 tick 普查 + 乐观自增（"约"语义压测红线）；
@@ -755,7 +755,7 @@ void AnimatorSystem::Tick(World& world, Scene& scene, float dt) {
     // M5 批③：clip 表帧映射（03 §5）。有 clip = 纯函数帧号 time*fps 截断 + 写
     // curFrame/sr.spriteId（逐帧重写幂等，无逐帧累加状态机 → 回放确定）；
     // 无 clip（clipId=0/表未命中/未登记）= M2 旧路径逐位保留——既有场景零漂移
-    // （金回放零重录的机制保证，M5-Plan §18）。
+    // （金回放零重录的机制保证，M5.md §18）。
     const ClipTable& clips = world.Clips();
     bool anyClip = clips.Count() > 0; // 空表 = 全体走 M2（省每实体 Find）
     auto view = scene.View<Animator2D>();

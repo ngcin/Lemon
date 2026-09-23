@@ -4,7 +4,7 @@ using Lemon.Interop;
 
 /// <summary>vs-survivor 模板玩家（M5 批④）：8 向移动 + HUD 四要素 + 升级三选一
 /// （固定序轮换，零 RNG）+ 环绕刃自愈 + 击杀掉宝石 + 死亡结算/复活（R 键）。
-/// 单类挂玩家实体（多脚本 scripts[] 属 M5 余项，见 M5-Plan §21.2 D4 注）。</summary>
+/// 单类挂玩家实体（多脚本 scripts[] 属 M5 余项，见 M5.md §21.2 D4 注）。</summary>
 public sealed class PlayerBehaviour : LemonBehaviour
 {
     // 模板资产 GUID（Templates/vs-survivor 生成期固定——引用锚点，勿改）

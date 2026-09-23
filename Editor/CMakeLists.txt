@@ -1,4 +1,4 @@
-# Lemon 编辑器（M4-Editor-Plan §3.1/§3.2）
+# Lemon 编辑器（M4.md §3.1/§3.2）
 # 纪律：
 #   * ImGui 头文件只准出现在本目录（lemon-engine 零 ImGui 引用；tests/imgui_isolation.cmake 断言）
 #   * App/ImGuiBackend.cpp 是本目录唯一含 Vulkan 头的 TU（后端 glue 豁免，07 例外登记）

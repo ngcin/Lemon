@@ -1,4 +1,4 @@
-// Lemon 编辑器 — AssetBrowser 面板（M4-Editor-Plan §2.2/§5 M4.4）
+// Lemon 编辑器 — AssetBrowser 面板（M4.md §2.2/§5 M4.4）
 // 数据源：AssetDatabase（GUID/.meta/manifest）+ AssetGpuCache 缩略图。
 // 交互：目录树 + 缩略图网格；拖拽 sprite 进 SceneView = 建实体、进 Inspector
 // sprite 槽 = 设引用；拖 prefab 进 SceneView/Hierarchy = 实例化；右键导入/

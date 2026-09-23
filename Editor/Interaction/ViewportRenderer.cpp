@@ -1,4 +1,4 @@
-// Lemon 编辑器 — 视口渲染器实现（M4-Editor-Plan §2.2/§3.1；内核 #2/#4/#11/#13）
+// Lemon 编辑器 — 视口渲染器实现（M4.md §2.2/§3.1；内核 #2/#4/#11/#13）
 #include "Interaction/ViewportRenderer.h"
 
 #include <algorithm>

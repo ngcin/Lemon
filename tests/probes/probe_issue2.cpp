@@ -5,7 +5,7 @@
 //   ② StatusEffects 只写 count=200（无 active 键）：Load 应钳到容量 4（warn 一条/
 //      实体），StatSystem tick 后 count=0、active[*].id=0、无内存污染
 //      （ISSUE-2：修复前按 count 越界读写，8 实体落池内静默、1000 实体 ASan 实锤
-//       heap-buffer-overflow @ StatSystem —— 见 M2-Review-Checklist.md §7.1/7.2）
+//       heap-buffer-overflow @ StatSystem —— 见 docs/Reports/2026-09-19-m2-review-checklist.md §7.1/7.2）
 //   ③ 1000 实体 count=511（截断 255）：同上，ASan 全程零报告
 //
 // 编译运行（macOS，ASan；依赖头在 CPM 缓存，路径以本机为准）：

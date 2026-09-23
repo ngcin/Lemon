@@ -1,6 +1,6 @@
-# M4.0 验收断言（M4-Editor-Plan §5）：ImGui 头文件只准出现在 Editor/。
+# M4.0 验收断言（M4.md §5）：ImGui 头文件只准出现在 Editor/。
 # lemon-engine（Engine/ 树）任何源文件出现 imgui 引用即 FAIL。
-# ctest 条目见 tests/CMakeLists.txt；新增绕行需先改 M4-Editor-Plan §3.2 并记 ADR。
+# ctest 条目见 tests/CMakeLists.txt；新增绕行需先改 M4.md §3.2 并记 ADR。
 file(GLOB_RECURSE _engine_sources
   "${CMAKE_CURRENT_LIST_DIR}/../Engine/*.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/../Engine/*.h")

@@ -1,4 +1,4 @@
-// Lemon 编辑器 — 应用壳（M4-Editor-Plan §3.1：EditorEntry/主循环/帧节奏/布局持久化）
+// Lemon 编辑器 — 应用壳（M4.md §3.1：EditorEntry/主循环/帧节奏/布局持久化）
 // 主循环 = anim-smoke 全链基线外层套 ImGui 帧节奏（M4.0 壳 + UI；World/场景 M4.1 起）。
 #pragma once
 
@@ -35,7 +35,7 @@ class AssetBrowserPanel;
 struct EditorLaunch {
     int frames = 0;          // 0 = 无限；>0 = 跑 N 帧退出（冒烟）
     bool validate = false;   // Vulkan 验证层（编辑器改动默认开，AGENTS 纪律）
-    bool smoke = false;      // 退出前自检断言 + 汇总打印（M4-Editor-Plan §6 #13 提案）
+    bool smoke = false;      // 退出前自检断言 + 汇总打印（M4.md §6 #13 提案）
     bool demoWindow = false; // 叠加 Dear ImGui Demo（冒烟画面丰富度/手动排障）
     std::string screenshot;  // 非空 = 末帧截屏写 PNG（stb_image_write）
     std::string projectDir;  // --project（M4.4 生效：AssetDatabase 根；空 = cwd 当项目）
@@ -106,7 +106,7 @@ public:
     bool OpenProjectPipeline(const std::string& projectRoot);
     /// 装配脚本宿主（dll 绝对路径；失败清 host 并告警）。--script 与项目 Game/ 共用
     bool InitScriptHostFrom(const std::string& dllAbs);
-    /// 编译 Game/ + 整域换装 + 双世界重装配 + 计时/泄漏红字（M4-Editor-Plan §3.7）
+    /// 编译 Game/ + 整域换装 + 双世界重装配 + 计时/泄漏红字（M4.md §3.7）
     bool TryHotReloadScripts(const char* reason);
     /// 手动触发（菜单"重新编译脚本"）
     void MenuRebuildScripts();

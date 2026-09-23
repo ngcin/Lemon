@@ -1,4 +1,4 @@
-// Lemon 编辑器 — 视口渲染器（M4-Editor-Plan §2.2 SceneView/GameView；内核 #2/#4/#11/#13）
+// Lemon 编辑器 — 视口渲染器（M4.md §2.2 SceneView/GameView；内核 #2/#4/#11/#13）
 // 职责：
 //   * ECS → RenderableManager 提取（世界矩阵合成消费内核 #1；销毁/禁用释放 #2；
 //     场景切换映射失效 #4）

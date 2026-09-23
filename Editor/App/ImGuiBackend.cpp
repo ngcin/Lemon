@@ -25,7 +25,7 @@ namespace lemon::editor {
 
 // ------------------------------------------------------------- 字体来源 ----
 // 运行时加载系统 CJK 字体（TrueType 轮廓；stb_truetype 不支持 CFF）。
-// 内嵌 OFL 字体子集是打包项（05 §10 / M4-Editor-Plan §2.3），开发期用系统字体
+// 内嵌 OFL 字体子集是打包项（05 §10 / M4.md §2.3），开发期用系统字体
 // 满足冒烟红线；此处按平台给出候选列表，取首个可加载者。
 static const char* kCjkFontCandidates[] = {
 #if defined(__APPLE__)
@@ -117,7 +117,7 @@ bool ImGuiBackend::Init(Window& window, rhi::Device& device, const char* iniDir,
     m->window = &window;
     m->device = &device;
 
-    // 布局持久化目录（.lemon/editor/imgui.ini；M4.0 起，布局持久化 = M4-Editor-Plan §1.1）
+    // 布局持久化目录（.lemon/editor/imgui.ini；M4.0 起，布局持久化 = M4.md §1.1）
     std::error_code ec;
     std::filesystem::create_directories(iniDir, ec);
     m->iniFilename = std::string(iniDir) + "/imgui.ini";

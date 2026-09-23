@@ -1,4 +1,4 @@
-// Lemon 编辑器 — SceneView / GameView 面板（M4-Editor-Plan §2.2；内核 #11/#13 消费端）
+// Lemon 编辑器 — SceneView / GameView 面板（M4.md §2.2；内核 #11/#13 消费端）
 // SceneView：编辑相机（pan/zoom/F 自愈）+ 拾取（单选/Ctrl 多选）+ Gizmo 三态
 // （移动十字/旋转圈/四角缩放）+ 网格吸附 + overlay 注入（网格/选框/Gizmo 手柄）。
 // GameView：游戏相机离屏（编辑态也实时显示）；输入门控 M4.3。

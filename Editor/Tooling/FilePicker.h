@@ -1,4 +1,4 @@
-// Lemon 编辑器 — 内置文件选择器（M4-Editor-Plan §3.8 场景 IO 配套）
+// Lemon 编辑器 — 内置文件选择器（M4.md §3.8 场景 IO 配套）
 // 不用 OS 原生对话框（SDL dialog 异步回调 + 平台差异；编辑器内实现可无头冒烟，
 // 新建项目向导 M4.5 复用）。用法：Open() 后每帧 Draw()，返回 PickerResult。
 #pragma once

@@ -53,8 +53,8 @@ CPMAddPackage(
 )
 
 # ---------------------------------------------------------------------------
-# Dear ImGui — 编辑器 UI（docking 分支，ADR-005；M4-Editor-Plan §3.1 锁 tag）
-# 纪律：ImGui 头文件只准出现在 Editor/（M4-Editor-Plan §3.2）；包装目标 lemon-imgui
+# Dear ImGui — 编辑器 UI（docking 分支，ADR-005；M4.md §3.1 锁 tag）
+# 纪律：ImGui 头文件只准出现在 Editor/（M4.md §3.2）；包装目标 lemon-imgui
 # 定义在 Editor/CMakeLists.txt（含 SDL3/Vulkan backend 两个 TU），不进 lemon-engine。
 CPMAddPackage(
   NAME imgui

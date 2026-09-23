@@ -1,4 +1,4 @@
-// Lemon 编辑器 — 编辑器日志环（M4-Editor-Plan §2.2 Console 面板数据源；内核 #14 消费端）
+// Lemon 编辑器 — 编辑器日志环（M4.md §2.2 Console 面板数据源；内核 #14 消费端）
 // 引擎 LogSink → 定长环 + 分级过滤。线程安全：sink 在引擎日志锁内被调，本环再持
 // 自锁拷贝；编辑器 UI 单线程消费（Swap 前台缓冲，帧内零锁渲染）。
 #pragma once

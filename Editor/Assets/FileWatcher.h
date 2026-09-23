@@ -1,4 +1,4 @@
-// Lemon 编辑器 — 文件监视器（M4-Editor-Plan §3.1 Assets/；06 §2.2 热重载入口）
+// Lemon 编辑器 — 文件监视器（M4.md §3.1 Assets/；06 §2.2 热重载入口）
 // 线程轮询快照比对（Luma FileWatcher 同款语义，轮询间隔 500ms）：任何增删改
 // 置脏标志，主线程 ConsumeDirty 取走并触发 AssetDatabase::Rescan。逐事件细分
 // 不做——Rescan 的 ChangeSet 已给出精确的 added/modified/removed。

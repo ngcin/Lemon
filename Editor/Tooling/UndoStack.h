@@ -1,4 +1,4 @@
-// Lemon 编辑器 — Undo 双轨栈（M4-Editor-Plan §3.5；ADR-009 对照 Prowl Undo.cs）
+// Lemon 编辑器 — Undo 双轨栈（M4.md §3.5；ADR-009 对照 Prowl Undo.cs）
 // 属性轨：组件字节快照（guid 定位 + POD memcpy 还原——组件 trivially copyable 前提）。
 //   记录粒度 = 组件级（一次拖拽/一次控件交互 = 一条，IsItemActivated/Deactivated 合并）；
 //   字段级拆分列 M5 精化（组件级是其状态超集，语义无损）。

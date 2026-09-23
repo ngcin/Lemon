@@ -1660,7 +1660,7 @@ void TestVerifyPickupXpLevelUp() {
     Expect(ExpectNear0(x.xpToNext, 7.0f), "xpToNext = ceil(5*1.25) = 7");
 }
 
-// ---- M5 批②：导演波次（WaveDirector 组件 + DirectorSystem；M5-Plan §11.2）----
+// ---- M5 批②：导演波次（WaveDirector 组件 + DirectorSystem；M5.md §11.2）----
 namespace { // 导演测试共用：计数工厂（prefab 1 = 最小怪：Transform+Meta）
 struct WaveSpawnCounter {
     int spawns = 0;
@@ -2017,7 +2017,7 @@ void TestNoDoubleDeathEvents() {
 
 // ------------------ M2 复核轮新增测试（2026-09-19，只读审计配套） -----------
 // 2026-09-19 修复轮：ISSUE-1..8 已全部修复，原 [ISSUE-n] "固化现状"断言已同步
-// 改为断言正确行为（问题登记与修法见 docs/EngineDesign/M2-Review-Checklist.md）。
+// 改为断言正确行为（问题登记与修法见 docs/Reports/2026-09-19-m2-review-checklist.md）。
 #include "ECS/StateHash.h"
 
 namespace {

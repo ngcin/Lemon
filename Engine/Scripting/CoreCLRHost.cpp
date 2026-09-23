@@ -1,5 +1,5 @@
 // Lemon 引擎 — CoreCLR 宿主实现（hostfxr 细节全部收敛于此文件）
-// 形态以 M0 spike-03 本机实测为准（docs/EngineDesign/M0-Go-NoGo.md 教训 5/6）；
+// 形态以 M0 spike-03 本机实测为准（docs/Reports/2026-09-18-m0-go-no-go.md 教训 5/6）；
 // 04 文档 §1 的 Luma CoreCLRHost 仅作对照（ADR-010：不整体移植，避免未实测面）。
 #include "Scripting/CoreCLRHost.h"
 

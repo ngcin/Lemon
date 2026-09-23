@@ -1,4 +1,4 @@
-// Lemon 编辑器 — 面板框架（M4-Editor-Plan §2.2/§3.1）
+// Lemon 编辑器 — 面板框架（M4.md §2.2/§3.1）
 // IEditorPanel + 编译期注册表（反射注册降级为编译期版，对应 08 §4 砍单 #7）。
 // 面板间不互相 include：共享状态一律经 EditorApp/EditorContext（§3.3）。
 // 面板开合状态持久化随 ImGui ini（窗口折叠即不绘制，布局文件同时记录开关）。

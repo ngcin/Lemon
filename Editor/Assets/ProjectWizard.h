@@ -1,4 +1,4 @@
-// Lemon 编辑器 — 新建项目向导（M4-Editor-Plan §5 M4.5；06 §1 布局 + §7 模板）
+// Lemon 编辑器 — 新建项目向导（M4.md §5 M4.5；06 §1 布局 + §7 模板）
 // blank 模板：目录骨架 + project.lemon + Game/ 脚本工程（HintPath 引 SDK）+
 // 种子资产 spawn.png（固定 guid，SpawnerBehaviour 引用）+ Scenes/Main.scene。
 // 纯文件系统 + SceneArchive（零 GPU/ImGui——lemon-editor-core 可单测）。

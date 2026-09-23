@@ -13,7 +13,7 @@ enable_testing()
 add_test(NAME engine-tests COMMAND lemon-tests)
 set_tests_properties(engine-tests PROPERTIES TIMEOUT 300)
 
-# M4 纪律断言：ImGui 头文件只准出现在 Editor/（M4-Editor-Plan §5 M4.0 验收项）
+# M4 纪律断言：ImGui 头文件只准出现在 Editor/（M4.md §5 M4.0 验收项）
 add_test(NAME imgui-isolation
   COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_SOURCE_DIR}/imgui_isolation.cmake)
 

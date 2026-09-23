@@ -1,4 +1,4 @@
-// Lemon 编辑器 — 应用壳实现（M4-Editor-Plan §3.1；主循环承 anim-smoke 全链基线）
+// Lemon 编辑器 — 应用壳实现（M4.md §3.1；主循环承 anim-smoke 全链基线）
 // M4.0：壳 + 默认布局 + DPI/字体 + smoke；M4.1：EditorContext/场景 IO/快捷键/关闭确认。
 #include "App/EditorApp.h"
 
@@ -364,7 +364,7 @@ using Lemon.Interop;
 
 /// <summary>vs-survivor 模板玩家（M5 批④）：8 向移动 + HUD 四要素 + 升级三选一
 /// （固定序轮换，零 RNG）+ 环绕刃自愈 + 击杀掉宝石 + 死亡结算/复活（R 键）。
-/// 单类挂玩家实体（多脚本 scripts[] 属 M5 余项，见 M5-Plan §21.2 D4 注）。</summary>
+/// 单类挂玩家实体（多脚本 scripts[] 属 M5 余项，见 M5.md §21.2 D4 注）。</summary>
 public sealed class PlayerBehaviour : LemonBehaviour
 {
     // 模板资产 GUID（Templates/vs-survivor 生成期固定——引用锚点，勿改）
@@ -1438,7 +1438,7 @@ void EditorApp::BuildUI() {
         if (ImGui::Begin("About Lemon Editor", &aboutOpen_, ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::Text("Lemon Editor — M4（ImGui %s / docking）", IMGUI_VERSION);
             ImGui::TextUnformatted("纯 2D 高性能游戏引擎：C++20 + Vulkan + C# 脚本");
-            ImGui::TextUnformatted("规划：docs/EngineDesign/M4-Editor-Plan.md");
+            ImGui::TextUnformatted("规划：docs/Plans/M4/M4.md");
         }
         ImGui::End();
     }
@@ -4013,7 +4013,7 @@ bool TagEquals(const char* tag, const char* want) {
 
 void EditorApp::UpdateGameCameraFollow() {
     // M4.7 手测修复：Play 中游戏相机钉死 (640,360)，玩家 WASD 走出视野后"消失"。
-    // 目标优先级（M4-Editor-Plan §2.2 GameView"场景中 Camera 实体"的标签化落地）：
+    // 目标优先级（M4.md §2.2 GameView"场景中 Camera 实体"的标签化落地）：
     //   ① tag "Camera"——显式相机位实体（进阶：也可作空场景的固定取景）；
     //   ② tag "Player"——默认跟随玩家；
     //   ③ 首个挂脚本实体——blank 模板默认名"Sprite"+InputMover 的兜底。

@@ -1,4 +1,4 @@
-// Lemon 编辑器 — ImGui 后端胶水（M4-Editor-Plan §3.1/§3.2）
+// Lemon 编辑器 — ImGui 后端胶水（M4.md §3.1/§3.2）
 // 职责：ImGui context 生命周期、SDL3 事件桥接、Vulkan 后端初始化（经 RHI interop
 // 豁免口）、DPI 缩放（style.ScaleAllDimensions + 字体按密度重栅格化）、CJK 字体加载。
 //

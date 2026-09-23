@@ -1,4 +1,4 @@
-// Lemon 编辑器 — 共享状态模型（M4-Editor-Plan §3.3 的 M4.1 形态）
+// Lemon 编辑器 — 共享状态模型（M4.md §3.3 的 M4.1 形态）
 // 唯一跨面板共享状态：面板间不互相 include，一律经 EditorApp 拿到这里。
 // M4.3 增 playWorld/editSnapshot（Play 沙盒）；M4.4 增 assets（AssetDatabase）。
 #pragma once
@@ -46,7 +46,7 @@ public:
     /// 返回 Play 世界重装配实例数（未在 Play = 0）。
     int RefreshScriptsAfterReload();
 
-    // ---- 场景 IO（M4-Editor-Plan §3.8）----
+    // ---- 场景 IO（M4.md §3.8）----
     /// 新建空场景（untitled；dirty=false）。清空当前 Scene 重建（World 不重建）。
     void NewScene();
     /// 打开 .scene；失败（文件缺失/解析失败）返回 false 且场景不动
@@ -82,7 +82,7 @@ public:
     /// 删除实体树（含后代），清选择集中成员，dirty 置位
     void DestroyEntityTree(ecs::Entity e);
 
-    // ---- Prefab 最小集（M4-Editor-Plan §3.9；.prefab = 实体子树 JSON，06 §4）----
+    // ---- Prefab 最小集（M4.md §3.9；.prefab = 实体子树 JSON，06 §4）----
     /// 选中实体导出为 Assets/Prefabs/<tag>.prefab + 挂 prefabId 回链；返回资产 GUID（0=败）
     uint64_t MakePrefabFrom(ecs::Entity e);
     /// .prefab 实例化（新 guid 集合 + prefabId 回链；pos 覆盖 root 本地位置）
@@ -97,7 +97,7 @@ public:
     /// 断链成普通实体（仅 root prefabId 清零）
     void BreakPrefabInstance(ecs::Entity e);
 
-    // ---- 选择集（末位 = 主选中；M4-Editor-Plan §3.3 双记 guid 在 Undo 接入时补）----
+    // ---- 选择集（末位 = 主选中；M4.md §3.3 双记 guid 在 Undo 接入时补）----
     std::vector<ecs::Entity>& Selection() { return selection_; }
     bool IsSelected(ecs::Entity e) const;
     void Select(ecs::Entity e, bool additive);
@@ -112,7 +112,7 @@ public:
     /// Play 帧节奏：激活 World 完整 Step（固定步长；Pause 由调用方跳过本调用）
     void TickPlay(float dt);
 
-    // ---- Play 沙盒（M4-Editor-Plan §3.4；进出 checklist 全项）----
+    // ---- Play 沙盒（M4.md §3.4；进出 checklist 全项）----
     bool EnterPlay();          // 快照固化 → 建 playWorld/Load → 清 Undo/存选中（计时 t0）
     bool ExitPlay();           // 弃 playWorld → editScene ← Load(快照) 整体重建 → 恢复选中
     bool Playing() const { return playWorld_ != nullptr; }

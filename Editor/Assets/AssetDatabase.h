@@ -1,4 +1,4 @@
-// Lemon 编辑器 — 资产数据库（M4-Editor-Plan §5 M4.4；06 §2 GUID/.meta/manifest）
+// Lemon 编辑器 — 资产数据库（M4.md §5 M4.4；06 §2 GUID/.meta/manifest）
 // 纯文件系统 + JSON 逻辑，零 GPU/ImGui 依赖（可单测；GPU 侧见 AssetGpuCache）。
 //   * GUID 稳定键：.meta 随文件走（重命名/移动引用不断）；.scene 只存 GUID/spriteId。
 //   * spriteId 持久分配（manifest 记账，只增不减）：已存场景引用不因增删资产漂移。

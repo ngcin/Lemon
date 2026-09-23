@@ -1,4 +1,4 @@
-// Lemon 编辑器 — Hierarchy 面板（M4-Editor-Plan §2.2）
+// Lemon 编辑器 — Hierarchy 面板（M4.md §2.2）
 // 数据源：Scene 实体遍历 + Hierarchy 父子链（ECS/Hierarchy.h 维护）。
 // 验收点：拖拽成环被拒（SetParent 引擎侧拒绝 + Console 告警）；Play 中切数据源 M4.3。
 #include <cctype>
