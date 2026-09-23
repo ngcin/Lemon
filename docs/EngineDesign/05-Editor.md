@@ -119,6 +119,10 @@ struct Chase { LEMON_FIELD(speed, Range{0,500}); LEMON_FIELD(aggroRange); LEMON_
 
 - 注册表展开出：字段名/类型/范围/控件（DragFloat/Color/枚举下拉/Team 选择器/sprite 选择器）→ Inspector 绘制、JSON 序列化、C# Source Generator 的 struct 镜像，三处共用一份元数据。
 - **可编辑数组段（M5 批②，2026-09-23）**：定长数组段（StatusEffects.active / Inventory.items / WaveDirector.waves）的元素表从只读 Text 升级为按 FieldType 裸派发的编辑控件（DragFloat/InputScalar/Checkbox），active/deactivated 汇入 M4.7d 属性轨（Undo 组件级字节快照天然覆盖）；元素级无 FieldEditorMeta——Range/枚举/prefab 反查等精细化归 M6 波次表编辑器。**WaveDirector 作者路径**：字段行改 `waveCount` 出槽位 → 表格逐格填 startTime/条目（或手改 `.scene` JSON，03 §8 形态示例）。定长标量数组（Equipment.relicIds）维持只读。
+- **clip 资产槽（M5 批③）**：`FieldHint::ClipRef`（`Animator2D.clipId`）——下拉
+  AssetType::Clip 全列 / AssetBrowser 拖入（drag kind 4）/ 右键清空；值 = `.clip`
+  资产 GUID 低 32 位（prefabId 同款约定），反查 entry 显示 relPath。sprite 资产槽
+  （AssetRef）同模式先例。
 - **C# 脚本组件的 Inspector**：SDK 侧 `[ShowInInspector]` + 字段特性经元数据通道导出，编辑器绘制同样走注册表路径（C# 组件与 C++ 组件在 Inspector 里体验一致）。
 - **Prefab 覆盖与头栏（ADR-009，PrefabLink 驱动，03 §2）**：改过字段蓝标 + 逐字段 Revert；组件头 Prefab 栏 Apply / Revert / Break / Select（Prowl2D PrefabUtility 模式）——v1 核心（M4）。
   > M4 范围修订（2026-09-19）：M4 做最小集（实例化/Apply/Break/整体 Revert）；**逐字段 override 蓝标列 M4 砍单候补首位**（富余则做，否则移 M5 记 ADR）。见 M4-Editor-Plan §3.9。

@@ -51,7 +51,7 @@ struct DestroyQueueTag {};                                               // 帧�
 
 ```cpp
 struct SpriteRenderer { uint32_t spriteId; uint32_t colorRGBA; int16_t sortOrder; uint8_t sortingLayer; uint8_t flags; }; // flags: flipX/Y, enabled
-struct Animator2D     { uint32_t clipId; float time; float speed; uint8_t loop; uint8_t playOnStart; uint16_t curFrame; }; // 帧动画驱动 SpriteRenderer.spriteId
+struct Animator2D     { uint32_t clipId; float time; float speed; uint8_t loop; uint8_t playOnStart; uint16_t curFrame; }; // 帧动画驱动 spriteId（clipId=.clip 资产 GUID 低 32 位；M5 批③起，0/未命中=M2 纯计时）
 struct ParticleEmitterRef { uint32_t emitterId; uint8_t playing:1, /*...*/; };
 struct SortingOverride { int16_t order; };                               // 运行时覆盖（血条永远压怪物）
 ```
@@ -106,7 +106,7 @@ struct IncrementalState { double rate, multiplier; double cached; };     // 增�
 | 10 | HitboxSystem | 投射物/Hazard/技能盒 | Health/Projectile/事件 | — | Team 判定 → 命中记忆（一弹一目标一次）→ 伤害/置无敌窗/击退（弹体配置）/Hit/Death |
 | 11 | TriggerSystem | Trigger2D + 哈希 | 事件 | — | 进入/离开配对（上一帧缓存差分） |
 | 12 | StatSystem | Stats/StatusEffects/Xp/Health | Stats/事件 | — | buff 计时/iFrames 递减/升级结算 onLevelUp（XP 入账源 = #9） |
-| 13 | AnimatorSystem | Animator2D | SpriteRenderer | ✅ | 帧推进（time+clip→spriteId） |
+| 13 | AnimatorSystem | Animator2D + ClipTable | SpriteRenderer | ✅ | 帧推进：curFrame=min(n-1, time*fps) 纯函数 + 写 spriteId；playOnStart=0 冻结；loop0 钳末帧；无 clip=M2 旧算术逐位不变（M5 批③；帧映射语义见 §8.1） |
 | 14 | ProjectileLifetime | Projectile | 销毁队列 | ✅ | 越界/超时/穿透耗尽回收 |
 | 15 | CSharpBatchSystem | 各（只读 slice） | 命令缓冲 | — | C# `IForEachSystem` 块级回调（04 §5） |
 | 16 | ScriptEventDispatch | 事件队列 | → C# | — | 帧末批量派发（04 §4） |
@@ -181,6 +181,27 @@ WaveStart)` 开箱即用（样例：TestScript.WaveBannerBehaviour → `Ui.Set` 
   "waves": [ { "startTime": 1.0, "rampMult": 1.0, "entryCount": 4,
       "e0prefab": 3735928559, "e0count": 999, "e0interval": 0.0167, "e0range": 550.0, ... } ] }
 ```
+
+### 8.1 帧动画（Animator 帧映射，M5 批③）
+
+**clip 表（`ECS/ClipTable.h`，World 持有）**：`clipId → {fps, loop, frames[](spriteId)}`。
+clipId = `.clip` 资产 GUID 低 32 位（prefabId 同款映射约定）；编辑器 EnterPlay 一次性
+建表（进 Play 时刻资产快照，Play 中改 .clip 不生效）；引擎测试/玩法层直接填。
+格式与切片通道见 06 §2.2。
+
+**帧映射语义（#13 AnimatorSystem）**：
+
+- 帧号 = **纯函数** `curFrame = min(n-1, (u16)(time*fps))`——无逐帧累加状态机，
+  回放确定性；curFrame/spriteId 逐帧重写幂等。
+- `time += speed*dt`（缩放 dt：timeScale=0 冻结动画）；loop=1 回绕 `period=n/fps`
+  （time 有界）；loop=0 **钳末帧**（time 钳 total——M2"非 loop 无界增长"随 clip 收口）；
+  负 time 钳 0（负 speed 防御）。
+- `playOnStart=0` = **暂停开关**（time/curFrame/spriteId 三态全冻结；M5 无 Play()
+  API，Play/CrossFade 归 M6 模板）。`Animator2D.loop` 为权威（实体上热调参）；
+  clip.loop 仅档面默认。
+- `SpriteRenderer` 可缺 = 纯计时推进；在场则 `sr.spriteId = frames[curFrame]`。
+- **无 clip（clipId=0/表未命中）= M2 旧算术逐位保留**（time 推进 + 占位周期 1.0
+  回绕）——既有场景/金档零漂移（M5-Plan §18 零重录前提）；RNG 零消费。
 
 ## 9. Team 势力系统（照搬 yami `Data/teams.json` schema）
 

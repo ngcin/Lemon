@@ -264,12 +264,20 @@ Chase 目标；**批⓪（M5-Plan T4）起兼弹幕源**：Shooter 20 发/s + �
 | 批⓪ 战斗化（同日，三跑） | **sim 9.37~9.49** / scene ~1.3 / ui 0.25 | frameAvg 11.48~11.64ms fps 86~87 **PASS** |
 | 批① 成长化（同日，三跑） | sim 12.84~13.92（Pickup 1.87）/ scene ~1.5 / ui 0.26 | frameAvg 15.53~16.29ms fps 61~64 **PASS** |
 | 批② 导演化（09-23，三跑） | sim 12.55~12.60（Director <0.1）/ scene ~1.3 / ui 0.26 | frameAvg 15.11~15.20ms fps 66 **PASS** |
+| 批③ 动画化（09-23，三跑） | sim 12.91~14.25（Animator 0.128）/ scene ~1.3 / ui 0.26 | frameAvg 14.89~17.27ms fps 58~67 **PASS** |
 
 批② 导演化口径变更：Spawner 闸 10000→8000 让 2000 头寸给 BenchDirector（3 波 ×
 4 条目 180/s/波，t=1/6/11s）——判据在原两条（alive≥10000、frameAvg≤22.2ms）外加
 **导演证据项** `waves≥3 且 teamAlive>8000`（实测 waves=3、teamAlive 10002 顶满
 capAlive=10000；alive 10435、三跑逐位一致）。Director 系统成本 <0.1ms（普查与
 Spawner 同款 30-tick O(n)）。
+
+批③ 动画化口径变更：BenchMob prefab 增 `Animator2D`（程序化 4 帧表 `anim.clip`
+自播种——tempdir 项目 hermetic，不依赖仓库路径；切片/clip 通道全走真实导入），
+万怪帧映射进压测口径——判据再加**动画证据项** `anim(切片命中 = Animator2D 总数)`
+（实测 10003/10003、三跑逐位一致；含玩家宝石等非动画实体外的全数怪群）。Animator
+系统成本 0.128ms（纯函数帧号 + 逐实体 TryGet 写 spriteId；优化路径预留：spriteId
+条件写/并行）。
 
 批⓪ 战斗化后 fps 反升（76→86）非笔误：iFrames 递减修复使怪进入击杀-补充循环，
 蜂群密度被持续疏散，Separation 随之回落（sim 11.1→9.4ms）。frameMax 43~52ms
@@ -369,11 +377,12 @@ Hierarchy 面板）。回归口径 = 本命令三跑稳定。
 - Windows 平台（CMake 预设 `win` 待加，见 README）。
 - 编辑器交互覆盖边界（M4-Editor-Plan §6 提案已落地）：无头冒烟 `--smoke`（含 overlay
   可见性像素断言）/ `--smoke-close`（关闭状态机）/ `--smoke-drag`（视口注入五段）/
-  `--final`（终验链）经 `tools/editor-regression.sh` 一键 10 步；**未脚本化**的纯观感路径
+  `--smoke-anim`（切片 + clip + Animator 帧映射链，M5 批③起）/ `--final`（终验链）
+  经 `tools/editor-regression.sh` 一键 12 步；**未脚本化**的纯观感路径
   （Inspector 控件手感、面板排版）仍靠 [Editor-Manual-Test-Guide.md](./EngineDesign/Editor-Manual-Test-Guide.md) 真人清单。
 - M2：bench-sim 早期怪群聚拢阶段存在 max ~145ms 单步尖峰（avg 判据不受影响；哈希重建
   并行化是已预留路径，触发 M5 压测 B 再做）；投射物穿透去重用全量 iFrames 策略（M5 细化）；
-  Patrol 端点暂停未实现（M5 随 clip 资产补）；Animator 帧映射待 clip 资产表（M5）。
+  Patrol 端点暂停未实现（M5 随 clip 资产补）；~~Animator 帧映射待 clip 资产表（M5）~~ 已落（批③，03 §8.1）。
   Director/Navigation/CSharpBatch 三系统为占位空跑（M5/M6/M3 激活）。
 - M3：ALC 卸载 pin（runtime 限制，M4 走整域重建，ADR-010）；30k+ 首帧 max 尖峰
   ~45–47ms（块缓冲 reserve 一次性 malloc，avg 判据不受影响；惰性分帧预留是可选优化）；

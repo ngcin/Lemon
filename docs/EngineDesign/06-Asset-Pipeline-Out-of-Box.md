@@ -60,6 +60,18 @@ MyGame/                                   # 用户项目（升级永不触碰）
 
 - **热重载**：`FileWatcher`（线程轮询，Luma 同款）触发增量导入 → 按依赖图通知（纹理变更 → 重建图集页 → 受影响场景视口刷新标记）。运行中 Play 的资产热替换（贴图/参数即时生效，音效不中断）。
 
+> **M5 批③落地注记（2026-09-23）**：clip2d（`.clip`）与**单页网格切片**先行——
+> - `.clip` JSON（帧动画资产）：`{schemaVersion, name, fps, loop, frames:[{sheet:<guidHex>,
+>   cell:<行优先序>}]}`；帧引用 = 精灵表 GUID + 切片号（不存 spriteId，manifest 重排
+>   不断链）；编辑器 EnterPlay 解析入 `World::Clips()`（进 Play 快照）；消费 =
+>   Animator2D 帧映射（03 §8.1）。AssetType 入库（AssetBrowser 可拖入 Inspector clip 槽）。
+> - `.meta` 的 `importer` 段（§2.1 格式）生效：`{"slice":"grid","cell":[w,h],
+>   "frames":[c,r]}`——**frames 由作者声明**（yami .anim hframes 同款；DB 零解码
+>   即记账连号切片块，manifest 持久）；AssetGpuCache 校验像素整除后一页登记
+>   全幅 sprite + 连号切片（`AddSpriteAt`）。热重导网格/尺寸变化 = `SetSpriteAt`
+>   覆盖重切（号不变）。多表 MaxRects 打包/手动切片 UI/AnimationEditor 归 M6。
+> - 第一批素材包入库 `Samples/Assets/yami-dungeon/`（见 §7 注记）。
+
 > **M4.4 落地范围注记（与 05/M4-Editor-Plan §1.2 对齐）**：sprite 族先行——每 PNG
 > 独立纹理页（bindless 槽 2..，上限 kMaxTextureSlots=64）+ 一页一全幅 sprite；
 > 切片/手动划分与 MaxRects 图集打包随消费者落 M5+/M6。删除资产 = **墓碑**（号与
@@ -102,6 +114,9 @@ MyGame/                                   # 用户项目（升级永不触碰）
 - 规则：`Assets/**` 中被标记进图集的 sprite → 每"图集组"一页 4096（像素风默认 Point 采样、禁旋转可选）；MaxRects（Prowl2D M0 同算法思想）。
 - 编辑器时打包 + 增量维护（增删 sprite 只重排受影响页）；打包命令行版进 `Tools/`（CI 可跑）。
 - 运行时零解析：spriteId → (页, uvRect) 静态表（02 §3.2）。
+- **M5 批③最小集注记**：MaxRects 打包前，已落"单页网格切片"（一 PNG 一页 +
+  连号切片块，见 §2.2 注记）——切片消费面 = clip 帧引用；sprite 槽直接引用切片的
+  UI 与跨表打包归本节 M6 工作。
 
 ## 6. 发布管线与 Steam
 
@@ -136,6 +151,11 @@ MyGame/                                   # 用户项目（升级永不触碰）
 - UI 九宫格框/按钮/血条/图标 32 枚、BGM 2 首 + 音效 24 条（攻击/受击/死亡/拾取/升级/建造）。
 
 素材清单进 `Samples/`（与压测场景共用，bench-mow 直接用默认怪物——性能验收与默认素材永远同步，不会"压测用专用素材、交付却缺货"）。
+> **第一批已入库（M5 批③，2026-09-23）**：`Samples/Assets/yami-dungeon/`——hero×2 /
+> monster×2 / boss 精灵表（16px/32px 格，帧数与 yami .anim hframes 核对）+ 3 份
+> `.clip` 样例 + README；`THIRD_PARTY.md` 已登记（MIT）。机械验证 = `--smoke-anim`
+> （程序化表必验 + yami 表在场即验）；bench-survivor 动画化暂用程序化表自播种
+> （hermetic），"bench 直接用默认素材"全面接轨推 M6 模板打包。音效/UI/tileset 后续批。
 
 ## 8. 运行时 UI（分阶段，决策 ADR-008）
 
