@@ -21,8 +21,10 @@ void SpriteBatcher::Init(rhi::Device& device, uint32_t samplerLinearSlot,
     CreatePipelines();
 
     // 设备丢失重建：句柄已随设备销毁全部作废（必须先清，否则 EnsureCapacity
-    // 会因旧句柄"看似有效"跳过重建 → 无效 buffer 写描述符，验证层实测抓过）
-    device.AddRecreateCallback("SpriteBatcher", [this](rhi::Device& d) {
+    // 会因旧句柄"看似有效"跳过重建 → 无效 buffer 写描述符，验证层实测抓过）。
+    // token 登记（M9）：析构反注册——本类先于设备销毁（成员序契约见 RHI.h）时，
+    // 不摘除的裸 this 捕获回调会在下次设备丢失重建时 UAF
+    recreateCbId_ = device.AddRecreateCallback("SpriteBatcher", [this](rhi::Device& d) {
         device_ = &d;
         cornerVB_ = {};
         indexIB_ = {};

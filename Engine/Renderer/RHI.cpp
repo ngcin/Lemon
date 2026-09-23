@@ -177,7 +177,15 @@ struct Device::Impl {
     std::vector<uint32_t> pipelineFree;
     std::unordered_map<uint64_t, uint32_t> shaderByHash;
 
-    std::vector<std::pair<const char*, std::function<void(Device&)>>> recreateCallbacks;
+    // 恢复回调（M9 token 化：注册返回 id，拥有者析构时按 id 反注册——裸 this 捕获
+    // 的 lambda 若拥有者先于设备销毁而不摘除，设备丢失重建即 UAF）
+    struct RecreateCallback {
+        uint64_t id;
+        const char* name;
+        std::function<void(Device&)> fn;
+    };
+    std::vector<RecreateCallback> recreateCallbacks;
+    uint64_t nextRecreateCallbackId = 1;
     bool deviceLost = false;
 
     // CommandList（Device 持有，BeginFrame 刷新指向）
@@ -737,9 +745,9 @@ struct Device::Impl {
         LoadPipelineCache();
         if (wantTimestamps) EnableTimestampsInternal();
         // 按注册顺序重建引擎侧资源（纹理重上传/几何与实例缓冲/管线经缓存重建）
-        for (auto& [name, fn] : recreateCallbacks) {
-            LEMON_LOG("recreate: %s", name);
-            fn(*ownerDevice);
+        for (auto& cb : recreateCallbacks) {
+            LEMON_LOG("recreate: %s", cb.name);
+            cb.fn(*ownerDevice);
         }
         deviceLost = false;
     }
@@ -1263,8 +1271,20 @@ bool Device::IsDeviceLost() const { return m->deviceLost; }
 
 void Device::SimulateDeviceLoss() { m->HandleDeviceLost("simulated (acceptance hook)"); }
 
-void Device::AddRecreateCallback(const char* name, std::function<void(Device&)> fn) {
-    m->recreateCallbacks.emplace_back(name, std::move(fn));
+Device::RecreateCallbackId Device::AddRecreateCallback(const char* name,
+                                                       std::function<void(Device&)> fn) {
+    uint64_t id = m->nextRecreateCallbackId++;
+    m->recreateCallbacks.push_back({id, name, std::move(fn)});
+    return id;
+}
+
+void Device::RemoveRecreateCallback(RecreateCallbackId id) {
+    auto& cbs = m->recreateCallbacks;
+    for (size_t i = 0; i < cbs.size(); ++i)
+        if (cbs[i].id == id) {
+            cbs.erase(cbs.begin() + i);
+            return;
+        }
 }
 
 void Device::SavePipelineCache() {

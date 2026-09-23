@@ -40,6 +40,12 @@ public:
     /// 帧推进（EndFrameAndPresent 之后调用；下帧 Bake 写下一段）
     void AdvanceFrame();
 
+    /// 析构反注册设备丢失回调（M9）：本类须先于 Device 销毁（编辑器/样例成员序
+    /// 天然满足；回调捕获裸 this，不摘除则设备丢失重建 = UAF）
+    ~SpriteBatcher() {
+        if (device_) device_->RemoveRecreateCallback(recreateCbId_);
+    }
+
     uint32_t LastBatchCount() const { return (uint32_t)batches_.size(); }
     uint32_t LastInstanceCount() const { return lastInstanceCount_; }
 
@@ -61,6 +67,7 @@ private:
     };
 
     rhi::Device* device_ = nullptr;
+    rhi::Device::RecreateCallbackId recreateCbId_ = 0; // Init 登记（M9 反注册用）
     rhi::Format colorFormat_ = rhi::Format::BGRA8UnormSrgb;
     uint32_t samplerSlots_[2] = {0, 1}; // Linear/Point → bindless 采样器槽
     uint32_t ringSlot_ = 0;             // 实例环 SSBO 数组槽（binding 2 下标）
