@@ -104,6 +104,7 @@ public:
     struct Stats {
         uint32_t visible = 0;
         uint32_t culled = 0;
+        uint32_t droppedSprites = 0; // 键表满（kMaxSpriteKeys）：超限键的精灵不渲染
     };
     const Stats& LastStats() const { return stats_; }
 
@@ -133,6 +134,7 @@ private:
     uint64_t builtViewportVersion_ = 0;
     float builtAlpha_ = -1.0f;
     Stats stats_;
+    bool warnedSanitize_ = false; // desc 钳制告警只响一次
 };
 
 } // namespace lemon::renderer

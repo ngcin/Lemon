@@ -8,8 +8,8 @@
 namespace lemon::renderer {
 
 namespace {
-/// 空洞哨兵：atlasIndex 槽位恒非法（bindless 越界）——IsValidSprite 据此过滤退役号
-constexpr uint32_t kHoleAtlasIdx = 0xFFFFFFFFu;
+
+/// 空洞占位 sprite（atlasIndex = kHoleAtlasIdx 哨兵，常量与 IsValidSprite 定义在 Atlas.h）
 const SpriteInfo kHoleSprite = MakeSpriteInfo(kHoleAtlasIdx, 1, 1, 0, 0, 1, 1);
 } // namespace
 
@@ -101,11 +101,6 @@ void AtlasRegistry::SetSpriteAt(uint32_t spriteId, uint32_t atlasIndex, uint32_t
         return;
     }
     LEMON_ASSERT(false, "unknown atlasIndex");
-}
-
-bool AtlasRegistry::IsValidSprite(uint32_t spriteId) const {
-    return spriteId != 0 && spriteId <= sprites_.size() &&
-           sprites_[spriteId - 1].atlasIndex != kHoleAtlasIdx;
 }
 
 const SpriteInfo& AtlasRegistry::GetSprite(uint32_t spriteId) const {

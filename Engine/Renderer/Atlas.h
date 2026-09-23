@@ -11,6 +11,9 @@
 
 namespace lemon::renderer {
 
+/// 空洞哨兵：AddSpriteAt/SetSpriteAt 中间空洞占位用的 atlasIndex（渲染侧据此过滤）
+inline constexpr uint32_t kHoleAtlasIdx = 0xFFFFFFFFu;
+
 struct SpriteInfo {
     uint32_t atlasIndex = 0;   // bindless 纹理槽位
     float u0 = 0, v0 = 0, u1 = 1, v1 = 1; // 归一化 UV（左上/右下）
@@ -40,8 +43,12 @@ public:
     /// 记账（块归属确定），热改 grid/整页重切用；未知 atlasIndex 仍 assert。
     void SetSpriteAt(uint32_t spriteId, uint32_t atlasIndex, uint32_t px, uint32_t py,
                      uint32_t w, uint32_t h);
-    /// 该号是否有效登记（0 / 越界 / 空洞 = false）。空洞页采样越界，渲染侧须先过滤
-    bool IsValidSprite(uint32_t spriteId) const;
+    /// 该号是否有效登记（0 / 越界 / 空洞 = false）。空洞页采样越界，渲染侧须先过滤。
+    /// 头文件内联：提取热路径每精灵一调（bench-mow 10 万/帧），跨 TU 调用实测 -4% fps
+    bool IsValidSprite(uint32_t spriteId) const {
+        return spriteId != 0 && spriteId <= sprites_.size() &&
+               sprites_[spriteId - 1].atlasIndex != kHoleAtlasIdx;
+    }
     const SpriteInfo& GetSprite(uint32_t spriteId) const;
     uint32_t SpriteCount() const { return (uint32_t)sprites_.size(); }
     uint32_t AtlasCount() const { return (uint32_t)atlases_.size(); }

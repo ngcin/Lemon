@@ -141,6 +141,9 @@ void SpriteBatcher::Record(rhi::CommandList& cl, const Mat3x2& viewProj) {
     // 段基 = ringFrame_ * capacity_；每批再加批内偏移
     const uint32_t segBase = ringFrame_ * capacity_;
     for (const Batch& b : batches_) {
+        // 位宽防御（M5）：键里 blend/filter 位宽大于数组尺寸，入口已钳（Renderable
+        // Create/粒子 Emit），此处断言兜底——越界读 pipelines_[15] 是垃圾句柄进 vkCmd
+        LEMON_ASSERT(b.key.blend < 4 && b.key.filter < 2, "batch key blend/filter out of range");
         cl.BindPipeline(pipelines_[b.key.blend]);
         pc.baseInstance = segBase + b.instanceOffset;
         pc.atlasIndex = (uint32_t)b.key.textureAtlas;

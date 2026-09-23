@@ -100,6 +100,7 @@ std::span<const SpritePacket> ParticleSystem::Extract(const AtlasRegistry& atlas
     const Rect view = Rect::FromCenterHalf(viewCenter, viewHalfW, viewHalfH).Expanded(64.0f);
     packets_.clear();
     slotOf_.clear();
+    stats_.droppedParticles = 0;
 
     for (uint32_t i = 0; i < alive_; ++i) {
         const ParticleData& p = pool_[i];
@@ -115,7 +116,12 @@ std::span<const SpritePacket> ParticleSystem::Extract(const AtlasRegistry& atlas
                  slots[si].key.filter == p.filter && slots[si].key.layer == p.sortingLayer))
             ++si;
         if (si == slotCount) {
-            LEMON_ASSERT(slotCount < kMaxParticleKeys, "particle batch keys exceed table");
+            // 键表满：软丢弃（断言在 Release 不设防，超限写栈数组 = 越界）；
+            // 丢弃数记 stats_.droppedParticles
+            if (slotCount >= kMaxParticleKeys) {
+                ++stats_.droppedParticles;
+                continue;
+            }
             const SpriteInfo& spr = atlas.GetSprite(p.spriteId);
             slots[si].key = MakeBatchKey(spr.atlasIndex, (BlendKind)p.blend,
                                          (FilterKind)p.filter, p.sortingLayer);

@@ -9,6 +9,18 @@ namespace lemon::renderer {
 
 uint32_t RenderableManager::Create(const RenderableDesc& desc) {
     LEMON_ASSERT(desc.spriteId != 0, "renderable needs spriteId");
+    // 批键位宽防御（blend:4 bit 可存 0–15，但 SpriteBatcher 只有 4 条管线/2 个采样器槽）：
+    // 序列化数据驱动的越界值在此钳回合法域，否则 Record 端 pipelines_[blend] 越界读
+    RenderableDesc sane = desc;
+    if (sane.blend > (uint8_t)BlendKind::Multiply || sane.filter > (uint8_t)FilterKind::Point) {
+        if (!warnedSanitize_) {
+            warnedSanitize_ = true;
+            LEMON_WARN("renderable desc blend/filter out of range (blend=%u filter=%u) — clamped",
+                       sane.blend, sane.filter);
+        }
+        sane.blend &= 3u;
+        sane.filter &= 1u;
+    }
     uint32_t id;
     if (!free_.empty()) {
         id = free_.back();
@@ -19,12 +31,13 @@ uint32_t RenderableManager::Create(const RenderableDesc& desc) {
     }
     Entry& e = entries_[id - 1];
     e = Entry{};
-    e.desc = desc;
+    e.desc = sane;
     e.alive = 1;
     e.seq = nextSeq_++;
     e.curScale = {1, 1};
     e.prevScale = {1, 1};
     ++alive_;
+    ++simVersion_; // 提取缓存失效（暂停态无 BeginSimTick，新实体也须立即可见；与 Destroy 对齐）
     return id;
 }
 
@@ -95,6 +108,7 @@ std::span<const SpritePacket> RenderableManager::Extract(const AtlasRegistry& at
 
     packets_.clear();
     stats_.culled = 0;
+    stats_.droppedSprites = 0;
     slotOf_.clear();
 
     // 键桶化（与 ParticleSystem 同方案）：单遍生成 + 槽缓存 + 纯搬运分桶（O(n)，
@@ -110,8 +124,10 @@ std::span<const SpritePacket> RenderableManager::Extract(const AtlasRegistry& at
 
     for (auto& e : entries_) {
         if (!e.alive) continue;
-        // spriteId 0/越界 = 槽位无 sprite（Unity 语义 Sprite=None：合法存在，不渲染）
-        if (e.desc.spriteId == 0 || e.desc.spriteId > atlas.SpriteCount()) continue;
+        // spriteId 0/越界/空洞退役号 = 槽位无 sprite（Unity 语义 Sprite=None：合法存在，
+        // 不渲染）——IsValidSprite 三态全检（与粒子路径同语义；仅查 SpriteCount 会放过
+        // 落在界内的空洞号，atlasIndex=哨兵 → bindless 采样不存在槽）
+        if (!atlas.IsValidSprite(e.desc.spriteId)) continue;
         const SpriteInfo& spr = atlas.GetSprite(e.desc.spriteId);
         Vec2 pos = math::Lerp(e.prevPos, e.curPos, alpha);
         float rot = math::Lerp(e.prevRot, e.curRot, alpha);
@@ -135,7 +151,12 @@ std::span<const SpritePacket> RenderableManager::Extract(const AtlasRegistry& at
                  slots[si].atlasIndex == spr.atlasIndex))
             ++si;
         if (si == slotCount) {
-            LEMON_ASSERT(slotCount < kMaxSpriteKeys, "sprite batch keys exceed table");
+            // 键表满：软丢弃（断言在 Release 不设防，超限写栈数组 = 越界）。可恢复动作 =
+            // 降图集/混合/层组合数；丢弃数记 stats_.droppedSprites
+            if (slotCount >= kMaxSpriteKeys) {
+                ++stats_.droppedSprites;
+                continue;
+            }
             slots[si].key = MakeBatchKey(spr.atlasIndex, (BlendKind)e.desc.blend,
                                          (FilterKind)e.desc.filter, e.desc.sortingLayer);
             slots[si].atlasIndex = spr.atlasIndex;

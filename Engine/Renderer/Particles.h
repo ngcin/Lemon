@@ -48,7 +48,7 @@ struct EmitterConfig {
 
 class ParticleSystem {
 public:
-    static constexpr uint32_t kMaxParticleKeys = 16; // 计数桶分组容量（粒子场景键数个位数）
+    static constexpr uint32_t kMaxParticleKeys = 32; // 计数桶分组容量（8 精灵×2 层=16 已可达，留一倍余量）
     /// 全局预算（存活上限）；池容量不缩，只钳发射
     void SetBudget(uint32_t maxParticles) { budget_ = maxParticles; }
     uint32_t Budget() const { return budget_; }
@@ -67,7 +67,8 @@ public:
     struct Stats {
         uint32_t emittedThisTick = 0;
         uint32_t diedThisTick = 0;
-        uint32_t droppedFull = 0; // 池满丢弃
+        uint32_t droppedFull = 0;       // 池满丢弃
+        uint32_t droppedParticles = 0;  // 键表满（kMaxParticleKeys）：超限键的粒子不渲染
     };
     const Stats& LastStats() const { return stats_; }
 

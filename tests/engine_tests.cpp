@@ -304,6 +304,96 @@ void TestRenderableExtractOrder() {
     Expect(pk2[0].key.hash < pk2[1].key.hash, "same-layer buckets ordered by key hash");
 }
 
+void TestRenderableSanitizeCacheAndHoles() {
+    // M5：序列化可驱动的 blend/filter 越界值在 Create 入口钳回合法域
+    //（SpriteBatcher 只有 4 管线/2 采样器槽，键位宽 blend:4/filter:2 存得下越界值）
+    AtlasRegistry atlas;
+    atlas.RegisterAtlas(0, rhi::Texture{1}, 64, 64);
+    uint32_t spr = atlas.AddSprite(0, 0, 0, 16, 16);
+    RenderableManager rm;
+    RenderableDesc d;
+    d.spriteId = spr;
+    d.blend = 7;   // 越界（合法 0–3）
+    d.filter = 3;  // 越界（合法 0–1）
+    rm.Create(d);
+    auto packets = rm.Extract(atlas, 1.0f);
+    Expect(packets.size() == 1 && packets[0].key.blend == 3 && packets[0].key.filter == 1,
+           "out-of-range blend/filter clamped to legal domain");
+
+    // M6：暂停态（无 BeginSimTick）Create 后提取缓存须失效——修复前新实体不可见
+    RenderableManager rm2;
+    RenderableDesc d2;
+    d2.spriteId = spr;
+    rm2.Create(d2);
+    (void)rm2.Extract(atlas, 1.0f); // 建缓存（1 包，非空 → 后续可命中）
+    rm2.Create(d2);                 // 暂停态生成：无 BeginSimTick
+    auto pk2 = rm2.Extract(atlas, 1.0f);
+    Expect(pk2.size() == 2, "create during pause invalidates extract cache");
+
+    // M8：空洞退役号（AddSpriteAt 中间空洞，落在 SpriteCount 界内）不渲染
+    AtlasRegistry atlasHole;
+    atlasHole.RegisterAtlas(0, rhi::Texture{1}, 64, 64);
+    atlasHole.AddSpriteAt(1, 0, 0, 0, 16, 16);
+    atlasHole.AddSpriteAt(3, 0, 0, 0, 16, 16); // id 2 = 哨兵空洞
+    Expect(!atlasHole.IsValidSprite(2), "hole id 2 invalid");
+    RenderableManager rm3;
+    RenderableDesc d3;
+    d3.spriteId = 2; // 空洞号
+    rm3.Create(d3);
+    d3.spriteId = 1;
+    rm3.Create(d3);
+    auto pk3 = rm3.Extract(atlasHole, 1.0f);
+    Expect(pk3.size() == 1 && pk3[0].spriteId == 1,
+           "hole sprite skipped, live sprite still visible");
+
+    // M7：键表满软丢弃（kMaxSpriteKeys=64；blend×layer 65 组合）——修复前 Release
+    // 仅靠断言，超限写 slots[64] = 栈越界
+    RenderableManager rm4;
+    RenderableDesc d4;
+    d4.spriteId = spr;
+    for (uint8_t blend = 0; blend < 4; ++blend)
+        for (uint8_t layer = 0; layer < 16; ++layer) { // 64 组合填满表
+            d4.blend = blend;
+            d4.sortingLayer = layer;
+            rm4.Create(d4);
+        }
+    d4.blend = 0;
+    d4.sortingLayer = 16; // 第 65 个键
+    rm4.Create(d4);
+    auto pk4 = rm4.Extract(atlas, 1.0f);
+    Expect(pk4.size() == RenderableManager::kMaxSpriteKeys,
+           "key-table full: exactly cap sprites visible");
+    Expect(rm4.LastStats().droppedSprites == 1, "overflow sprite dropped and counted");
+}
+
+void TestParticlesKeyOverflow() {
+    // M7 粒子侧：键表满（kMaxParticleKeys=32）软丢弃——blend×layer 33 组合
+    AtlasRegistry atlas;
+    atlas.RegisterAtlas(0, rhi::Texture{1}, 64, 64);
+    uint32_t spr = atlas.AddSprite(0, 0, 0, 16, 16);
+    ParticleSystem ps;
+    ps.SetBudget(1000);
+    EmitterConfig e;
+    e.spriteId = spr;
+    e.rate = 1.0f; // dt=1 → 每次 Emit 恰 1 粒
+    for (uint8_t blend = 0; blend < 4; ++blend)
+        for (uint8_t layer = 0; layer < 8; ++layer) { // 32 组合填满表
+            e.blend = blend;
+            e.sortingLayer = layer;
+            float acc = 0;
+            ps.Emit(e, 1.0f, 1, acc);
+        }
+    e.blend = 0;
+    e.sortingLayer = 8; // 第 33 个键
+    float acc33 = 0;
+    ps.Emit(e, 1.0f, 1, acc33);
+    Expect(ps.AliveCount() == 33, "all 33 particles alive in sim");
+    auto packets = ps.Extract(atlas, {32, 32}, 1000, 1000);
+    Expect(packets.size() == ParticleSystem::kMaxParticleKeys,
+           "key-table full: exactly cap particles visible");
+    Expect(ps.LastStats().droppedParticles == 1, "overflow particle dropped and counted");
+}
+
 void TestCamera2D() {
     Camera2D cam;
     cam.center = {100, 50};
@@ -358,6 +448,17 @@ void TestQuality() {
     // 再过载 → Low 到底（含 EMA 爬升窗口的余量）
     for (int i = 0; i < 200; ++i) q.Update(25.0, 1.0f / 60.0f);
     Expect(q.Current() == QualityTier::Low, "downgrade to low");
+
+    // 非 High 启动档：构造即对齐预算（修复前 params_ 恒按 High 初始化，且 Low 档
+    // Update 提前 return 永不自愈 → 粒子预算长期 100000）
+    QualityManager lowStart(QualityTier::Low);
+    Expect(lowStart.Current() == QualityTier::Low &&
+               lowStart.Params().particleBudget == 20000,
+           "low-start ctor budget matches tier");
+    QualityManager medStart(QualityTier::Med);
+    Expect(medStart.Params().particleBudget == 50000, "med-start ctor budget matches tier");
+    lowStart.Update(25.0, 1.0f); // Low 档到底：过载也不漂移
+    Expect(lowStart.Params().particleBudget == 20000, "low-start budget stable under overload");
 }
 
 void TestBitmapFontLayout() {
@@ -3582,6 +3683,8 @@ int main() {
     TestSortStability();
     TestParticles();
     TestRenderableExtractOrder();
+    TestRenderableSanitizeCacheAndHoles();
+    TestParticlesKeyOverflow();
     TestCamera2D();
     TestQuality();
     TestBitmapFontLayout();

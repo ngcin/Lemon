@@ -36,7 +36,8 @@ public:
     static constexpr double kSlowFrameMs = 20.0;   // 低于 50fps 视为过载
     static constexpr double kDowngradeSeconds = 2.0;
 
-    explicit QualityManager(QualityTier start = QualityTier::High) : tier_(start) {}
+    explicit QualityManager(QualityTier start = QualityTier::High)
+        : tier_(start), params_(TierParams(start)) {}
 
     QualityTier Current() const { return tier_; }
     const QualityParams& Params() const { return params_; }
