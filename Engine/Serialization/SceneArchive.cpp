@@ -351,6 +351,10 @@ bool SceneArchive::Load(Scene& scene, const std::string& jsonText) {
         LEMON_WARN("scene missing/invalid entities array");
         return false;
     }
+    // 场景名恢复（Save 写 doc["name"]，Load 原从不读回 → 存档再开标题回默认名；
+    // 旧档/无名档不覆盖调用方默认名）
+    if (doc.contains("name") && doc.at("name").is_string())
+        scene.SetName(doc.at("name").get<std::string>().c_str());
 
     // 清空目标场景（两阶段销毁直接提交）
     scene.Each([&](Entity e) { scene.Destroy(e); });

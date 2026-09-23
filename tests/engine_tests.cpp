@@ -795,6 +795,8 @@ void TestSceneArchive() {
     World world2;
     Scene& dst = world2.CreateScene("reload");
     Expect(SceneArchive::Load(dst, text), "scene load ok");
+    // 场景名往返（M16：Load 原从不读回 doc["name"]，存"Arena01"再开回"reload"默认名）
+    Expect(std::string(dst.Name()) == "Arena01", "scene name roundtrip restored");
 
     Expect(dst.AliveCount() == 2, "entity count roundtrip");
     // 找回组件（实体句柄会变，按组件数据定位）
@@ -820,7 +822,7 @@ void TestSceneArchive() {
     });
     Expect(foundMonster && foundChild, "both entities located");
 
-    // 二次 roundtrip 稳定（组件数据不动点；场景名是宿主属性，不参与比较）
+    // 二次 roundtrip 稳定（组件数据不动点；场景名自 M16 起随档往返，同样不动点）
     std::string text2 = SceneArchive::Save(dst);
     World world3;
     Scene& third = world3.CreateScene("reload");

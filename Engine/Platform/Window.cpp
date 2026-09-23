@@ -64,7 +64,12 @@ bool Window::PollEvents() {
                 break;
             }
             case SDL_EVENT_DROP_FILE: // OS 拖入窗口（路径在事件回调外失效 → 即拷即存）
-                if (ev.drop.data && ev.drop.data[0]) m->drops.emplace_back(ev.drop.data);
+                // drop.data 归应用所有，SDL3 约定必须 SDL_free（空串也占分配；
+                // data 是 const char*，所有权转移需去 const 转 void*）
+                if (ev.drop.data) {
+                    if (ev.drop.data[0]) m->drops.emplace_back(ev.drop.data);
+                    SDL_free((void*)ev.drop.data);
+                }
                 break;
             default:
                 break;

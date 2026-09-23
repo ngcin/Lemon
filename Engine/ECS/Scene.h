@@ -105,6 +105,7 @@ public:
     const physics2d::SpatialHash& Spatial() const;
 
     const char* Name() const { return name_.c_str(); }
+    void SetName(const char* name) { name_ = name; } // 装载器恢复场景名（Save 写 name，Load 读回）
     uint64_t CreatedTotal() const { return createdTotal_; }
     uint64_t DestroyedTotal() const { return destroyedTotal_; }
 
