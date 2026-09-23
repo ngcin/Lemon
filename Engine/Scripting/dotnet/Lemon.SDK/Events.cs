@@ -40,6 +40,14 @@ public static unsafe class Events
         (s_handlers[t] ??= new List<Action<GameEventMsg>>(4)).Add(handler);
     }
 
+    /// <summary>退订（M15：原只增不删——按实例订阅的行为体反复生成/销毁 =
+    /// 订阅表无界增长 + 根住已毁实例。behaviour 内订阅优先用 LemonBehaviour.Subscribe
+    /// 助手（OnDestroy 自动退订）；本方法供静态订阅/手动管理用）。</summary>
+    public static void Unsubscribe(GameEvent type, Action<GameEventMsg> handler)
+    {
+        s_handlers[(int)type]?.Remove(handler);
+    }
+
     /// <summary>脚本推事件（Custom 用户区：user = 资产注册 id）。当帧 #15 派发。</summary>
     public static void Push(GameEvent type, ushort user, EntityHandle src, EntityHandle dst,
                             float p0 = 0, float p1 = 0, float p2 = 0, float p3 = 0,

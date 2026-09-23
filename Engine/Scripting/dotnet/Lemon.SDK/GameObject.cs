@@ -1,6 +1,8 @@
 // Lemon.SDK — GameObject / LemonBehaviour（档①，04 §2.1；Unity 命名级对齐 ADR-009）
 // M3 分期口径（ADR-010 D4）：门面核心集；Input/Audio/Assets/Instantiate(prefab) M4+；
 // GetComponent 系列是语法糖（低频），热路径用 Chunk span（04 §3）。
+using System;
+using System.Collections.Generic;
 using Lemon.Interop;
 
 namespace Lemon;
@@ -55,4 +57,26 @@ public abstract class LemonBehaviour
     protected internal virtual void OnHotReloadOut(StateBag bag) { }
     protected internal virtual void OnHotReloadIn(StateBag bag) { }
     // 触发器/事件回调（OnTriggerEnter/Exit/OnGameEvent）随 M4 事件桥扩展接入
+
+    // ---- 实例级事件订阅（M15）----
+    // 惰性分配：订阅发生在挂载/构造期（非每帧），分配不入 GC 热路径纪律账。
+    private List<(GameEvent type, Action<GameEventMsg> handler)> _subscriptions;
+
+    /// <summary>订阅事件，本实例 OnDestroy 时自动退订（M15：裸 Events.Subscribe 只增
+    /// 不删，行为体按实例订阅（如构造器订阅波次横幅）反复生成/销毁 = 订阅表无界增长
+    /// + 根住已毁实例 + 根住旧 ALC 直到下次换域）。静态订阅（GameMain.Configure 等
+    /// 域级订阅）不适用本助手，用 Events.Unsubscribe 手动管理。</summary>
+    protected void Subscribe(GameEvent type, Action<GameEventMsg> handler)
+    {
+        Events.Subscribe(type, handler);
+        (_subscriptions ??= new List<(GameEvent, Action<GameEventMsg>)>(2)).Add((type, handler));
+    }
+
+    /// <summary>Behaviours.Detach 收尾调用：清本实例全部订阅（OnDestroy 后）。</summary>
+    internal void ClearSubscriptions()
+    {
+        if (_subscriptions == null) return;
+        foreach (var (type, handler) in _subscriptions) Events.Unsubscribe(type, handler);
+        _subscriptions.Clear();
+    }
 }

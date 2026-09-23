@@ -129,8 +129,17 @@ internal static unsafe class DomainManager
     public static bool UnloadScript()
     {
         try {
-            // 先让域线程丢掉委托/程序集引用（后续 Tick 返回 NaN 哨兵）
-            Post(() => { s_tickFn = null; s_asm = null; s_alc = null; });
+            // 先让域线程丢掉全部旧域引用再卸载（M14：原只置空三引用，
+            // Scripting/Events/SceneOps 静态表仍根住旧 ALC 类型 → Unload 后 GC
+            // 永远收不净、weak.IsAlive 恒真。与 LoadScript 的清理口径对称）
+            Post(() => {
+                s_tickFn = null; s_asm = null; s_alc = null;
+                Lemon.Scripting.Reset();
+                Lemon.Events.Reset();
+                Lemon.Behaviours.Reset();
+                Lemon.SceneOps.Reset();
+                Lemon.Time.Reset();
+            });
             var weak = s_alcWeak;
             s_alcWeak = null;
             if (weak == null) return true;
@@ -169,10 +178,17 @@ internal static unsafe class DomainManager
     public static bool ReloadScript(string assemblyPath)
     {
         try {
-            // 1) 域线程：捕获状态 + 释放旧域全部强引用（实例/委托/注册表）
+            // 1) 域线程：捕获状态 + 释放旧域全部强引用（实例/委托/注册表）。
+            //    M14：清根必须完整且先于步骤 2 的 Unload+GC——原只 Behaviours.Reset，
+            //    Scripting/Events/SceneOps 在 GC 窗口期仍根住旧 ALC → 换装必记泄漏
+            //    （LoadScript 末尾的 Reset 只对新域生效，救不了已发生的 GC 轮询）
             Post(() => {
                 Lemon.Behaviours.CaptureForHotReload();
                 Lemon.Behaviours.Reset(); // 旧实例即弃（类型来自旧域，保着只会 pin）
+                Lemon.Scripting.Reset();
+                Lemon.Events.Reset();
+                Lemon.SceneOps.Reset();
+                Lemon.Time.Reset();
                 s_tickFn = null; s_asm = null; s_alc = null;
             });
             var weak = s_alcWeak;

@@ -36,11 +36,13 @@ public sealed class PlayerBehaviour : LemonBehaviour
 
     public PlayerBehaviour()
     {
-        Events.Subscribe(GameEvent.LevelUp, m => {
+        // Subscribe 助手（M15）：实例销毁自动退订（裸 Events.Subscribe 只增不删，
+        // 死亡→复活重挂会逐局累积订阅）
+        Subscribe(GameEvent.LevelUp, m => {
             if (m.Src.Id == gameObject.Entity.Id) ++_pendingLevels;
         });
-        Events.Subscribe(GameEvent.Death, OnDeath);
-        Events.Subscribe(GameEvent.WaveStart, m =>
+        Subscribe(GameEvent.Death, OnDeath);
+        Subscribe(GameEvent.WaveStart, m =>
             Ui.Set("wave", $"—— 第 {(int)m.P0 + 1} 波 ——", -1f, kColorWave));
     }
 

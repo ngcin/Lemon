@@ -28,6 +28,8 @@ public static class GameMain
         Lemon.Behaviours.Register<SaveCardsProbeBehaviour>();
         // M11：Awake/OnDestroy 内 native 调用（typeId 7，表尾注册同上约定）
         Lemon.Behaviours.Register<AwakeUiProbeBehaviour>();
+        // M15：Subscribe 助手 + Detach 自动退订（typeId 8，表尾注册同上约定）
+        Lemon.Behaviours.Register<SubProbeBehaviour>();
     }
 }
 
@@ -188,12 +190,14 @@ public sealed class ScaleUiProbeBehaviour : Lemon.LemonBehaviour
 
 /// <summary>M5 批②：WaveStart 订阅样例（引擎事件 → Game RT UI 的最小闭环）。
 /// 收到 WaveStart（P0=波序号 0 起、P1=本波计划总数）→ Ui.Set 波次横幅行；
-/// C++ 侧（script-tests TestWaveStartToUi）人工推包后断言 RtUi 槽。</summary>
+/// C++ 侧（script-tests TestWaveStartToUi）人工推包后断言 RtUi 槽。
+/// Medium 轮 M15 迁移：裸 Events.Subscribe → Subscribe 助手（实例销毁自动退订，
+/// 反复挂载不再累积订阅）。</summary>
 public sealed class WaveBannerBehaviour : Lemon.LemonBehaviour
 {
     public WaveBannerBehaviour()
     {
-        Lemon.Events.Subscribe(Lemon.Interop.GameEvent.WaveStart, m =>
+        Subscribe(Lemon.Interop.GameEvent.WaveStart, m =>
         {
             int index = (int)m.P0;
             int planned = (int)m.P1;
@@ -249,4 +253,17 @@ public sealed class AwakeUiProbeBehaviour : Lemon.LemonBehaviour
     protected override void Awake() => Lemon.Ui.Set("awake", "alive", 1.0f);
 
     protected override void OnDestroy() => Lemon.Ui.Set("awake", "dead", 0.0f);
+}
+
+/// <summary>M15 验收（typeId 8）：Subscribe 助手 + Detach 自动退订。挂载→销毁→
+/// 再挂载后推一次 Custom 900：旧实例订阅不得残留（残留 = 一次推送两份 901 回执）。
+/// 若用裸 Events.Subscribe 订阅（旧行为），首个已销毁实例的 handler 仍在静态表里，
+/// 回执会翻倍。</summary>
+public sealed class SubProbeBehaviour : Lemon.LemonBehaviour
+{
+    public SubProbeBehaviour()
+        => Subscribe(Lemon.Interop.GameEvent.Custom, m => {
+            if (m.User != 900) return;
+            Lemon.Events.Push(Lemon.Interop.GameEvent.Custom, 901, default, default);
+        });
 }

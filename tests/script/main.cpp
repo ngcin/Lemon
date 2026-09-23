@@ -304,7 +304,7 @@ void TestDomainManager() {
         auto listFn = (int (*)(char*, int))GetExport("lemon_behaviours_list");
         char buf[4096];
         int n = listFn ? listFn(buf, (int)sizeof buf) : -1;
-        Expect(n == 8, "behaviours list after hot reload (+M11 AwakeUiProbe)");
+        Expect(n == 9, "behaviours list after hot reload (+M11/M15 probes)");
         // M4.6 回归（用户实测闪退根因）：相对路径进 dm_reload 曾抛 ArgumentException
         // 逃逸 UnmanagedCallersOnly → coreclr abort。拦截层必须转 0 返回且进程存活
         // （本断言能跑到 = 进程没死）。换装失败后旧域已弃——再换一次真路径恢复。
@@ -804,6 +804,53 @@ void TestAwakeWindowAndDoubleAdd() {
     g_sh.ResetPlayDomain(); // 收尾自清（同上）
 }
 
+// M15：Subscribe 助手 + Detach 自动退订——挂载→销毁→再挂载后推一次 900，
+// 恰一份 901 回执（旧实例订阅残留 = 双份；裸 Events.Subscribe 的旧行为）。
+void TestSubscribeAutoUnsubscribe() {
+    using namespace lemon::ecs;
+    auto opsSubmit =
+        (void (*)(unsigned char, unsigned char, uint64_t))GetExport("lemon_ops_submit");
+    auto timeResetFn = (void (*)())GetExport("lemon_time_reset");
+    Expect(opsSubmit && timeResetFn, "subscribe-probe exports resolved");
+    timeResetFn();
+
+    WorldDesc d;
+    d.threadCount = 1;
+    World w(d);
+    Scene& s = w.CreateScene("SUB");
+    w.SetActiveScene(&s);
+    w.SetScriptBackend(&g_sh);
+    w.Pipeline().AddSystem(std::make_unique<DestroyCommitSystem>());
+    w.Pipeline().AddSystem(std::make_unique<CSharpBatchSystem>());
+    w.Pipeline().AddSystem(std::make_unique<ScriptEventDispatchSystem>());
+    w.Pipeline().ResolveOrder();
+
+    int got = 0;
+    w.SetEventSink([&](World&, const EventPacket& p) {
+        if (p.type == GameEvent::Custom && p.user == 901) ++got;
+    });
+
+    // 局1：挂载 → 销毁（Detach 必须连带退订）
+    Entity e1 = s.Create();
+    g_sh.AttachBehaviour(w, s, e1, 8); // SubProbeBehaviour（表尾 typeId 8）
+    opsSubmit(1, 0, e1.id);
+    w.Step(0.25f); // 应用销毁 → Detach → ClearSubscriptions
+    w.Step(0.25f);
+
+    // 局2：同域再挂载新实例 → 推一次 900 → 恰一份回执
+    Entity e2 = s.Create();
+    g_sh.AttachBehaviour(w, s, e2, 8);
+    EventPacket p{};
+    p.type = GameEvent::Custom;
+    p.user = 900;
+    w.Events().Push(p);
+    w.Step(0.25f); // 帧末派发：900 → handler → Push(901) 入托管 pending
+    w.Step(0.25f); // 下帧派发头部拉 pending（派发期回推 = 下帧送达，#15 语义）
+    Expect(got == 1, "single receipt after re-attach (stale subscription would double)");
+
+    g_sh.ResetPlayDomain(); // 收尾自清（同上）
+}
+
 } // namespace
 
 int main() {
@@ -851,6 +898,7 @@ int main() {
     TestSaveChannelAndUiCards();
     TestPlayDomainReset();
     TestAwakeWindowAndDoubleAdd();
+    TestSubscribeAutoUnsubscribe();
 
     // M4.6 探针（编辑器切项目场景）：同进程二次 ScriptHost 生命周期。CoreCLR 运行时
     // 进程单例——第二次 Initialize 的真实行为必须钉板（成功/失败都合法，崩 = 缺陷）。

@@ -160,6 +160,7 @@ public static class Behaviours
             for (int i = slot.Instances.Count - 1; i >= 0; i--) {
                 if (slot.Instances[i].gameObject.Entity.Id != e.Id) continue;
                 if (!slot.Disabled[i]) SafeCall(slot, i, slot.Instances[i], LifecycleBits.OnDestroy);
+                slot.Instances[i].ClearSubscriptions(); // M15：实例级订阅随实例退订
                 slot.Instances.RemoveAt(i);
                 slot.StartPending.RemoveAt(i);
                 slot.BadStreak.RemoveAt(i);
