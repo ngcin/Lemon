@@ -4,6 +4,10 @@
 #   quick     = ctest + 基础冒烟 + 关闭状态机（约 1 分钟）
 #   full      = 缺省；追加 资产链/脚本链/终验/场景 roundtrip
 #   build-dir 缺省 build/mac（cmake --preset mac 产物）
+# 后台跑：编辑器窗口不抢前台焦点（smoke 输入为合成事件注入，不依赖激活；
+# 2026-09-24 用户反馈回归运行打断前台工作而加，机制见 Window.cpp LEMON_NO_ACTIVATE）
+export LEMON_NO_ACTIVATE=1
+
 # 注：macOS 自带 bash 3.2——所有展开一律 ${BRACED}（变量名后跟全角标点会把
 #     高位字节并进名字 → "unbound variable"）。
 set -u

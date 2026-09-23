@@ -1,5 +1,6 @@
 #include "Platform/Window.h"
 
+#include <cstdlib>
 #include <cstring>
 #include <utility>
 
@@ -23,6 +24,10 @@ std::unique_ptr<Window> Window::Create(const WindowDesc& desc) {
         LEMON_ASSERT(false, "SDL_Init(VIDEO) failed: %s", SDL_GetError());
         return nullptr;
     }
+    // 自动化/回归跑窗口不抢前台焦点：显示时不激活（SDL3 hint）。smoke 输入是
+    // 合成事件注入，不依赖窗口激活；手动使用不设此变量 = 默认行为不变
+    if (std::getenv("LEMON_NO_ACTIVATE"))
+        SDL_SetHint(SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN, "0");
     auto w = std::unique_ptr<Window>(new Window());
     w->m = std::make_unique<Impl>();
     w->m->window = SDL_CreateWindow(desc.title, desc.width, desc.height,
