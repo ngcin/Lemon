@@ -199,6 +199,12 @@ RESULT 行判读：`sim avg ≤ 8ms`（08 §3 判据）；`alive` 稳定在 n �
 > alive/created/destroyed 与旧档逐项一致）。金档换代 m5b0 → **m5b2**（sim mt/st +
 > script 三档，重录后 replay mismatches=0）。推论：**加字段可零重录（空组件名已在
 > 哈希流），加组件必重录**——批次规划时按此预判。
+>
+> **零重录先例二（M5 批④，2026-09-23）**：World 级新通道（SaveChannel 存档 KV /
+> RtUiCards 三选一卡片 / RtUi 槽着色）+ vtable 尾追 8 项——零新组件、零布局改动，
+> 且新通道**不入 StateHash**（呈现与用户数据段）→ m5b2 三档原样 replay
+> mismatches=0。即：**凡"World 持有 + 非 ECS"机制一律零重录**，与批②推论合并：
+> schema 一字不动 = 旧档即证。
 
 ### 6.9 bench-script —— M3 脚本验收场（无渲染，CoreCLR 域线程）
 
@@ -377,8 +383,9 @@ Hierarchy 面板）。回归口径 = 本命令三跑稳定。
 - Windows 平台（CMake 预设 `win` 待加，见 README）。
 - 编辑器交互覆盖边界（M4-Editor-Plan §6 提案已落地）：无头冒烟 `--smoke`（含 overlay
   可见性像素断言）/ `--smoke-close`（关闭状态机）/ `--smoke-drag`（视口注入五段）/
-  `--smoke-anim`（切片 + clip + Animator 帧映射链，M5 批③起）/ `--final`（终验链）
-  经 `tools/editor-regression.sh` 一键 12 步；**未脚本化**的纯观感路径
+  `--smoke-anim`（切片 + clip + Animator 帧映射链，M5 批③起）/ `--smoke-template`
+  （向导复制模板 → build → Play → HUD/存档/波次/击杀/升级卡片断言，M5 批④起）/
+  `--final`（终验链）经 `tools/editor-regression.sh` 一键 13 步；**未脚本化**的纯观感路径
   （Inspector 控件手感、面板排版）仍靠 [Editor-Manual-Test-Guide.md](./EngineDesign/Editor-Manual-Test-Guide.md) 真人清单。
 - M2：bench-sim 早期怪群聚拢阶段存在 max ~145ms 单步尖峰（avg 判据不受影响；哈希重建
   并行化是已预留路径，触发 M5 压测 B 再做）；投射物穿透去重用全量 iFrames 策略（M5 细化）；

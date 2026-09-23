@@ -243,6 +243,7 @@ RingQueue<EventPacket> gEvents;          // 系统只入队，帧末 ScriptEvent
 
 - **场景文件**与**存档**同构（ECS 全量序列化器，组件注册表驱动），存档 = 场景快照 + 用户数据段（双通道接口见 06 §10）。
 - 版本迁移：schema 带 `version`，逐版本迁移函数链（老档自动升级，借鉴 duality gzip 版本化思想，压缩用 gzip）。
+- **M5 批④ 落地注**：用户数据段已落地为 **World 级 `SaveChannel`**（`ECS/SaveChannel.h`，内存 KV key→bytes；C# `Lemon.Save` 写读，IO 归宿主钩子——编辑器 = `.lemon/saves/game.sav` 定长头二进制 + 原子写 + .bak；06 §10 口径修订见彼处）。**不入 StateHash**（用户数据非模拟态）。场景快照入档（整场景存档）M6+；Game RT UI 通道（`World::RtUi` 槽 + `World::Cards` 三选一卡片）同为 World 级非 ECS 通道（呈现层，不入哈希）——**本通道族新增机制一律走"World 持有 + vtable 尾追"，不动组件注册表**（批②勘误的哈希漂移教训）。
 
 ## 14. 性能预算分解（压测 A 模拟侧 ≤ 10 ms）
 

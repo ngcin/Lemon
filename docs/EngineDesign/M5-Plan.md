@@ -7,7 +7,10 @@
 > 完成**（§6–§10 分解 + 完工记录见 §10 末；执行勘误：Pickup 密核扫描实测 1.87ms
 > 超预估 0.2~0.6ms，登记 09 §6.10 观察项不扩 scope；smoke-ui 飘忽为既有问题）。
 > **批② 已于 2026-09-23 完成**（§11–§15 分解 + 完工记录见 §15 末）。**批③ 已于
-> 2026-09-23 完成**（§16–§20 分解 + 完工记录见 §20 末；判据 2 零重录兑现）。批④ 待分解。
+> 2026-09-23 完成**（§16–§20 分解 + 完工记录见 §20 末；判据 2 零重录兑现）。
+> **批④ 已于 2026-09-23 完成**（§21–§25 分解 + 完工记录见 §25 末；判据 2 零重录
+> 兑现；真人 10 分钟一局验收待用户执行——M5 代码面就此收口，余项：多脚本 scripts[]
+> 重排 M6）。
 > 批② 执行勘误两处：① 金回放属**重录**口径非零重录——`ComputeStateHash` 对注册表
 > 组件名无条件入哈希（schema 漂移绊线），**新增组件必致全帧哈希漂移**（行为零漂移
 > 的旁证：bench-sim 终态与旧档逐项一致），金档换代 m5b0→m5b2（09 §7 已沉淀推论：
@@ -24,7 +27,7 @@
 | ① | 成长闭环 | Collectible 磁吸系统 ＋ Pickup 事件发射 ＋ XP 入账 ＋ Game RT UI 最小通道 ＋ timeScale | **✅ 完成 2026-09-22** |
 | ② | 导演波次 | DirectorSystem 波次表（数据驱动）＋ WaveStart 事件 | **✅ 完成 2026-09-23** |
 | ③ | 表现层 | clip .asset ＋ Animator 帧映射 ＋ 最小图集/切片（自 M6 提前）＋ 素材包第一批 | **✅ 完成 2026-09-23** |
-| ④ | 收口 | 存档 ＋ HUD 完整版 ＋ 模板整合 ＋ Play 调参 ADR | 待分解 |
+| ④ | 收口 | 存档 ＋ HUD 完整版 ＋ 模板整合 ＋ Play 调参 ADR | **✅ 完成 2026-09-23**（判据 1–4/6 全过；判据 5 真人验收待用户） |
 
 ---
 
@@ -882,3 +885,212 @@ anim-chain 步；首轮 smoke-ui rename=0/1 与 final overlay sel=0 两步时序
 hframes 逐表核对；THIRD_PARTY.md 登记）+ yami 真素材链核验（--smoke-anim 拷入项目：
 5 表切片全登记 + 4 clip 建表 + 双链断言 OK）。执行勘误：无（分解预判全部兑现——
 含 D5 预声明的"bench 用程序化表自播种保 hermetic"）。
+
+---
+
+## 21. 批④：收口 —— 现状盘点与设计决策（代码逐行核对，2026-09-23）
+
+### 21.1 现状：管线断点在哪
+
+| 环节 | 现状 | 锚点 |
+|---|---|---|
+| 存档 | **零落地**：06 §10 Save API/双通道/防损坏全停留在设计；引擎无任何持久化通道（autosave 是编辑器场景备份，非游戏存档） | `06 §10` |
+| HUD | 批① 最小通道：8 槽纯文本+ProgressBar，**无颜色、无卡片、无交互回读**——三选一/死亡结算（06 §7 模板验收项）做不了 | `World.h:29 RtUiSlot` / `ViewportPanels.cpp:752` |
+| 模板 | ProjectWizard 只有 **blank**（代码生成）；06 §1 向导"选模板→复制"未落地；vs-survivor 无可玩形态（bench-survivor 是压测场非模板） | `ProjectWizard.cpp:27` |
+| Play 调参 | 决议 #5 已实现"落 Play World、Stop 丢弃"，但**无显式提示、无 ADR**——08 §2 M5 验收第三条"'Play 中调参→改动回灌'或显式禁用提示（ADR 记录）"未闭合 | `EditorContext.h:126` |
+| 武器/升级 | 直射（Shooter）/穿透（pierce）/成长（XpProgress+LevelUp）组件层齐备；**环绕武器无组件**；三选一无卡片通道；死亡结算无 HUD 面 | `BehaviorComponents.h` |
+
+**管线零重编号 + 零新 ECS 组件 + 零布局改动**（批③同款前置规避）：本批全部
+机制走"World 级非 ECS 通道 + vtable 尾追 + 编辑器/脚本层"，ComputeStateHash
+的组件名与字段集不变 → 金回放零重录（§23 机制保证）。
+
+### 21.2 设计决策（六条，实施时写进代码注释与文档）
+
+**D1 存档 = World 级 SaveChannel（内存 KV）+ 编辑器域 IO 钩子**：新
+`Engine/ECS/SaveChannel.h`——`unordered_map<string, vector<uint8_t>>` 的
+Set/Get/Remove/Count/清空/遍历（只 Find 不遍历序敏感路径）；World 持有
+（RtUi 先例）。**不入 StateHash**（用户数据段非模拟态）。IO 归编辑器域：
+`ScriptIoHooks{ saveFlushFn(World&), saveLoadFn(World&) }` 进程级注入
+（EditorAssetHooks 同款模式），编辑器装配期装——flush = 项目根
+`.lemon/saves/game.sav`（版本头 + 原子写 tmp→rename + 旧档转 .bak 三件套）；
+EnterPlay 自动载入 / ExitPlay 自动兜底落盘（进 Play 快照语义一致）。
+纯运行时（打包 M8）未注入 = Flush 红字一次后 no-op。**文件格式 M5 版 =
+定长头二进制**（`LEMONSAVE` magic + u32 版本 1 + u32 条目数 + 每条
+{u16 keyLen, key, u32 valLen, val}）；gzip 推 M7 packager（06 §10 修订注）。
+M5 单档单文件（slot_N/settings/meta 三类分档推 M6——06 §10 注记修订，
+模板用 key 前缀约定区分语义）。
+
+**D2 C# Save API（06 §10 形状裁剪）+ vtable 尾追 4 项**：
+`saveSet(key, bytes, len)` / `saveGetLen(key)`（返回长度，-1=无）/
+`saveGet(key, out, cap)`（返回拷贝数）/ `saveFlush()`（钩子落盘）。
+SDK `Save` 静态类：`Set(key, ReadOnlySpan<byte>)` / `Get(key)`（byte[]?）
+/ `SetString/GetString`（UTF8 便利层）/ `HasKey` / `Flush`。旧宿主 null
+判空（M4.4 尾追既有约定）。Flush 语义 = 全量覆写（幂等，帧末或显式皆可）。
+
+**D3 HUD 完整版 = 槽样式扩展 + 卡片通道 + 交互回读**：
+RtUiSlot 追加 `uint32_t color`（0=默认，ABGR；12→16B 纯 C++ 侧无镜像无哈希）
+＋ RtUiChannel 加 `Clear(key)`（删单行——结算后清 HUD）。新 `RtUiCards`
+（World 持有）：`{bool active; char title[48]; char labels[3][48]; int32_t pick}`
+——三选一卡片状态 + 选择回读。vtable 尾追 4 项：`rtUiClear(key)` /
+`uiCards(show, title, a, b, c)` / `uiCardPick()`（消费式：返回后置 -1）。
+GameView：槽行 color 时 PushStyleColor（文本/进度条着色）；卡片 active 时
+居中半透明面板 + 3 按钮（点击写 pick）；窗口聚焦时数字键 1/2/3 写 pick
+（卡片期间脚本已 Time.Scale=0 冻结，与游戏输入无冲突）。**交互确定性口径**
+：卡片选择属用户 IO 不入 InputSnapshot 录制流（金档场景通道空转 = 零漂移；
+依赖卡片选择的场景不进金回放口径——同 Inspector Play 编辑的"游玩操作"
+分类，09 §7 注记）。SDK：`Ui.Clear(key)` / `Ui.ShowCards(title,a,b,c)` /
+`Ui.HideCards()` / `int Ui.CardPick()`。
+
+**D4 模板 = 仓库 Templates/vs-survivor 完整项目目录 + 向导复制模式**：
+模板即项目（project.lemon + Assets + Scenes + Prefabs + Game/*.cs），随仓库
+版本管理、可直接打开调试；向导"复制模板"（06 §1 流程）：目录拷贝 →
+project.lemon 重写（新项目 GUID=存档隔离键/name）→ Game/*.csproj HintPath
+重锚（创建期固化 sdkDir）。**模板内资产 GUID 不重生成**（引用稳定；项目
+GUID 才是隔离语义）。模板路径经编译期 `LEMON_TEMPLATE_DIR` 注入（CMAKE
+源树推导，LEMON_SCRIPT_DIR 同款）。素材 = yami-dungeon 5 表 + 3 clip 拷贝
+（THIRD_PARTY 已登记，模板 README 再声明）+ 程序化 gem/bullet/blade 小图。
+玩法组装零新组件：环绕武器 = C# OrbitBladesBehaviour 驱动 blade prefab
+（sprite+Hazard）绕玩家旋转；三选一 = HudBehaviour 订阅 LevelUp →
+Time.Scale=0 + Ui.ShowCards（固定序池：移速/磁力/射速/穿透/生命上限/环绕+1，
+零 RNG 确定性）→ 轮询 CardPick → 写玩家组件 → 恢复；死亡结算 = 订阅
+Death（src==玩家）→ 结算 HUD + Save.SetString("vs.best") + Flush →
+按 attack 位复活（清场重计数）。**机械验收 = `--smoke-template`**
+（复制→build→Play 600 帧→断言 HUD 槽≥4/WaveStart≥2/kills>0/LevelUp≥1/
+卡片出现且可选→OK），进 editor-regression（12→13 步）；真人 10 分钟一局
+验收归用户（06 §7 判据，DevLog 记录）。
+
+**D5 Play 调参 ADR-011 = 显式不回灌 + Inspector 横幅**：维持决议 #5
+（Play 中编辑落 Play World、Stop 丢弃——Unity 默认同款），**不做字段级回灌**
+（M5）。理由：回灌需 (guid, compId, bytes) diff + 回链匹配，Play 结构性变化
+（spawn/destroy/prefab 实例化/脚本态）下语义模糊；Unity/Godot 4 均默认丢弃。
+**显式提示**：Inspector 顶部 Play 中橙色横幅"▶ Play 模式：改动随 Stop 丢弃
+（ADR-011）"；GameView 既有输入提示保持。M6+ 重评条件（编辑操作录制轨）
+写进 ADR"后续"节。
+
+**D6 输入位扩一位**：InputState bit5 = confirm（R 键映射，编辑器采样行
+`ImGuiKey_R`）——模板复活/确认语义用；Input.h 注释与 C# `InputButton.Confirm`
+同步。录制/回放不受扰（既有位序不变，新位只在按下时非零）。
+
+### 21.3 验收判据（全部满足才勾销）
+
+1. `ctest` 3/3 全绿，含 script-tests 新增（Save 通道 set/get/roundtrip/Flush
+   钩子 + Ui.Clear/ShowCards/CardPick 消费语义 + InputButton.Confirm）；
+2. **金回放零重录**（零新组件/零布局改动/新通道不入哈希）：m5b2 三档
+   `--replay` mismatches=0；
+3. `--smoke-template` PASS + `tools/editor-regression.sh full` **13/13**；
+4. bench-survivor ×3 判据不变 PASS（本批不动播种，守门跑）；
+5. 真人验收（用户执行）：新建 vs-survivor 项目 → Play 完整一局（HUD 四要素/
+   三选一/波次/死亡结算/最高分续显）——10 分钟口径；
+6. 回写：ADR-011、03（SaveChannel 注记）、04（vtable 尾追 8 项 + Save/Ui API
+   + Input bit5）、05（向导模板选择/Inspector 横幅/GameView 卡片）、
+   06（§7 模板落地 + §8 HUD v1 落地 + §10 M5 口径修订）、08 §3 表注、
+   09（测试数 + §7 零重录注记）、DevLog 批④条目、本页勾销。
+
+## 22. 任务分解（T1→T5 依序落地）
+
+### T1 SaveChannel + vtable 4 项 + 编辑器 IO —— 约 0.75 天
+
+- `Engine/ECS/SaveChannel.h/.cpp`（CMake 源表追加）：定长头二进制
+  `Encode/Decode`（SaveChannel ↔ bytes）+ 内存 KV；World 持有 + `Save()`
+  访问器；
+- `ScriptHost.h`：vtable 尾追 4 项（D2 签名）+ `ScriptIoHooks` 注入面 +
+  g_world 窗口实现（`ScriptHost.cpp` kNativeApi 表尾）；SDK `Save.cs`
+  + `NativeApi.cs` 镜像；
+- 编辑器：`EditorApp` 装配期 `SetScriptIoHooks`（flush =
+  `.lemon/saves/game.sav` 原子写 + .bak；load 同路径解码）；EnterPlay
+  载入 / ExitPlay 兜底落盘（`EditorContext.cpp`）；
+- script-tests：`TestSaveChannel`（set/get/覆盖/删除/GetString 往返 +
+  Flush 后 C++ 侧读 World 槽断言 + EnterPlay 清零/载入）。
+
+### T2 HUD 完整版：槽样式 + 卡片通道 + GameView 交互 —— 约 0.75 天
+
+- `World.h`：RtUiSlot + color（16B）；RtUiChannel::Clear；RtUiCards 结构 +
+  World 持有 + ShowCards/HideCards/SetCardPick/ConsumeCardPick；
+- vtable 尾追 4 项（D3）+ SDK `Ui.cs` 扩（Clear/ShowCards/HideCards/CardPick）；
+- `ViewportPanels.cpp` GameView：槽 color 着色；卡片居中面板 + 3 按钮 +
+  数字键 1/2/3（聚焦时）；RtUi 槽布局微调（行距/进度条宽）；
+- script-tests：`TestUiCardsAndClear`（ShowCards 后 C++ 读 World 卡片态 +
+  SetCardPick 模拟选择 → C# CardPick 消费恰一次 → 二读 -1 + Ui.Clear 删行）。
+
+### T3 vs-survivor 模板 + 向导复制 + smoke-template —— 约 1.25 天
+
+- `Templates/vs-survivor/`：project.lemon（占位 guid）/Assets（yami 拷贝 +
+  程序化 gem/bullet/blade png + meta + 3 clip）/Prefabs（mob/bullet/gem/blade/
+  boss）/Scenes/Main.scene（玩家 hero+clip+Health/Stats/XpProgress+Shooter+
+  InputMover 脚本/BenchSpawner 风格宝石源改为杀怪掉落版 + WaveDirector
+  16 波含 Boss 波）/Game/*.cs（GameMain+InputMoverBehaviour 软钳制+
+  HudBehaviour+OrbitBladesBehaviour）/README（素材来源与许可）；
+- `ProjectWizard`：ProjectDesc.template + Create 模板分支（拷贝/重写/重锚）；
+  向导 UI 模板下拉（blank/vs-survivor）；CMake `LEMON_TEMPLATE_DIR` 注入；
+- `--smoke-template`（`EditorApp.cpp`）：临时目录复制模板 → OpenProject →
+  BuildGameProject → 装配 → EnterPlay 600 帧 → 断言（D4 列表）→
+  `smoke-template: ... => OK`；`tools/editor-regression.sh` full 增 1 步；
+- Input bit5 confirm（Input.h 注释 + ImGuiBackend 采样行 + C# InputButton）。
+
+### T4 ADR-011 + Inspector Play 横幅 —— 约 0.25 天
+
+- `docs/ADR/ADR-011-Play-Mode-Tweak-Disposition.md`：决策（显式不回灌+
+  横幅）/备选分析（字段级回灌/录制轨）/Unity·Godot 对照/M6+ 重评条件；
+- `InspectorPanel.cpp` OnGui 头部：Playing() 时橙色横幅（文案含 ADR-011 指向）。
+
+### T5 全量验证 + 文档收口 —— 约 0.5 天
+
+§25 命令全跑 + §21.3 回写清单逐项落（06 §7/§8/§10 修订注、03/04/05、
+08 §3 表注、09 测试数与 §7 注记、DevLog 批④条目、本页勾销）。
+
+**合计约 3.5 个工作日**（批① 3.5 天同量级；新付模板组装与冒烟，省零管线成本）。
+
+## 23. 确定性与回放影响（批③教训延续）
+
+- **零 schema 变化**：零新组件/零布局改动/零字段位变化——ComputeStateHash
+  输入不变（批②勘误根因持续规避）；
+- SaveChannel/RtUiCards/RtUiSlot.color 全不入 StateHash（呈现与用户数据段，
+  非模拟态）——bench 金档场景这些通道空转，m5b2 零重录 replay=0 即机械证明；
+- 卡片选择/存档 Flush 属用户 IO 副作用，不入输入快照——依赖卡片选择的场景
+  （模板玩法）不进金回放口径，09 §7 分类声明；
+- Input bit5 只在按下时非零，既有录制流（bit0..4）逐位不变——bench 场景
+  无 R 键按下 = 零漂移；
+- 模板脚本零 RNG（三选一固定序、掉落按击杀序），C# Random 不引入。
+
+## 24. 风险与对策
+
+| 风险 | 对策 |
+|---|---|
+| 模板冒烟 dotnet build 时长（回归 +N 秒） | 只引 SDK dll 无包依赖，--final blank 向导同量级（秒级）；超 30s 则缓存装配产物 |
+| 模板玩法不平衡（10 分钟一局验收依赖真人） | 冒烟只断言机械链路（HUD/波次/击杀/升级/卡片）；波表与三选一数值保守初版，真人调参后回写 |
+| 卡片 ImGui 焦点与输入路由冲突 | 卡片期间脚本 Time.Scale=0（模拟冻结）；数字键消费在 ImGui 层不进 InputState |
+| 存档并发写（ExitPlay 兜底 + 显式 Flush 同帧） | Flush 幂等（全量覆写）；原子改名保证中途不损 |
+| .lemon/saves 权限/路径异常（项目只读卷） | IO 失败红字一次不炸；SaveChannel 内存态照常（会话内 Get/Set 有效） |
+| RtUiSlot 12→16B 布局改动 | 纯 C++ 内部结构（C# 经参数传递不 blit、不入哈希）——零镜像零回放影响 |
+| yami 素材模板再分发 | MIT + THIRD_PARTY 批③已登记；模板 README 复述来源/许可声明 |
+| 向导模板拷贝中断（半成品目录） | 目标目录不存在才创建（既有防重入）；拷贝失败清目录返回空 |
+| 模板项目 GUID 与资产 GUID 混淆 | 模板 README + 向导注释双声明：资产 guid 稳定、project.lemon guid 重生成 |
+
+## 25. 验证命令（批④完工口径）
+
+```bash
+ctest --test-dir build/mac --output-on-failure                        # 单测＋布局探针＋脚本测试
+# 金回放零重录（零 schema 变化 + 新通道不入哈希 → 不重录）
+build/mac/Samples/bench-sim/lemon-bench-sim --frames 3600 --replay build/goldens/m5b2-sim-mt.txt
+build/mac/Samples/bench-sim/lemon-bench-sim --frames 3600 --threads 1 --replay build/goldens/m5b2-sim-st.txt
+build/mac/Samples/bench-script/lemon-bench-script --frames 1800 --replay build/goldens/m5b2-script.txt
+build/mac/Editor/lemon-editor --bench-survivor --frames 900           # 守门跑 ×3（本批不动播种）
+build/mac/Editor/lemon-editor --smoke-template --frames 1800          # 模板链路单跑（风筝断言需 1800 帧）
+tools/editor-regression.sh full build/mac                             # 13/13（新增 template 步）
+```
+
+**完工记录（2026-09-23）**：判据 1–4/6 满足——ctest 3/3（engine-tests **13158**
+持平；script-tests **1477**，+17：TestSaveChannelAndUiCards——SaveChannel 编解码
+往返/坏档拒收/边界 + C# Save/Ui 完整版/Confirm 位探针（typeId 6 表尾））；**判据 2
+金回放零重录兑现**（m5b2 三档 replay mismatches=0：零新组件/零布局改动 + 新通道
+SaveChannel/RtUiCards 全不入 StateHash——批②推论"schema 一字不动 = 旧档即证"
+的第二次机械验证）；`--smoke-template` PASS（HUD 四要素/存档载入回显/波次行/
+172 击杀/1 升级/卡片出现→选择→隐藏/saveFile）+ editor-regression full **13/13**；
+bench-survivor ×3 **60/55/66 fps PASS**（守门跑，三跑逐位一致）。**判据 5 真人
+10 分钟一局验收待用户执行**。执行勘误三处 + 过程发现两项（SDK 字符串跨界 UTF-16
+截字节→改 `CopyUtf8`；Rescan 目录序不确定→两段式排序入账；冒烟玩家站桩死亡链
+→切向轴注入风筝；⑤模板 spriteId 基号陷阱（生成器写死 100 vs 管线
+程序化图集+1=104——生成器挪 viewport 后同规则取 base 重生成，无 manifest 也
+逐位可复现）；多脚本 scripts[] 未落地→单 PlayerBehaviour 规避重排 M6）——
+细节见 DevLog 同日条目。ADR-011 落笔（`docs/ADR/ADR-011-Play-Mode-Tweak-
+Disposition.md`）。

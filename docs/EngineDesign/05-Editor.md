@@ -53,6 +53,14 @@ v1 面板清单：
 > M5 批①（2026-09-22）：GameView **Game RT UI 通道**已交付——Play 时画 `World.RtUi` 定长 8 槽
 > （C# `Lemon.Ui.Set(key, text, frac)` 写入；左上角文本 + frac≥0 附进度条）。M8 完整 HUD
 > 前的最小形态；通道引擎级（World 持有，非编辑器私产——打包游戏同通道复用）。
+> M5 批④（2026-09-23）：HUD 完整版——槽**着色**（`Ui.Set(key,text,frac,color)` ABGR，
+> 文本与进度条同色；`Ui.Clear(key)` 删行）+ **三选一卡片**（`World.Cards`：C#
+> `Ui.ShowCards` → GameView 居中面板 3 按钮 + 聚焦时数字键 1/2/3 → 回写 pick → C#
+> `Ui.CardPick()` 消费式读）。交互属用户 IO 不入输入快照（09 §7 分类）。同批：
+> **新建项目向导模板下拉**（blank / vs-survivor 目录拷贝 + project.lemon 重写 +
+> csproj HintPath 重锚，06 §7）；**Inspector Play 横幅**（"改动随 Stop 丢弃"，
+> ADR-011）；**存档 IO**（EnterPlay 载入 / ExitPlay 兜底落盘 `.lemon/saves/`，
+> C# `Save.Flush` 走 ScriptIoHooks）。
 
 ## 3. 交互内核三件套（直接拷贝 Editor-RPG2D，注明出处）
 

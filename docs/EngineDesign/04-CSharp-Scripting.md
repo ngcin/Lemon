@@ -211,7 +211,15 @@ public readonly struct Transform               // 视图结构：逐属性访问
 - **native 函数表**（`NativeApiVtable` ↔ `NativeApi.cs` 逐字节一致；表尾追加 = 旧宿主零扰动，SDK 侧判空）：
   M4.4 追加 4 项（GetInput/SpriteOfGuid/SpawnSprite/InstantiatePrefab）；**M5 批① 追加 3 项**——
   `get/setTimescale`（Time.Scale ↔ World）+ `rtUiSet`（Lemon.Ui.Set → World.RtUi 定长 8 槽，
-  GameView Play 叠加画，M8 打包 HUD 复用）。
+  GameView Play 叠加画，M8 打包 HUD 复用）；**M5 批④ 追加 8 项**——存档 4 项
+  （`saveSet/saveGetLen/saveGet/saveFlush` → World.Saves 内存 KV + 宿主 IO 钩子落盘）+
+  HUD 完整版 4 项（`rtUiClear` 删行 / `rtUiSetEx` 着色版（ABGR）/ `uiCards` 三选一
+  显隐 / `uiCardPick` 消费式选择回读）。SDK 新面：`Lemon.Save`（Set/Get/
+  SetString/GetString/HasKey/Flush，06 §10 形状裁剪）、`Lemon.Ui` 扩
+  （着色 Set/Clear/ShowCards/HideCards/CardPick）、`GameObject.From(EntityHandle)`
+  （事件回读 src/dst 组件）、`InputButton.Confirm`（bit5 = R 键）。
+  **字符串跨界一律 UTF-8**（SDK `CopyUtf8`：ASCII 快路径零分配 + 多字节不切断——
+  批④ 前逐 char 截字节只对 ASCII 正确，中文 HUD 会乱码）。
 
 ## 4. 事件队列桥（C++ → C# 批量派发）
 

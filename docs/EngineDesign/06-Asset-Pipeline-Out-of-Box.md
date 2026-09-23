@@ -156,6 +156,15 @@ MyGame/                                   # 用户项目（升级永不触碰）
 > `.clip` 样例 + README；`THIRD_PARTY.md` 已登记（MIT）。机械验证 = `--smoke-anim`
 > （程序化表必验 + yami 表在场即验）；bench-survivor 动画化暂用程序化表自播种
 > （hermetic），"bench 直接用默认素材"全面接轨推 M6 模板打包。音效/UI/tileset 后续批。
+> **vs-survivor 模板已交付（M5 批④，2026-09-23）**：`Templates/vs-survivor/`——完整
+> 项目（yami 5 表 + 3 clip 拷贝 + 程序化 gem/bullet/pierce/blade + 6 prefab 固定
+> guid + Main.scene 玩家/导演 16 波含 Boss + Game/PlayerBehaviour 单脚本全家桶）。
+> 向导"选模板 → 复制模板"流程落地（ProjectWizard 模板分支：目录拷贝 + project.lemon
+> 重写（新项目 GUID = 存档隔离键）+ csproj HintPath 重锚；资产 GUID 不重生成）。
+> 生成器 = `--gen-vs-template`（改玩法后重跑重生成）；机械验收 = `--smoke-template`
+> （进回归第 13 步：向导复制 → build → Play → HUD 四要素/存档载入回显/波次/击杀/
+> 升级卡片出现-选择-隐藏断言）。多脚本（scripts[] schema）M5 未落地——模板以
+> 单 PlayerBehaviour 规避，余项挂 M6。
 
 ## 8. 运行时 UI（分阶段，决策 ADR-008）
 
@@ -164,6 +173,12 @@ MyGame/                                   # 用户项目（升级永不触碰）
 | v1（M5） | **ImGui HUD**（游戏视口独立 ImGui 上下文，皮肤主题化）+ 位图数字/血条走 sprite 管线 | VS 三选一卡片、TD 建造栏、菜单、暂停、结算 |
 | v1.x 评估 | **RmlUi 6.3 首选（ADR-008 D2，spike-04 三判据已验收）**：自研 RenderInterface over Lemon RHI；备选自研轻量保留模式 UI（回退条件见 ADR-008） | 需要复杂列表/富文本/本地化排版（ARPG 对话）时升级 |
 | 恒定原则 | 世界空间 HUD（血条/飘字）永远走 sprite 渲染管线（合批零额外成本），不进 UI 框架 | yami printer/ui 分工教训 |
+
+> **v1 落地注（M5 批①/批④）**：HUD 通道 = World 级 `RtUi`（8 槽：key/text/frac/
+> **color**——批④ 着色）+ `Cards`（三选一：ShowCards/CardPick 消费式回读），
+> GameView Play 时叠加画（着色文本/进度条 + 居中卡片面板 + 数字键 1/2/3）；
+> "独立 ImGui 上下文 + 皮肤主题化"推 M8 打包 HUD（编辑器内嵌 ImGui 即 v1 形态）；
+> 位图数字/世界空间血条飘字（sprite 管线）M6。
 
 ## 9. 本地化
 
@@ -186,6 +201,16 @@ public static class Save
 - 存档 = 场景快照序列化器输出（03 §13）+ 用户数据段；gzip + 版本头；`slot_N + settings + meta` 三类。
 - 防损坏：写临时文件 + 原子改名；保留上一代备份 `slot_N.bak`。
 - 增量品类长档：增量游戏模板走"数值快照 + 时间戳"，离线结算在加载时一次追算（确定性模拟保证一致，03 §12）。
+
+> **M5 批④ 落地口径（2026-09-23 修订）**：用户数据段已交付——`Lemon.Save`
+> （Set/Get/SetString/GetString/HasKey/Flush）→ World 级 SaveChannel（内存 KV）→
+> 宿主 IO 钩子落盘（编辑器 = `.lemon/saves/game.sav`）。**M5 版简化三处**：
+> ①单档单文件（slot_N/settings/meta 三类分档推 M6，模板以 key 前缀区分语义如
+> `vs.best`）；②定长头二进制无压缩（gzip 归 M7 packager 引 zlib 时一并）；
+> ③场景快照入档推 M6（VS 一局 10 分钟无续局刚需；增量品类"数值快照 + 时间戳"
+> 口径即本形态）。防损坏三件套齐：版本头 + 原子改名（tmp→rename）+ `.bak`
+> 上一代备份（坏档自动回退）。EnterPlay 自动载入 / ExitPlay 兜底落盘 / Flush 显式
+> 立即落盘（幂等）。
 
 ## 11. 可视化事件系统（schema 冻结，编辑器后评估）
 
