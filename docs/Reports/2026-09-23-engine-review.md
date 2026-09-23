@@ -40,6 +40,10 @@
 | 17 | Medium | Platform | `Window.cpp:67` | SDL drop 文件 `ev.drop.data` 未 `SDL_free` → 每次拖入泄漏 |
 
 > 另有约 20 项 **Low**（见 §三-C），以及若干「已复核不成立」的子代理误报（见 §六）。
+>
+> **2026-09-24 修复轮**：14 条 Medium 全部修复（批A `ff16bd3` / 批D `45b4da8` /
+> 批B `14f95df` / 批C `91d5b31` / M9 `00a7179`），逐条状态见 §三-B 各条目标注；
+> 核实与修复过程见 DevLog 2026-09-24 五条目。Low 段未动（观察项台账）。
 
 ---
 
@@ -66,47 +70,47 @@
 
 ### B. Medium
 
-**M4 — `QualityManager` 构造缺陷** ✅ `Quality.h:39`(+:70)
+**M4 — `QualityManager` 构造缺陷** ✅ `Quality.h:39`(+:70)` → 已修（批A `ff16bd3`）
 - `: tier_(start)` 只初始化 `tier_`，`params_` 用默认成员初始化器恒为 `TierParams(High)`（:70）。`QualityManager(QualityTier::Low)` → `Current()==Low` 但 `Params().particleBudget==100000`。且 `Low` 在 `Update()` 提前 return（:48）永不再降，故**启动档非 High 时粒子预算永远错**。修复：`: tier_(start), params_(TierParams(start)) {}`。
 
-**M5 — 批键位宽 > 数组** ✅ `Renderable.h:23-24` / `SpriteBatcher.cpp`
+**M5 — 批键位宽 > 数组** ✅ `Renderable.h:23-24` / `SpriteBatcher.cpp`` → 已修（批A `ff16bd3`）
 - `blend:4`(0–15) vs `pipelines_[4]`；`filter:2`(0–3) vs `samplerSlots_[2]`。`MakeBatchKey`（:42-43）不钳值，数据驱动配置给 `blend≥4`/`filter≥2` → `pipelines_[5]`/`samplerSlots_[3]` 越界读 → 传垃圾句柄给 `BindPipeline`。修复：`MakeBatchKey` 内 `& 3u`/`& 1u`，或 `Record` 加断言。
 
-**M6 — `Create()` 不失效提取缓存** ✅ `Renderable.cpp:10-29`(vs `Destroy` :38)
+**M6 — `Create()` 不失效提取缓存** ✅ `Renderable.cpp:10-29`(vs `Destroy` :38)` → 已修（批A `ff16bd3`）
 - `Destroy()` bump `simVersion_`，`Create()` 不 bump。暂停态（无 `BeginSimTick`）下 debug 生成实体 → 缓存命中返回旧 `packets_` → 实体直到下次 sim tick 才可见。修复：`Create()` 里 `++simVersion_`。
 
-**M7 — 键表上限仅靠断言（release 栈越界）** ✅ `Renderable.cpp:138` `Particles.cpp:115`
+**M7 — 键表上限仅靠断言（release 栈越界）** ✅ `Renderable.cpp:138` `Particles.cpp:115`` → 已修（批A `ff16bd3`）
 - `slots[kMaxSpriteKeys=64]`/`[kMaxParticleKeys=16]` 仅有 `LEMON_ASSERT`；关断言后超限写 `slots[si]` 越过栈数组。两个上限都可达（10 图集×2 混合×3 层=60；8 粒子精灵×2 层=16）。修复：超限时 `++stats_.droppedKeys; continue;` 而非断言。
 
-**M8 — 未过滤空洞 sprite** ✅ `Renderable.cpp:114` `Particles.cpp:116`
+**M8 — 未过滤空洞 sprite** ✅ `Renderable.cpp:114` `Particles.cpp:116`` → 已修（批A `ff16bd3`；粒子半边此前已随 H2 覆盖）
 - `Atlas.h:39-40` 明确「空洞页采样越界，渲染侧须先过滤」，`AddSpriteAt` 用 sentinel `kHoleAtlasIdx=0xFFFFFFFF` 预留空洞。渲染只查 `SpriteCount()` 上界，注销后的 sprite id 仍落在界内但 atlasIndex=0xFFFFFFFF → 采样不存在槽。修复：改用 `atlas.IsValidSprite(id)`。
 
-**M9 — 设备丢失回调裸 `this`** ✅ `SpriteBatcher.cpp:25-35`
+**M9 — 设备丢失回调裸 `this`** ✅ `SpriteBatcher.cpp:25-35`` → 已修（`00a7179`，排查轮分批漏排后补）
 - `device.AddRecreateCallback("SpriteBatcher", [this]...)` 捕获裸 `this`，`SpriteBatcher` 无析构/反注册。若 batcher 先于 device 销毁（按场景/热重载），设备丢失时回调写垂悬 `this` → UAF。修复：加析构/`Shutdown()` 反注册，或用 generation token。
 
-**M10 — 未初始化缓冲当字符串解析** ✅ `ScriptHost.cpp:346`
+**M10 — 未初始化缓冲当字符串解析** ✅ `ScriptHost.cpp:346`` → 已修（批B `14f95df`）
 - `char buf[4096];` 未初始化，`n=behavioursListFn_(buf,...)` 后 `(void)n` 丢弃返回值，直接 `for(const char* p=buf; *p;)` 走栈。托管侧失败/写空 → 走未初始化内存 → 垃圾类型名或（无 NUL 时）栈越界读。修复：`= {}`，`n<=0` 早退，强制 `buf[n]='\0'`。
 
-**M11 — native API 窗口未覆盖 attach/destroy** ✅ `ScriptHost.cpp:335,406,426`
+**M11 — native API 窗口未覆盖 attach/destroy** ✅ `ScriptHost.cpp:335,406,426`` → 已修（批B `14f95df`，行为变更经金回放三档零重录证明）
 - `ApplyStructural`/`AttachBehaviour` 调 `scriptsAttachFn_`/`scriptsDestroyFn_` 时未像 `TickBatch`(:315-319)/`DispatchEvents`(:454-461) 那样设 `g_world/g_scene`。托管 `Awake`/`OnDestroy` 内调 `Ui.Set`/`Time.Scale`/`Spawn` → 静默空转（`NativeRtUiSet` 等早退）。修复：在这两处也设窗口。
 
-**M12 — `ApplyStructural` 双重 emplace** ✅ `ScriptHost.cpp:413,425`
+**M12 — `ApplyStructural` 双重 emplace** ✅ `ScriptHost.cpp:413,425`` → 已修（批B `14f95df`）
 - `case 2`/`case 4` 无条件 `Emplace`，而异处（`NativeWrite`:42-43、`AttachBehaviour`:329-334）都做 get-or-create。对已有组件二次 emplace = entt 池损坏 → AV（正是周边注释反复强调的根因）。修复：emplacing 前先 `TryGet`。
 
-**M13 — 预留/悬垂指针隐患** ✅ `ScriptHost.cpp:272`
+**M13 — 预留/悬垂指针隐患** ✅ `ScriptHost.cpp:272`` → 已修（批B `14f95df`）
 - 预留总量全凭 `countFn`；代码容忍 `countFn==nullptr`（`n=0`）却仍无条件跑 `forEachFn`。若 `countFn` 为空/少报而 `forEachFn` 仍产出实体 → vector 扩容 → 已存于 `blockBuf_` 的 `blk.entities/comps` 与 `fr.blocks` 指针全部悬垂 → C# 线性步进野读。修复：`countFn` 为空即跳过该系统并告警，或 `forEachFn` 后重取块指针。
 
-**M14 — ALC 卸载未清注册表** ✅ `DomainManager.cs:133,173-177`(vs `LoadScript` :100-104)
+**M14 — ALC 卸载未清注册表** ✅ `DomainManager.cs:133,173-177`(vs `LoadScript` :100-104)` → 已修（批C `91d5b31`，先清根后卸载）
 - `UnloadScript` 只置空 `s_tickFn/s_asm/s_alc`；`ReloadScript` 只 `Behaviours.Reset()`。二者都不清 `Scripting.s_systems/s_queries`、`Events.s_handlers`、`SceneOps` 就 `alc.Unload()` → 旧 ALC 类型被 Entry-ALC 静态根住 → `weak.IsAlive` 恒真 → `UnloadScript` 每次都返回 0、`LeakCount` 永不归零（即便 runtime 将来修复 pin）。`LoadScript` 是清的（:100-104），属不对称疏漏。修复：Unload/Reload 的 `Post(...)` 里补 `Scripting.Reset(); Events.Reset(); SceneOps.Reset();`。
 - *保留*：本机 .NET 10 域线程模型下已知必 pin（ADR-010），故此缺陷当前部分被掩盖；但它是「runtime 修好后卸载仍失败」的根因，应修。
 
-**M15 — 无 `Unsubscribe`** ✅ `Events.cs:37-41`
+**M15 — 无 `Unsubscribe`** ✅ `Events.cs:37-41`` → 已修（批C `91d5b31`，Subscribe 助手 + Detach 自动退订）
 - `Subscribe` 只加不删，`Reset()` 仅换域时跑。`WaveBannerBehaviour` 构造期按实例订阅 → 实体反复生成/销毁时 `s_handlers` 无界增长、且捕获 `this` 根住已毁实例（跨热重载还会根住旧 ALC 实例直到下次 `LoadScript`）。修复：加 `Unsubscribe` 并在 `Detach`/`OnDestroy` 调，或改 `ConditionalWeakTable`。
 
-**M16 — 场景名往返丢失** ✅ `SceneArchive.cpp:264`(vs :322-370)
+**M16 — 场景名往返丢失** ✅ `SceneArchive.cpp:264`(vs :322-370)` → 已修（批D `45b4da8`）
 - `Save` 写 `doc["name"]`，`Load` 只读 `schemaVersion`/`entities`，从不恢复 `name` → 存"Level3.scene"再读回，编辑器标题显示默认名。修复：`Load` 里 `if(doc.contains("name")&&...is_string()) scene.SetName(...)`。
 
-**M17 — SDL drop 文件泄漏** ✅ `Window.cpp:67`
+**M17 — SDL drop 文件泄漏** ✅ `Window.cpp:67`` → 已修（批D `45b4da8`）
 - `m->drops.emplace_back(ev.drop.data)` 拷贝了路径，但 SDL3 要求应用 `SDL_free(ev.drop.data)`，此处未释放 → 每次拖入泄漏一个字符串。修复：emplace 后 `SDL_free(ev.drop.data)`。
 
 ### C. Low（记录，择要处理）
