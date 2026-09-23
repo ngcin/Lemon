@@ -678,6 +678,8 @@ bool EditorContext::EnterPlay() {
     if (scripts_) {
         playWorld_->SetScriptBackend(scripts_);
         scripts_->ResetScriptTime(); // M5 清障①：进 Play = 新的一局，Time 归零
+        scripts_->ResetPlayDomain(); // M5 批④后修：清上局残留实例/事件订阅（防同
+                                     // 实体双实例双 tick——Blade 每局递增的根因）
         ResolvePlayScripts();
     }
     // §3.4-4：清 Undo 并禁用；选中集快照后清空

@@ -128,6 +128,12 @@ public:
     /// Time 属于"局"——必须显式归零。旧 Entry 程序集无该导出时 = 安全 no-op。
     void ResetScriptTime();
 
+    /// 进 Play 域复位（M5 批④后修）：硬清 behaviour 实例/事件订阅（Unity
+    /// "Enter Play = 新域"的实例面）。根因：Stop 弃 playWorld 时 C# 侧无人
+    /// Detach，同实体 id 再 Attach = 双实例双 tick（VS 模板实测每局 +2 刃）。
+    /// bench/回放不经此路径 = 金档零扰动；旧 Entry 无导出 = 安全 no-op。
+    void ResetPlayDomain();
+
     /// 直接取导出（测试/扩展用；勿在热路径调用——启动期一次取全的同一纪律）。
     CoreCLRHost& RawHost() { return host_; }
 
@@ -160,6 +166,7 @@ private:
     int (*eventsPullFn_)(ecs::EventPacket*, int) = nullptr;
     void (*scriptsTickFn_)(BatchSystemFrame*, int, float) = nullptr;
     void (*timeResetFn_)() = nullptr; // M5 清障①：lemon_time_reset（旧 Entry = null）
+    void (*playResetFn_)() = nullptr; // M5 批④后修：lemon_play_reset（旧 Entry = null）
     void (*scriptsAttachFn_)(int, uint64_t) = nullptr;
     void (*scriptsDestroyFn_)(uint64_t) = nullptr;
     int (*opsPullFn_)(SceneOpC*, int) = nullptr;

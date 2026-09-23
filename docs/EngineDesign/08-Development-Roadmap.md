@@ -99,6 +99,14 @@ CoreCLRHost 全量（域线程模型，ADR-010）→ SDK 核心子集（~50 导�
 Tilemap 数据 + chunk 烘焙渲染 → 碰撞层 → 自动瓦片 + TilePalette/笔刷 → FlowField + A* → 放置状态机（塔防摆塔）→ 波次表编辑器 → TD 模板整合。
 **验收**：TD 10 波通关；千怪流场 ≤ 2ms；自动瓦片 47 变体正确。
 
+> **M5 收口后登记（2026-09-23 用户反馈轮）**：①**数值配置外置**——波次/技能/掉落
+> 走 CSV/JSON 配置表资产（Excel/Numbers 编辑 → 导入，Inspector 表格转查看/微调
+> 双轨），替代"在 Inspector 里逐格填 16 波"的作者路径；与"波次表编辑器"合并
+> 评估（表格式编辑器 vs 外置表导入 vs 双轨，开工时 ADR 定形）。②**AnimationEditor
+> 面板**（05 §7 既列）随 TD/VS 模板帧动画需求开工——当前动画创建 = 精灵网格切片
+> + `.clip` 资产（批③通道），无时间轴编辑 UI。③新技能作者路径数据化（当前 =
+> C# behaviour + prefab + GameMain 注册三件套纯代码面）。
+
 ### M7 发布管线（4 周）
 
 packager（烘焙/打包/安装器）→ Steam 集成（steamworks 动态加载 + 云档 + 成就）→ .baked + 资源校验 → 安装包回归（干净 Win 虚拟机）。

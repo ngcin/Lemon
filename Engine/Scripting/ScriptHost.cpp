@@ -238,6 +238,7 @@ bool ScriptHost::Initialize(const char* dotnetRoot, const char* runtimeConfigPat
     scriptsTickFn_ =
         (void (*)(BatchSystemFrame*, int, float))host_.GetExport(kType, "lemon_scripts_tick");
     timeResetFn_ = (void (*)())host_.GetExport(kType, "lemon_time_reset"); // M5 清障①（可缺席）
+    playResetFn_ = (void (*)())host_.GetExport(kType, "lemon_play_reset"); // M5 批④后修（可缺席）
     scriptsAttachFn_ = (void (*)(int, uint64_t))host_.GetExport(kType, "lemon_scripts_attach");
     scriptsDestroyFn_ = (void (*)(uint64_t))host_.GetExport(kType, "lemon_scripts_destroy");
     opsPullFn_ = (int (*)(SceneOpC*, int))host_.GetExport(kType, "lemon_ops_pull");
@@ -419,6 +420,13 @@ void ScriptHost::ResetScriptTime()
 {
     // M5 清障①：编辑器 EnterPlay 调。启动期已解析指针，此处零 GetExport（GC 纪律同上）
     if (timeResetFn_) timeResetFn_();
+}
+
+void ScriptHost::ResetPlayDomain()
+{
+    // M5 批④后修：编辑器 EnterPlay 调（ResetScriptTime 之后、装配新实例之前）。
+    // 启动期已解析指针（GC 纪律同上）；bench/回放路径不经过 = 金档零扰动。
+    if (playResetFn_) playResetFn_();
 }
 
 void ScriptHost::ApplyStructural(ecs::World& world, ecs::Scene& scene) {

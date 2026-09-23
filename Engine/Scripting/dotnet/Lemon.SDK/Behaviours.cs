@@ -227,4 +227,23 @@ public static class Behaviours
         s_ordered.Clear();
         s_attached = 0;
     }
+
+    /// <summary>硬清实例表（编辑器 EnterPlay 期由 lemon_play_reset 调；M5 批④后修）。
+    /// 根因：Stop 弃 playWorld 时 C# 侧无人 Detach（Detach 只挂单实体 Destroy 命令
+    /// 路径），下次 EnterPlay 同实体 id 再 Attach = 同实体双实例双 tick（VS 模板
+    /// 实测：每局 +2 环绕刃、击杀宝石翻倍）。语义 = Unity "Enter Play = 新域"
+    /// 的实例面：只清实例/热重载包，类型注册表保留（同域未换装，免重 Configure）；
+    /// OnDestroy 不调——实体已随旧 World 销毁，句柄悬空，调了只会对死世界读写
+    /// （与 LoadScript 的 Behaviours.Reset 同口径）。配套 Events.Reset 同导出一并做。</summary>
+    internal static void ClearInstances()
+    {
+        foreach (var slot in Slots) {
+            slot.Instances.Clear();
+            slot.StartPending.Clear();
+            slot.BadStreak.Clear();
+            slot.Disabled.Clear();
+        }
+        s_attached = 0;
+        s_hotBags.Clear(); // 跨局残留的待恢复包 = 状态串局（同键 (类名,实体)）
+    }
 }

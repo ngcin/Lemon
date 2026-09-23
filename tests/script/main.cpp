@@ -676,6 +676,61 @@ void TestSaveChannelAndUiCards() {
     w.Step(0.25f); // 销毁提交
 }
 
+// M5 批④后修（用户实测）：Stop→Play 后 Blade 每局递增——脚本域跨局残留。
+// 根因：ExitPlay 弃 playWorld 时 C# 侧无人 Detach（Detach 只挂单实体 Destroy
+// 命令路径），EnterPlay 对同实体 id（新世界确定性重排 = 同 id）再 Attach =
+// 同实体双实例双 tick。修复 = lemon_play_reset（EnterPlay 期硬清实例/事件
+// 订阅；Unity "Enter Play = 新域"同语义）。bench/回放不经该路径 = 金档零扰动。
+void TestPlayDomainReset() {
+    using namespace lemon::ecs;
+    auto timeResetFn = (void (*)())GetExport("lemon_time_reset");
+    auto attachedFn = (int (*)())GetExport("lemon_behaviours_attached");
+    Expect(timeResetFn && attachedFn, "play-reset exports resolved");
+    timeResetFn();
+
+    WorldDesc d;
+    d.threadCount = 1;
+    World w(d);
+    Scene& s = w.CreateScene("PDR");
+    w.SetActiveScene(&s);
+    w.SetScriptBackend(&g_sh);
+    w.Pipeline().AddSystem(std::make_unique<DestroyCommitSystem>());
+    w.Pipeline().AddSystem(std::make_unique<CSharpBatchSystem>());
+    w.Pipeline().AddSystem(std::make_unique<ScriptEventDispatchSystem>());
+    w.Pipeline().ResolveOrder();
+
+    int saw700 = 0, saw801 = 0;
+    w.SetEventSink([&](World&, const EventPacket& p) {
+        if (p.type != GameEvent::Custom) return;
+        if (p.user == 700) ++saw700;
+        else if (p.user == 801) ++saw801;
+    });
+
+    // 局1：装配探针（ResolvePlayScripts 同款入口；快照已带 ScriptBox → get-or-create）
+    Entity e = s.Create();
+    g_sh.AttachBehaviour(s, e, 6);
+    w.Step(0.25f); // 帧1
+    Expect(attachedFn() == 1 && saw700 == 1, "session1: single instance reports once");
+
+    // 泄漏复现（修复前实测路径）：残留实例 + 同实体 id 再 Attach = 双实例
+    g_sh.AttachBehaviour(s, e, 6);
+    Expect(attachedFn() == 2, "leak signature: residual + re-attach = 2 instances");
+    w.Step(0.25f); // 帧2：双实例都 tick（读回报告 ×2）
+    Expect(saw801 == 2, "double instance ticks twice (Custom 801 x2)");
+
+    // 修复：EnterPlay 序（Time 归零 → 域复位 → 重挂）
+    g_sh.ResetPlayDomain();
+    Expect(attachedFn() == 0, "play reset clears instances");
+    timeResetFn();
+    g_sh.AttachBehaviour(s, e, 6);
+    Expect(attachedFn() == 1, "re-play: single instance (leak fixed)");
+    w.Step(0.25f); // 新局帧1
+    Expect(saw700 == 2, "re-play adds exactly one report (2 = 1+1)");
+
+    g_sh.ResetPlayDomain(); // 收尾自清：不让本测试实例泄给后续（进程内域共享）
+    Expect(attachedFn() == 0, "post-test domain clean");
+}
+
 } // namespace
 
 int main() {
@@ -721,6 +776,7 @@ int main() {
     TestTimeScaleAndUiChannel();
     TestWaveStartToUi();
     TestSaveChannelAndUiCards();
+    TestPlayDomainReset();
 
     // M4.6 探针（编辑器切项目场景）：同进程二次 ScriptHost 生命周期。CoreCLR 运行时
     // 进程单例——第二次 Initialize 的真实行为必须钉板（成功/失败都合法，崩 = 缺陷）。

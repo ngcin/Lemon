@@ -113,6 +113,16 @@ internal static unsafe class Exports
     [UnmanagedCallersOnly]
     public static void lemon_time_reset() => Lemon.Time.Reset();
 
+    /// <summary>进 Play 域复位（M5 批④后修）：清 behaviour 实例 + 事件订阅/待发/计数。
+    /// 编辑器 EnterPlay 在 lemon_time_reset 之后、装配新实例之前调用；bench/回放
+    /// 路径不经过（金档零扰动）。旧 Entry 程序集无本导出 = 宿主判空安全 no-op。</summary>
+    [UnmanagedCallersOnly]
+    public static void lemon_play_reset()
+    {
+        Lemon.Behaviours.ClearInstances();
+        Lemon.Events.Reset();
+    }
+
     // ---- M3-3 档② 批量系统 ------------------------------------------------------
 
     /// <summary>已注册批量系统数（load 后由宿主拉取注册表）。</summary>

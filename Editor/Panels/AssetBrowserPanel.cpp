@@ -23,7 +23,7 @@
 namespace lemon::editor {
 
 namespace {
-constexpr float kCell = 92.0f; // 网格单元（含名）
+constexpr float kThumb = 72.0f; // 缩略图边长（网格节距按主题实测，见 OnGui）
 
 uint8_t KindOf(AssetType t) {
     switch (t) {
@@ -109,7 +109,15 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
     ImGui::BeginChild("grid", ImVec2(0, 0), ImGuiChildFlags_None,
                       ImGuiWindowFlags_AlwaysVerticalScrollbar);
     const float avail = ImGui::GetContentRegionAvail().x;
-    const int cols = std::max(1, (int)(avail / kCell));
+    // 列距按主题实测而非固定值：主题度量随 displayScale 缩放（FramePadding.x =
+    // ItemSpacing.x = 8k → 节距 72+24k，k≥1 时超旧硬码 92）→ 旧公式列数偏多，
+    // 每行末列溢出右缘被裁——子窗口只保留竖向滚动条，溢出部分无横向滚动可达
+    // （用户实测"素材一多显示不完整"）。配套 DrawItem/文件夹名 PushTextWrapPos
+    // 钉宽 → 单元格宽确定，本公式精确成立。
+    const ImGuiStyle& st = ImGui::GetStyle();
+    const float cellW = kThumb + st.FramePadding.x * 2.0f;
+    const int cols =
+        std::max(1, (int)((avail + st.ItemSpacing.x) / (cellW + st.ItemSpacing.x)));
     int col = 0;
 
     // 子目录文件夹单元格（M4.7d 补全：面包屑只向上，向下进子目录靠这里——
@@ -139,7 +147,7 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
             void* tex = app.Viewport().IconTex();
             float u0 = 0, v0 = 0, u1 = 1, v1 = 1;
             if (tex) app.Viewport().Assets().IconUV(IconKind::AssetGeneric, u0, v0, u1, v1);
-            const ImVec2 size(72, 72);
+            const ImVec2 size(kThumb, kThumb);
             if (tex)
                 ImGui::ImageButton("##dir", tex, size, ImVec2(u0, v0), ImVec2(u1, v1),
                                    theme::kBgMid, theme::kAccent);
@@ -147,7 +155,13 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
                 ImGui::Button("/", size);
             const bool iconHover = ImGui::IsItemHovered();
             if (iconHover) ImGui::SetTooltip("文件夹（单击进入）\n%s", d.c_str());
-            ImGui::TextWrapped("%.12s%s", rest.c_str(), rest.size() > 12 ? "…" : "");
+            char dirName[16];
+            std::snprintf(dirName, sizeof(dirName), "%.12s%s", rest.c_str(),
+                          rest.size() > 12 ? "…" : "");
+            // 名字钉到按钮宽（TextWrapped 相对窗口右缘 → 行中单元格宽随位置漂移）
+            ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + cellW);
+            ImGui::TextUnformatted(dirName);
+            ImGui::PopTextWrapPos();
             const bool labelHover = ImGui::IsItemHovered();
             testhooks::Stash(("assets.folder." + rest).c_str(), ImGui::GetItemRectMin(),
                              ImGui::GetItemRectMax());
@@ -234,7 +248,7 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
     ImGui::BeginGroup();
     // 缩略图 / 类型图标：sprite = 纹理页缩略；其余 = 形状页类型图标（M4.7b，
     // 替代旧调色板色块——prefab 蓝调 / script 墨绿 / generic 次级灰，ImageButton tint 染色）
-    const ImVec2 size(72, 72);
+    const ImVec2 size(kThumb, kThumb);
     void* tex = isSprite ? app.AssetGpu().Thumbnail(e.guid) : app.Viewport().IconTex();
     ImVec2 uv0(0, 0), uv1(1, 1);
     ImVec4 tint(1, 1, 1, 1);
@@ -302,11 +316,15 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
         }
     }
 
-    // 文件名（截断 12 字符；右键菜单已上移绑缩略图）
+    // 文件名（截断 12 字符；钉到按钮宽换行——单元格宽确定，网格列距公式才精确；
+    // 右键菜单已上移绑缩略图）
     char shortName[16];
     std::snprintf(shortName, sizeof(shortName), "%.12s%s", e.FileName().c_str(),
                   e.FileName().size() > 12 ? "…" : "");
-    ImGui::TextWrapped("%s", shortName);
+    const ImGuiStyle& st = ImGui::GetStyle();
+    ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + kThumb + st.FramePadding.x * 2.0f);
+    ImGui::TextUnformatted(shortName);
+    ImGui::PopTextWrapPos();
     ImGui::EndGroup();
     ImGui::PopID();
 }

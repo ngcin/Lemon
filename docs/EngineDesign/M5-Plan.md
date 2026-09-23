@@ -1094,3 +1094,14 @@ bench-survivor ×3 **60/55/66 fps PASS**（守门跑，三跑逐位一致）。*
 逐位可复现）；多脚本 scripts[] 未落地→单 PlayerBehaviour 规避重排 M6）——
 细节见 DevLog 同日条目。ADR-011 落笔（`docs/ADR/ADR-011-Play-Mode-Tweak-
 Disposition.md`）。
+
+**批④后修（2026-09-23 用户反馈轮，提交后追加）**：①**脚本域跨局残留**——
+Stop→Play 后环绕刃每局 +2：`Behaviours.Slots`/`Events.Subscribe` 为 C# 静态态，
+ExitPlay 弃 playWorld 不清、EnterPlay 同实体 id（快照确定性重排）重 Attach =
+同实体双实例双 tick。修 = `lemon_play_reset`（EnterPlay 硬清实例/订阅/热重载包，
+类型注册表保留；bench/回放不经 = 金档零扰动，m5b2-script replay 仍
+mismatches=0）。②**AssetBrowser HiDPI 末列裁剪**——列数按硬码 92 换列 vs 主题
+实测节距 72+24k（displayScale），末列溢出且无横向滚动可达；修 = 实测节距换列 +
+文件名 `PushTextWrapPos` 钉宽。回归：ctest 3/3（script-tests 1485，+8
+TestPlayDomainReset）+ 金回放三档 mismatches=0 + regression full 13/13。用户
+问询三项（编辑器动画创建 / 新技能作者路径 / 波次数值外置配置表）登记 08 §M6。

@@ -193,6 +193,7 @@ public readonly struct Transform               // 视图结构：逐属性访问
 
 - **`Update` = 60Hz 固定步长**（≙ Unity FixedUpdate 语义）；**无 FixedUpdate、无变步长 Update**——渲染插值由引擎做（01 §2）；
 - **无协程 / Invoke / SendMessage / BroadcastMessage** → `async/await`（§3.1）、`Events.Subscribe`、`OnGameEvent`；
+- **Enter Play 不换域（与 Unity 默认相反），"局"边界由引擎显式清**：Play↔Edit 切换不重载程序集（热重载连续性），编辑器 EnterPlay 调 `lemon_play_reset` **硬清 behaviour 实例表 + `Events` 订阅/待发/计数 + 热重载待恢复包**（类型注册表保留；Time 同刻归零）。脚本侧含义：**构造器里的 `Events.Subscribe` 每局恰好一次**、实例字段每局全新——静态字段（`static`）仍跨局存活（刻意：换装/诊断计数用；勿存"局内"状态）。漏清的实测症状（批④后修）：同实体双实例双 tick、构造器订阅逐局累积（击杀掉落翻倍）。
 - **无 ScriptableObject** → 资产即 JSON + `AssetRef<T>`（06）；
 - **无刚体/关节物理回调** → 触发器与命中走查询层事件（03 §5/§6）；
 - `GetComponent` 系列是语法糖（热路径用 Chunk span，§2.2）；
