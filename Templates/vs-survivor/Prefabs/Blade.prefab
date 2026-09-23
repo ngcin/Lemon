@@ -1,0 +1,1 @@
+{"entities":[{"components":{"Hazard":{"dps":6.0,"radius":44.0,"tickInterval":0.4000000059604645},"Meta":{"guid":204138102181856070,"layer":0,"prefabId":0,"tag":"Blade","team":0},"SpriteRenderer":{"colorRGBA":4294967295,"flags":4,"sortOrder":0,"sortingLayer":0,"spriteId":104},"Transform2D":{"pos":[0.0,0.0],"rot":0.0,"scale":[1.0,1.0]}}}],"name":"prefab","schemaVersion":1}

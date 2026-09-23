@@ -78,6 +78,10 @@ if(LEMON_BUILD_SCRIPTING)
   add_dependencies(lemon-editor lemon-dotnet-asm)
 endif()
 
+# M5 批④：模板项目源根（向导 vs-survivor 分支 / --gen-vs-template / --smoke-template）
+target_compile_definitions(lemon-editor PRIVATE
+  LEMON_TEMPLATE_DIR="${CMAKE_SOURCE_DIR}/Templates")
+
 if(APPLE)
   # 开窗口目标必带（同 anim-smoke；DevLog P1）：brew 验证层 JSON 裸名 dlopen 靠此命中
   set_target_properties(lemon-editor PROPERTIES

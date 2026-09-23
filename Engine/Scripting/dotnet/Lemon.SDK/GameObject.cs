@@ -8,10 +8,15 @@ namespace Lemon;
 /// <summary>实体句柄门面（Unity 正名；底层 EntityHandle u64）。</summary>
 public readonly struct GameObject
 {
-    /// <summary>底层实体句柄（供 SceneOps 等桥 API；游戏代码用 GameObject 门面方法）。</summary>
-    internal readonly EntityHandle Entity;
+    /// <summary>底层实体句柄（供 SceneOps 等桥 API/事件回读；游戏代码优先用门面方法）。
+    /// M5 批④ 起 public：事件回调里 GameObject.From(m.Src) 与自持句柄对账需要读 Id。</summary>
+    public readonly EntityHandle Entity;
 
     internal GameObject(EntityHandle e) { Entity = e; }
+
+    /// <summary>从底层句柄构造门面（M5 批④：事件回调里访问 src/dst 实体的组件——
+    /// GameEventMsg.Src/Dst 是裸 EntityHandle）。句柄失效时 Alive=false，自查。</summary>
+    public static GameObject From(EntityHandle e) => new(e);
 
     public bool Alive => Native.IsAlive(Entity.Id) != 0;
 

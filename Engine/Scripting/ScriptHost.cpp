@@ -8,6 +8,7 @@
 
 #include "Components/CoreComponents.h"
 #include "Components/RenderComponents.h"
+#include "Core/Log.h"
 #include "ECS/ComponentRegistry.h"
 
 namespace lemon::scripting {
@@ -103,6 +104,43 @@ void NativeRtUiSet(const char* key, const char* text, float frac) {
     if (g_world) g_world->RtUi().Set(key, text, frac);
 }
 
+// ---- M5 批④（存档 + HUD 完整版；g_world 窗口约定同上）----
+ScriptIoHooks g_scriptIo{nullptr};
+bool g_saveIoWarned = false; // 未注入钩子的 Flush 红字去重
+
+int32_t NativeSaveSet(const char* key, const void* bytes, uint32_t len) {
+    return g_world && g_world->Saves().Set(key, bytes, len) ? (int32_t)len : -1;
+}
+int32_t NativeSaveGetLen(const char* key) {
+    return g_world ? g_world->Saves().GetLen(key) : -1;
+}
+int32_t NativeSaveGet(const char* key, void* out, uint32_t cap) {
+    return g_world ? g_world->Saves().Get(key, out, cap) : -1;
+}
+void NativeSaveFlush() {
+    if (!g_world) return;
+    if (g_scriptIo.saveFlush) {
+        g_scriptIo.saveFlush(*g_world);
+    } else if (!g_saveIoWarned) {
+        g_saveIoWarned = true;
+        LEMON_WARN("Save.Flush：宿主未注入存档 IO 钩子（纯运行时 M8 前编辑器外为 no-op）");
+    }
+}
+
+void NativeRtUiClear(const char* key) {
+    if (g_world) g_world->RtUi().Clear(key);
+}
+void NativeRtUiSetEx(const char* key, const char* text, float frac, uint32_t color) {
+    if (g_world) g_world->RtUi().Set(key, text, frac, color);
+}
+void NativeUiCards(int32_t show, const char* title, const char* a, const char* b,
+                   const char* c) {
+    if (!g_world) return;
+    if (show) g_world->Cards().Show(title, a, b, c);
+    else g_world->Cards().Hide();
+}
+int32_t NativeUiCardPick() { return g_world ? g_world->Cards().ConsumePick() : -1; }
+
 const NativeApiVtable kNativeApi{NativeIsAlive,
                                  NativeHas,
                                  NativeRead,
@@ -113,8 +151,18 @@ const NativeApiVtable kNativeApi{NativeIsAlive,
                                  NativeInstantiatePrefab,
                                  NativeGetTimeScale,
                                  NativeSetTimeScale,
-                                 NativeRtUiSet};
+                                 NativeRtUiSet,
+                                 NativeSaveSet,
+                                 NativeSaveGetLen,
+                                 NativeSaveGet,
+                                 NativeSaveFlush,
+                                 NativeRtUiClear,
+                                 NativeRtUiSetEx,
+                                 NativeUiCards,
+                                 NativeUiCardPick};
 } // namespace
+
+void SetScriptIoHooks(const ScriptIoHooks& hooks) { g_scriptIo = hooks; }
 
 namespace {
 

@@ -83,6 +83,10 @@ uint64_t HookInstantiate(const char* hex, float x, float y) {
                                                         Vec2{x, y});
     return e.IsNull() ? 0 : e.id;
 }
+// M5 批④：C# Save.Flush → 编辑器域落盘（项目 .lemon/saves/；无项目 = no-op）
+void HookSaveFlush(ecs::World& w) {
+    if (g_app) g_app->Ctx().WriteSaveFile(w.Saves());
+}
 
 // ---- M5 批③：--smoke-anim 固定 guid（程序化 4 帧表 + clip；yami 包同段命名）----
 constexpr uint64_t kAnimSheetGuid = 0x5bd31a7c30000001ull; // anim-sheet.png（128×32，4×32×32 格）
@@ -250,10 +254,558 @@ bool SeedBenchSurvivorScene(EditorContext& ctx) {
     return true;
 }
 
+// ---- M5 批④：vs-survivor 模板（Templates/vs-survivor 生成器 + 冒烟）------------
+// 生成器 = 开发工具（--gen-vs-template 跑一次、产物入库随仓库版本管理）；
+// --smoke-template = 面向回归的模板链冒烟（向导复制 → build → Play → 断言）。
+// GUID 全固定：模板内引用锚点（06 §7"模板即项目"——资产 .meta 随行、
+// project.lemon 的项目 GUID 由向导复制时重生成 = 存档隔离键）。
+namespace vs_template {
+constexpr uint64_t kGemPng = 0x7e57000000000001ull;       // gem.png（程序化 16×16）
+constexpr uint64_t kBulletPng = 0x7e57000000000002ull;    // bullet.png
+constexpr uint64_t kPiercePng = 0x7e57000000000003ull;    // pierce.png
+constexpr uint64_t kBladePng = 0x7e57000000000004ull;     // blade.png
+constexpr uint64_t kMobPf = 0x7e57100000000001ull;        // Mob.prefab
+constexpr uint64_t kBossPf = 0x7e57100000000002ull;       // BossMob.prefab
+constexpr uint64_t kBulletPf = 0x7e57100000000003ull;     // Bullet.prefab
+constexpr uint64_t kPiercePf = 0x7e57100000000004ull;     // PierceBullet.prefab
+constexpr uint64_t kGemPf = 0x7e57100000000005ull;        // Gem.prefab
+constexpr uint64_t kBladePf = 0x7e57100000000006ull;      // Blade.prefab
+// yami 素材沿用批③入库 guid（Templates 侧拷贝即引用同源）
+constexpr uint64_t kHeroSheet = 0x5bd31a7c10000001ull;
+constexpr uint64_t kMonsterSheet = 0x5bd31a7c10000003ull;
+constexpr uint64_t kBossSheet = 0x5bd31a7c10000005ull;
+constexpr uint64_t kHeroClip = 0x5bd31a7c20000001ull;
+constexpr uint64_t kMonsterClip = 0x5bd31a7c20000002ull;
+
+/// 程序化小图（16×16：宝石/直射弹/穿透弹/环绕刃）+ 固定 guid meta
+void WriteProceduralAssets(const std::filesystem::path& assets) {
+    namespace fs = std::filesystem;
+    struct Spec { const char* file; uint64_t guid; uint8_t r, g, b; };
+    const Spec specs[] = {
+        {"gem.png", kGemPng, 70, 160, 255},     // 宝石蓝
+        {"bullet.png", kBulletPng, 255, 220, 80}, // 直射黄
+        {"pierce.png", kPiercePng, 255, 140, 60}, // 穿透橙
+        {"blade.png", kBladePng, 180, 240, 255},  // 刃青白
+    };
+    for (const Spec& sp : specs) {
+        const fs::path png = assets / sp.file;
+        if (!fs::exists(png)) {
+            std::vector<uint8_t> px(16 * 16 * 4);
+            for (int y = 0; y < 16; ++y)
+                for (int x = 0; x < 16; ++x) {
+                    const float dx = x - 7.5f, dy = y - 7.5f;
+                    const float r = dx * dx + dy * dy;
+                    uint8_t* q = &px[((size_t)y * 16 + x) * 4];
+                    if (r > 7.5f * 7.5f) {
+                        q[3] = 0; // 圆外透明
+                    } else if (r > 5.5f * 5.5f) {
+                        q[0] = sp.r / 2; q[1] = sp.g / 2; q[2] = sp.b / 2; q[3] = 255;
+                    } else {
+                        q[0] = sp.r; q[1] = sp.g; q[2] = sp.b; q[3] = 255;
+                    }
+                }
+            stbi_write_png(png.string().c_str(), 16, 16, 4, px.data(), 16 * 4);
+        }
+        const fs::path meta = fs::path(png.string() + ".meta");
+        if (!fs::exists(meta)) {
+            std::ofstream f(meta, std::ios::trunc);
+            f << "{\n  \"guid\": \"" << AssetDatabase::GuidToHex(sp.guid)
+              << "\",\n  \"type\": \"sprite\",\n  \"hash\": 0,\n  \"importedAt\": 0\n}\n";
+        }
+    }
+}
+
+/// 模板 Game/ 脚本工程（csproj 固定名 Game → dll = Game.dll；HintPath 创建期锚）
+void WriteGameSources(const std::filesystem::path& game, const std::string& sdkDir) {
+    namespace fs = std::filesystem;
+    {
+        std::ofstream f(game / "Game.csproj", std::ios::trunc);
+        f << "<Project Sdk=\"Microsoft.NET.Sdk\">\n"
+          << "  <!-- Lemon vs-survivor 模板脚本工程（M5 批④） -->\n"
+          << "  <PropertyGroup>\n"
+          << "    <TargetFramework>net10.0</TargetFramework>\n"
+          << "    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>\n"
+          << "    <Nullable>enable</Nullable>\n"
+          << "    <AssemblyName>Game</AssemblyName>\n"
+          << "    <RootNamespace>Game</RootNamespace>\n"
+          << "    <GenerateRuntimeConfigurationFiles>false</GenerateRuntimeConfigurationFiles>\n"
+          << "  </PropertyGroup>\n"
+          << "  <ItemGroup>\n"
+          << "    <Reference Include=\"Lemon.SDK\">\n"
+          << "      <HintPath>" << (fs::path(sdkDir) / "Lemon.SDK.dll").string()
+          << "</HintPath>\n"
+          << "    </Reference>\n"
+          << "  </ItemGroup>\n"
+          << "</Project>\n";
+    }
+    {
+        std::ofstream f(game / "GameMain.cs", std::ios::trunc);
+        f << R"CS(using Lemon;
+
+public static class GameMain
+{
+    public static void Configure()
+    {
+        Lemon.Behaviours.Register<PlayerBehaviour>();
+    }
+}
+)CS";
+    }
+    std::ofstream f(game / "PlayerBehaviour.cs", std::ios::trunc);
+    f << R"CS(using System.Collections.Generic;
+using Lemon;
+using Lemon.Interop;
+
+/// <summary>vs-survivor 模板玩家（M5 批④）：8 向移动 + HUD 四要素 + 升级三选一
+/// （固定序轮换，零 RNG）+ 环绕刃自愈 + 击杀掉宝石 + 死亡结算/复活（R 键）。
+/// 单类挂玩家实体（多脚本 scripts[] 属 M5 余项，见 M5-Plan §21.2 D4 注）。</summary>
+public sealed class PlayerBehaviour : LemonBehaviour
+{
+    // 模板资产 GUID（Templates/vs-survivor 生成期固定——引用锚点，勿改）
+    private const string kGemPrefab = "7e57100000000005";
+    private const string kBladePrefab = "7e57100000000006";
+    private const uint kPiercePrefabLow = 0x00000004; // PierceBullet.prefab 低 32 位
+
+    private const float kArenaHalf = 1000f; // 软竞技场边界（脚本层钳制）
+    private const uint kColorHp = 0xFF30B0F0u;   // 血条红（ABGR）
+    private const uint kColorXp = 0xFF30D8F0u;   // 经验金
+    private const uint kColorTime = 0xFFF0F0F0u; // 计时白
+    private const uint kColorKill = 0xFF4098F0u; // 击杀橙
+    private const uint kColorWave = 0xFF60E0A0u; // 波次绿
+
+    private static readonly string[] kOptions = {
+        "移速 +10%", "磁力 +25%", "射速 +15%", "穿透弹", "生命上限 +25", "环绕之刃 +1",
+    };
+
+    private float _runTime;
+    private int _kills;
+    private int _best;
+    private bool _dead;
+    private int _pendingLevels; // LevelUp 事件累计的待选次数
+    private bool _cardsShown;
+    private int _pickRotation;  // 三选一轮换序（确定性）
+    private int _bladeCount = 2;
+    private readonly List<ulong> _blades = new();
+    private float _bladeAngle;
+
+    public PlayerBehaviour()
+    {
+        Events.Subscribe(GameEvent.LevelUp, m => {
+            if (m.Src.Id == gameObject.Entity.Id) ++_pendingLevels;
+        });
+        Events.Subscribe(GameEvent.Death, OnDeath);
+        Events.Subscribe(GameEvent.WaveStart, m =>
+            Ui.Set("wave", $"—— 第 {(int)m.P0 + 1} 波 ——", -1f, kColorWave));
+    }
+
+    private void OnDeath(GameEventMsg m)
+    {
+        var src = GameObject.From(m.Src);
+        if (!src.Alive || !src.TryGetComponent<Meta>(out var meta)) return;
+        if (meta.Team == 1) {
+            ++_kills;
+            if (src.TryGetComponent<Transform2D>(out var tf)) // 两阶段销毁：当帧可读
+                Instantiate.Prefab(kGemPrefab, new Vec2(tf.Pos.X, tf.Pos.Y));
+        } else if (m.Src.Id == gameObject.Entity.Id) {
+            Die();
+        }
+    }
+
+    protected override void Start()
+    {
+        _best = int.TryParse(Save.GetString("vs.best"), out var b) ? b : 0; // 上一局纪录
+    }
+
+    protected override void Update()
+    {
+        if (_dead) {
+            if (Input.Confirm) Revive(); // R 键复活（继续厮杀，纪录不清）
+            else return;
+        }
+        _runTime += Time.DeltaTime;
+
+        var tf = gameObject.GetComponent<Transform2D>();
+        var stats = gameObject.GetComponent<Stats>();
+        Vec2 axis = Input.Axis;
+        tf.Pos = new Vec2(
+            System.Math.Clamp(tf.Pos.X + axis.X * stats.MoveSpeed * Time.DeltaTime,
+                              -kArenaHalf, kArenaHalf),
+            System.Math.Clamp(tf.Pos.Y + axis.Y * stats.MoveSpeed * Time.DeltaTime,
+                              -kArenaHalf, kArenaHalf));
+        gameObject.SetComponent(tf);
+
+        UpdateHud();
+        UpdateBlades(tf);
+        UpdateCards();
+    }
+
+    private void UpdateHud()
+    {
+        var hp = gameObject.GetComponent<Health>();
+        var xp = gameObject.GetComponent<XpProgress>();
+        Ui.Set("hp", $"HP {(int)hp.Cur}/{(int)hp.Max}",
+               hp.Max > 0f ? hp.Cur / hp.Max : 0f, kColorHp);
+        Ui.Set("xp", $"LV {xp.Level} {(int)xp.Xp}/{(int)xp.XpToNext}",
+               xp.XpToNext > 0f ? xp.Xp / xp.XpToNext : 0f, kColorXp);
+        int t = (int)_runTime;
+        Ui.Set("time", $"{t / 60}:{t % 60:00}", -1f, kColorTime);
+        Ui.Set("kills", $"击杀 {_kills}", -1f, kColorKill);
+        Ui.Set("best", $"最高纪录 {_best}", -1f);
+    }
+
+    private void UpdateBlades(Transform2D playerTf)
+    {
+        _bladeAngle += 2.2f * Time.DeltaTime;
+        while (_blades.Count < _bladeCount) { // 自愈：热重装/丢失即补（挂玩家当前位置）
+            var g = Instantiate.Prefab(kBladePrefab,
+                                       new Vec2(playerTf.Pos.X, playerTf.Pos.Y));
+            _blades.Add(g.Entity.Id);
+        }
+        _blades.RemoveAll(id => !GameObject.From(new EntityHandle { Id = id }).Alive);
+        for (int i = 0; i < _blades.Count; ++i) {
+            var b = GameObject.From(new EntityHandle { Id = _blades[i] });
+            if (!b.TryGetComponent<Transform2D>(out var bt)) continue;
+            float a = _bladeAngle + i * (6.2831853f / _blades.Count);
+            bt.Pos = new Vec2(playerTf.Pos.X + 90f * System.MathF.Cos(a),
+                              playerTf.Pos.Y + 90f * System.MathF.Sin(a));
+            bt.Rot = a;
+            b.SetComponent(bt);
+        }
+    }
+
+    private void UpdateCards()
+    {
+        if (_cardsShown) {
+            int pick = Ui.CardPick();
+            if (pick < 0) return;
+            int n = _pickRotation - 1; // ShowCards 时已自增
+            ApplyOption((n + pick * 2) % 6);
+            --_pendingLevels;
+            _cardsShown = false;
+            Ui.HideCards();
+            if (_pendingLevels <= 0) Time.Scale = 1f; // 选完恢复（多级连选继续冻结）
+            return;
+        }
+        if (_pendingLevels > 0) {
+            Time.Scale = 0f; // 卡片期间冻结（RNG 不消耗，批① D5 语义）
+            int n = _pickRotation++;
+            Ui.ShowCards("升级！三选一", kOptions[n % 6], kOptions[(n + 2) % 6],
+                         kOptions[(n + 4) % 6]);
+            _cardsShown = true;
+        }
+    }
+
+    private void ApplyOption(int o)
+    {
+        switch (o) {
+        case 0: { // 移速
+            var st = gameObject.GetComponent<Stats>();
+            st.MoveSpeed *= 1.10f;
+            gameObject.SetComponent(st);
+            break;
+        }
+        case 1: { // 磁力
+            var st = gameObject.GetComponent<Stats>();
+            st.PickupRadius *= 1.25f;
+            gameObject.SetComponent(st);
+            break;
+        }
+        case 2: { // 射速
+            var sh = gameObject.GetComponent<Shooter>();
+            sh.Interval = System.Math.Max(0.05f, sh.Interval * 0.85f);
+            gameObject.SetComponent(sh);
+            break;
+        }
+        case 3: { // 穿透弹（切弹种）
+            var sh = gameObject.GetComponent<Shooter>();
+            sh.ProjectileId = kPiercePrefabLow;
+            gameObject.SetComponent(sh);
+            break;
+        }
+        case 4: { // 生命上限
+            var hp = gameObject.GetComponent<Health>();
+            hp.Max += 25f;
+            hp.Cur += 25f;
+            gameObject.SetComponent(hp);
+            break;
+        }
+        case 5: ++_bladeCount; break; // 环绕 +1（UpdateBlades 自愈补挂）
+        }
+    }
+
+    private void Die()
+    {
+        _dead = true;
+        Time.Scale = 0f;
+        int score = _kills * 10 + (int)_runTime;
+        bool newBest = score > _best;
+        if (newBest) {
+            _best = score;
+            Save.SetString("vs.best", score.ToString());
+            Save.Flush(); // 立即落盘（ExitPlay 兜底之外的显式路径）
+        }
+        Ui.Set("over", newBest ? $"★ 新纪录 {score} 分！按 R 复活"
+                               : $"本局 {score} 分（最高 {_best}）  按 R 复活",
+               -1f, 0xFF5080FFu);
+    }
+
+    private void Revive()
+    {
+        _dead = false;
+        var hp = gameObject.GetComponent<Health>();
+        hp.Cur = hp.Max;
+        hp.IFrames = 2f; // 复活无敌 2s（StatSystem 递减）
+        gameObject.SetComponent(hp);
+        Time.Scale = 1f;
+        Ui.Clear("over");
+    }
+
+    // 热重载状态迁移（数值面；刃实体经 UpdateBlades 自愈重建轨道）
+    protected override void OnHotReloadOut(StateBag bag)
+    {
+        bag.Set("time", _runTime);
+        bag.Set("kills", _kills);
+        bag.Set("best", _best);
+        bag.Set("dead", _dead);
+        bag.Set("pending", _pendingLevels);
+        bag.Set("rotation", _pickRotation);
+        bag.Set("blades", _bladeCount);
+    }
+
+    protected override void OnHotReloadIn(StateBag bag)
+    {
+        if (bag.TryGet("time", out float t)) _runTime = t;
+        if (bag.TryGet("kills", out int k)) _kills = k;
+        if (bag.TryGet("best", out int b)) _best = b;
+        if (bag.TryGet("dead", out bool d)) _dead = d;
+        if (bag.TryGet("pending", out int p)) _pendingLevels = p;
+        if (bag.TryGet("rotation", out int r)) _pickRotation = r;
+        if (bag.TryGet("blades", out int n)) _bladeCount = n;
+    }
+}
+)CS";
+}
+} // namespace vs_template
+
+/// --gen-vs-template <dir>：产出 vs-survivor 模板项目文件（跑一次、入库）。
+/// 结构 = 完整项目：yami 素材 + 程序化小图（.meta 固定 guid）+ Prefabs（固定 guid
+/// 占位 meta → 扫描后覆写内容）+ Game/ 脚本 + Main.scene（玩家/导演 + 波表）。
+bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
+                        const std::string& outRoot) {
+    namespace fs = std::filesystem;
+    using namespace vs_template;
+    std::error_code ec;
+    const fs::path root = fs::absolute(outRoot, ec);
+    fs::remove_all(root, ec);
+    for (const char* dir : {"Assets", "Prefabs", "Scenes", "Game", "Data", ".lemon/editor"})
+        fs::create_directories(root / dir, ec);
+
+    // 1) yami 素材拷贝（批③入库包 → 模板自带；.meta 随行 = guid/切片稳定）
+    const fs::path yamiSrc = fs::path(LEMON_TEMPLATE_DIR).parent_path() /
+                             "Samples/Assets/yami-dungeon";
+    if (!fs::is_directory(yamiSrc, ec)) {
+        LEMON_ERROR("gen-vs-template：yami 素材包缺失 %s", yamiSrc.string().c_str());
+        return false;
+    }
+    for (const char* f : {"dungeon_hero_1.png", "dungeon_hero_1.png.meta",
+                          "dungeon_monster_2.png", "dungeon_monster_2.png.meta",
+                          "dungeon_boss_1.png", "dungeon_boss_1.png.meta",
+                          "hero-walk.clip", "hero-walk.clip.meta",
+                          "monster-walk.clip", "monster-walk.clip.meta"})
+        fs::copy(yamiSrc / f, root / "Assets" / f, fs::copy_options::overwrite_existing, ec);
+
+    // 2) 程序化小图 + Game/ 脚本工程 + prefab 占位（固定 guid meta 先行——
+    //    OpenProject 扫描按 meta 记账，之后覆写 .prefab 内容 guid 不动）
+    WriteProceduralAssets(root / "Assets");
+#ifdef LEMON_SCRIPT_DIR
+    WriteGameSources(root / "Game", LEMON_SCRIPT_DIR);
+#endif
+    struct Pf { const char* file; uint64_t guid; };
+    for (const Pf& pf : {Pf{"Mob.prefab", kMobPf}, Pf{"BossMob.prefab", kBossPf},
+                         Pf{"Bullet.prefab", kBulletPf}, Pf{"PierceBullet.prefab", kPiercePf},
+                         Pf{"Gem.prefab", kGemPf}, Pf{"Blade.prefab", kBladePf}}) {
+        {
+            std::ofstream f(root / "Prefabs" / pf.file, std::ios::trunc);
+            f << "{\"entities\":[],\"name\":\"tpl\",\"schemaVersion\":1}\n"; // 占位（后覆写）
+        }
+        std::ofstream m(fs::path((root / "Prefabs" / pf.file).string() + ".meta"),
+                        std::ios::trunc);
+        m << "{\n  \"guid\": \"" << AssetDatabase::GuidToHex(pf.guid)
+          << "\",\n  \"type\": \"prefab\",\n  \"hash\": 0,\n  \"importedAt\": 0\n}\n";
+    }
+    {
+        std::ofstream f(root / "project.lemon", std::ios::trunc);
+        f << "{\n  \"schemaVersion\": 1,\n  \"name\": \"vs-survivor\",\n"
+             "  \"engineVersion\": \"0.5.0-m5\",\n  \"guid\": \"tpl-placeholder\"\n}\n";
+    }
+    {
+        std::ofstream f(root / "README.md", std::ios::trunc);
+        f << "# vs-survivor 模板（M5 批④）\n\n"
+             "吸血鬼幸存者式开局模板：8 向移动 + 直射弹（可升级穿透）+ 环绕刃 +\n"
+             "经验宝石磁吸 + 升级三选一（数字键 1/2/3 或点击卡片）+ 16 波导演\n"
+             "（t=565s Boss 波）+ HUD 四要素 + 死亡结算/最高分存档（R 复活）。\n\n"
+             "由 `lemon-editor --gen-vs-template <dir>` 生成（改玩法请改 Game/\n"
+             "PlayerBehaviour.cs 或场景后重新生成，勿手改 .prefab 内 guid）。\n\n"
+             "## 素材来源与许可\n\n"
+             "- `dungeon_*` 精灵表与 `*.clip`：yami-rpg-editor（MIT，Copyright (c) 2025\n"
+             "  Yami & Xuran & Contributors）——随模板再分发需在发布物保留版权声明\n"
+             "  （仓库根 THIRD_PARTY.md 已登记）。\n"
+             "- `gem/bullet/pierce/blade.png`：程序化生成（无版权负担）。\n\n"
+             "## 玩法锚点\n\n"
+             "- 玩家：`Player` 实体（PlayerBehaviour 单脚本；多脚本 scripts[] 属 M5 余项）。\n"
+             "- 波次：`Director` 实体 WaveDirector（Inspector 数组段可调参）。\n"
+             "- 三选一池：PlayerBehaviour.kOptions（固定序轮换，零 RNG = 回放友好）。\n";
+    }
+
+    // 3) 打开项目（扫描记账）→ 播种场景 + 覆写 prefab 内容。
+    // base = 调用方传入（OpenProjectPipeline 同规则——真实打开路径一致）
+    if (!ctx.Assets().OpenProject(root.string(), spriteIdBase)) return false;
+    ctx.NewScene();
+    ecs::Scene& s = ctx.EditScene();
+    const AssetDatabase& db = ctx.Assets();
+    auto spriteOf = [&](uint64_t guid) -> uint32_t {
+        const AssetEntry* e = db.FindByGuid(guid);
+        return e ? (e->sliceCount > 0 ? e->sliceBase : e->spriteId) : 0;
+    };
+
+    // 玩家（hero 表 0 帧 + 走路 clip）
+    ecs::Entity player = ctx.CreateSpriteEntity("Player", spriteOf(kHeroSheet));
+    s.Get<ecs::Meta>(player).team = 0;
+    s.Emplace<ecs::Health>(player, ecs::Health{.max = 100.0f, .cur = 100.0f});
+    s.Emplace<ecs::Stats>(player).pickupRadius = 96.0f;
+    s.Emplace<ecs::XpProgress>(player, ecs::XpProgress{.xpToNext = 30.0f});
+    ecs::Shooter& psh = s.Emplace<ecs::Shooter>(player);
+    psh.projectileId = (uint32_t)kBulletPf;
+    psh.interval = 0.12f;
+    psh.range = 2000.0f;
+    psh.targetTeam = 1;
+    s.Emplace<ecs::Animator2D>(player).clipId = (uint32_t)kHeroClip;
+    ctx.AttachScript(player, 0, "PlayerBehaviour");
+
+    // 导演（16 波：15 波小怪递增 + t=565s Boss；后波接管语义下条目都在波内完成）
+    ecs::Entity director = ctx.CreateEntity("Director");
+    ecs::WaveDirector& wd = s.Emplace<ecs::WaveDirector>(director);
+    wd.spawnTeam = 1;
+    wd.capAlive = 300;
+    wd.waveCount = 16;
+    for (int w = 0; w < 15; ++w) {
+        ecs::WaveDef& def = wd.waves[w];
+        def.startTime = 5.0f + 35.0f * (float)w;
+        def.rampMult = 1.0f;
+        def.entryCount = 2;
+        def.entries[0] = ecs::WaveEntry{.prefabId = (uint32_t)kMobPf,
+                                        .count = (uint16_t)(30 + w * 4),
+                                        .interval = 0.6f, .range = 560.0f};
+        def.entries[1] = ecs::WaveEntry{.prefabId = (uint32_t)kMobPf,
+                                        .count = (uint16_t)(15 + w * 2),
+                                        .interval = 0.35f, .range = 320.0f};
+    }
+    {
+        ecs::WaveDef& def = wd.waves[15];
+        def.startTime = 565.0f;
+        def.entryCount = 1;
+        def.entries[0] = ecs::WaveEntry{.prefabId = (uint32_t)kBossPf, .count = 1,
+                                        .interval = 1.0f, .range = 80.0f};
+    }
+
+    // prefab 内容（scratch 实体 → SaveEntityTree → 覆写 .prefab；导出后销毁）
+    auto exportPrefab = [&](const char* tag, uint32_t team, uint32_t sprite,
+                            auto build) -> bool {
+        ecs::Entity e = ctx.CreateSpriteEntity(tag, sprite);
+        s.Get<ecs::Meta>(e).team = team;
+        build(e);
+        const std::string json = ecs::SceneArchive::SaveEntityTree(s, e);
+        ctx.DestroyEntityTree(e);
+        if (json.empty()) return false;
+        std::ofstream f(root / "Prefabs" / (std::string(tag) + ".prefab"),
+                        std::ios::trunc);
+        f << json;
+        return true;
+    };
+    const uint32_t mobSprite = spriteOf(kMonsterSheet), bossSprite = spriteOf(kBossSheet);
+    if (!exportPrefab("Mob", 1, mobSprite, [&](ecs::Entity e) {
+            s.Emplace<ecs::Health>(e, ecs::Health{.max = 20.0f, .cur = 20.0f});
+            s.Emplace<ecs::Knockback>(e);
+            s.Emplace<ecs::Velocity>(e);
+            s.Emplace<ecs::Animator2D>(e).clipId = (uint32_t)kMonsterClip;
+            ecs::Chase& ch = s.Emplace<ecs::Chase>(e);
+            ch.speed = 60.0f;
+            ch.aggroRange = 2500.0f;
+            ch.keepRange = 20.0f;
+            ch.targetTeam = 0;
+            ecs::Hazard& hz = s.Emplace<ecs::Hazard>(e); // 近身接触伤害
+            hz.dps = 8.0f;
+            hz.tickInterval = 0.8f;
+            hz.radius = 24.0f;
+        }))
+        return false;
+    if (!exportPrefab("BossMob", 1, bossSprite, [&](ecs::Entity e) {
+            s.Emplace<ecs::Health>(e, ecs::Health{.max = 600.0f, .cur = 600.0f});
+            s.Emplace<ecs::Knockback>(e);
+            s.Emplace<ecs::Velocity>(e);
+            s.Emplace<ecs::Animator2D>(e).clipId = 0; // boss clip 帧率低，先静态
+            ecs::Chase& ch = s.Emplace<ecs::Chase>(e);
+            ch.speed = 32.0f;
+            ch.aggroRange = 3000.0f;
+            ch.keepRange = 26.0f;
+            ch.targetTeam = 0;
+            ecs::Hazard& hz = s.Emplace<ecs::Hazard>(e);
+            hz.dps = 18.0f;
+            hz.tickInterval = 0.5f;
+            hz.radius = 40.0f;
+        }))
+        return false;
+    auto bulletBody = [&](ecs::Entity e, float dmg, uint8_t pierce, float life) {
+        s.Emplace<ecs::Velocity>(e);
+        ecs::Projectile& pr = s.Emplace<ecs::Projectile>(e);
+        pr.damage = dmg;
+        pr.speed = 320.0f;
+        pr.lifetime = life;
+        pr.pierce = pierce;
+    };
+    if (!exportPrefab("Bullet", 0, db.FindByGuid(kBulletPng)->spriteId, [&](ecs::Entity e) {
+            bulletBody(e, 8.0f, 0, 2.5f);
+        }))
+        return false;
+    if (!exportPrefab("PierceBullet", 0, db.FindByGuid(kPiercePng)->spriteId,
+                      [&](ecs::Entity e) { bulletBody(e, 6.0f, 3, 3.0f); }))
+        return false;
+    if (!exportPrefab("Gem", 2, db.FindByGuid(kGemPng)->spriteId, [&](ecs::Entity e) {
+            ecs::Collectible& c = s.Emplace<ecs::Collectible>(e);
+            c.kind = 0;
+            c.value = 1.0f;
+        }))
+        return false;
+    if (!exportPrefab("Blade", 0, db.FindByGuid(kBladePng)->spriteId, [&](ecs::Entity e) {
+            ecs::Hazard& hz = s.Emplace<ecs::Hazard>(e);
+            hz.dps = 6.0f;
+            hz.tickInterval = 0.4f;
+            hz.radius = 44.0f;
+        }))
+        return false;
+
+    // 4) 场景落盘 + 终态记账（prefab 内容覆写后 hash 刷新）
+    {
+        std::ofstream f(root / "Scenes" / "Main.scene", std::ios::trunc);
+        f << ecs::SceneArchive::Save(s);
+    }
+    ctx.Assets().Rescan();
+    ctx.Assets().SaveManifest();
+    LEMON_LOG("gen-vs-template：OK → %s（scene %zuB，%u 实体）", root.string().c_str(),
+              ecs::SceneArchive::Save(s).size(), s.AliveCount());
+    return true;
+}
+
 // ImGui 错误汇（1.92 内部回调口；DockBuilder 同源引用 imgui_internal）：ID 冲突/
 // 空标签等程序员错误在这里现形——冒烟断言清零（M4.5 修复 Inspector ##v 撞号后
 // 加的程序化防线：这类错只在交互时弹窗，无头冒烟原本测不到）。
 int g_imguiErrorCount = 0;
+// M5 批④ --smoke-template 证据计数（事件 sink + 帧循环采样写入；verdict 汇总）
+int g_tplWaveStarts = 0, g_tplLevelUps = 0, g_tplDeaths = 0;
+int g_tplGems = 0, g_tplMobs = 0; // 峰值快照（帧内采样）
+char g_tplHudRows[64] = "";
+bool g_tplHudOk = false, g_tplBestLoaded = false, g_tplWaveRow = false;
+bool g_tplCardsSeen = false, g_tplPicked = false, g_tplCardsHidden = false;
 void ImGuiErrorSink(ImGuiContext*, void* user_data, const char* msg) {
     ++*static_cast<int*>(user_data);
     LEMON_WARN("ImGui 错误：%s", msg);
@@ -1016,11 +1568,19 @@ void EditorApp::BuildPickersAndModals() {
         ImGui::EndPopup();
     }
 
-    // M4.5 新建项目向导（blank 模板；06 §1 布局 + 零配置 Game/ 编译装配）
+    // M4.5 新建项目向导（blank/vs-survivor 模板；06 §1 布局 + §7 模板）
     if (wizOpen_) ImGui::OpenPopup("新建项目");
     if (ImGui::BeginPopupModal("新建项目", &wizOpen_, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextUnformatted("blank 模板：Assets/Scenes/Prefabs/Game/Data + 种子资产 + "
-                               "可编译脚本工程（零配置直接 Play）");
+        static int wizTemplate = 0; // 0 blank / 1 vs-survivor（M5 批④模板整合）
+        const char* wizTemplates[] = {"blank（空场景起步）", "vs-survivor（幸存者完整玩法）"};
+        ImGui::SetNextItemWidth(320);
+        ImGui::Combo("模板", &wizTemplate, wizTemplates, 2);
+        if (wizTemplate == 0)
+            ImGui::TextUnformatted("blank：Assets/Scenes/Prefabs/Game/Data + 种子资产 +\n"
+                                   "可编译脚本工程（零配置直接 Play）");
+        else
+            ImGui::TextDisabled("%s", "vs-survivor：玩家/波次导演/三选一/HUD/存档全套\n"
+                                      "（yami 素材随行，MIT——见模板 README）");
         ImGui::SetNextItemWidth(320);
         ImGui::InputText("项目名", wizName_, sizeof(wizName_));
         ImGui::SetNextItemWidth(320);
@@ -1046,6 +1606,10 @@ void EditorApp::BuildPickersAndModals() {
 #ifdef LEMON_SCRIPT_DIR
             d.sdkDir = LEMON_SCRIPT_DIR;
             d.engineVersion = "0.4.0-m4";
+            if (wizTemplate == 1) { // M5 批④：模板分支（复制 + 重锚）
+                d.templateName = "vs-survivor";
+                d.templateDir = std::string(LEMON_TEMPLATE_DIR) + "/vs-survivor";
+            }
             if (const std::string root = ProjectWizard::Create(d); !root.empty()) {
                 ImGui::CloseCurrentPopup();
                 wizOpen_ = false;
@@ -1669,6 +2233,19 @@ int EditorApp::Run(const EditorLaunch& launch) {
     viewport_ = std::make_unique<ViewportRenderer>();
     viewport_->Init(*device_, *ui_);
 
+    // M5 批④：--gen-vs-template <dir>（开发工具：产出模板项目文件后退出——
+    // 不进渲染主循环；产物入库 Templates/vs-survivor 随仓库管理）。须在 viewport
+    // 就绪后执行：spriteIdBase 用与 OpenProjectPipeline 同一规则
+    // （程序化图集 SpriteCount()+1）——模板场景的数字 spriteId 才与真实打开
+    // 路径一致（manifest 丢失/gitignore 下 fresh 扫描仍可复现）。
+    if (!launch.genVsTemplate.empty()) {
+        const uint32_t genBase = viewport_->Assets().Registry().SpriteCount() + 1;
+        const bool ok = GenerateVsTemplate(ctx_, genBase, launch.genVsTemplate);
+        std::printf("[gen-vs-template] %s → %s（base %u）\n", ok ? "OK" : "FAILED",
+                    launch.genVsTemplate.c_str(), genBase);
+        return ok ? 0 : 1;
+    }
+
     ownedPanels_ = CreateAllPanels();
     for (auto& p : ownedPanels_) panels_.Add(p.get());
     for (auto& e : panels_.Entries()) // --smoke-drag 注入定位（按名取 Scene 面板）
@@ -1708,6 +2285,35 @@ int EditorApp::Run(const EditorLaunch& launch) {
         LEMON_LOG("final: 向导建项目 OK %s", root.c_str());
 #endif
     }
+    // --smoke-template（M5 批④）：向导复制 vs-survivor 到 tempdir（幂等清残留）→
+    // 走标准 OpenProjectPipeline（Game/ 编译 + 脚本宿主 + watcher）→ 开 Main.scene
+    if (launch.smokeTemplate) {
+#ifndef LEMON_SCRIPT_DIR
+        LEMON_ERROR("--smoke-template 需要 LEMON_BUILD_SCRIPTING=ON 构建");
+        return 1;
+#else
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        const fs::path tmp = fs::temp_directory_path() /
+                             ("lemon-smoke-template-" + std::to_string(::getpid()));
+        fs::remove_all(tmp, ec);
+        ProjectDesc d;
+        d.parentDir = tmp.string();
+        d.name = "VsSmoke";
+        d.sdkDir = LEMON_SCRIPT_DIR;
+        d.engineVersion = "0.5.0-m5";
+        d.templateName = "vs-survivor";
+        d.templateDir = std::string(LEMON_TEMPLATE_DIR) + "/vs-survivor";
+        const std::string root = ProjectWizard::Create(d);
+        if (root.empty()) {
+            LEMON_ERROR("smoke-template：向导复制失败（模板缺失/不可写）");
+            return 1;
+        }
+        launchCopy_.projectDir = root;
+        launch_ = &launchCopy_;
+        LEMON_LOG("smoke-template: 向导复制 OK %s", root.c_str());
+#endif
+    }
     // 最近项目（M4.6 §4-4）：--project 缺省时自动重开上次（--no-reopen 跳过；
     // 冒烟/终验不适用——确定性优先）。菜单最近列表同源本 vector。
     recentProjects_ = LoadRecentProjects();
@@ -1734,6 +2340,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
     if (!launch.script.empty()) InitScriptHostFrom(launch.script);
     g_app = this;
     scripting::SetEditorAssetHooks({HookSpriteOf, HookInstantiate});
+    scripting::SetScriptIoHooks({HookSaveFlush}); // M5 批④：存档 IO（编辑器域）
     playDiag_ = std::getenv("LEMON_PLAY_DIAG") != nullptr; // 相机手感诊断开关
     if (playDiag_) std::printf("[playdiag] init on\n");
 
@@ -1745,6 +2352,29 @@ int EditorApp::Run(const EditorLaunch& launch) {
         if (!ctx_.OpenScene(launch_->projectDir + "/Scenes/Main.scene")) return 1;
         SeedJudgementScene(wizardSpawnGuid_);
         smokeSeeded_ = ctx_.ActiveScene().AliveCount();
+    } else if (launch.smokeTemplate) {
+        // M5 批④：模板链冒烟——Main.scene（玩家/导演已由生成器播种）；进 Play 前
+        // 预置存档（vs.best=123）= EnterPlay 载入路径的机械验证
+        if (!ctx_.OpenScene(launch_->projectDir + "/Scenes/Main.scene")) return 1;
+        {
+            namespace fs = std::filesystem;
+            std::error_code ec;
+            const fs::path saves = fs::path(launch_->projectDir) / ".lemon/saves";
+            fs::create_directories(saves, ec);
+            lemon::ecs::SaveChannel pre;
+            pre.Set("vs.best", "123", 3);
+            const std::vector<uint8_t> bytes = pre.Encode();
+            std::ofstream f(saves / "game.sav", std::ios::binary | std::ios::trunc);
+            f.write((const char*)bytes.data(), (std::streamsize)bytes.size());
+        }
+        smokeSeeded_ = ctx_.ActiveScene().AliveCount();
+        forceDefaultLayout_ = true; // overlay 断言依赖 Scene 面板前台（同 smoke-drag 语义）
+        // overlay 三要素需要选中实体：选玩家（tag "Player"）
+        ctx_.EditScene().Each([&](ecs::Entity e) {
+            if (const ecs::Meta* m = ctx_.EditScene().TryGet<ecs::Meta>(e);
+                m && std::strcmp(m->tag, "Player") == 0)
+                ctx_.Select(e, false);
+        });
     } else if (launch.smoke || launch.smokeDrag || launch.smokeUi) {
         SeedSmokeScene();
         // 冒烟不吃 ini 布局漂移账（同 smoke-drag 语义）：断言依赖 Scene 面板被绘制
@@ -1782,6 +2412,16 @@ int EditorApp::Run(const EditorLaunch& launch) {
         }
         if (!ctx_.EnterPlay()) return 1;
     }
+    // M5 批④ --smoke-template：EnterPlay 已由上方 playTest 块完成（模板含 Game/、
+    // 编译成功才走到这——PlayBlockedByScripts 守卫先行）。此处挂事件计数 sink。
+    if (launch.smokeTemplate && ctx_.Playing()) {
+        ctx_.ActiveWorld().SetEventSink(
+            [](ecs::World&, const ecs::EventPacket& p) {
+                if (p.type == ecs::GameEvent::WaveStart) ++g_tplWaveStarts;
+                else if (p.type == ecs::GameEvent::LevelUp) ++g_tplLevelUps;
+                else if (p.type == ecs::GameEvent::Death) ++g_tplDeaths;
+            });
+    }
 
     // --save-scene：场景就绪即保存退出（CLI roundtrip 验收：save → --scene 重开）
     if (!launch.saveScene.empty()) {
@@ -1813,6 +2453,11 @@ int EditorApp::Run(const EditorLaunch& launch) {
     if (launch.benchSurvivor && launch.frames < 600) {
         LEMON_ERROR("--bench-survivor 需要 --frames N（N>=600：怪海涨满 ~240 帧预热 + "
                     "测量窗 ≥360）");
+        return 2;
+    }
+    if (launch.smokeTemplate && launch.frames < 1800) {
+        LEMON_ERROR("--smoke-template 需要 --frames N（N>=1800：波1 t=5s + 30 击杀攒满"
+                    "首升 XP + 卡片链 + 余量）");
         return 2;
     }
     // ---- 主循环（anim-smoke 基线骨架；编辑 Step = Essential）----
@@ -2009,9 +2654,18 @@ int EditorApp::Run(const EditorLaunch& launch) {
                 in.ax = ax;
                 in.ay = ay;
                 if (ImGui::IsKeyDown(ImGuiKey_Space)) in.buttons |= 1u << 4; // bit4 attack
+                if (ImGui::IsKeyDown(ImGuiKey_R)) in.buttons |= 1u << 5;     // bit5 confirm（M5 批④：模板重开/确认）
             }
             if (playDiag_ && frame >= 60 && frame < 120)
                 in.ax = 1.0f; // 诊断注入：D 键右走（自动化无真人点击，不经聚焦门）
+            if (launch.smokeTemplate && !gameViewFocused_) {
+                // 模板冒烟注入：切向轴绕原点环绕（角速 1.2rad/s × 速 240 → 半径
+                // ~200）——站桩会被近身 Hazard 磨死（Time.Scale=0 冻结断升级链），
+                // 风筝是 VS 类冒烟的"真人行为"最小替代
+                const float a = 0.02f * (float)frame;
+                in.ax = -std::sin(a);
+                in.ay = std::cos(a);
+            }
             ctx_.ActiveWorld().ApplyInput(in);
             const float dt = paused_ && !singleStep_ ? 0.0f : 1.0f / 60.0f;
             bPump = BenchClock::now(); // 段界：pump（轮询/watcher/自动备份）结束 = sim 开始
@@ -2068,6 +2722,19 @@ int EditorApp::Run(const EditorLaunch& launch) {
                     break;
                 }
             }
+            if (launch.smokeTemplate) // 玩家（16×32 hero：环像素稳定过阈；池序首灵
+                // 可能是 16×16 子弹，AA 后 <20px 阈值误报）+ 相机对焦（风筝后玩家
+                // 大概率在视口外——环被裁 = sel 误报 0）
+                ctx_.ActiveScene().Each([&](ecs::Entity e) {
+                    if (const ecs::Meta* m = ctx_.ActiveScene().TryGet<ecs::Meta>(e);
+                        m && std::strcmp(m->tag, "Player") == 0) {
+                        ctx_.Select(e, false);
+                        Camera2D& cam = viewport_->SceneCam();
+                        cam.zoom = 1.0f;
+                        cam.halfHeight = 360.0f;
+                        cam.center = ctx_.ActiveScene().Get<ecs::Transform2D>(e).pos;
+                    }
+                });
         }
 
         // --smoke-drag（M4.7c 交互回归）：ImGui 事件注入模拟"点选已选实体 → 拖 44pt →
@@ -2790,6 +3457,40 @@ int EditorApp::Run(const EditorLaunch& launch) {
                 }
             });
         }
+        // M5 批④ smoke-template 证据采样：HUD 四要素行齐 / 存档载入（best=123 回显）/
+        // 波次行 / 三选一卡片链（出现 → 注入选择（模拟数字键 1）→ 消费后隐藏）
+        if (launch.smokeTemplate && ctx_.Playing() && frame > 5) {
+            const lemon::ecs::RtUiChannel& rt = ctx_.ActiveWorld().RtUi();
+            bool has[6] = {}; // hp/xp/time/kills/best/wave
+            static const char* const kKeys[6] = {"hp", "xp", "time", "kills", "best", "wave"};
+            for (uint32_t i = 0; i < rt.Count(); ++i)
+                for (int k = 0; k < 6; ++k)
+                    if (std::strcmp(rt.At(i).key, kKeys[k]) == 0) {
+                        has[k] = true;
+                        if (k == 4 && std::strstr(rt.At(i).text, "123"))
+                            g_tplBestLoaded = true; // 预置存档 → C# 读回 → HUD 回显
+                    }
+            if (has[0] && has[1] && has[2] && has[3]) g_tplHudOk = true;
+            if (has[5]) g_tplWaveRow = true;
+            lemon::ecs::RtUiCards& cards = ctx_.ActiveWorld().Cards();
+            if (cards.active) {
+                g_tplCardsSeen = true;
+                if (!g_tplPicked && frame > 120) {
+                    cards.pick = 0; // 模拟玩家选择（数字键 1 / 卡片点击同通道）
+                    g_tplPicked = true;
+                }
+            } else if (g_tplPicked) {
+                g_tplCardsHidden = true; // C# 消费 → HideCards
+            }
+            if (frame % 60 == 0) { // 诊断快照（低频）：RtUi 行 + 场内分布
+                std::snprintf(g_tplHudRows, sizeof g_tplHudRows, "hp/xp/time/kills=%d%d%d%d",
+                              has[0], has[1], has[2], has[3]);
+                ctx_.ActiveScene().View<ecs::Collectible>().each(
+                    [](auto, ecs::Collectible&) { ++g_tplGems; });
+                ctx_.ActiveScene().View<ecs::Chase>().each(
+                    [](auto, ecs::Chase&) { ++g_tplMobs; });
+            }
+        }
         if (firstFrameMs < 0.0)
             firstFrameMs = std::chrono::duration<double, std::milli>(
                                std::chrono::steady_clock::now() - tColdStart)
@@ -3083,6 +3784,30 @@ int EditorApp::Run(const EditorLaunch& launch) {
                         sh ? sh->sliceCount : 0, yami, animOk ? "OK" : "FAIL");
             if (!animOk) exitCode = 1;
         }
+        // M5 批④模板链验收：向导复制 → build → Play 全链在跑（能到这 = 前两环已过）；
+        // 断言 HUD 四要素 / 存档载入回显 / 波次 / 击杀 / 升级卡片出现-选择-隐藏。
+        if (launch.smokeTemplate) {
+            const bool tplOk = g_tplHudOk && g_tplBestLoaded && g_tplWaveRow &&
+                               g_tplDeaths > 0 && g_tplLevelUps > 0 && g_tplCardsSeen &&
+                               g_tplPicked && g_tplCardsHidden;
+            std::printf("[lemon] smoke-template: hud=%s saveLoad=%s wave(row=%s n=%d) "
+                        "kills=%d levelUps=%d cards(seen=%s pick=%s hidden=%s) => %s\n",
+                        g_tplHudOk ? "YES" : "NO", g_tplBestLoaded ? "YES" : "NO",
+                        g_tplWaveRow ? "YES" : "NO", g_tplWaveStarts, g_tplDeaths,
+                        g_tplLevelUps, g_tplCardsSeen ? "YES" : "NO",
+                        g_tplPicked ? "YES" : "NO", g_tplCardsHidden ? "YES" : "NO",
+                        tplOk ? "OK" : "FAIL");
+            std::printf("[lemon] smoke-template: diag %s gems(peak)=%d mobs(peak)=%d\n",
+                        g_tplHudRows, g_tplGems, g_tplMobs);
+            if (!tplOk) exitCode = 1;
+            // ExitPlay 兜底落盘（写路径）：Stop 后 .lemon/saves/game.sav 在且含模板档
+            const std::string sav = ctx_.Assets().ProjectRoot() + "/.lemon/saves/game.sav";
+            std::error_code ec;
+            const bool savOk = std::filesystem::file_size(sav, ec) > 16 && !ec;
+            std::printf("[lemon] smoke-template: saveFile=%s => %s\n",
+                        savOk ? "YES" : "NO", savOk ? "OK" : "FAIL");
+            if (!savOk) exitCode = 1;
+        }
         // ---- M4.5 终验（§6 #1/#2/#3/#6/#7 全量化）----
         bool finalOk = true;
         if (launch.finalTest) {
@@ -3174,6 +3899,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
                 std::printf("[lemon] editor-smoke overlay-visible: grid=%d(≥8000) sel=%d(≥20) "
                             "handle=%d(≥20) label=%d(≥20) => %s\n",
                             gridN, selN, handleN, labelN, overlayOk ? "OK" : "FAIL");
+
             } else {
                 overlayOk = false; // 场景 RT 回读失败 = 断言原料缺失，按失败计
                 std::printf("[lemon] editor-smoke overlay-visible: 场景 RT 回读缺失 => FAIL\n");

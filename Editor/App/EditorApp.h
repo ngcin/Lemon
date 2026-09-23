@@ -53,6 +53,10 @@ struct EditorLaunch {
                              // 隐含 --smoke --play：程序化 4 帧表必验，yami 表在场即验）
     bool benchSurvivor = false; // --bench-survivor：M5 压测基线（临时项目 + 1 万怪刷怪
                                 // 场景 + Immediate 呈现 + 帧时统计；08 §3 判据 ≥45fps）
+    std::string genVsTemplate;  // --gen-vs-template <dir>：M5 批④ 开发工具——生成
+                                // vs-survivor 模板项目文件后退出（不开窗；跑一次入库）
+    bool smokeTemplate = false; // --smoke-template：M5 批④ 模板链冒烟（向导复制 →
+                                // build → Play → HUD/波次/击杀/升级/卡片断言）
 };
 
 /// 工具标识（Q 选择 / W 移动 / E 旋转 / R 缩放；Godot 式 Select 模式 = 8 向手柄）

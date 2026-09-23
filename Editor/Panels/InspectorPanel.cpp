@@ -601,6 +601,14 @@ void InspectorPanel::OnGui(EditorApp& app) {
         return;
     }
     EditorContext& ctx = app.Ctx();
+    // Play 横幅（M5 批④ / ADR-011）：显式告知调参改动随 Stop 丢弃——正路 =
+    // 编辑态改 → Play 验证（波次表/数值全是编辑态可改的字段）
+    if (ctx.Playing()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, theme::kTextWarn);
+        ImGui::TextUnformatted("▶ Play 模式：改动随 Stop 丢弃（ADR-011）");
+        ImGui::PopStyleColor();
+        ImGui::Separator();
+    }
     ctx.PruneSelection();
     ecs::Entity e = ctx.Primary();
     if (e.IsNull()) {

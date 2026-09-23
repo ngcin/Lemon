@@ -300,11 +300,11 @@ void TestDomainManager() {
         Expect(d2 == (double)0.1f, "hot-reload new domain fresh state");
         Expect(leaks >= 0 && leaksFn && leaksFn() == leaks, "leak count visible + consistent");
         Expect(reloadsFn && reloadsFn() >= 1, "reload count visible");
-        // 换装后新域 GameMain.Configure 已跑：behaviours 列表可拉（6 个类型）
+        // 换装后新域 GameMain.Configure 已跑：behaviours 列表可拉（7 个类型）
         auto listFn = (int (*)(char*, int))GetExport("lemon_behaviours_list");
         char buf[4096];
         int n = listFn ? listFn(buf, (int)sizeof buf) : -1;
-        Expect(n == 6, "behaviours list after hot reload (+M5 批② WaveBanner)");
+        Expect(n == 7, "behaviours list after hot reload (+M5 批④ SaveCardsProbe)");
         // M4.6 回归（用户实测闪退根因）：相对路径进 dm_reload 曾抛 ArgumentException
         // 逃逸 UnmanagedCallersOnly → coreclr abort。拦截层必须转 0 返回且进程存活
         // （本断言能跑到 = 进程没死）。换装失败后旧域已弃——再换一次真路径恢复。
@@ -596,6 +596,86 @@ void TestWaveStartToUi() {
     Expect(slotOk, "WaveStart -> Ui.Set wave banner (key/text/text-only)");
 }
 
+// M5 批④：存档通道（SaveChannel 编解码/边界 + C# Save API 往返/Flush no-op）
+// + HUD 完整版（着色槽/Clear/卡片/CardPick 消费语义）+ Input.Confirm 位。
+// SaveCardsProbeBehaviour typeId 6 表尾注册；Custom 编码见 TestScript.cs 注释。
+void TestSaveChannelAndUiCards() {
+    using namespace lemon::ecs;
+    // ---- 引擎侧单元：Encode/Decode 往返 + 边界（坏档拒绝/键长上限/cap 不足）----
+    {
+        SaveChannel ch;
+        const uint8_t raw[4] = {1, 2, 3, 255};
+        Expect(ch.Set("k0", raw, 4) && ch.Set("k1", "ab", 2), "save set entries");
+        Expect(ch.GetLen("k0") == 4 && ch.GetLen("nope") == -1, "getlen hit/miss");
+        uint8_t out[4] = {};
+        Expect(ch.Get("k0", out, 4) == 4 && out[3] == 255, "get copies bytes");
+        Expect(ch.Get("k0", out, 3) == -2, "get cap insufficient = -2");
+        Expect(!ch.Set("", raw, 4), "empty key rejected");
+        const std::vector<uint8_t> enc = ch.Encode();
+        SaveChannel ch2;
+        Expect(ch2.Decode(enc.data(), enc.size()) && ch2.GetLen("k0") == 4 &&
+                   ch2.GetLen("k1") == 2,
+               "encode/decode roundtrip");
+        Expect(!ch2.Decode(enc.data(), enc.size() / 2), "corrupt (truncated) rejected");
+        Expect(ch2.Remove("k0") && !ch2.Remove("k0") && ch2.Count() == 1, "remove once");
+    }
+
+    auto opsSubmit = (void (*)(unsigned char, unsigned char, uint64_t))GetExport("lemon_ops_submit");
+    auto timeResetFn = (void (*)())GetExport("lemon_time_reset");
+    Expect(opsSubmit && timeResetFn, "ops/time exports resolved");
+    timeResetFn(); // 探针按 FrameCount 分段——本测试 = 新一局（批① 测试同款处理）
+
+    WorldDesc d;
+    d.threadCount = 1;
+    World w(d);
+    Scene& s = w.CreateScene("SvC");
+    w.SetActiveScene(&s);
+    w.SetScriptBackend(&g_sh);
+    w.Pipeline().AddSystem(std::make_unique<DestroyCommitSystem>());
+    w.Pipeline().AddSystem(std::make_unique<CSharpBatchSystem>());
+    w.Pipeline().AddSystem(std::make_unique<ScriptEventDispatchSystem>());
+    w.Pipeline().ResolveOrder();
+
+    int saw700 = 0, saw800 = 0, saw900 = 0, saw960 = 0;
+    w.SetEventSink([&](World&, const EventPacket& p) {
+        if (p.type != GameEvent::Custom) return;
+        if (p.user == 700) ++saw700;
+        else if (p.user == 801) ++saw800;
+        else if (p.user == 910) ++saw900;
+        else if (p.user == 965) ++saw960;
+    });
+
+    opsSubmit(0, 0, 0x8000000000000006ull); // Create + Attach SaveCardsProbe（typeId 6 表尾）
+    opsSubmit(4, 6, 0x8000000000000006ull);
+
+    w.Step(0.25f); // 帧1：写档 + 着色槽 + Clear 删行
+    Expect(saw700 == 1, "frame1 probe report (Custom 700)");
+    Expect(w.Saves().GetLen("probe") == 7 && w.Saves().GetLen("raw") == 4,
+           "C# Save.SetString/Set landed in World.Saves");
+    bool slotOk = w.RtUi().Count() == 1;
+    if (slotOk) {
+        const RtUiSlot& slot = w.RtUi().At(0);
+        slotOk = std::strcmp(slot.key, "hp") == 0 && slot.color == 0xFF30B0F0u &&
+                 std::fabs(slot.frac - 0.68f) < 1e-5f;
+    }
+    Expect(slotOk, "colored ui slot (key/color/frac); tmp row cleared");
+
+    w.Step(0.25f); // 帧2：读回 + ShowCards
+    Expect(saw800 == 1, "frame2 readback ok (Custom 801: string+bytes+HasKey)");
+    Expect(w.Cards().active && std::strcmp(w.Cards().labels[1], "磁力 +25%") == 0,
+           "ui cards shown (title/labels)");
+    w.Cards().pick = 1; // 模拟 GameView 按钮/数字键选择（帧间回写；Show 已清旧值）
+    InputState in{};
+    in.buttons = 1ull << 5; // bit5 confirm（R 键语义）
+    w.ApplyInput(in);
+
+    w.Step(0.25f); // 帧3：CardPick 消费 + Confirm + Hide + Flush(no-op) + 自毁
+    Expect(saw900 == 1, "card pick consumed once (Custom 910: pick=1,again=-1)");
+    Expect(saw960 == 1, "Input.Confirm bit5 reached C# (Custom 965)");
+    Expect(!w.Cards().active, "cards hidden after pick");
+    w.Step(0.25f); // 销毁提交
+}
+
 } // namespace
 
 int main() {
@@ -640,6 +720,7 @@ int main() {
     TestBehaviourAndStructuralOps();
     TestTimeScaleAndUiChannel();
     TestWaveStartToUi();
+    TestSaveChannelAndUiCards();
 
     // M4.6 探针（编辑器切项目场景）：同进程二次 ScriptHost 生命周期。CoreCLR 运行时
     // 进程单例——第二次 Initialize 的真实行为必须钉板（成功/失败都合法，崩 = 缺陷）。

@@ -8,7 +8,7 @@
 
 namespace lemon::ecs {
 
-bool RtUiChannel::Set(const char* key, const char* text, float frac) {
+bool RtUiChannel::Set(const char* key, const char* text, float frac, uint32_t color) {
     if (!key || !key[0] || !text) return false;
     uint32_t found = count_;
     for (uint32_t i = 0; i < count_; ++i)
@@ -24,7 +24,31 @@ bool RtUiChannel::Set(const char* key, const char* text, float frac) {
     std::snprintf(s.key, sizeof s.key, "%s", key);
     std::snprintf(s.text, sizeof s.text, "%s", text); // 截断 47 字符
     s.frac = frac;
+    s.color = color; // 0 = 默认色（M5 批④）
     return true;
+}
+
+// 删单行（M5 批④）：命中即删、尾槽前移（保持呈现序 = 写入序）
+bool RtUiChannel::Clear(const char* key) {
+    if (!key) return false;
+    for (uint32_t i = 0; i < count_; ++i)
+        if (std::strcmp(slots_[i].key, key) == 0) {
+            for (uint32_t j = i + 1; j < count_; ++j) slots_[j - 1] = slots_[j];
+            --count_;
+            slots_[count_] = RtUiSlot{}; // 尾槽清零（复占不读旧值）
+            return true;
+        }
+    return false;
+}
+
+void RtUiCards::Show(const char* title, const char* a, const char* b, const char* c) {
+    if (!title || !a || !b || !c) return;
+    std::snprintf(this->title, sizeof this->title, "%s", title);
+    std::snprintf(labels[0], sizeof labels[0], "%s", a); // 截断 47 字符 ×4
+    std::snprintf(labels[1], sizeof labels[1], "%s", b);
+    std::snprintf(labels[2], sizeof labels[2], "%s", c);
+    pick = -1; // 新卡片清旧选择
+    active = true;
 }
 
 World::World(const WorldDesc& desc)

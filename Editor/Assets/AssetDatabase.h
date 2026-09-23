@@ -65,6 +65,8 @@ public:
     const AssetEntry* FindByGuid(uint64_t guid) const;
     const AssetEntry* FindByPath(const std::string& relPath) const;
     const AssetEntry* FindBySpriteId(uint32_t spriteId) const;
+    /// spriteId 是否已登记（全幅号 ∪ 切片连号区间；M5 批④ 场景装载悬空校验用）
+    bool SpriteIdRegistered(uint32_t spriteId) const;
     /// clip 资产按 GUID 低 32 位反查（Animator2D.clipId 槽显示/解析；M5 批③）
     const AssetEntry* FindClipByLowId(uint32_t lowId) const;
     /// 可变版（编辑器操作 Rename/Remove 用；DB 持有者 = EditorContext）

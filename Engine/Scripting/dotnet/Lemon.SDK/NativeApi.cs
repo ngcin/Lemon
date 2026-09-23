@@ -1,6 +1,7 @@
 // Lemon.SDK — native 函数表（04 §1：Bootstrap 期 C++ 注册给 C# 的低频语法糖通道）
 // 高频数据访问走 Chunk（零跨界）；本表只服务档① 的低频组件读写。
 // 线程约定：仅在域线程 tick 期间调用（C++ 侧活动 World/Scene 上下文仅此时有效）。
+using System;
 using System.Runtime.InteropServices;
 
 namespace Lemon;
@@ -21,6 +22,14 @@ public unsafe struct NativeApi
     public delegate* unmanaged<float> GetTimescale;                            // M5 批①：World.TimeScale
     public delegate* unmanaged<float, void> SetTimescale;                      // M5 批①：World.SetTimeScale
     public delegate* unmanaged<byte*, byte*, float, void> RtUiSet;             // M5 批①：Lemon.Ui.Set → World.RtUi
+    public delegate* unmanaged<byte*, void*, uint, int> SaveSet;               // M5 批④：Lemon.Save.Set → World.Saves
+    public delegate* unmanaged<byte*, int> SaveGetLen;                         // M5 批④：-1 = 无此键
+    public delegate* unmanaged<byte*, void*, uint, int> SaveGet;               // M5 批④：返回拷贝数（-2 = cap 不足）
+    public delegate* unmanaged<void> SaveFlush;                                // M5 批④：ScriptIoHooks 落盘
+    public delegate* unmanaged<byte*, void> RtUiClear;                         // M5 批④：Lemon.Ui.Clear → RtUi 删单行
+    public delegate* unmanaged<byte*, byte*, float, uint, void> RtUiSetEx;     // M5 批④：Ui.Set 着色版（0 = 默认）
+    public delegate* unmanaged<int, byte*, byte*, byte*, byte*, void> UiCards; // M5 批④：三选一卡片显隐/内容
+    public delegate* unmanaged<int> UiCardPick;                                // M5 批④：消费式：返回后置 -1
 }
 
 internal static unsafe class Native
@@ -100,12 +109,101 @@ internal static unsafe class Native
         if (Api.RtUiSet == null || key == null || text == null) return;
         byte* k = stackalloc byte[16];
         byte* t = stackalloc byte[48];
-        int kn = System.Math.Min(key.Length, 15);
-        for (int i = 0; i < kn; i++) k[i] = (byte)key[i];
-        k[kn] = 0;
-        int tn = System.Math.Min(text.Length, 47);
-        for (int i = 0; i < tn; i++) t[i] = (byte)text[i];
-        t[tn] = 0;
+        CopyUtf8(key, k, 15);
+        CopyUtf8(text, t, 47);
         Api.RtUiSet(k, t, frac);
+    }
+
+    // ---- M5 批④（存档 + HUD 完整版；旧宿主未注册时安全降级）----
+
+    internal static unsafe void UiClear(string key)
+    {
+        if (Api.RtUiClear == null || key == null) return;
+        byte* k = stackalloc byte[16];
+        CopyUtf8(key, k, 15);
+        Api.RtUiClear(k);
+    }
+
+    internal static unsafe void UiSetColored(string key, string text, float frac, uint color)
+    {
+        if (Api.RtUiSetEx == null || key == null || text == null) return;
+        byte* k = stackalloc byte[16];
+        byte* t = stackalloc byte[48];
+        CopyUtf8(key, k, 15);
+        CopyUtf8(text, t, 47);
+        Api.RtUiSetEx(k, t, frac, color);
+    }
+
+    internal static unsafe void UiCards(bool show, string title, string a, string b, string c)
+    {
+        if (Api.UiCards == null) return;
+        byte* pTitle = stackalloc byte[48];
+        byte* pa = stackalloc byte[48];
+        byte* pb = stackalloc byte[48];
+        byte* pc = stackalloc byte[48];
+        CopyUtf8(title, pTitle, 47);
+        CopyUtf8(a, pa, 47);
+        CopyUtf8(b, pb, 47);
+        CopyUtf8(c, pc, 47);
+        Api.UiCards(show ? 1 : 0, pTitle, pa, pb, pc);
+    }
+
+    internal static int UiCardPick() => Api.UiCardPick != null ? Api.UiCardPick() : -1;
+
+    /// string → UTF-8 NUL 结尾（M5 批④：中文 HUD/卡片文本；此前逐 char 截字节
+    /// 只对 ASCII 正确）。ASCII 快路径零分配；非 ASCII 走 UTF8.GetBytes（低频 UI
+    /// 调用可容忍小分配）。截断回退到多字节边界（不切出半个字符）。
+    private static unsafe void CopyUtf8(string? s, byte* dst, int maxBytes)
+    {
+        if (s == null || maxBytes <= 0) { dst[0] = 0; return; }
+        bool ascii = true;
+        for (int i = 0; i < s.Length; i++)
+            if (s[i] >= 0x80) { ascii = false; break; }
+        if (ascii) {
+            int n = System.Math.Min(s.Length, maxBytes);
+            for (int i = 0; i < n; i++) dst[i] = (byte)s[i];
+            dst[n] = 0;
+            return;
+        }
+        byte[] b = System.Text.Encoding.UTF8.GetBytes(s);
+        int m = System.Math.Min(b.Length, maxBytes);
+        while (m > 0 && (b[m - 1] & 0xC0) == 0x80) m--; // 尾部连续 10xxxxxx = 半个字符
+        for (int i = 0; i < m; i++) dst[i] = b[i];
+        dst[m] = 0;
+    }
+
+    internal static unsafe int SaveSet(string key, ReadOnlySpan<byte> bytes)
+    {
+        if (Api.SaveSet == null || key == null) return -1;
+        byte* k = stackalloc byte[256];
+        CopyUtf8(key, k, 255);
+        fixed (byte* p = bytes)
+            return Api.SaveSet(k, p, (uint)bytes.Length);
+    }
+
+    internal static unsafe int SaveGetLen(string key)
+    {
+        if (Api.SaveGetLen == null || key == null) return -1;
+        byte* k = stackalloc byte[256];
+        CopyUtf8(key, k, 255);
+        return Api.SaveGetLen(k);
+    }
+
+    internal static unsafe byte[]? SaveGet(string key)
+    {
+        int len = SaveGetLen(key);
+        if (len < 0) return null;
+        var buf = new byte[len];
+        if (len == 0) return buf;
+        byte* k = stackalloc byte[256];
+        CopyUtf8(key, k, 255);
+        fixed (byte* p = buf)
+            Api.SaveGet(k, p, (uint)len);
+        return buf;
+    }
+
+    internal static void SaveFlushCall()
+    {
+        if (Api.SaveFlush != null) Api.SaveFlush();
     }
 }

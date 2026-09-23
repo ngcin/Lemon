@@ -1,0 +1,1 @@
+{"entities":[{"components":{"Collectible":{"kind":0,"magnetRadius":48.0,"magnetSpeed":320.0,"value":1.0},"Meta":{"guid":10990919031001472408,"layer":0,"prefabId":0,"tag":"Gem","team":2},"SpriteRenderer":{"colorRGBA":4294967295,"flags":4,"sortOrder":0,"sortingLayer":0,"spriteId":134},"Transform2D":{"pos":[0.0,0.0],"rot":0.0,"scale":[1.0,1.0]}}}],"name":"prefab","schemaVersion":1}

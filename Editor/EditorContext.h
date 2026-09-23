@@ -125,6 +125,14 @@ public:
     double LastExitPlayMs() const { return lastExitMs_; }
     /// Play 中编辑落 Play World（决议 #5）—— dirty 不置位（Stop 即丢，不动编辑侧）
 
+    // ---- 游戏存档 IO（M5 批④ D1；编辑器域实现，ScriptHost 钩子消费）----
+    /// 存档路径 = 项目根/.lemon/saves/game.sav（无项目/未打开 = 空串 = 全部 no-op）
+    std::string SaveFilePath() const;
+    /// 通道 → 文件（旧档转 .bak → tmp 写 → 原子改名；空通道/无项目 = false）
+    bool WriteSaveFile(const ecs::SaveChannel& ch);
+    /// 文件 → 通道（EnterPlay 载入；坏档红字后试 .bak，再坏 = 空通道开局）
+    void LoadSaveFile(ecs::SaveChannel& dst);
+
     // ---- Undo 双轨（§3.5；Play 中禁用）----
     UndoStack& Undo() { return undo_; }
     /// 组件字节快照（属性轨原料；guid 定位）

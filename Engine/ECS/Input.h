@@ -9,7 +9,7 @@
 namespace lemon::ecs {
 
 struct InputState {
-    uint64_t buttons = 0; // 语义键位掩码（位分配：bit0=up1=down2=left3=right4=attack...）
+    uint64_t buttons = 0; // 语义键位掩码（位分配：bit0=up1=down2=left3=right4=attack5=confirm(重开/确认，M5 批④)）
     float ax = 0.0f;      // 移动轴 -1..1（模拟摇杆/键盘合成）
     float ay = 0.0f;
 

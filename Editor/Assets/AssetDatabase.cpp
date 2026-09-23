@@ -58,6 +58,17 @@ const AssetEntry* AssetDatabase::FindBySpriteId(uint32_t spriteId) const {
     return nullptr;
 }
 
+bool AssetDatabase::SpriteIdRegistered(uint32_t spriteId) const {
+    if (spriteId == 0) return false;
+    for (const auto& e : entries_) {
+        if (e.spriteId == spriteId) return true;
+        if (e.sliceCount > 0 && spriteId >= e.sliceBase &&
+            spriteId < e.sliceBase + e.sliceCount) // 切片连号区间（模板场景引 cell 号）
+            return true;
+    }
+    return false;
+}
+
 const AssetEntry* AssetDatabase::FindClipByLowId(uint32_t lowId) const {
     if (lowId == 0) return nullptr;
     for (const auto& e : entries_) {
@@ -310,26 +321,36 @@ void AssetDatabase::Rescan() {
     }
 
     // 扫描项目根（M4.5 起 06 §1 布局：Assets/** + 根级 Prefabs/** 均入索引；
-    // Game/Scenes/Data/Builds/obj/bin/点目录排除）
-    std::vector<std::string> seenPaths;
+    // Game/Scenes/Data/Builds/obj/bin/点目录排除）。
+    // [M5 批④] 两段式：先收集全部文件**按路径排序**再入账——fresh 项目的
+    // spriteId/切片块分配序确定（recursive_directory_iterator 的目录序是 FS
+    // 实现细节，模板分发的场景引用可复现的前提；既有项目 id 走 manifest/
+    // entries 记账不受影响）。
+    std::vector<fs::path> files;
     for (auto it = fs::recursive_directory_iterator(
              root_, fs::directory_options::skip_permission_denied, ec);
          it != fs::recursive_directory_iterator(); it.increment(ec)) {
         if (ec) break;
         const fs::directory_entry& de = *it;
-        const std::string name = de.path().filename().string();
         if (de.is_directory(ec)) {
+            const std::string name = de.path().filename().string();
             std::string relDir = fs::relative(de.path(), root_, ec).generic_string();
             const bool top = !ec && relDir.find('/') == std::string::npos;
             const bool skip = ec || (top ? SkipDirTop(name) : SkipDirAny(name));
             if (skip) it.disable_recursion_pending();
             continue;
         }
+        files.push_back(de.path());
+    }
+    std::sort(files.begin(), files.end());
+    std::vector<std::string> seenPaths;
+    for (const fs::path& file : files) {
+        const std::string name = file.filename().string();
         if (name.empty() || name[0] == '.') continue;
         if (name.size() > 5 && name.compare(name.size() - 5, 5, ".meta") == 0) continue;
-        if (!de.is_regular_file(ec)) continue;
+        if (!fs::is_regular_file(file, ec)) continue;
 
-        std::string rel = fs::relative(de.path(), root_, ec).generic_string();
+        std::string rel = fs::relative(file, root_, ec).generic_string();
         if (ec) continue;
         seenPaths.push_back(rel);
 

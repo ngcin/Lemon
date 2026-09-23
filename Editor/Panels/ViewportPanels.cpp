@@ -745,19 +745,55 @@ void GameViewPanel::OnGui(EditorApp& app) {
         if (app.Ctx().Playing()) {
             ImGui::SetCursorPos(ImVec2(6, 6));
             ImGui::TextDisabled("%s", ImGui::IsWindowFocused() && ImGui::IsWindowHovered()
-                                         ? "输入已路由至 Play World（WASD/空格）"
+                                         ? "输入已路由至 Play World（WASD/空格/R=确认）"
                                          : "点击聚焦后键鼠进游戏");
             // M5 批①：Game RT UI 通道——C# Lemon.Ui.Set 写 World.RtUi 定长槽，
             // Play 时叠画在游戏画面左上角（M8 完整 HUD 前的最小形态；frac≥0 附进度条）
+            // M5 批④：color 非 0 时文本与进度条着色（ABGR；模板血条/经验/计时惯例色）
             const lemon::ecs::RtUiChannel& rt = app.Ctx().ActiveWorld().RtUi();
             for (uint32_t i = 0; i < rt.Count(); ++i) {
                 const lemon::ecs::RtUiSlot& slot = rt.At(i);
                 ImGui::SetCursorPos(ImVec2(off.x + 10.0f, off.y + 26.0f + i * 24.0f));
+                const bool colored = slot.color != 0;
+                if (colored) ImGui::PushStyleColor(ImGuiCol_Text, slot.color);
                 ImGui::TextUnformatted(slot.text);
+                if (colored) ImGui::PopStyleColor();
                 if (slot.frac >= 0.0f) {
                     ImGui::SameLine();
+                    if (colored) ImGui::PushStyleColor(ImGuiCol_PlotHistogram, slot.color);
                     ImGui::ProgressBar(slot.frac, ImVec2(120.0f, 10.0f), "");
+                    if (colored) ImGui::PopStyleColor();
                 }
+            }
+            // M5 批④：三选一卡片（升级选择；Ui.ShowCards 写入、按钮/数字键回写 pick、
+            // C# Ui.CardPick 消费式读）。居中半透明面板——模拟侧惯例已 Time.Scale=0 冻结
+            lemon::ecs::RtUiCards& cards = app.Ctx().ActiveWorld().Cards();
+            if (cards.active) {
+                const bool gvFocus = ImGui::IsWindowFocused() && ImGui::IsWindowHovered();
+                const ImVec2 center(off.x + imgW * 0.5f, off.y + imgH * 0.42f);
+                ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+                ImGui::SetNextWindowBgAlpha(0.88f);
+                ImGui::Begin("##rtui-cards", nullptr,
+                             ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                                 ImGuiWindowFlags_NoScrollbar |
+                                 ImGuiWindowFlags_AlwaysAutoResize);
+                ImGui::TextUnformatted(cards.title);
+                ImGui::Separator();
+                ImGui::Spacing();
+                for (int i = 0; i < 3; ++i) {
+                    if (i) ImGui::SameLine();
+                    ImGui::PushID(i);
+                    if (ImGui::Button(cards.labels[i], ImVec2(200.0f, 64.0f)))
+                        cards.pick = i; // 点击回写（消费归 C# CardPick）
+                    ImGui::PopID();
+                }
+                ImGui::Spacing();
+                ImGui::TextDisabled("%s", "点击或按数字键 1/2/3 选择");
+                // 数字键选择（Game 面板或卡片窗任一聚焦即生效；模拟已冻结无输入冲突）
+                if (gvFocus || ImGui::IsWindowFocused())
+                    for (int k = 0; k < 3; ++k)
+                        if (ImGui::IsKeyPressed((ImGuiKey)(ImGuiKey_1 + k))) cards.pick = k;
+                ImGui::End();
             }
         }
     }

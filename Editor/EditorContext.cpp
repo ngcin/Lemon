@@ -72,8 +72,8 @@ bool EditorContext::OpenScene(const std::string& path) {
             if (const ecs::SpriteRenderer* sr = scene_->TryGet<ecs::SpriteRenderer>(e)) {
                 const uint32_t id = sr->spriteId;
                 if (id != 0 && id >= assets_.SpriteIdBase() &&
-                    assets_.FindBySpriteId(id) == nullptr)
-                    ++dangling;
+                    !assets_.SpriteIdRegistered(id)) // M5 批④：含切片区间（模板场景
+                    ++dangling;                      // 引用 cell 号是常态，勿误报）
             }
         });
         if (dangling)
@@ -594,6 +594,60 @@ void EditorContext::PruneSelection() {
 }
 
 // ------------------------------------------------------------- Play 沙盒 ----
+// ---- 游戏存档 IO（M5 批④ D1；06 §10 防损坏三件套：版本头 + 原子改名 + .bak）----
+std::string EditorContext::SaveFilePath() const {
+    const std::string& root = assets_.ProjectRoot();
+    return root.empty() ? std::string() : root + "/.lemon/saves/game.sav";
+}
+
+bool EditorContext::WriteSaveFile(const ecs::SaveChannel& ch) {
+    namespace fs = std::filesystem;
+    const std::string path = SaveFilePath();
+    if (path.empty() || ch.Count() == 0) return false;
+    std::error_code ec;
+    const fs::path p(path);
+    fs::create_directories(p.parent_path(), ec);
+    // 上一代转备份（首次落盘无 .bak 属正常）
+    if (fs::exists(p, ec))
+        fs::copy_file(p, fs::path(path + ".bak"), fs::copy_options::overwrite_existing, ec);
+    const std::vector<uint8_t> bytes = ch.Encode();
+    const fs::path tmp(path + ".tmp");
+    {
+        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+        if (!f) {
+            LEMON_WARN("存档写入失败（无法创建 %s）", tmp.string().c_str());
+            return false;
+        }
+        f.write((const char*)bytes.data(), (std::streamsize)bytes.size());
+    }
+    fs::rename(tmp, p, ec);
+    if (ec) {
+        LEMON_WARN("存档原子改名失败：%s", ec.message().c_str());
+        return false;
+    }
+    return true;
+}
+
+void EditorContext::LoadSaveFile(ecs::SaveChannel& dst) {
+    namespace fs = std::filesystem;
+    const std::string path = SaveFilePath();
+    if (path.empty()) return; // 无项目（bench/smoke tempdir 外的裸会话）= 空通道开局
+    auto tryDecode = [&](const std::string& p) {
+        std::error_code ec;
+        if (!fs::exists(p, ec)) return false;
+        std::ifstream f(p, std::ios::binary);
+        if (!f) return false;
+        std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(f)),
+                                   std::istreambuf_iterator<char>());
+        if (!dst.Decode(bytes.data(), bytes.size())) {
+            LEMON_WARN("存档损坏，已跳过：%s", p.c_str());
+            return false;
+        }
+        return true;
+    };
+    if (!tryDecode(path)) tryDecode(path + ".bak"); // 主档坏 → 备份兜底
+}
+
 bool EditorContext::EnterPlay() {
     if (Playing()) return false;
     const auto t0 = std::chrono::steady_clock::now();
@@ -618,6 +672,8 @@ bool EditorContext::EnterPlay() {
     });
     // M5 批③：clip 表（.clip 资产 → 帧映射；AnimatorSystem #13 消费）
     BuildPlayClipCache();
+    // M5 批④：存档载入（进 Play 快照语义：上一局数据进通道，C# Save.Get 即读）
+    LoadSaveFile(playWorld_->Saves());
     // M4.4 装配通路（#7）：脚本后端接入 + 场景 ScriptBox 按 className 解析挂载
     if (scripts_) {
         playWorld_->SetScriptBackend(scripts_);
@@ -642,6 +698,8 @@ bool EditorContext::EnterPlay() {
 bool EditorContext::ExitPlay() {
     if (!Playing()) return false;
     const auto t0 = std::chrono::steady_clock::now();
+    // M5 批④：存档兜底落盘（脚本显式 Flush 之外的保险——中断退 Play 不丢局）
+    WriteSaveFile(playWorld_->Saves());
     // §3.4-1：弃 playWorld（两阶段销毁随 World 析构；renderable 由视口提取差集释放）
     playWorld_.reset();
     playScene_ = nullptr;

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <cstring>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -24,8 +25,42 @@ namespace lemon::editor {
 namespace fs = std::filesystem;
 using ecs::SceneArchive;
 
+namespace {
+// Game/*.csproj 的 Lemon.SDK HintPath 重锚（M5 批④ 模板分支）：正则不动，
+// 逐 .csproj 找 <HintPath>...</HintPath>（Lemon.SDK.dll 结尾）整行替换。
+// 无 csproj/无锚点 = 告警一次不阻断（模板仍可手改）。
+void ReanchorSdkHintPath(const fs::path& gameDir, const std::string& sdkDir) {
+    std::error_code ec;
+    if (!fs::is_directory(gameDir, ec)) return;
+    const std::string want = "<HintPath>" + (fs::path(sdkDir) / "Lemon.SDK.dll").string() +
+                             "</HintPath>";
+    for (auto it = fs::directory_iterator(gameDir, ec); it != fs::directory_iterator();
+         it.increment(ec)) {
+        if (ec || !it->is_regular_file(ec) || it->path().extension() != ".csproj") continue;
+        const fs::path csproj = it->path();
+        std::ifstream in(csproj, std::ios::binary);
+        std::string src((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        in.close();
+        const size_t at = src.find("<HintPath>");
+        if (at == std::string::npos) continue;
+        const size_t end = src.find("</HintPath>", at);
+        if (end == std::string::npos) continue;
+        const size_t after = end + std::strlen("</HintPath>");
+        if (src.compare(at, after - at, want) != 0) {
+            src.replace(at, after - at, want);
+            std::ofstream out(csproj, std::ios::trunc);
+            out << src;
+            LEMON_LOG("模板 csproj SDK 已重锚：%s", csproj.filename().string().c_str());
+        }
+        return; // 单脚本工程：首个 csproj 即工程文件（已锚定 = 本机生成路径一致）
+    }
+    LEMON_WARN("模板 Game/ 无 .csproj 或无 HintPath 锚点（SDK 引用需手改）");
+}
+
+} // namespace
+
 std::string ProjectWizard::Create(const ProjectDesc& d, uint64_t* outSpawnGuid) {
-    if (d.name.empty() || d.parentDir.empty() || d.sdkDir.empty()) return {};
+    if (d.name.empty() || d.parentDir.empty()) return {};
     std::error_code ec;
     // 父目录绝对化（手敲 ./x 等相对路径）：返回 root 与全链路径保持绝对——
     // LoadFromAssemblyPath 只收绝对路径（M4.6 实测闪退根因之一）
@@ -34,6 +69,43 @@ std::string ProjectWizard::Create(const ProjectDesc& d, uint64_t* outSpawnGuid) 
         LEMON_WARN("新建项目失败：目录已存在 %s", root.string().c_str());
         return {};
     }
+
+    // ---- M5 批④：vs-survivor 模板分支（06 §1 "选模板 → 复制模板"流程）----
+    // 拷贝整棵模板项目（资产 .meta 随行 = GUID/切片稳定）→ 重写 project.lemon
+    // （新项目 GUID = 存档隔离键；模板资产 GUID 不重生成——引用锚点）→ 重锚
+    // Game/*.csproj HintPath（创建期固化，blank 同款纪律）。
+    const bool isTemplate = d.templateName != "blank" && !d.templateName.empty();
+    if (isTemplate) {
+        fs::path src = d.templateDir.empty() ? fs::path("Templates") / d.templateName
+                                             : fs::path(d.templateDir);
+        if (src.is_relative()) src = fs::absolute(src, ec);
+        if (!fs::is_directory(src / "Assets") || !fs::is_regular_file(src / "project.lemon")) {
+            LEMON_WARN("模板缺失或不完整：%s", src.string().c_str());
+            return {};
+        }
+        fs::create_directories(root.parent_path(), ec); // 中间目录（父目录可能未建）
+        fs::copy(src, root, fs::copy_options::recursive, ec);
+        if (ec) {
+            LEMON_WARN("模板拷贝失败：%s", ec.message().c_str());
+            fs::remove_all(root, ec);
+            return {};
+        }
+        // project.lemon 重写：名字/引擎版本/新项目 GUID（模板占位档替换）
+        const uint64_t projectGuid = GenerateGuid();
+        {
+            std::ofstream f(root / "project.lemon", std::ios::trunc);
+            f << "{\n  \"schemaVersion\": 1,\n  \"name\": \"" << d.name << "\",\n"
+              << "  \"engineVersion\": \"" << d.engineVersion << "\",\n"
+              << "  \"guid\": \"" << AssetDatabase::GuidToHex(projectGuid) << "\"\n}\n";
+        }
+        // Game/*.csproj HintPath 重锚（找到 Reference Include="Lemon.SDK" 段替换）
+        if (!d.sdkDir.empty()) ReanchorSdkHintPath(root / "Game", d.sdkDir);
+        LEMON_LOG("项目已创建（%s 模板）：%s（project guid %016llx）",
+                  d.templateName.c_str(), root.string().c_str(),
+                  (unsigned long long)projectGuid);
+        return root.string();
+    }
+
     for (const char* dir : {"Assets", "Scenes", "Prefabs", "Game", "Data", ".lemon/editor",
                             "Builds"})
         fs::create_directories(root / dir, ec);
@@ -91,6 +163,7 @@ std::string ProjectWizard::Create(const ProjectDesc& d, uint64_t* outSpawnGuid) 
 }
 
 bool ProjectWizard::WriteGameProject(const ProjectDesc& d, uint64_t spawnGuid) {
+    if (d.sdkDir.empty()) return false;
     fs::path game = fs::path(d.parentDir) / d.name / "Game";
     // HintPath 绝对锚定（创建期固化；06 §1 安装模型 M5 随安装器迁相对锚）
     fs::path sdk(d.sdkDir);
@@ -230,8 +303,7 @@ std::vector<std::string> ProjectWizard::ExtractCompileErrors(const std::string& 
 }
 
 bool ProjectWizard::AddBehaviourScript(const std::string& gameDirAbs,
-                                       const std::string& className) {
-    // 类名 = C# 标识符（首字符字母/下划线；限长防 tag 类缓冲溢出类问题）
+                                       const std::string& className) {    // 类名 = C# 标识符（首字符字母/下划线；限长防 tag 类缓冲溢出类问题）
     if (className.empty() || className.size() > 48) return false;
     if (!std::isalpha((unsigned char)className[0]) && className[0] != '_') return false;
     for (char c : className)

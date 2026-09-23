@@ -14,6 +14,7 @@ public static class InputButton
     public const int Left = 2;
     public const int Right = 3;
     public const int Attack = 4;
+    public const int Confirm = 5; // M5 批④：确认/重开（编辑器映射 R 键）
 }
 
 public static class Input
@@ -40,4 +41,5 @@ public static class Input
     public static bool Left => GetButton(InputButton.Left);
     public static bool Right => GetButton(InputButton.Right);
     public static bool Attack => GetButton(InputButton.Attack);
+    public static bool Confirm => GetButton(InputButton.Confirm);
 }

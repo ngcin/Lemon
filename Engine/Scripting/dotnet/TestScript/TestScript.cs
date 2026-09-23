@@ -24,6 +24,8 @@ public static class GameMain
         Lemon.Behaviours.Register<ScaleUiProbeBehaviour>();
         // M5 批②：WaveStart 订阅 → Ui.Set 波次行（typeId 5，表尾注册同上约定）
         Lemon.Behaviours.Register<WaveBannerBehaviour>();
+        // M5 批④：存档 + HUD 完整版 + Confirm 位（typeId 6，表尾注册同上约定）
+        Lemon.Behaviours.Register<SaveCardsProbeBehaviour>();
     }
 }
 
@@ -195,5 +197,44 @@ public sealed class WaveBannerBehaviour : Lemon.LemonBehaviour
             int planned = (int)m.P1;
             Lemon.Ui.Set("wave", $"WAVE {index + 1} x{planned}", -1f);
         });
+    }
+}
+
+/// <summary>M5 批④：存档通道 + HUD 完整版（着色槽/Clear/卡片/CardPick 消费语义）
+/// + InputButton.Confirm 验收（typeId 6，表尾注册同上约定）。
+/// 帧1 Save.SetString + Ui.Set 着色 + Ui.Set/Clear；帧2 读回（含原始字节档与
+/// HasKey）+ ShowCards；帧3 CardPick 消费 ×2（C++ 帧间置 pick=1）+ HideCards +
+/// Input.Confirm + Save.Flush（无钩子宿主 = 安全 no-op）后自毁。</summary>
+public sealed class SaveCardsProbeBehaviour : Lemon.LemonBehaviour
+{
+    protected override void Update()
+    {
+        var fc = Lemon.Time.FrameCount;
+        if (fc == 1) {
+            Lemon.Save.SetString("probe", "hello-4");
+            Lemon.Save.Set("raw", new byte[] { 1, 2, 3, 255 });
+            Lemon.Ui.Set("hp", "68/100", 0.68f, 0xFF30B0F0u);
+            Lemon.Ui.Set("tmp", "erase-me");
+            Lemon.Ui.Clear("tmp");
+            Lemon.Events.Push(Lemon.Interop.GameEvent.Custom, 700, default, default);
+        } else if (fc == 2) {
+            string? s = Lemon.Save.GetString("probe");
+            byte[]? b = Lemon.Save.Get("raw");
+            bool ok = s == "hello-4" && Lemon.Save.HasKey("probe") &&
+                      !Lemon.Save.HasKey("nope") && b != null && b.Length == 4 && b[3] == 255;
+            Lemon.Events.Push(Lemon.Interop.GameEvent.Custom,
+                              (ushort)(800 + (ok ? 1 : 0)), default, default);
+            Lemon.Ui.ShowCards("升级三选一", "移速 +10%", "磁力 +25%", "射速 +20%");
+        } else if (fc == 3) {
+            int pick = Lemon.Ui.CardPick();  // C++ 帧间置 1（模拟按钮/数字键）
+            int again = Lemon.Ui.CardPick(); // 消费语义：同选择只回报一次
+            Lemon.Events.Push(Lemon.Interop.GameEvent.Custom,
+                              (ushort)(900 + pick * 10 + (again + 1)), default, default);
+            Lemon.Events.Push(Lemon.Interop.GameEvent.Custom,
+                              (ushort)(960 + (Lemon.Input.Confirm ? 5 : 0)), default, default);
+            Lemon.Ui.HideCards();
+            Lemon.Save.Flush(); // 无 IO 钩子宿主：红字一次后 no-op（不炸即验收）
+            gameObject.Destroy();
+        }
     }
 }

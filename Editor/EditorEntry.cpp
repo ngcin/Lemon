@@ -26,7 +26,8 @@ int usageExit(const char* why) {
                 "[--screenshot out.png] [--project dir] [--scene f.scene] "
                 "[--save-scene f.scene] [--play] [--script Game.dll] [--final] "
                 "[--no-reopen] [--smoke-close clean|dirty] [--smoke-drag] "
-                "[--smoke-ui] [--smoke-anim] [--bench-survivor]\n");
+                "[--smoke-ui] [--smoke-anim] [--bench-survivor] [--gen-vs-template dir] "
+                "[--smoke-template]\n");
     return 2;
 }
 
@@ -77,6 +78,10 @@ int main(int argc, char** argv) {
             launch.smokeAnim = launch.smoke = launch.playTest = true; // 动画链冒烟（M5 批③）
         else if (!std::strcmp(argv[i], "--bench-survivor"))
             launch.benchSurvivor = true; // M5 压测基线（1 万怪刷怪 + Immediate + 帧时）
+        else if (!std::strcmp(argv[i], "--gen-vs-template") && i + 1 < argc)
+            launch.genVsTemplate = argv[++i]; // M5 批④：模板生成（开发工具，跑一次）
+        else if (!std::strcmp(argv[i], "--smoke-template"))
+            launch.smokeTemplate = launch.smoke = launch.playTest = true; // 模板链冒烟
         else
             return usageExit((std::string("unknown arg: ") + argv[i]).c_str());
     }

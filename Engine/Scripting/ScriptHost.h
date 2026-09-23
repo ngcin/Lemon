@@ -47,6 +47,17 @@ struct NativeApiVtable {
     float (*getTimescale)();                                        // World::TimeScale
     void (*setTimescale)(float);                                    // World::SetTimeScale（clamp [0,8]）
     void (*rtUiSet)(const char* key, const char* text, float frac); // Lemon.Ui.Set → World::RtUi
+    // ---- M5 批④（存档通道 + HUD 完整版；表尾追加同上约定）----
+    int32_t (*saveSet)(const char* key, const void* bytes, uint32_t len); // Lemon.Save.Set → World::Saves
+    int32_t (*saveGetLen)(const char* key);                              // -1 = 无此键
+    int32_t (*saveGet)(const char* key, void* out, uint32_t cap);        // 返回拷贝数（-2 = cap 不足）
+    void (*saveFlush)();                                                 // ScriptIoHooks 落盘（C# Save.Flush）
+    void (*rtUiClear)(const char* key);                                  // Lemon.Ui.Clear → RtUi 删单行
+    void (*rtUiSetEx)(const char* key, const char* text, float frac,
+                      uint32_t color);                                   // Lemon.Ui.Set 着色版（0 = 默认）
+    void (*uiCards)(int32_t show, const char* title, const char* a,
+                    const char* b, const char* c);                       // 三选一卡片显隐/内容
+    int32_t (*uiCardPick)();                                             // 消费式：返回已选索引后置 -1
 };
 
 /// 编辑器资产钩子（M4.4：编辑器宿主装配期经 SetEditorAssetHooks 注入；
@@ -57,6 +68,13 @@ struct EditorAssetHooks {
 };
 /// 进程级单份（宿主装配期一次；thread-safe 之前 = 引导期约定）
 void SetEditorAssetHooks(const EditorAssetHooks& hooks);
+
+/// 存档 IO 钩子（M5 批④ D1：编辑器注入项目路径实现；纯运行时 M8 自带
+/// %APPDATA% 版）。未注入 = C# Save.Flush 红字一次后 no-op（内存态照常）。
+struct ScriptIoHooks {
+    void (*saveFlush)(ecs::World& world); // 全量落盘（幂等）
+};
+void SetScriptIoHooks(const ScriptIoHooks& hooks);
 
 /// 结构命令（与 Lemon.SDK/SceneOps.cs SceneOp 一致，16B）
 struct SceneOpC {

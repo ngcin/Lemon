@@ -14,15 +14,19 @@ namespace lemon::editor {
 
 struct ProjectDesc {
     std::string parentDir;       // 绝对父目录（项目落 <parent>/<name>/）
-    std::string name;            // 项目名（= 目录名 = csproj 程序集名）
+    std::string name;            // 项目名（= 目录名；csproj 程序集名随模板）
     std::string sdkDir;          // Lemon.SDK.dll 所在目录（绝对；HintPath）
     std::string engineVersion;   // 写入 project.lemon 的引擎版本锚点
+    std::string templateName;    // "blank"（缺省，代码生成）| "vs-survivor"（目录拷贝，M5 批④）
+    std::string templateDir;     // 模板源根（LEMON_TEMPLATE_DIR/vs-survivor；空 = 内置解析）
 };
 
 class ProjectWizard {
 public:
-    /// 创建 blank 模板项目。成功返回项目根绝对路径；失败（目录已存在/不可写）返回空。
-    /// outSpawnGuid 非空时回写种子资产 guid（调用方装配脚本用）。
+    /// 创建项目（06 §1 向导：blank = 代码生成；vs-survivor = 模板目录拷贝 +
+    /// project.lemon 重写（新项目 GUID=存档隔离键）+ Game/*.csproj HintPath 重锚）。
+    /// 成功返回项目根绝对路径；失败（目录已存在/不可写/模板缺失）返回空。
+    /// outSpawnGuid 非空时回写种子资产 guid（blank 专属；模板分支不写）。
     static std::string Create(const ProjectDesc& d, uint64_t* outSpawnGuid = nullptr);
 
     /// Game/ 脚本工程内容（csproj + GameMain + 示例脚本；独立出来供测试断言）

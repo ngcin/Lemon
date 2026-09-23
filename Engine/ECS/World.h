@@ -15,6 +15,7 @@
 #include "ECS/ClipTable.h"
 #include "ECS/Events.h"
 #include "ECS/Input.h"
+#include "ECS/SaveChannel.h"
 #include "ECS/Scene.h"
 #include "ECS/SystemPipeline.h"
 #include "ECS/TeamTable.h"
@@ -30,11 +31,14 @@ struct RtUiSlot {
     char key[16] = {};
     char text[48] = {};
     float frac = -1.0f; // <0 纯文本；[0,1] 附进度条
+    uint32_t color = 0; // 0 = 默认色；非 0 = ABGR（文本与进度条着色，M5 批④）
 };
 
 class RtUiChannel {
 public:
-    bool Set(const char* key, const char* text, float frac);
+    bool Set(const char* key, const char* text, float frac,
+             uint32_t color = 0); // 命中覆写/空槽即占；text 截断 47 字符
+    bool Clear(const char* key);  // 删单行（M5 批④：结算后清 HUD；尾槽前移）
     void Clear() { count_ = 0; }
     uint32_t Count() const { return count_; }
     const RtUiSlot& At(uint32_t i) const { return slots_[i]; }
@@ -42,6 +46,25 @@ public:
 private:
     RtUiSlot slots_[8]{};
     uint32_t count_ = 0;
+};
+
+// ---- HUD 三选一卡片（M5 批④ D3；升级选择/死亡重开的交互回读通道）----------------
+// C# Ui.ShowCards 写入、GameView 呈现按钮并回写 pick、C# Ui.CardPick 消费式读。
+// 选择属用户 IO 不入输入快照（金档场景通道空转 = 回放零漂移；依赖卡片选择的
+// 场景不进金回放口径——09 §7 分类）。不入 StateHash。
+struct RtUiCards {
+    bool active = false;
+    char title[48] = {};
+    char labels[3][48] = {};
+    int32_t pick = -1; // 已选索引（呈现层写；ConsumePick 读后置 -1）
+
+    void Show(const char* title, const char* a, const char* b, const char* c);
+    void Hide() { active = false; pick = -1; }
+    int32_t ConsumePick() {
+        const int32_t p = pick;
+        pick = -1;
+        return p;
+    }
 };
 
 /// 脚本桥后端（M3：Scripting/ScriptHost 实现；由宿主构造并注入 World，World 不拥有）
@@ -102,6 +125,15 @@ public:
     RtUiChannel& RtUi() { return rtUi_; }
     const RtUiChannel& RtUi() const { return rtUi_; }
 
+    // ---- HUD 三选一卡片（上方 RtUiCards 说明）----
+    RtUiCards& Cards() { return cards_; }
+    const RtUiCards& Cards() const { return cards_; }
+
+    // ---- 游戏存档通道（M5 批④ D1；SaveChannel 头说明）----
+    // C# Lemon.Save 写读；IO 归宿主（编辑器钩子/打包运行时 M8）。不入 StateHash。
+    SaveChannel& Saves() { return saves_; }
+    const SaveChannel& Saves() const { return saves_; }
+
     // ---- 输入（InputSnapshot 系统消费的快照通道；录制/回放共用）----
     const InputState& Input() const { return input_; }
     void ApplyInput(const InputState& in) { input_ = in; }
@@ -151,7 +183,9 @@ private:
     EventSink eventSink_;
     IScriptBackend* scriptBackend_ = nullptr;
     RtUiChannel rtUi_;
+    RtUiCards cards_;
     ClipTable clips_;
+    SaveChannel saves_;
     uint64_t tick_ = 0;
     float timeScale_ = 1.0f;
 };
