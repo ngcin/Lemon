@@ -105,7 +105,14 @@ Tilemap 数据 + chunk 烘焙渲染 → 碰撞层 → 自动瓦片 + TilePalette
 > 评估（表格式编辑器 vs 外置表导入 vs 双轨，开工时 ADR 定形）。②**AnimationEditor
 > 面板**（05 §7 既列）随 TD/VS 模板帧动画需求开工——当前动画创建 = 精灵网格切片
 > + `.clip` 资产（批③通道），无时间轴编辑 UI。③新技能作者路径数据化（当前 =
-> C# behaviour + prefab + GameMain 注册三件套纯代码面）。
+> C# behaviour + prefab + GameMain 注册三件套纯代码面）。④**sprite 引用 GUID 化**
+> （批④后修③的治本项）：`SpriteRenderer.spriteId` 是场景/prefab 里最后一个
+> "数字资产引用"（clipId/prefabId 已是 GUID 低 32 位）——数字号依赖扫描序/
+> manifest 记账，GUID 依赖资产自身身份。方案 = 组件**尾加** `spriteGuid` 字段
+> （加字段零重录口径）+ 场景加载时解析为运行时 spriteId（DB 查表），作者面
+> （Inspector 槽/模板生成器/拖拽）只写 GUID；spriteId 降级为运行时缓存。残余
+> 风险消除：manifest 丢失/损坏后"确定性重排"在资产集变化过（导入过新素材）的
+> 项目上仍可能与旧场景引用错位——GUID 化后此类问题类别整体消失。
 
 ### M7 发布管线（4 周）
 
