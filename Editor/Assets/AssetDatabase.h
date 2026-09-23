@@ -15,7 +15,7 @@
 
 namespace lemon::editor {
 
-enum class AssetType : uint8_t { Sprite, Prefab, Script, Generic };
+enum class AssetType : uint8_t { Sprite, Prefab, Script, Clip, Generic };
 
 const char* AssetTypeName(AssetType t);
 struct AssetEntry {
@@ -25,6 +25,20 @@ struct AssetEntry {
     uint32_t spriteId = 0; // Sprite：AtlasRegistry 稳定 id（0 = 非 sprite）
     uint64_t hash = 0;     // 内容 FNV-1a 64（重导入判定）
     bool missing = false;  // 墓碑（文件已删；号保留，浏览器隐藏）
+
+    // ---- 网格切片（M5 批③；.meta importer 段声明，DB 纯文件系统零解码记账）----
+    // cellW/H=0 = 全幅（M4 最小集语义）；gridCols/Rows 来自 meta frames 声明
+    // （yami .anim hframes/vframes 同款）→ Rescan 分配连号块 base..base+count-1
+    // （manifest 持久，跨会话稳定——场景引用/clip 解析可复现；号只增不减）。
+    uint16_t cellW = 0, cellH = 0;
+    uint16_t gridCols = 0, gridRows = 0;
+    uint32_t sliceBase = 0;  // 0 = 无块
+    uint32_t sliceCount = 0; // = gridCols*gridRows（块分配时刻的值）
+    bool Sliced() const { return sliceBase != 0 && sliceCount != 0; }
+    /// 切片序号（行优先）→ spriteId（越界 = 0）
+    uint32_t SliceSpriteId(uint32_t cell) const {
+        return cell < sliceCount ? sliceBase + cell : 0;
+    }
 
     std::string FileName() const; // relPath 末段
     std::string Dir() const;      // relPath 去末段（"" = 根；无尾 '/'）
@@ -51,6 +65,8 @@ public:
     const AssetEntry* FindByGuid(uint64_t guid) const;
     const AssetEntry* FindByPath(const std::string& relPath) const;
     const AssetEntry* FindBySpriteId(uint32_t spriteId) const;
+    /// clip 资产按 GUID 低 32 位反查（Animator2D.clipId 槽显示/解析；M5 批③）
+    const AssetEntry* FindClipByLowId(uint32_t lowId) const;
     /// 可变版（编辑器操作 Rename/Remove 用；DB 持有者 = EditorContext）
     AssetEntry* FindByGuid(uint64_t guid) {
         return const_cast<AssetEntry*>(std::as_const(*this).FindByGuid(guid));
@@ -94,8 +110,14 @@ private:
 
     std::string root_;
     std::vector<AssetEntry> entries_; // relPath 升序（含墓碑）
-    // 启动期 manifest 携带（path → guid/spriteId；首轮 Rescan 后清空）
-    std::unordered_map<std::string, std::pair<uint64_t, uint32_t>> manifestCarry_;
+    // 启动期 manifest 携带（path → guid/spriteId/切片块；首轮 Rescan 后清空）
+    struct CarryInfo {
+        uint64_t guid = 0;
+        uint32_t spriteId = 0;
+        uint32_t sliceBase = 0;
+        uint32_t sliceCount = 0;
+    };
+    std::unordered_map<std::string, CarryInfo> manifestCarry_;
     uint32_t nextSpriteId_ = 0;
     uint32_t spriteIdBase_ = 0;
     uint32_t healthIssues_ = 0;

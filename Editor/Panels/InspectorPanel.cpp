@@ -228,6 +228,58 @@ bool DrawSpriteSlot(EditorApp& app, uint8_t* p, ecs::SpriteRenderer& sr) {
     return false; // 写入已就地完成（combo 尾置 → 属性轨由 Deactivated 捕获）
 }
 
+/// clip 资产槽（FieldHint::ClipRef；M5 批③）。值 = .clip 资产 GUID 低 32 位
+/// （Animator2D.clipId；映射约定同 prefabId）。下拉全列 / AssetBrowser 拖入（kind 4）/
+/// 右键清空。写入就地完成（combo 尾置 → 属性轨由 Deactivated 捕获）。
+bool DrawClipSlot(EditorApp& app, uint8_t* p) {
+    EditorContext& ctx = app.Ctx();
+    AssetDatabase& db = ctx.Assets();
+    uint32_t& id = *(uint32_t*)p;
+    const AssetEntry* entry = db.FindClipByLowId(id);
+
+    char label[96];
+    if (entry)
+        std::snprintf(label, sizeof(label), "%s%s", entry->missing ? "⚠ " : "",
+                      entry->relPath.c_str());
+    else if (id != 0)
+        std::snprintf(label, sizeof(label), "悬空 clip %08x", id);
+    else
+        std::snprintf(label, sizeof(label), "(无 clip · M2 纯计时)");
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::BeginCombo("##clipv", label)) {
+        for (const auto& e : db.Entries()) {
+            if (e.type != AssetType::Clip) continue;
+            char item[160];
+            std::snprintf(item, sizeof(item), "%s%s", (uint32_t)e.guid == id ? "√ " : "",
+                          e.relPath.c_str());
+            if (ImGui::Selectable(item, (uint32_t)e.guid == id)) {
+                id = (uint32_t)e.guid;
+                ctx.dirty = true;
+            }
+        }
+        ImGui::EndCombo();
+    }
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* pay = ImGui::AcceptDragDropPayload("LemonAsset")) {
+            AssetDragPayload d{};
+            std::memcpy(&d, pay->Data, sizeof(d));
+            if (d.kind == 4) { // clip（AssetBrowser KindOf）
+                id = (uint32_t)d.guid;
+                ctx.dirty = true;
+            }
+        }
+        ImGui::EndDragDropTarget();
+    }
+    if (ImGui::BeginPopupContextItem("clip_ctx")) {
+        if (ImGui::MenuItem("清空引用")) {
+            id = 0;
+            ctx.dirty = true;
+        }
+        ImGui::EndPopup();
+    }
+    return false;
+}
+
 /// 字段字节尺寸（FieldMeta 无 size 位，按 FieldType 定长）
 size_t FieldSizeOf(ecs::FieldType t) {
     using ecs::FieldType;
@@ -310,6 +362,7 @@ FieldResult DrawField(EditorApp& app, const ecs::ComponentMeta& meta, ecs::Entit
     const bool scrubbable =
         !ecs::HasHint(ed.hints, FieldHint::Hide) &&
         !ecs::HasHint(ed.hints, FieldHint::AssetRef) &&
+        !ecs::HasHint(ed.hints, FieldHint::ClipRef) &&
         !ecs::HasHint(ed.hints, FieldHint::Enum) &&
         !ecs::HasHint(ed.hints, FieldHint::ColorHex) &&
         (f.type == FieldType::Float || f.type == FieldType::Double ||
@@ -341,7 +394,8 @@ FieldResult DrawField(EditorApp& app, const ecs::ComponentMeta& meta, ecs::Entit
     bool resetDone = false;
     if (ecs::HasHint(ed.hints, ecs::FieldHint::Reset) && meta.constructFn &&
         meta.sizeOf <= kResetBuf && !ecs::HasHint(ed.hints, ecs::FieldHint::Hide) &&
-        !ecs::HasHint(ed.hints, ecs::FieldHint::AssetRef)) {
+        !ecs::HasHint(ed.hints, ecs::FieldHint::AssetRef) &&
+        !ecs::HasHint(ed.hints, ecs::FieldHint::ClipRef)) {
         const float iconSz = ImGui::GetFrameHeight() - 4.0f;
         ImGui::SameLine();
         // slack 必须在 SameLine 之后取：文本绘制后光标已换行到列首，之前取到的
@@ -376,6 +430,8 @@ FieldResult DrawField(EditorApp& app, const ecs::ComponentMeta& meta, ecs::Entit
         // AssetRef 槽当前仅 SpriteRenderer.spriteId（ED_ASSET 全目录唯一）→ 可取整组件
         // 写入就地完成（combo 尾置 → 属性轨由 Deactivated 捕获）
         DrawSpriteSlot(app, p, *static_cast<ecs::SpriteRenderer*>(comp));
+    } else if (ecs::HasHint(ed.hints, FieldHint::ClipRef) && f.type == FieldType::UInt32) {
+        DrawClipSlot(app, p); // M5 批③：Animator2D.clipId（写入就地完成）
     } else if (ecs::HasHint(ed.hints, FieldHint::Enum)) {
         changed = DrawEnumControl(f, ed, p);
     } else if (ecs::HasHint(ed.hints, FieldHint::ColorHex) && f.type == FieldType::UInt32) {

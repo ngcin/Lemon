@@ -156,6 +156,9 @@ private:
     };
     void BuildPlayPrefabCache(); // EnterPlay：Prefab 资产 → {低 32 位 → 缓存}
     ecs::Entity SpawnPlayPrefab(ecs::Scene& s, uint32_t prefabId, Vec2 pos, uint32_t team);
+    // M5 批③：EnterPlay 建 clip 表（.clip JSON → (sheet guid, cell) 解析为 spriteId
+    // 入 playWorld_->Clips()；进 Play 时刻快照——Play 中改 .clip 不生效）
+    void BuildPlayClipCache();
 
     std::unique_ptr<ecs::World> world_;
     ecs::Scene* scene_ = nullptr;

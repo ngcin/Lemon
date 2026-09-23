@@ -2170,6 +2170,121 @@ void TestVerifyAnimatorAdvance() {
     for (int i = 0; i < 120; ++i) w.Step(1.0f / 60.0f); // 2 模拟秒
     Expect(al.time >= 0.0f && al.time < 1.0f, "anim: loop keeps time bounded");
     Expect(ao.time > 1.0f, "anim: non-loop advances unbounded (M2 语义)");
+
+    // 批③回退护栏：表非空但 clipId 未命中（错绑）→ 仍走 M2 旧算术（金档零漂移前提）
+    w.Clips().Add(0xEEEEu, {501u}, 8.0f, true); // 表非空即可
+    Entity missy = s.Create();
+    Animator2D& am = s.Emplace<Animator2D>(missy);
+    am.clipId = 0xDEADBEEFu; // 未登记 id
+    am.speed = 1.0f;
+    am.loop = 1;
+    for (int i = 0; i < 120; ++i) w.Step(1.0f / 60.0f);
+    Expect(am.time >= 0.0f && am.time < 1.0f, "anim: unknown clipId falls back to M2 loop");
+}
+
+// ---- 批③：ClipTable 帧映射（fps 截断/回绕/钳末帧/暂停/半速/负速/无渲染器/孪生/roundtrip）----
+void TestVerifyAnimatorFrameMapping() {
+    const float dt = 1.0f / 60.0f;
+    World w;
+    w.InstallDefaultSystems();
+    Scene& s = w.CreateScene("clip");
+    w.SetActiveScene(&s);
+    // clip 0x77：fps 8 × 3 帧（spriteId 10/11/12）→ 帧界 7.5 tick、周期 22.5 tick
+    Expect(w.Clips().Add(0x77u, {10u, 11u, 12u}, 8.0f, true), "clip table add");
+    Expect(!w.Clips().Add(0u, {1u}, 8.0f, true), "clip id 0 rejected");
+    Expect(w.Clips().Add(0x78u, {}, 8.0f, true) == false, "empty frames rejected");
+    Expect(w.Clips().Find(0x77u) != nullptr && w.Clips().Find(0u) == nullptr &&
+               w.Clips().Find(0x999u) == nullptr, "clip find semantics");
+
+    Entity loopy = s.Create();
+    SpriteRenderer& srl = s.Emplace<SpriteRenderer>(loopy);
+    srl.spriteId = 999u;
+    Animator2D& al = s.Emplace<Animator2D>(loopy);
+    al.clipId = 0x77u;
+
+    Entity oncey = s.Create(); // loop=0 钳末帧（M5 收口：time 钳 total 有界）
+    SpriteRenderer& sro = s.Emplace<SpriteRenderer>(oncey);
+    sro.spriteId = 999u;
+    Animator2D& ao = s.Emplace<Animator2D>(oncey);
+    ao.clipId = 0x77u;
+    ao.loop = 0;
+
+    Entity paused = s.Create(); // playOnStart=0 = 暂停开关（三态全冻结）
+    SpriteRenderer& srp = s.Emplace<SpriteRenderer>(paused);
+    srp.spriteId = 999u;
+    Animator2D& ap = s.Emplace<Animator2D>(paused);
+    ap.clipId = 0x77u;
+    ap.playOnStart = 0;
+
+    Entity half = s.Create(); // speed 0.5：16 tick == 全速 8 tick
+    Animator2D& ah = s.Emplace<Animator2D>(half);
+    ah.clipId = 0x77u;
+    ah.speed = 0.5f;
+
+    Entity bare = s.Create(); // 无 SpriteRenderer：纯计时推进不炸
+    Animator2D& ab = s.Emplace<Animator2D>(bare);
+    ab.clipId = 0x77u;
+
+    Entity neg = s.Create(); // 负 speed 防御：time 钳 0、停 0 号帧
+    SpriteRenderer& srn = s.Emplace<SpriteRenderer>(neg);
+    srn.spriteId = 999u;
+    Animator2D& an = s.Emplace<Animator2D>(neg);
+    an.clipId = 0x77u;
+    an.speed = -1.0f;
+
+    for (int i = 0; i < 8; ++i) w.Step(dt);
+    Expect(al.curFrame == 1 && srl.spriteId == 11u, "clip: tick 8 -> frame 1");
+    Expect(ah.curFrame == 0, "clip: half speed still frame 0 at tick 8");
+    Expect(ab.curFrame == 1, "clip: no-renderer animator advances");
+    for (int i = 0; i < 14; ++i) w.Step(dt); // 累计 22 tick
+    Expect(al.curFrame == 2 && srl.spriteId == 12u, "clip: tick 22 -> frame 2");
+    w.Step(dt); // 23 tick：time 0.3833 ≥ total 0.375 → 回绕
+    Expect(al.curFrame == 0 && srl.spriteId == 10u, "clip: tick 23 wraps to frame 0");
+    Expect(ah.curFrame == 1, "clip: half speed reaches frame 1 at tick 23 (帧界 15 tick)");
+    for (int i = 0; i < 97; ++i) w.Step(dt); // 累计 120 tick
+    Expect(ao.time <= 3.0f / 8.0f && ao.curFrame == 2 && sro.spriteId == 12u,
+           "clip: non-loop clamps to last frame (time bounded)");
+    Expect(ap.time == 0.0f && ap.curFrame == 0 && srp.spriteId == 999u,
+           "clip: playOnStart=0 freezes all three");
+    Expect(an.time == 0.0f && an.curFrame == 0 && srn.spriteId == 10u,
+           "clip: negative speed clamps to frame 0");
+
+    // roundtrip：clipId/speed/loop/playOnStart 入档；time/curFrame 亦入档（FIELD 位未动）
+    const std::string text = SceneArchive::Save(s);
+    Expect(text.find("\"clipId\"") != std::string::npos, "clipId serialized");
+    World w2;
+    Scene& dst = w2.CreateScene("clip2");
+    Expect(SceneArchive::Load(dst, text), "clip scene load");
+    dst.View<Animator2D>().each([&](auto ent2, Animator2D& r) {
+        if (Scene::FromEntt(ent2) == oncey) {
+            Expect(r.clipId == 0x77u && r.loop == 0 && r.speed == 1.0f,
+                   "animator config roundtrip");
+        }
+    });
+
+    // 孪生世界：帧映射纯函数 + 无 RNG 消费 → 300 tick StateHash 相等（§18 护栏）
+    auto run = [](uint64_t& hashOut) {
+        World world;
+        world.InstallDefaultSystems();
+        Scene& sc = world.CreateScene("det");
+        world.SetActiveScene(&sc);
+        world.Clips().Add(0x77u, {10u, 11u, 12u}, 8.0f, true);
+        for (int k = 0; k < 3; ++k) {
+            ecs::Entity e = sc.Create();
+            sc.Emplace<Transform2D>(e, Transform2D{{(float)k * 30.0f, 5.0f}});
+            SpriteRenderer& sr = sc.Emplace<SpriteRenderer>(e);
+            sr.spriteId = 999u;
+            Animator2D& a = sc.Emplace<Animator2D>(e);
+            a.clipId = 0x77u;
+            a.speed = 1.0f + 0.5f * (float)k; // 不同速度混合
+        }
+        for (int i = 0; i < 300; ++i) world.Step(1.0f / 60.0f);
+        hashOut = ComputeStateHash(sc);
+    };
+    uint64_t ha = 0, hb = 0;
+    run(ha);
+    run(hb);
+    Expect(ha == hb, "clip anim twin worlds: identical state hash");
 }
 
 // ---- Stat：到期压缩保序 + xpToNext=0 终止性 ----
@@ -3329,6 +3444,7 @@ int main() {
     TestVerifyAISystemChase();
     TestVerifyFleeAndPatrol();
     TestVerifyAnimatorAdvance();
+    TestVerifyAnimatorFrameMapping();
     TestVerifyStatEffectsAndXp();
     TestVerifyMovementKnockbackAndClamp();
     TestVerifyProjectileLifetime();

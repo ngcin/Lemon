@@ -84,6 +84,58 @@ uint64_t HookInstantiate(const char* hex, float x, float y) {
     return e.IsNull() ? 0 : e.id;
 }
 
+// ---- M5 批③：--smoke-anim 固定 guid（程序化 4 帧表 + clip；yami 包同段命名）----
+constexpr uint64_t kAnimSheetGuid = 0x5bd31a7c30000001ull; // anim-sheet.png（128×32，4×32×32 格）
+constexpr uint64_t kAnimClipGuid = 0x5bd31a7c30000002ull;  // anim.clip（fps10 × cells 0..3）
+constexpr uint64_t kYamiHeroSheetGuid = 0x5bd31a7c10000001ull; // Samples yami-dungeon hero_1（在场即验）
+constexpr uint64_t kYamiHeroClipGuid = 0x5bd31a7c20000001ull;  // hero-walk.clip（9 帧 @8fps）
+
+/// 程序化动画素材三件套（sheet png + grid meta + clip + clip meta）落 assetsDir。
+/// smoke-anim（SeedSmokeProject）与 bench-survivor（万怪动画化）共用；须在
+/// OpenProject/Rescan 前落盘（切片记账/导入随扫描走）。
+void WriteAnimSheetAssets(const std::filesystem::path& assetsDir) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::create_directories(assetsDir, ec);
+    std::filesystem::path sheet = assetsDir / "anim-sheet.png";
+    if (!fs::exists(sheet, ec)) {
+        std::vector<uint8_t> px(128 * 32 * 4);
+        for (int y = 0; y < 32; ++y)
+            for (int x = 0; x < 128; ++x) {
+                const int frame = x / 32;
+                uint8_t* q = &px[((size_t)y * 128 + x) * 4];
+                q[0] = (uint8_t)(60 * (frame + 1));
+                q[1] = (uint8_t)(255 - 50 * frame);
+                q[2] = 128;
+                q[3] = 255;
+            }
+        stbi_write_png(sheet.string().c_str(), 128, 32, 4, px.data(), 128 * 4);
+    }
+    std::filesystem::path sheetMeta = sheet.string() + ".meta";
+    if (!fs::exists(sheetMeta, ec)) {
+        std::ofstream f(sheetMeta, std::ios::trunc);
+        f << "{\n  \"guid\": \"5bd31a7c30000001\",\n  \"type\": \"sprite\",\n"
+             "  \"importer\": { \"slice\": \"grid\", \"cell\": [32, 32], \"frames\": [4, 1] },\n"
+             "  \"hash\": 0,\n  \"importedAt\": 0\n}\n";
+    }
+    std::filesystem::path clip = assetsDir / "anim.clip";
+    if (!fs::exists(clip, ec)) {
+        std::ofstream f(clip, std::ios::trunc);
+        f << "{\n  \"schemaVersion\": 1,\n  \"name\": \"smoke-anim\",\n  \"fps\": 10,\n"
+             "  \"loop\": true,\n  \"frames\": [\n"
+             "    { \"sheet\": \"5bd31a7c30000001\", \"cell\": 0 },\n"
+             "    { \"sheet\": \"5bd31a7c30000001\", \"cell\": 1 },\n"
+             "    { \"sheet\": \"5bd31a7c30000001\", \"cell\": 2 },\n"
+             "    { \"sheet\": \"5bd31a7c30000001\", \"cell\": 3 }\n  ]\n}\n";
+    }
+    std::filesystem::path clipMeta = clip.string() + ".meta";
+    if (!fs::exists(clipMeta, ec)) {
+        std::ofstream f(clipMeta, std::ios::trunc);
+        f << "{\n  \"guid\": \"5bd31a7c30000002\",\n  \"type\": \"clip\",\n  \"hash\": 0,\n"
+             "  \"importedAt\": 0\n}\n";
+    }
+}
+
 // ---- M5 清障③：bench-survivor 压测场景播种（08 §3：编辑器内 1 万怪 ≥45fps）----
 // 临时项目 + 程序化播种（怪 prefab 走清障② SpawnFn 桥；Spawner capAlive 顶格 =
 // "导演拉满"）。恒用 tempdir：MakePrefabFrom 会往项目写 Prefabs/——不污染用户工程。
@@ -93,6 +145,9 @@ bool SeedBenchSurvivorScene(EditorContext& ctx) {
     const fs::path root = fs::temp_directory_path() /
                           ("lemon-bench-survivor-" + std::to_string(::getpid()));
     fs::remove_all(root, ec);
+    // M5 批③动画化：程序化 4 帧表 + clip 先落盘（OpenProject 扫描即切片记账/导入）
+    // ——万怪 Animator2D 帧映射进压测口径（Animator 系统成本进 09 §6.10 台账）
+    WriteAnimSheetAssets(root / "Assets");
     if (!ctx.Assets().OpenProject(root.string(), 100)) return false;
 
     ecs::Scene& s = ctx.EditScene();
@@ -101,6 +156,8 @@ bool SeedBenchSurvivorScene(EditorContext& ctx) {
     s.Emplace<ecs::Health>(mob, ecs::Health{.max = 30.0f, .cur = 30.0f});
     s.Emplace<ecs::Knockback>(mob);
     s.Emplace<ecs::Velocity>(mob);
+    // 动画（M5 批③）：clipId = anim.clip GUID 低 32 位（EnterPlay 建表；fps10×4 帧）
+    s.Emplace<ecs::Animator2D>(mob).clipId = (uint32_t)kAnimClipGuid;
     ecs::Chase& ch = s.Emplace<ecs::Chase>(mob);
     ch.speed = 70.0f;
     ch.aggroRange = 2000.0f;
@@ -1602,7 +1659,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
     // M4.8-c：注入/冒烟模式不做布局持久化（cwd 共享 ini 的状态污染 = smoke-drag
     // 间歇失败的根因）；正常会话布局持久化照旧
     const bool persistLayout = !(launch.smoke || launch.smokeUi || launch.smokeDrag ||
-                                 launch.playTest || launch.finalTest ||
+                                 launch.smokeAnim || launch.playTest || launch.finalTest ||
                                  !launch.smokeClose.empty());
     if (!ui_->Init(*window_, *device_, ".lemon/editor", persistLayout)) return 1;
     // ImGui 程序员错误（ID 冲突等）进编辑器日志 + 冒烟清零断言（见 anon-ns 注记）
@@ -1749,6 +1806,10 @@ int EditorApp::Run(const EditorLaunch& launch) {
         LEMON_ERROR("--smoke-ui 需要 --frames N（N>=160 看门狗）");
         return 2;
     }
+    if (launch.smokeAnim && launch.frames < 60) {
+        LEMON_ERROR("--smoke-anim 需要 --frames N（N>=60：fps10×4 帧周期 24 tick + 预热余量）");
+        return 2;
+    }
     if (launch.benchSurvivor && launch.frames < 600) {
         LEMON_ERROR("--bench-survivor 需要 --frames N（N>=600：怪海涨满 ~240 帧预热 + "
                     "测量窗 ≥360）");
@@ -1820,6 +1881,9 @@ int EditorApp::Run(const EditorLaunch& launch) {
     uint64_t benchSpikeN = 0;
     bool benchSimProfileZeroed = false;
     std::vector<ecs::SystemProfile> benchPlayProfiles; // Stop 前捕获（Play 世界随 ExitPlay 析构）
+    // M5 批③ smoke-anim 证据（帧循环内累积：单帧采样会踩回绕 0）
+    uint16_t smokeAnimMax[2] = {0, 0};    // [0] 程序表 / [1] yami 表：见过的最大 curFrame
+    bool smokeAnimSlice[2] = {false, false}; // sr.spriteId 曾落入对应切片连号区间
     while (running) {
         const auto benchT0 = std::chrono::steady_clock::now();
         using BenchClock = std::chrono::steady_clock;
@@ -2706,6 +2770,26 @@ int EditorApp::Run(const EditorLaunch& launch) {
             const float f = ImGui::GetIO().Framerate;
             if (f > 1.0f && f < finalPlayMinFps_) finalPlayMinFps_ = f;
         }
+        // M5 批③ smoke-anim 证据采样：clip 命中表 → curFrame 推进 + spriteId 落切片区间
+        if (launch.smokeAnim && ctx_.Playing() && frame > 5) {
+            const AssetEntry* sh[2] = {ctx_.Assets().FindByGuid(kAnimSheetGuid),
+                                       ctx_.Assets().FindByGuid(kYamiHeroSheetGuid)};
+            ecs::Scene& ps = ctx_.ActiveScene();
+            ps.View<ecs::Animator2D>().each([&](auto ent, ecs::Animator2D& a) {
+                const int slot = a.clipId == (uint32_t)kAnimClipGuid      ? 0
+                                 : a.clipId == (uint32_t)kYamiHeroClipGuid ? 1
+                                                                           : -1;
+                if (slot < 0) return;
+                if (a.curFrame > smokeAnimMax[slot]) smokeAnimMax[slot] = a.curFrame;
+                if (const ecs::SpriteRenderer* sr =
+                        ps.TryGet<ecs::SpriteRenderer>(ecs::Scene::FromEntt(ent))) {
+                    const AssetEntry* e = sh[slot];
+                    if (e && e->Sliced() && sr->spriteId >= e->sliceBase &&
+                        sr->spriteId < e->sliceBase + e->sliceCount)
+                        smokeAnimSlice[slot] = true;
+                }
+            });
+        }
         if (firstFrameMs < 0.0)
             firstFrameMs = std::chrono::duration<double, std::milli>(
                                std::chrono::steady_clock::now() - tColdStart)
@@ -2757,6 +2841,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
     double playEnterMs = 0, playExitMs = 0;
     uint32_t playAliveAtStop = 0;
     uint32_t benchTeam1Alive = 0, benchWavesStarted = 0;
+    uint32_t benchAnimHit = 0, benchAnimTotal = 0;
     if (launch.benchSurvivor && ctx_.Playing()) {
         benchPlayProfiles = ctx_.ActiveWorld().Pipeline().Profiles(); // ExitPlay 弃世界前留证
         // 导演化证据（M5 批②）：waveIndex=已生效波数；team1 存活突破 Spawner 8000
@@ -2766,6 +2851,19 @@ int EditorApp::Run(const EditorLaunch& launch) {
         });
         ctx_.ActiveScene().View<ecs::WaveDirector>().each(
             [&](auto, ecs::WaveDirector& w) { benchWavesStarted += w.waveIndex; });
+        // 动画化证据（M5 批③）：Animator2D 实体总数 + spriteId 落切片连号区间数
+        // （帧映射每 tick 无条件写 → 命中 = 表达 + 切片解析全通；全数应命中）
+        const AssetEntry* sh = ctx_.Assets().FindByGuid(kAnimSheetGuid);
+        if (sh && sh->Sliced()) {
+            ctx_.ActiveScene().View<ecs::Animator2D>().each([&](auto ent, ecs::Animator2D& a) {
+                (void)a;
+                ++benchAnimTotal;
+                if (const ecs::SpriteRenderer* sr = ctx_.ActiveScene().TryGet<ecs::SpriteRenderer>(
+                        ecs::Scene::FromEntt(ent)))
+                    if (sr->spriteId >= sh->sliceBase && sr->spriteId < sh->sliceBase + sh->sliceCount)
+                        ++benchAnimHit;
+            });
+        }
     }
     if (ctx_.Playing()) { // --play：跑满帧数后 Stop（恢复编辑世界）
         playAliveAtStop = ctx_.ActiveScene().AliveCount();
@@ -2801,7 +2899,9 @@ int EditorApp::Run(const EditorLaunch& launch) {
         const bool aliveOk = playAliveAtStop >= 10000;
         // 导演化批（M5 批②）：波次 ≥3 生效 + team1 突破 Spawner 8000 闸门
         const bool directorOk = benchWavesStarted >= 3 && benchTeam1Alive > 8000;
-        const bool pass = aliveOk && avg > 0.0 && avg <= 1000.0 / 45.0 && directorOk;
+        // 动画化批（M5 批③）：万怪帧映射生效（全数命中切片区间）
+        const bool animOk = benchAnimTotal >= 10000 && benchAnimHit == benchAnimTotal;
+        const bool pass = aliveOk && avg > 0.0 && avg <= 1000.0 / 45.0 && directorOk && animOk;
         const double segN = benchFrameN ? (double)benchFrameN : 1.0;
         std::printf("[bench-survivor] 分段avg ms: pump=%.2f sim=%.2f glue=%.2f ui=%.2f "
                     "acquire=%.2f scene=%.2f uidraw=%.2f present=%.2f | segSum=%.2f\n",
@@ -2813,12 +2913,12 @@ int EditorApp::Run(const EditorLaunch& launch) {
                         segN);
         std::printf("[bench-survivor] frames=%u warmup=%u alive=%u stepAvg=%.2fms "
                     "frameAvg=%.2fms frameMax=%.2fms fps=%.0f present=IMMEDIATE(请求)"
-                    " director(waves=%u teamAlive=%u/闸8000)"
+                    " director(waves=%u teamAlive=%u/闸8000) anim(%u/%u 切片命中)"
                     " => %s\n",
                     (unsigned)frame, (unsigned)kBenchWarmup, playAliveAtStop,
                     benchSimSum / segN, avg,
                     benchFrameMax, fps, benchWavesStarted, benchTeam1Alive,
-                    pass ? "PASS" : "FAIL");
+                    benchAnimHit, benchAnimTotal, pass ? "PASS" : "FAIL");
         // 性能批②①：sim 系统级分解（测量窗口 = 预热后 ZeroProfiles 起；avg=totalMs/runs）
         {
             std::vector<ecs::SystemProfile> rows;
@@ -2962,6 +3062,26 @@ int EditorApp::Run(const EditorLaunch& launch) {
             scriptOk = playAliveAtStop > smokeSeeded_ + 10;
             std::printf("[lemon] editor-smoke script-spawn: playAlive=%u seeded=%u => %s\n",
                         playAliveAtStop, smokeSeeded_, scriptOk ? "OK" : "FAIL");
+        }
+        // M5 批③动画链验收：切片记账 + clip 建表 + 帧映射推进 + spriteId 落切片区间。
+        // 程序化 4 帧表必验；yami hero-walk 素材在场（Samples 拷入项目）即连带验真链。
+        if (launch.smokeAnim) {
+            const AssetEntry* sh = ctx_.Assets().FindByGuid(kAnimSheetGuid);
+            const AssetEntry* ysh = ctx_.Assets().FindByGuid(kYamiHeroSheetGuid);
+            const bool booked = sh && sh->Sliced() && sh->sliceCount == 4;
+            bool animOk = booked && smokeAnimMax[0] > 0 && smokeAnimSlice[0];
+            char yami[96] = "";
+            if (ysh && !ysh->missing && ysh->Sliced()) {
+                const bool yOk = smokeAnimMax[1] > 0 && smokeAnimSlice[1] && ysh->sliceCount == 9;
+                animOk = animOk && yOk;
+                std::snprintf(yami, sizeof(yami), " yami(maxFrame=%u slice=%s frames=%u)",
+                              (unsigned)smokeAnimMax[1], smokeAnimSlice[1] ? "YES" : "NO",
+                              ysh->sliceCount);
+            }
+            std::printf("[lemon] smoke-anim: prog(maxFrame=%u slice=%s booked=%u)%s => %s\n",
+                        (unsigned)smokeAnimMax[0], smokeAnimSlice[0] ? "YES" : "NO",
+                        sh ? sh->sliceCount : 0, yami, animOk ? "OK" : "FAIL");
+            if (!animOk) exitCode = 1;
         }
         // ---- M4.5 终验（§6 #1/#2/#3/#6/#7 全量化）----
         bool finalOk = true;
@@ -3185,6 +3305,28 @@ void EditorApp::SeedSmokeScene() {
             ctx_.CreateSpriteEntityFromAsset("FromAsset", 0x5bd31a7c10e9f2c8ull, Vec2{420, 200});
         if (!fromAsset.IsNull()) s.Get<Transform2D>(fromAsset).scale = Vec2{0.5f, 0.5f};
     }
+    // M5 批③动画链：程序化 4 帧表 + anim.clip → Animator2D 帧映射断言实体；
+    // yami hero-walk（Samples/Assets/yami-dungeon 拷进项目才在场）→ 真素材端到端验
+    if (launch_->smokeAnim) {
+        if (const AssetEntry* sheet = ctx_.Assets().FindByGuid(kAnimSheetGuid);
+            sheet && !sheet->missing) {
+            if (ecs::Entity hero = ctx_.CreateSpriteEntityFromAsset(
+                    "AnimHero", kAnimSheetGuid, Vec2{640, 540});
+                !hero.IsNull()) {
+                ecs::Animator2D& an = s.Emplace<ecs::Animator2D>(hero);
+                an.clipId = (uint32_t)kAnimClipGuid; // fps10 × 4 帧
+            }
+        }
+        if (const AssetEntry* yc = ctx_.Assets().FindByGuid(kYamiHeroClipGuid);
+            yc && !yc->missing) {
+            if (ecs::Entity y = ctx_.CreateSpriteEntityFromAsset(
+                    "AnimYami", kYamiHeroSheetGuid, Vec2{840, 540});
+                !y.IsNull()) {
+                ecs::Animator2D& an = s.Emplace<ecs::Animator2D>(y);
+                an.clipId = (uint32_t)kYamiHeroClipGuid; // 9 帧 @8fps（Samples 素材）
+            }
+        }
+    }
     // M4.4 装配通路：--script 时挂 SpawnerBehaviour（Play 中刷怪断言用）
     if (ctx_.Scripts()) ctx_.AttachScript(root, 0, "SpawnerBehaviour");
     smokeSeeded_ = (uint32_t)s.AliveCount();
@@ -3224,6 +3366,9 @@ void EditorApp::SeedSmokeProject() {
         f << "{\n  \"guid\": \"5bd31a7c10e9f2c8\",\n  \"type\": \"sprite\",\n  \"hash\": 0,\n"
              "  \"importedAt\": 0\n}\n";
     }
+
+    // M5 批③动画链素材：anim-sheet + grid meta + anim.clip（固定 guid 见 kAnimSheetGuid）
+    if (launch_->smokeAnim) WriteAnimSheetAssets(root / "Assets");
 }
 
 void EditorApp::SeedJudgementScene(uint64_t spawnGuid) {

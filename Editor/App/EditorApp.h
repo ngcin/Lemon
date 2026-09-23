@@ -49,6 +49,8 @@ struct EditorLaunch {
     bool smokeDrag = false;  // --smoke-drag：视口拖拽注入冒烟（M4.7c 交互回归）
     bool smokeUi = false;    // --smoke-ui：真人会话注入冒烟（快捷键/Undo/保存/Play/重命名/
                              // 挂父子/目录导航/命名布局；M4.7d 收尾轮）
+    bool smokeAnim = false;  // --smoke-anim：切片+clip+Animator 帧映射链冒烟（M5 批③；
+                             // 隐含 --smoke --play：程序化 4 帧表必验，yami 表在场即验）
     bool benchSurvivor = false; // --bench-survivor：M5 压测基线（临时项目 + 1 万怪刷怪
                                 // 场景 + Immediate 呈现 + 帧时统计；08 §3 判据 ≥45fps）
 };

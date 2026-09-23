@@ -12,6 +12,7 @@
 #include "Core/JobSystem.h"
 #include "Core/Random.h"
 #include "Core/RingQueue.h"
+#include "ECS/ClipTable.h"
 #include "ECS/Events.h"
 #include "ECS/Input.h"
 #include "ECS/Scene.h"
@@ -92,6 +93,11 @@ public:
     TeamTable& Teams() { return teams_; }
     const TeamTable& Teams() const { return teams_; }
 
+    // ---- 帧动画 clip 表（M5 批③；AnimatorSystem #13 帧映射消费）----
+    // 空表 = 全体 Animator2D 走 M2 无 clip 旧路径（逐位不变）——既有场景/金档零漂移。
+    ClipTable& Clips() { return clips_; }
+    const ClipTable& Clips() const { return clips_; }
+
     // ---- Game RT UI 通道（上方 RtUiChannel 说明）----
     RtUiChannel& RtUi() { return rtUi_; }
     const RtUiChannel& RtUi() const { return rtUi_; }
@@ -145,6 +151,7 @@ private:
     EventSink eventSink_;
     IScriptBackend* scriptBackend_ = nullptr;
     RtUiChannel rtUi_;
+    ClipTable clips_;
     uint64_t tick_ = 0;
     float timeScale_ = 1.0f;
 };

@@ -29,6 +29,7 @@ namespace {
 #define ED_TIP(tip) { FieldHint::None, 0, 0, nullptr, 0, tip }
 #define ED_RESET { FieldHint::Reset }
 #define ED_ASSET(tip) { FieldHint::AssetRef, 0, 0, nullptr, 0, tip }
+#define ED_CLIPREF(tip) { FieldHint::ClipRef, 0, 0, nullptr, 0, tip } // M5 批③
 
 // ---- Core（id 0..4）----
 constexpr FieldMeta kTransform2D[] = {
@@ -64,8 +65,9 @@ constexpr FieldMeta kAnimator2D[] = {
     FIELD(Animator2D, speed, Float), FIELD(Animator2D, loop, UInt8),
     FIELD(Animator2D, playOnStart, UInt8), FIELD(Animator2D, curFrame, UInt16)};
 constexpr FieldEditorMeta kEdAnimator2D[] = {
-    ED_TIP("动画页基 spriteId（M5 clip 资产化）"), ED_RANGE(0.0f, 1.0f), ED_RANGE(0.0f, 100.0f),
-    ED_BOOL8, ED_BOOL8, ED};
+    ED_CLIPREF("clip 资产槽（.clip GUID 低 32 位；下拉/拖入。0 = 无 clip，走 M2 纯计时）"),
+    ED_RANGE(0.0f, 100.0f), ED_RANGE(0.0f, 100.0f),
+    ED_BOOL8, ED_BOOL8, ED_TIP("运行时帧号（clip 帧映射自动写；playOnStart=0 = 暂停开关）")};
 constexpr FieldMeta kParticleEmitterRef[] = {
     FIELD(ParticleEmitterRef, emitterId, UInt32),
     FIELD(ParticleEmitterRef, playing, UInt8)};

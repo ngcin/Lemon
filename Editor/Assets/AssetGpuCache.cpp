@@ -32,6 +32,39 @@ const AssetGpuCache::Page* AssetGpuCache::Find(uint64_t guid) const {
     return nullptr;
 }
 
+// 网格切片登记（M5 批③ D3）：像素整除/越界校验在解码侧（DB 只信 meta 声明）；
+// 行优先 cell → sliceBase+cell 连号。宁缺勿错：网格与像素不符 = 红字不切。
+bool AssetGpuCache::RegisterSlices(const AssetEntry& e, uint32_t slot, uint32_t w, uint32_t h,
+                                   bool overwrite) {
+    if (e.gridCols == 0 || e.sliceBase == 0) return false; // 未声明网格/无块
+    const uint32_t gw = (uint32_t)e.gridCols * e.cellW, gh = (uint32_t)e.gridRows * e.cellH;
+    if (gw > w || gh > h) {
+        LEMON_ERROR("切片网格 %u×%u 格（%u×%u px）超出图面 %u×%u——按全幅处理：%s",
+                    (unsigned)e.gridCols, (unsigned)e.gridRows, gw, gh, w, h, e.relPath.c_str());
+        return false;
+    }
+    uint32_t conflicts = 0;
+    for (uint32_t r = 0; r < e.gridRows; ++r)
+        for (uint32_t c = 0; c < e.gridCols; ++c) {
+            const uint32_t id = e.SliceSpriteId(r * e.gridCols + c);
+            if (overwrite) {
+                atlas_->SetSpriteAt(id, slot, c * e.cellW, r * e.cellH, e.cellW, e.cellH);
+            } else if (!atlas_->AddSpriteAt(id, slot, c * e.cellW, r * e.cellH, e.cellW,
+                                           e.cellH)) {
+                ++conflicts; // 占号冲突：manifest 记账两本账漂移（单条红字汇总）
+            }
+        }
+    if (conflicts)
+        LEMON_ERROR("切片登记冲突 %u/%u（号被占）：'%s'——manifest 记账异常（删 "
+                    ".lemon/manifest.json 可重排，已存引用将失效）",
+                    conflicts, e.sliceCount, e.relPath.c_str());
+    else
+        LEMON_LOG("切片登记：'%s' %u×%u 格 %u px → %u..%u（槽 %u）", e.relPath.c_str(),
+                  (unsigned)e.gridCols, (unsigned)e.gridRows, (unsigned)e.cellW, e.sliceBase,
+                  e.sliceBase + e.sliceCount - 1, slot);
+    return conflicts == 0;
+}
+
 void AssetGpuCache::ImportSprite(const AssetEntry& e) {
     if (!device_ || !atlas_ || !db_ || e.type != AssetType::Sprite) return;
 
@@ -44,7 +77,9 @@ void AssetGpuCache::ImportSprite(const AssetEntry& e) {
     }
 
     if (Page* p = Find(e.guid)) { // 热重导入
-        if ((uint32_t)w == p->w && (uint32_t)h == p->h) {
+        const bool gridChanged = p->cellW != e.cellW || p->cellH != e.cellH ||
+                                 p->gridCols != e.gridCols || p->gridRows != e.gridRows;
+        if ((uint32_t)w == p->w && (uint32_t)h == p->h && !gridChanged) {
             device_->UploadTexture(p->tex, px, (uint64_t)w * h * 4); // 同尺寸：原位重传
         } else {
             device_->WaitIdle(); // 尺寸变化低频；在途帧可能采样旧视图
@@ -63,6 +98,13 @@ void AssetGpuCache::ImportSprite(const AssetEntry& e) {
             LEMON_LOG("资产热重导入（尺寸 %u×%u → 同槽 %u）：%s", p->w, p->h, p->slot,
                       e.relPath.c_str());
         }
+        // 切片热重切（M5 批③）：网格/尺寸变化 = 覆盖式重登记（块号 manifest 记账
+        // 稳定）；配置回看快照同步（未声明网格 = 清零，下一轮按全幅）
+        if (gridChanged) RegisterSlices(e, p->slot, (uint32_t)w, (uint32_t)h, true);
+        p->cellW = e.cellW;
+        p->cellH = e.cellH;
+        p->gridCols = e.gridCols;
+        p->gridRows = e.gridRows;
         stbi_image_free(px);
         return;
     }
@@ -81,6 +123,10 @@ void AssetGpuCache::ImportSprite(const AssetEntry& e) {
     p.spriteId = e.spriteId;
     p.w = (uint32_t)w;
     p.h = (uint32_t)h;
+    p.cellW = e.cellW;
+    p.cellH = e.cellH;
+    p.gridCols = e.gridCols;
+    p.gridRows = e.gridRows;
     p.tex = device_->CreateTexture(
         {.width = p.w, .height = p.h, .debugName = "importSprite"});
     device_->UploadTexture(p.tex, px, (uint64_t)w * h * 4);
@@ -99,6 +145,9 @@ void AssetGpuCache::ImportSprite(const AssetEntry& e) {
         stbi_image_free(px);
         return;
     }
+    // 网格切片（M5 批③）：一页纹理 + 全幅 sprite + 连号切片块（引用兼容；冲突已
+    // 红字但不回滚整页——全幅可用，切片按登记成功的子集生效）
+    RegisterSlices(e, p.slot, p.w, p.h, false);
     stbi_image_free(px);
 
     // 保持 spriteId 升序（RebuildAll 的槽位复原依赖此序）

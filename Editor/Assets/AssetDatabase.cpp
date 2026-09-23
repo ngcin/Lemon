@@ -23,6 +23,7 @@ const char* AssetTypeName(AssetType t) {
         case AssetType::Sprite: return "sprite";
         case AssetType::Prefab: return "prefab";
         case AssetType::Script: return "script";
+        case AssetType::Clip: return "clip"; // M5 批③：06 §2.2 clip2d（.clip JSON）
         default: return "generic";
     }
 }
@@ -54,6 +55,15 @@ const AssetEntry* AssetDatabase::FindBySpriteId(uint32_t spriteId) const {
     if (spriteId == 0) return nullptr;
     for (const auto& e : entries_)
         if (e.spriteId == spriteId) return &e;
+    return nullptr;
+}
+
+const AssetEntry* AssetDatabase::FindClipByLowId(uint32_t lowId) const {
+    if (lowId == 0) return nullptr;
+    for (const auto& e : entries_) {
+        if (e.missing || e.type != AssetType::Clip) continue;
+        if ((uint32_t)e.guid == lowId) return &e;
+    }
     return nullptr;
 }
 
@@ -122,6 +132,7 @@ AssetType AssetDatabase::TypeOf(const std::string& relPath) {
     if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp") return AssetType::Sprite;
     if (ext == ".prefab") return AssetType::Prefab;
     if (ext == ".cs") return AssetType::Script;
+    if (ext == ".clip") return AssetType::Clip; // M5 批③帧动画资产（06 §2.2）
     return AssetType::Generic;
 }
 
@@ -142,6 +153,48 @@ uint64_t AssetDatabase::HashFile(const std::string& absPath) {
 }
 
 // ---------------------------------------------------------------- meta ----
+// importer 段（06 §2.1）网格切片声明（M5 批③）：
+//   "importer": { "slice": "grid", "cell": [16, 32], "frames": [9, 1] }
+// frames 由作者显式声明（yami .anim hframes/vframes 同款）——DB 零解码即可记账
+// （Rescan 分配连号块）；像素整除/越界校验归 AssetGpuCache（解码侧）。
+static void ParseGridImporter(const Json& doc, AssetEntry& e) {
+    e.cellW = e.cellH = e.gridCols = e.gridRows = 0;
+    auto it = doc.find("importer");
+    if (it == doc.end() || !it->is_object()) return;
+    const Json& imp = *it;
+    const auto slice = imp.find("slice");
+    if (slice == imp.end() || !slice->is_string() || *slice != "grid") return;
+    struct V2 {
+        uint16_t x, y;
+    };
+    auto readPair = [&imp](const char* key, V2& out) {
+        auto p = imp.find(key);
+        if (p == imp.end() || !p->is_array() || p->size() != 2) return false;
+        const Json& a = (*p)[0];
+        const Json& b = (*p)[1];
+        if (!a.is_number() || !b.is_number()) return false;
+        const double x = a.get<double>(), y = b.get<double>();
+        if (x < 1 || x > 65535 || y < 1 || y > 65535) return false;
+        out = {(uint16_t)x, (uint16_t)y};
+        return true;
+    };
+    V2 cell{0, 0}, frames{0, 0};
+    if (!readPair("cell", cell) || !readPair("frames", frames)) {
+        LEMON_WARN("importer 网格段不完整（需 slice/cell/frames），按全幅处理：%s",
+                   e.relPath.c_str());
+        return;
+    }
+    e.cellW = cell.x;
+    e.cellH = cell.y;
+    e.gridCols = frames.x;
+    e.gridRows = frames.y;
+    if ((uint32_t)e.gridCols * e.gridRows > 4096) { // 防荒谬声明（16k px 页上限量级）
+        LEMON_WARN("importer 网格超限（%u×%u > 4096 切片），按全幅处理：%s",
+                   (unsigned)e.gridCols, (unsigned)e.gridRows, e.relPath.c_str());
+        e.cellW = e.cellH = e.gridCols = e.gridRows = 0;
+    }
+}
+
 void AssetDatabase::SyncMeta(AssetEntry& e) const {
     const std::string abs = AbsolutePath(e);
     const std::string metaPath = abs + ".meta";
@@ -159,6 +212,7 @@ void AssetDatabase::SyncMeta(AssetEntry& e) const {
             else if (g.is_number_unsigned()) got = g.get<uint64_t>();
             if (got != 0 && e.guid == 0) e.guid = got;
         }
+        if (!doc.is_discarded()) ParseGridImporter(doc, e); // 每次重扫重读（热改 meta 即生效）
     }
     if (e.guid == 0) e.guid = GenerateGuid();
     if (metaExists) return; // 已在档：不重写（500ms 轮询重扫不做写放大）
@@ -212,9 +266,15 @@ bool AssetDatabase::OpenProject(const std::string& projectRoot, uint32_t spriteI
         if (!doc.is_discarded() && doc.contains("assets") && doc.at("assets").is_array()) {
             for (const Json& a : doc.at("assets")) {
                 if (!a.contains("path")) continue;
-                manifestCarry_[a.at("path").get<std::string>()] = {
-                    a.contains("guid") ? a.at("guid").get<uint64_t>() : 0,
-                    a.contains("spriteId") ? a.at("spriteId").get<uint32_t>() : 0};
+                CarryInfo info;
+                info.guid = a.contains("guid") ? a.at("guid").get<uint64_t>() : 0;
+                info.spriteId = a.contains("spriteId") ? a.at("spriteId").get<uint32_t>() : 0;
+                if (a.contains("slice") && a.at("slice").is_object()) {
+                    const Json& sl = a.at("slice");
+                    info.sliceBase = sl.contains("base") ? sl.at("base").get<uint32_t>() : 0;
+                    info.sliceCount = sl.contains("count") ? sl.at("count").get<uint32_t>() : 0;
+                }
+                manifestCarry_[a.at("path").get<std::string>()] = info;
             }
             if (doc.contains("nextSpriteId")) {
                 uint32_t n = doc.at("nextSpriteId").get<uint32_t>();
@@ -285,6 +345,8 @@ void AssetDatabase::Rescan() {
         if (oldIt != old.end()) {
             const AssetEntry& prev = oldIt->second;
             e.spriteId = prev.spriteId;
+            e.sliceBase = prev.sliceBase; // 切片块跨扫描稳定（grid 参数由 meta 每次重读）
+            e.sliceCount = prev.sliceCount;
             if (prev.missing) {
                 lastChange_.added.push_back(e.guid); // 墓碑复活
             } else if (prev.hash != e.hash) {
@@ -297,15 +359,37 @@ void AssetDatabase::Rescan() {
             if (mit == manifestCarry_.end() && rel.rfind("Assets/", 0) == 0)
                 mit = manifestCarry_.find(rel.substr(7));
             if (mit != manifestCarry_.end()) {
-                if (mit->second.first != 0 && !FindByGuid(mit->second.first)) e.guid = mit->second.first;
+                if (mit->second.guid != 0 && !FindByGuid(mit->second.guid)) e.guid = mit->second.guid;
                 if (e.type == AssetType::Sprite) {
-                    uint32_t id = mit->second.second;
+                    uint32_t id = mit->second.spriteId;
                     if (id >= spriteIdBase_ && id < nextSpriteId_ && !FindBySpriteId(id))
                         e.spriteId = id;
+                    const uint32_t b = mit->second.sliceBase, c = mit->second.sliceCount;
+                    if (b >= spriteIdBase_ && c > 0 && b + c <= nextSpriteId_) {
+                        e.sliceBase = b;
+                        e.sliceCount = c;
+                    }
                 }
             }
             if (e.type == AssetType::Sprite && e.spriteId == 0) e.spriteId = nextSpriteId_++;
             lastChange_.added.push_back(e.guid);
+        }
+        // 网格切片块记账（M5 批③ D3）：声明了网格但无块 → 分配连号块；
+        // frames 增大 → 新块（旧块烧号，"只增不减"）；缩小 → 基不变、余号留空洞。
+        if (e.type == AssetType::Sprite && e.gridCols > 0) {
+            const uint32_t count = (uint32_t)e.gridCols * e.gridRows;
+            if (e.sliceBase == 0 || count > e.sliceCount) {
+                const bool regrow = e.sliceBase != 0;
+                e.sliceBase = nextSpriteId_;
+                nextSpriteId_ += count;
+                if (regrow)
+                    LEMON_WARN("切片 frames 增大：新块 %u..%u（旧块烧号）：%s", e.sliceBase,
+                               e.sliceBase + count - 1, e.relPath.c_str());
+            }
+            e.sliceCount = count;
+        } else if (e.sliceBase != 0 && e.gridCols == 0) {
+            // meta 撤掉了网格声明：块留账（引用防悬空），按全幅导入
+            e.sliceCount = 0;
         }
         entries_.push_back(std::move(e));
     }
@@ -426,10 +510,13 @@ void AssetDatabase::SaveManifest() const {
     Json arr = Json::array();
     for (const auto& e : entries_) {
         if (e.missing) continue; // 墓碑不落盘（号已烧毁在 nextSpriteId 单调性里）
-        arr.push_back(Json{{"guid", e.guid},
-                           {"path", e.relPath},
-                           {"type", AssetTypeName(e.type)},
-                           {"spriteId", e.spriteId}});
+        Json item{{"guid", e.guid},
+                  {"path", e.relPath},
+                  {"type", AssetTypeName(e.type)},
+                  {"spriteId", e.spriteId}};
+        if (e.sliceCount > 0) // 切片连号块（M5 批③；旧档缺键 = 全幅兼容）
+            item["slice"] = Json{{"base", e.sliceBase}, {"count", e.sliceCount}};
+        arr.push_back(std::move(item));
     }
     doc["assets"] = std::move(arr);
     std::ofstream of(root_ + "/.lemon/manifest.json", std::ios::binary | std::ios::trunc);

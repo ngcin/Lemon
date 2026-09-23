@@ -160,7 +160,8 @@ public:
     float xpCurveK = 1.25f; // xpToNext 增长系数
 };
 
-/// #13 动画推进（M2 最小：time 推进；curFrame 帧映射接 clip 资产后补，M5）
+/// #13 动画推进（M5 批③：ClipTable 帧映射 → curFrame/spriteId；clipId=0 或
+/// 未命中 = M2 旧路径逐位不变——金档零漂移前提，M5-Plan §18）
 class AnimatorSystem final : public ISystem {
 public:
     const char* Name() const override { return "Animator"; }

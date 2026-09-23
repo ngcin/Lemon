@@ -50,9 +50,16 @@ private:
         rhi::Texture tex{};
         void* thumb = nullptr; // ImTextureID
         uint32_t w = 0, h = 0;
+        // 切片配置快照（M5 批③）：热重导入比对——像素尺寸或网格任一变化 = 重切
+        uint16_t cellW = 0, cellH = 0, gridCols = 0, gridRows = 0;
     };
     Page* Find(uint64_t guid);
     const Page* Find(uint64_t guid) const;
+    /// 网格切片登记（D3）：像素校验（网格越界 = 红字 false，宁缺勿错不 assert）；
+    /// overwrite=false 走 AddSpriteAt（新页，占号冲突红字）；true 走 SetSpriteAt
+    /// （热重导重切——块号已由 manifest 记账，覆盖写）。
+    bool RegisterSlices(const AssetEntry& e, uint32_t slot, uint32_t w, uint32_t h,
+                        bool overwrite);
 
     rhi::Device* device_ = nullptr;
     ImGuiBackend* ui_ = nullptr;

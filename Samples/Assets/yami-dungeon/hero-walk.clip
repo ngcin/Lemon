@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "name": "hero-walk",
+  "fps": 8,
+  "loop": true,
+  "frames": [
+    {
+      "sheet": "5bd31a7c10000001",
+      "cell": 0
+    },
+    {
+      "sheet": "5bd31a7c10000001",
+      "cell": 1
+    },
+    {
+      "sheet": "5bd31a7c10000001",
+      "cell": 2
+    },
+    {
+      "sheet": "5bd31a7c10000001",
+      "cell": 3
+    },
+    {
+      "sheet": "5bd31a7c10000001",
+      "cell": 4
+    },
+    {
+      "sheet": "5bd31a7c10000001",
+      "cell": 5
+    },
+    {
+      "sheet": "5bd31a7c10000001",
+      "cell": 6
+    },
+    {
+      "sheet": "5bd31a7c10000001",
+      "cell": 7
+    },
+    {
+      "sheet": "5bd31a7c10000001",
+      "cell": 8
+    }
+  ]
+}

@@ -748,16 +748,40 @@ void StatSystem::Tick(World& world, Scene& scene, float dt) {
 
 // ------------------------------------------------------------- #13 动画 ----
 void AnimatorSystem::Tick(World& world, Scene& scene, float dt) {
-    (void)world;
-    // M2：时间推进（含 loop 回绕）；帧号映射需 clip 资产表（M5 接入后写
-    // SpriteRenderer.spriteId），此处推进至回绕保证 time 有界
+    // M5 批③：clip 表帧映射（03 §5）。有 clip = 纯函数帧号 time*fps 截断 + 写
+    // curFrame/sr.spriteId（逐帧重写幂等，无逐帧累加状态机 → 回放确定）；
+    // 无 clip（clipId=0/表未命中/未登记）= M2 旧路径逐位保留——既有场景零漂移
+    // （金回放零重录的机制保证，M5-Plan §18）。
+    const ClipTable& clips = world.Clips();
+    bool anyClip = clips.Count() > 0; // 空表 = 全体走 M2（省每实体 Find）
     auto view = scene.View<Animator2D>();
     for (auto [ent, an] : view.each()) {
-        an.time += an.speed * dt;
-        if (an.loop) {
-            float period = 1.0f; // 占位周期；clip 表接入后 = frames/fps
-            while (an.time >= period) an.time -= period;
+        const ClipDef* clip = anyClip ? clips.Find(an.clipId) : nullptr;
+        if (!clip) {
+            // M2：时间推进（含 loop 回绕）；占位周期 1.0 保证 time 有界
+            an.time += an.speed * dt;
+            if (an.loop) {
+                float period = 1.0f; // 占位周期；无 clip 路径恒此值（勿动——金档锚）
+                while (an.time >= period) an.time -= period;
+            }
+            continue;
         }
+        // playOnStart=0 = 暂停开关（M5 无 Play() API；Play/CrossFade 归 M6 模板）
+        if (!an.playOnStart) continue;
+        an.time += an.speed * dt; // 缩放 dt：timeScale=0 冻结动画（批① D5 同语义）
+        const float total = (float)clip->frames.size() / clip->fps;
+        if (an.loop) {
+            while (an.time >= total) an.time -= total;
+            if (an.time < 0.0f) an.time = 0.0f; // 负 speed 防御（回绕后仍负）
+        } else {
+            if (an.time < 0.0f) an.time = 0.0f;
+            if (an.time > total) an.time = total; // 钳末帧：M2"无界增长"随 clip 收口
+        }
+        uint32_t f = (uint32_t)(an.time * clip->fps);
+        if (f >= clip->frames.size()) f = (uint32_t)clip->frames.size() - 1; // total 边界
+        an.curFrame = (uint16_t)f;
+        if (SpriteRenderer* sr = scene.TryGet<SpriteRenderer>(Scene::FromEntt(ent)))
+            sr->spriteId = clip->frames[f]; // SpriteRenderer 可缺 = 纯计时推进
     }
 }
 

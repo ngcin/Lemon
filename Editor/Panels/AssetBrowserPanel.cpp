@@ -30,6 +30,7 @@ uint8_t KindOf(AssetType t) {
         case AssetType::Sprite: return 0;
         case AssetType::Prefab: return 1;
         case AssetType::Script: return 2;
+        case AssetType::Clip: return 4; // M5 批③（3 保留 generic）
         default: return 3;
     }
 }

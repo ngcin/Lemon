@@ -15,6 +15,7 @@
 | stb（stb_image / stb_image_write） | master@2c980bb | 公有领域 | CPM 锁 commit | PNG 解码（M4.4 导入器）+ 截屏写盘（编辑器冒烟） | M4.0 |
 | RmlUi | 6.3 | MIT | CPM 锁 tag（spike/04-rmlui 消费；**spike 期**——验收过 ADR-008 才转正式依赖） | 运行时 UI（M5 ADR-008 spike：官方 SDL_VK 后端整体验证） | M5 |
 | FreeType | 2.14.3（系统 brew） | FreeType License (MIT 兼容) | find_package(Freetype)（RmlUi 依赖） | 字体光栅（RmlUi FreeType 引擎） | M5 |
+| yami-rpg-editor 默认素材（第一批） | arpg-ts-chinese 模板（源树拷贝） | MIT（资产随模板再分发） | `Samples/Assets/yami-dungeon/`（5 精灵表 + 3 clip；06 §7） | 素材包底包（M5 批③起；模板/压测共用） | M5 |
 
 ## 保留的第三方版权声明
 
@@ -32,6 +33,9 @@
 - **CPM.cmake (MIT)**：Copyright (c) 2019-2024 Lars Melchior — 构建期工具，不进发布物。
 - **nlohmann/json (MIT)**：Copyright (c) 2013-2024 Niels Lohmann — 头文件库链入，
   发布物致谢页保留。
+- **yami-rpg-editor 素材（MIT）**：Copyright (c) 2025 Yami & Xuran & Contributors ——
+  `Samples/Assets/yami-dungeon/`（arpg-ts-chinese 模板 Dungeon Assets 拷贝，文件名去
+  yami 哈希缀）；发布物致谢页保留。
 - **Luma (MIT)**：JobSystem 队列/窃取结构移植自 `Event/JobSystem.{h,cpp}`，源文件头
   保留来源标注；发布物致谢页保留。
 

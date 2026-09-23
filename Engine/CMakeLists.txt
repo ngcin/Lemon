@@ -5,6 +5,7 @@ add_library(lemon-engine STATIC
   Core/JobSystem.cpp
   Core/Log.cpp
   ECS/Hierarchy.cpp
+  ECS/ClipTable.cpp
   ECS/Scene.cpp
   ECS/StateHash.cpp
   ECS/SystemPipeline.cpp

@@ -50,10 +50,9 @@ void AtlasRegistry::UpdateAtlasPage(uint32_t atlasIndex, rhi::Texture tex, uint3
             if (s.u0 == 0.0f && s.v0 == 0.0f && s.u1 == 1.0f && s.v1 == 1.0f) {
                 s.widthPx = (uint16_t)width; // 全幅 sprite：uv 不变，像素尺寸刷新
                 s.heightPx = (uint16_t)height;
-            } else {
-                LEMON_WARN("atlas %u 尺寸变化但含切片 sprite（M5 图集打包器接管重切）",
-                           atlasIndex);
             }
+            // 切片 sprite（uv 子矩形）：本调用不重切——调用方（AssetGpuCache 热重导，
+            // M5 批③起）随后按新网格 SetSpriteAt 覆盖重登记
         }
         return;
     }
@@ -89,6 +88,19 @@ bool AtlasRegistry::AddSpriteAt(uint32_t spriteId, uint32_t atlasIndex, uint32_t
     }
     LEMON_ASSERT(false, "unknown atlasIndex");
     return false;
+}
+
+void AtlasRegistry::SetSpriteAt(uint32_t spriteId, uint32_t atlasIndex, uint32_t px,
+                                uint32_t py, uint32_t w, uint32_t h) {
+    LEMON_ASSERT(spriteId != 0, "spriteId 0 reserved");
+    if (spriteId > sprites_.size()) sprites_.resize(spriteId, kHoleSprite);
+    for (auto& a : atlases_) {
+        if (a.atlasIndex != atlasIndex) continue;
+        LEMON_ASSERT(px + w <= a.width && py + h <= a.height, "sprite rect out of atlas");
+        sprites_[spriteId - 1] = MakeSpriteInfo(atlasIndex, a.width, a.height, px, py, w, h);
+        return;
+    }
+    LEMON_ASSERT(false, "unknown atlasIndex");
 }
 
 bool AtlasRegistry::IsValidSprite(uint32_t spriteId) const {

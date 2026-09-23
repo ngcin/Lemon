@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "name": "boss-idle",
+  "fps": 4,
+  "loop": true,
+  "frames": [
+    {
+      "sheet": "5bd31a7c10000005",
+      "cell": 0
+    },
+    {
+      "sheet": "5bd31a7c10000005",
+      "cell": 1
+    },
+    {
+      "sheet": "5bd31a7c10000005",
+      "cell": 2
+    },
+    {
+      "sheet": "5bd31a7c10000005",
+      "cell": 3
+    },
+    {
+      "sheet": "5bd31a7c10000005",
+      "cell": 4
+    },
+    {
+      "sheet": "5bd31a7c10000005",
+      "cell": 5
+    },
+    {
+      "sheet": "5bd31a7c10000005",
+      "cell": 6
+    },
+    {
+      "sheet": "5bd31a7c10000005",
+      "cell": 7
+    }
+  ]
+}

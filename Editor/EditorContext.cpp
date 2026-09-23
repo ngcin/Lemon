@@ -426,6 +426,61 @@ ecs::Entity EditorContext::SpawnPlayPrefab(ecs::Scene& s, uint32_t prefabId, Vec
     return root;
 }
 
+// ---- M5 批③：Play 世界 clip 表（.clip JSON → ClipTable；06 §2.2 / 03 §5）----
+// 格式（M5-Plan §16.2 D2）：
+//   { "schemaVersion": 1, "fps": 8, "loop": true,
+//     "frames": [ {"sheet": "<guidHex>", "cell": 0}, ... ] }
+// 帧引用 = 精灵表资产 GUID + 切片序号（行优先）——不直接存 spriteId（manifest 重排
+// 不断链）。进 Play 时刻快照（同 BuildPlayPrefabCache 语义）。坏 clip 红字跳过：
+// 实体 Animator2D.clipId 未命中表 → M2 纯计时回退（不炸）。
+void EditorContext::BuildPlayClipCache() {
+    playWorld_->Clips().Clear();
+    for (const AssetEntry& e : assets_.Entries()) {
+        if (e.type != AssetType::Clip || e.missing) continue;
+        std::ifstream f(assets_.AbsolutePath(e), std::ios::binary);
+        if (!f) continue;
+        std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        nlohmann::json doc = nlohmann::json::parse(text, nullptr, false);
+        if (doc.is_discarded() || !doc.contains("frames") || !doc.at("frames").is_array() ||
+            !doc.contains("fps")) {
+            LEMON_WARN("clip 解析失败（需 frames[]/fps）：%s——跳过", e.relPath.c_str());
+            continue;
+        }
+        const float fps = doc.at("fps").get<float>();
+        const bool loop = !doc.contains("loop") || doc.at("loop").get<bool>(); // 缺省 true
+        std::vector<uint32_t> frames;
+        bool ok = true;
+        for (const nlohmann::json& fr : doc.at("frames")) {
+            if (!fr.is_object() || !fr.contains("sheet") || !fr.contains("cell")) {
+                ok = false;
+                break;
+            }
+            const uint64_t sheetGuid =
+                AssetDatabase::HexToGuid(fr.at("sheet").get<std::string>().c_str());
+            const AssetEntry* sheet = assets_.FindByGuid(sheetGuid);
+            const uint32_t cell = fr.at("cell").get<uint32_t>();
+            const uint32_t spriteId =
+                sheet && !sheet->missing && sheet->type == AssetType::Sprite
+                    ? sheet->SliceSpriteId(cell)
+                    : 0;
+            if (spriteId == 0) {
+                LEMON_WARN("clip 帧悬空（sheet 缺失/未切片/cell 越界 %u）：%s 帧 %zu——跳过该 clip",
+                           cell, e.relPath.c_str(), frames.size());
+                ok = false;
+                break;
+            }
+            frames.push_back(spriteId);
+        }
+        if (!ok) continue;
+        const uint32_t clipId = (uint32_t)e.guid; // 低 32 位（映射约定同 prefabId）
+        if (!playWorld_->Clips().Add(clipId, std::move(frames), fps, loop))
+            LEMON_WARN("clip 登记失败（空帧/fps 非法）：%s", e.relPath.c_str());
+        else
+            LEMON_LOG("Play clip 表：'%s' → id %08x（%zu 帧 @%.1ffps）", e.relPath.c_str(),
+                      clipId, playWorld_->Clips().Find(clipId)->frames.size(), fps);
+    }
+}
+
 bool EditorContext::ApplyPrefabInstance(ecs::Entity e) {
     if (e.IsNull() || !scene_->Alive(e)) return false;
     const ecs::Meta* m = scene_->TryGet<ecs::Meta>(e);
@@ -561,6 +616,8 @@ bool EditorContext::EnterPlay() {
     playWorld_->SetSpawnFn([this](ecs::Scene& s, uint32_t prefabId, Vec2 pos, uint32_t team) {
         return SpawnPlayPrefab(s, prefabId, pos, team);
     });
+    // M5 批③：clip 表（.clip 资产 → 帧映射；AnimatorSystem #13 消费）
+    BuildPlayClipCache();
     // M4.4 装配通路（#7）：脚本后端接入 + 场景 ScriptBox 按 className 解析挂载
     if (scripts_) {
         playWorld_->SetScriptBackend(scripts_);

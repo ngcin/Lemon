@@ -155,7 +155,7 @@ private:
 struct AssetDragPayload {         // "LemonAsset" 拖拽载荷（面板间约定）
     uint64_t guid;
     uint32_t spriteId;
-    uint8_t kind;                 // 0=sprite 1=prefab 2=script
+    uint8_t kind;                 // 0=sprite 1=prefab 2=script 3=generic 4=clip（M5 批③）
 };
 
 class AssetBrowserPanel final : public IEditorPanel {

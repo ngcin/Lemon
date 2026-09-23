@@ -62,6 +62,9 @@ grep_step "smoke-ui (real-person session: shortcuts/undo/scrub/save/play/rename/
 if [ "${MODE}" = "full" ]; then
     grep_step "asset-chain smoke (import/hot-replace/thumbnail)" "editor-smoke PASS" \
         "${EDITOR}" --project "${TMP}/assets" --smoke --frames 240
+    grep_step "anim-chain smoke (grid slice + clip + animator frame mapping; M5-b3)" \
+        "smoke-anim: .* => OK" \
+        "${EDITOR}" --project "${TMP}/anim" --smoke-anim --frames 120 --no-reopen
     if [ -f "${SDK}" ]; then
         grep_step "script-chain smoke (CoreCLR/spawn/play byte-exact/--validate)" "editor-smoke PASS" \
             "${EDITOR}" --project "${TMP}/script" --script "${SDK}" --smoke --play --frames 240 --validate

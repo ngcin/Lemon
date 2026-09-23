@@ -36,6 +36,10 @@ public:
     /// ——根治"注册表自增号与 DB 记账两本账漂移"（2026-09-21，指定 A 显示 B 的元凶）
     bool AddSpriteAt(uint32_t spriteId, uint32_t atlasIndex, uint32_t px, uint32_t py,
                      uint32_t w, uint32_t h);
+    /// 覆盖式登记（M5 批③切片热重导）：同号重写几何，不查占用——号已由 manifest
+    /// 记账（块归属确定），热改 grid/整页重切用；未知 atlasIndex 仍 assert。
+    void SetSpriteAt(uint32_t spriteId, uint32_t atlasIndex, uint32_t px, uint32_t py,
+                     uint32_t w, uint32_t h);
     /// 该号是否有效登记（0 / 越界 / 空洞 = false）。空洞页采样越界，渲染侧须先过滤
     bool IsValidSprite(uint32_t spriteId) const;
     const SpriteInfo& GetSprite(uint32_t spriteId) const;

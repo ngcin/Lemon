@@ -53,6 +53,7 @@ enum class FieldHint : uint32_t {
     Hide     = 1u << 5,  // 不进 Inspector（池内冗余字段）
     Range    = 1u << 6,  // 数值夹取 [rangeMin, rangeMax]（Drag 控件）
     Reset    = 1u << 7,  // 字段级重置按钮（Inspector 值列尾；恢复默认构造值）
+    ClipRef  = 1u << 8,  // clip 资产槽（uint32 = .clip 资产 GUID 低 32 位；M5 批③）
 };
 inline constexpr FieldHint operator|(FieldHint a, FieldHint b) {
     return (FieldHint)((uint32_t)a | (uint32_t)b);
