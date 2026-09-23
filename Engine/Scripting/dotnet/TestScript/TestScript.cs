@@ -26,6 +26,8 @@ public static class GameMain
         Lemon.Behaviours.Register<WaveBannerBehaviour>();
         // M5 批④：存档 + HUD 完整版 + Confirm 位（typeId 6，表尾注册同上约定）
         Lemon.Behaviours.Register<SaveCardsProbeBehaviour>();
+        // M11：Awake/OnDestroy 内 native 调用（typeId 7，表尾注册同上约定）
+        Lemon.Behaviours.Register<AwakeUiProbeBehaviour>();
     }
 }
 
@@ -237,4 +239,14 @@ public sealed class SaveCardsProbeBehaviour : Lemon.LemonBehaviour
             gameObject.Destroy();
         }
     }
+}
+
+/// <summary>M11 验收（typeId 7）：Awake/OnDestroy 内 native 调用。修复前
+/// AttachBehaviour/结构命令期 native 窗口（g_world/g_scene）未设，Ui.Set 静默
+/// 空转——Awake 与 Attach 同步执行，托管调用返回后 C++ 侧应立即可见。</summary>
+public sealed class AwakeUiProbeBehaviour : Lemon.LemonBehaviour
+{
+    protected override void Awake() => Lemon.Ui.Set("awake", "alive", 1.0f);
+
+    protected override void OnDestroy() => Lemon.Ui.Set("awake", "dead", 0.0f);
 }

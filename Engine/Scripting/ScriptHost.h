@@ -115,7 +115,8 @@ public:
     }
 
     /// 挂载脚本组件（宿主装配期用；bench/编辑器入口）——ScriptBox + 托管实例/Awake。
-    void AttachBehaviour(ecs::Scene& scene, ecs::Entity e, int typeId);
+    /// Awake/OnEnable 在此同步执行，native 窗口（g_world/g_scene）由内部就位（M11）。
+    void AttachBehaviour(ecs::World& world, ecs::Scene& scene, ecs::Entity e, int typeId);
 
     /// 已注册脚本类型名表（M4.4 编辑器装配通路：Inspector 列表/className→typeId 解析；
     /// 未加载用户程序集返回空）。惰性拉取缓存。
@@ -181,6 +182,7 @@ private:
     int hrLeaks_ = 0;                       // 泄漏计数（红字告警口径，ADR-010 A 线）
     bool scriptsNeedTick_ = true;           // 档① 实例存在时即使无批量帧也要跑 tick
     bool batchPulled_ = false;              // 注册表惰性拉取标记（M3-7：装配可早于 World）
+    bool warnedNoCountFn_ = false;          // 批量系统缺 countFn 告警只响一次（M13）
 
     // 帧缓冲（复用；块 stride 恒 64，末块 Length<64）。
     // 必须 vector + 每帧构造前 reserve 足量：C# 侧对 Blocks/Comps/Entities 做线性

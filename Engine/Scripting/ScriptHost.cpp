@@ -19,6 +19,23 @@ namespace {
 ecs::World* g_world = nullptr;
 ecs::Scene* g_scene = nullptr;
 
+/// g_world/g_scene 的 RAII 窗口：托管回调（Update/Awake/OnDestroy/事件订阅方）内
+/// native 调用（Ui.Set/Time.Scale/Spawn/Save）依赖此窗口，漏设 = 静默空转。
+/// 五处统一走本守卫：TickBatch、DispatchEvents、AttachBehaviour、结构命令
+/// Destroy/AttachScript（M11：原仅前两处设窗口，Awake/OnDestroy 内 native 调用空转）
+struct NativeApiWindow {
+    NativeApiWindow(ecs::World* w, ecs::Scene* s) : prevW(g_world), prevS(g_scene) {
+        g_world = w;
+        g_scene = s;
+    }
+    ~NativeApiWindow() {
+        g_world = prevW;
+        g_scene = prevS;
+    }
+    ecs::World* prevW;
+    ecs::Scene* prevS;
+};
+
 int NativeIsAlive(uint64_t e) { return g_scene && g_scene->Alive(ecs::Entity{e}) ? 1 : 0; }
 int NativeHas(uint64_t e, uint8_t id) {
     if (!g_scene || id >= ecs::ComponentRegistry::Instance().Count()) return 0;
@@ -332,6 +349,15 @@ void ScriptHost::TickBatch(ecs::World& world, ecs::Scene& scene, float dt) {
         const BatchSys& bs = batch_[s];
         if (bs.disabled) continue; // C# 侧异常禁用：不再构造死块
         const auto& driver = reg.At(bs.comps[0]);
+        if (!driver.countFn) {
+            // 预留钩子缺失（M13）：不预留就 gather = 块缓冲增长期 realloc，先前系统
+            // fr.blocks 悬垂 → C# 线性步进野读。宁可响亮地整系统跳过，不静默降级
+            if (!warnedNoCountFn_) {
+                warnedNoCountFn_ = true;
+                LEMON_WARN("batch system %u driver lacks countFn — system skipped", s);
+            }
+            continue;
+        }
         const uint32_t blockBase = (uint32_t)blockBuf_.size();
 
         BuildCtx ctx{};
@@ -361,18 +387,16 @@ void ScriptHost::TickBatch(ecs::World& world, ecs::Scene& scene, float dt) {
 
     // 档①+档② 一帧固定序：Start/Update → 批量 → LateUpdate（域线程；ADR-010 D1）
     if (!frameBuf_.empty() || scriptsNeedTick_) {
-        g_world = &world;
-        g_scene = &scene;
+        NativeApiWindow win(&world, &scene);
         scriptsTickFn_(frameBuf_.data(), (int)frameBuf_.size(), dt);
-        g_world = nullptr;
-        g_scene = nullptr;
         // 回读禁用位（域线程已同步返回，栅栏保证可见）
         for (auto& fr : frameBuf_)
             if (fr.disabled) batch_[fr.systemIndex].disabled = true;
     }
 }
 
-void ScriptHost::AttachBehaviour(ecs::Scene& scene, ecs::Entity e, int typeId) {
+void ScriptHost::AttachBehaviour(ecs::World& world, ecs::Scene& scene, ecs::Entity e,
+                                 int typeId) {
     // get-or-create：场景档（.scene script 段）已带 ScriptBox（typeId=-1 待解析）时
     // 原位覆写，不二次 Emplace（entt 对已有组件再 emplace = 池损坏）
     if (ScriptBox* sb = scene.TryGet<ScriptBox>(e)) {
@@ -381,7 +405,11 @@ void ScriptHost::AttachBehaviour(ecs::Scene& scene, ecs::Entity e, int typeId) {
     } else {
         scene.Emplace<ScriptBox>(e, ScriptBox{(int32_t)typeId, 0, 0, {}});
     }
-    if (scriptsAttachFn_) scriptsAttachFn_(typeId, e.id);
+    // Awake/OnEnable 在 PostBatch 内同步执行——native 窗口必须就位（M11）
+    if (scriptsAttachFn_) {
+        NativeApiWindow win(&world, &scene);
+        scriptsAttachFn_(typeId, e.id);
+    }
 }
 
 const std::vector<std::string>& ScriptHost::BehaviourTypeNames() {
@@ -392,9 +420,12 @@ const std::vector<std::string>& ScriptHost::BehaviourTypeNames() {
                                                  "lemon_behaviours_list");
         if (!behavioursListFn_) return behaviourNames_;
     }
-    char buf[4096];
+    // M10 契约加固：返回值 = 类型数（非字节数），托管侧 '\n' 分隔 + 自写 '\0' 结尾
+    //（cap 不足 = -1）。零初始化 + n<=0 早退兜住失败/短写——原未初始化缓冲在托管侧
+    // 失败时走未初始化栈内存
+    char buf[4096] = {};
     int n = behavioursListFn_(buf, (int)sizeof(buf));
-    (void)n;
+    if (n <= 0) return behaviourNames_;
     for (const char* p = buf; *p;) { // '\n' 分隔、'\0' 结尾
         const char* nl = std::strchr(p, '\n');
         size_t len = nl ? (size_t)(nl - p) : std::strlen(p);
@@ -459,14 +490,22 @@ void ScriptHost::ApplyStructural(ecs::World& world, ecs::Scene& scene) {
             case 1: { // Destroy（先 OnDestroy 通知，再入两阶段队列——本批随后 CommitDestroys 生效）
                 ecs::Entity e = Resolve(op.entity);
                 if (!e.IsNull()) {
-                    if (scriptsDestroyFn_) scriptsDestroyFn_(e.id);
+                    // OnDestroy 在 PostBatch 内同步执行——native 窗口必须就位（M11）
+                    if (scriptsDestroyFn_) {
+                        NativeApiWindow win(&world, &scene);
+                        scriptsDestroyFn_(e.id);
+                    }
                     scene.Destroy(e);
                 }
                 break;
             }
-            case 2: { // AddComponent（注册表驱动）
+            case 2: { // AddComponent（注册表驱动；get-or-create——对已有组件再
+                // emplace = entt 池损坏，与 NativeWrite/AttachBehaviour 同口径 M12）
                 ecs::Entity e = Resolve(op.entity);
-                if (!e.IsNull() && op.compId < reg.Count()) reg.At(op.compId).emplaceFn(scene, e);
+                if (!e.IsNull() && op.compId < reg.Count()) {
+                    const auto& m = reg.At(op.compId);
+                    if (!m.hasFn(scene, e)) m.emplaceFn(scene, e);
+                }
                 break;
             }
             case 3: { // RemoveComponent
@@ -476,11 +515,10 @@ void ScriptHost::ApplyStructural(ecs::World& world, ecs::Scene& scene) {
                 break;
             }
             case 4: { // AttachScript（挂 ScriptBox + 托管实例/Awake/OnEnable）
+                // 复用 AttachBehaviour：get-or-create + native 窗口（M11/M12——原
+                // 无条件 Emplace<ScriptBox>，对快照已带 ScriptBox 的实体 = 池损坏）
                 ecs::Entity e = Resolve(op.entity);
-                if (!e.IsNull()) {
-                    scene.Emplace<ScriptBox>(e, ScriptBox{(int32_t)op.compId, 0});
-                    if (scriptsAttachFn_) scriptsAttachFn_((int)op.compId, e.id);
-                }
+                if (!e.IsNull()) AttachBehaviour(world, scene, e, (int)op.compId);
                 break;
             }
             default: break;
@@ -507,14 +545,11 @@ void ScriptHost::DispatchEvents(ecs::World& world, ecs::Scene& scene) {
     // WaveStart 等回调内可调 Ui.Set/Time.Scale/Instantiate。此前窗口只盖 TickBatch，
     // #16 派发期的回调内 native 调用会静默空转（批① xp 样例恰在 Update 内调用
     // 故未暴露）。
-    g_world = &world;
-    g_scene = &scene;
+    NativeApiWindow win(&world, &scene);
     q.HeadSpan(seg, n);
     if (n) eventsDispatchFn_(seg, (int)n);
     q.TailSpan(seg, n);
     if (n) eventsDispatchFn_(seg, (int)n);
-    g_world = nullptr;
-    g_scene = nullptr;
 }
 
 } // namespace lemon::scripting

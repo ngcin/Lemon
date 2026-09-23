@@ -289,7 +289,7 @@ void EditorContext::ResolvePlayScripts() {
             LEMON_WARN("Play 装配：脚本类型未注册（跳过）'%s'", sb->className);
             return;
         }
-        scripts_->AttachBehaviour(*playScene_, e, id);
+        scripts_->AttachBehaviour(*playWorld_, *playScene_, e, id);
     });
 }
 
@@ -314,7 +314,7 @@ int EditorContext::RefreshScriptsAfterReload() {
         }
         sb->typeId = id;
         sb->flags &= ~1u;
-        scripts_->AttachBehaviour(*playScene_, e, id);
+        scripts_->AttachBehaviour(*playWorld_, *playScene_, e, id);
         ++n;
     });
     return n;

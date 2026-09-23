@@ -285,7 +285,7 @@ int main(int argc, char** argv) {
             sr.flags = kSrEnabled;
             s.Emplace<SpriteRenderer>(e, sr);
             if (i == 0) (g == 0 ? cppProbe : csProbe) = e;
-            if (g == 1 && script) host.AttachBehaviour(s, e, 0); // FrameScript（typeId 0）
+            if (g == 1 && script) host.AttachBehaviour(world, s, e, 0); // FrameScript（typeId 0）
         }
     }
     for (uint32_t f = 0; f < kFrameCount; ++f) { // 胶片条：无 Animator2D/Meta → 不动不被映射

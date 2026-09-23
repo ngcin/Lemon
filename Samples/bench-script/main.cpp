@@ -125,7 +125,7 @@ int main(int argc, char** argv) {
     s.Emplace<Transform2D>(player, Transform2D{{0, 0}});
     s.Emplace<Meta>(player).team = 0;
     s.Emplace<Velocity>(player);
-    host.AttachBehaviour(s, player, 0);
+    host.AttachBehaviour(world, s, player, 0);
 
     Rng rng(cfg.seed, 0x51u);
     for (uint32_t i = 0; i < cfg.bullets; ++i) {

@@ -300,11 +300,11 @@ void TestDomainManager() {
         Expect(d2 == (double)0.1f, "hot-reload new domain fresh state");
         Expect(leaks >= 0 && leaksFn && leaksFn() == leaks, "leak count visible + consistent");
         Expect(reloadsFn && reloadsFn() >= 1, "reload count visible");
-        // 换装后新域 GameMain.Configure 已跑：behaviours 列表可拉（7 个类型）
+        // 换装后新域 GameMain.Configure 已跑：behaviours 列表可拉（8 个类型）
         auto listFn = (int (*)(char*, int))GetExport("lemon_behaviours_list");
         char buf[4096];
         int n = listFn ? listFn(buf, (int)sizeof buf) : -1;
-        Expect(n == 7, "behaviours list after hot reload (+M5 批④ SaveCardsProbe)");
+        Expect(n == 8, "behaviours list after hot reload (+M11 AwakeUiProbe)");
         // M4.6 回归（用户实测闪退根因）：相对路径进 dm_reload 曾抛 ArgumentException
         // 逃逸 UnmanagedCallersOnly → coreclr abort。拦截层必须转 0 返回且进程存活
         // （本断言能跑到 = 进程没死）。换装失败后旧域已弃——再换一次真路径恢复。
@@ -708,12 +708,12 @@ void TestPlayDomainReset() {
 
     // 局1：装配探针（ResolvePlayScripts 同款入口；快照已带 ScriptBox → get-or-create）
     Entity e = s.Create();
-    g_sh.AttachBehaviour(s, e, 6);
+    g_sh.AttachBehaviour(w, s, e, 6);
     w.Step(0.25f); // 帧1
     Expect(attachedFn() == 1 && saw700 == 1, "session1: single instance reports once");
 
     // 泄漏复现（修复前实测路径）：残留实例 + 同实体 id 再 Attach = 双实例
-    g_sh.AttachBehaviour(s, e, 6);
+    g_sh.AttachBehaviour(w, s, e, 6);
     Expect(attachedFn() == 2, "leak signature: residual + re-attach = 2 instances");
     w.Step(0.25f); // 帧2：双实例都 tick（读回报告 ×2）
     Expect(saw801 == 2, "double instance ticks twice (Custom 801 x2)");
@@ -722,13 +722,86 @@ void TestPlayDomainReset() {
     g_sh.ResetPlayDomain();
     Expect(attachedFn() == 0, "play reset clears instances");
     timeResetFn();
-    g_sh.AttachBehaviour(s, e, 6);
+    g_sh.AttachBehaviour(w, s, e, 6);
     Expect(attachedFn() == 1, "re-play: single instance (leak fixed)");
     w.Step(0.25f); // 新局帧1
     Expect(saw700 == 2, "re-play adds exactly one report (2 = 1+1)");
 
     g_sh.ResetPlayDomain(); // 收尾自清：不让本测试实例泄给后续（进程内域共享）
     Expect(attachedFn() == 0, "post-test domain clean");
+}
+
+// M11：Attach/Destroy 期 native 窗口（修复前窗口只盖 TickBatch/DispatchEvents，
+// Awake/OnDestroy 内 Ui.Set 静默空转）+ M12：结构命令 AddComponent/AttachScript
+// 的 get-or-create（修复前无条件 Emplace = entt 池损坏）。
+void TestAwakeWindowAndDoubleAdd() {
+    using namespace lemon::ecs;
+    auto opsSubmit =
+        (void (*)(unsigned char, unsigned char, uint64_t))GetExport("lemon_ops_submit");
+    auto attachedFn = (int (*)())GetExport("lemon_behaviours_attached");
+    auto timeResetFn = (void (*)())GetExport("lemon_time_reset");
+    Expect(opsSubmit && attachedFn && timeResetFn, "awake-window exports resolved");
+    timeResetFn();
+
+    WorldDesc d;
+    d.threadCount = 1;
+    World w(d);
+    Scene& s = w.CreateScene("AWN");
+    w.SetActiveScene(&s);
+    w.SetScriptBackend(&g_sh);
+    w.Pipeline().AddSystem(std::make_unique<DestroyCommitSystem>());
+    w.Pipeline().AddSystem(std::make_unique<CSharpBatchSystem>());
+    w.Pipeline().AddSystem(std::make_unique<ScriptEventDispatchSystem>());
+    w.Pipeline().ResolveOrder();
+
+    // M11 attach：Awake 与 AttachBehaviour 同步执行 → 调用返回即应已写 RT UI
+    //（修复前 g_world 未设 → NativeRtUiSet 早退，槽位为空）
+    Entity e = s.Create();
+    g_sh.AttachBehaviour(w, s, e, 7); // AwakeUiProbeBehaviour（表尾 typeId 7）
+    bool aliveOk = w.RtUi().Count() == 1;
+    if (aliveOk) {
+        const RtUiSlot& slot = w.RtUi().At(0);
+        aliveOk = std::strcmp(slot.key, "awake") == 0 &&
+                  std::strcmp(slot.text, "alive") == 0 &&
+                  std::fabs(slot.frac - 1.0f) < 1e-5f;
+    }
+    Expect(aliveOk, "Awake Ui.Set visible right after AttachBehaviour (M11 window)");
+    const int attached0 = attachedFn();
+
+    // M12 case4：AttachScript 结构命令对已带 ScriptBox 的实体（快照路径常态）=
+    // 原位覆写（修复前无条件 Emplace<ScriptBox> = entt 池损坏；C# 侧再挂一实例
+    // 属 ResetPlayDomain 管的跨局残留语义，与本断言无关）
+    opsSubmit(4, 7, e.id);
+    w.Step(0.25f); // ApplyStructural 帧首应用
+    Expect(s.TryGet<lemon::scripting::ScriptBox>(e) != nullptr &&
+               attachedFn() == attached0 + 1,
+           "AttachScript op on scripted entity: overwrite not double-emplace (M12)");
+
+    // M12 case2：AddComponent 对已有组件重复提交 = no-op（修复前二次 emplace）
+    const ComponentMeta* vel = ComponentRegistry::Instance().Find("Velocity");
+    Expect(vel != nullptr, "Velocity meta found");
+    opsSubmit(2, (unsigned char)vel->id, e.id);
+    opsSubmit(2, (unsigned char)vel->id, e.id);
+    w.Step(0.25f);
+    bool poolOk = s.Has<Velocity>(e);
+    uint32_t ents = 0;
+    s.Each([&](Entity) { ++ents; });
+    poolOk = poolOk && ents == 1;
+    Expect(poolOk, "double AddComponent op: single component, pool intact (M12)");
+
+    // M11 destroy：OnDestroy 内 Ui.Set 生效（alive 行覆写为 dead；同 key 槽位更新）。
+    // Detach 清实体全部实例（直挂 + 命令挂共 2 个）→ 计数归零
+    opsSubmit(1, 0, e.id);
+    w.Step(0.25f); // 帧首应用销毁命令（OnDestroy 同步执行）
+    Expect(attachedFn() == 0, "both instances detached after destroy op");
+    bool deadOk = w.RtUi().Count() == 1;
+    if (deadOk) {
+        const RtUiSlot& slot = w.RtUi().At(0);
+        deadOk = std::strcmp(slot.key, "awake") == 0 && std::strcmp(slot.text, "dead") == 0;
+    }
+    Expect(deadOk, "OnDestroy Ui.Set visible (M11 destroy window)");
+
+    g_sh.ResetPlayDomain(); // 收尾自清（同上）
 }
 
 } // namespace
@@ -777,6 +850,7 @@ int main() {
     TestWaveStartToUi();
     TestSaveChannelAndUiCards();
     TestPlayDomainReset();
+    TestAwakeWindowAndDoubleAdd();
 
     // M4.6 探针（编辑器切项目场景）：同进程二次 ScriptHost 生命周期。CoreCLR 运行时
     // 进程单例——第二次 Initialize 的真实行为必须钉板（成功/失败都合法，崩 = 缺陷）。
