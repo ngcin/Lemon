@@ -1244,6 +1244,117 @@ void TestSpatialHashRangeClamp() {
     Expect(hits == 0, "out-of-range team/layer never hit");
 }
 
+// 查询侧两级加速（2026-09-24 方案 A）：Item 内联 team/layer 位 + cell 级 team
+// 位图整格早退——语义零漂移的机制证明（无 Meta 恒放行 / 越界恒不命中 / 掩码
+// 命中集合与回调序 = 默认过滤 + 回调内手过滤逐项一致）
+void TestSpatialHashQueryFastPath() {
+    World world;
+    Scene& s = world.CreateScene("fastpath");
+
+    // 混合布置（同格 (0..30)² 内）：team1 ×2 / team2 ×1 / 无 Meta ×1 / 越界 ×1；
+    // 远处格 (500,0)：纯 team1 群 ×3（整格早退靶）
+    Entity t1a = s.Create(), t1b = s.Create(), t2 = s.Create(), noMeta = s.Create(),
+           bad = s.Create();
+    for (Entity e : {t1a, t1b, t2, noMeta, bad})
+        s.Emplace<Transform2D>(e, Transform2D{{10.0f, 10.0f}});
+    s.Emplace<Meta>(t1a).team = 1;
+    s.Emplace<Meta>(t1b).team = 1;
+    s.Emplace<Meta>(t2).team = 2;
+    s.Emplace<Meta>(bad).team = 40;
+    Entity far[3];
+    for (int i = 0; i < 3; ++i) {
+        far[i] = s.Create();
+        s.Emplace<Transform2D>(far[i], Transform2D{{500.0f + (float)i, 0.0f}});
+        s.Emplace<Meta>(far[i]).team = 1;
+    }
+
+    SpatialHash hash;
+    hash.Configure(64.0f);
+    hash.Rebuild(s);
+
+    // ① 无 Meta 实体恒放行（默认过滤命中近格全部 4 个有效实体）
+    {
+        int hits = 0;
+        hash.OverlapCircle(s, {0, 0}, 64.0f, QueryFilter{}, 0.0f,
+                           [&](Entity, const Transform2D&) {
+                               ++hits;
+                               return true;
+                           });
+        Expect(hits == 4, "noMeta passes default filter");
+    }
+    // ② teamMask 查询：同格无 Meta 实体不被掩码误杀、不被整格早退漏掉
+    {
+        int hits = 0;
+        bool sawNoMeta = false;
+        QueryFilter f;
+        f.teamMask = 1u << 2; // 只要 team2
+        hash.OverlapCircle(s, {0, 0}, 64.0f, f, 0.0f, [&](Entity e, const Transform2D&) {
+            ++hits;
+            sawNoMeta |= (e == noMeta);
+            return true;
+        });
+        Expect(hits == 2 && sawNoMeta, "team2 + noMeta (hasNoMeta 钉住整格)");
+    }
+    // ③ 纯 team1 远格 + teamMask=team2 → 整格早退零命中
+    {
+        int hits = 0;
+        QueryFilter f;
+        f.teamMask = 1u << 2;
+        hash.OverlapCircle(s, {500.0f, 0.0f}, 64.0f, f, 0.0f,
+                           [&](Entity, const Transform2D&) {
+                               ++hits;
+                               return true;
+                           });
+        Expect(hits == 0, "pure-team1 cell skipped for team2 mask");
+    }
+    // ④ layerMask 过滤走内联位
+    {
+        s.Emplace<Meta>(t2).layer = 3;
+        hash.Rebuild(s);
+        int hits = 0;
+        QueryFilter f;
+        f.layerMask = 1u << 3;
+        hash.OverlapCircle(s, {0, 0}, 64.0f, f, 0.0f, [&](Entity e, const Transform2D&) {
+            ++hits;
+            return e == t2 || e == noMeta; // 命中只允许 t2 与无 Meta 实体
+        });
+        Expect(hits == 2, "layer mask via inline bits");
+        s.Emplace<Meta>(t2).layer = 0;
+        hash.Rebuild(s);
+    }
+    // ⑤ 差分等价：掩码查询命中序 ≡ 默认查询 + 回调内手过滤（含跨格排序）
+    {
+        for (uint32_t mask = 1; mask < 8; ++mask) {
+            std::vector<uint64_t> masked, manual;
+            QueryFilter f;
+            f.teamMask = mask;
+            hash.OverlapCircle(s, {0, 0}, 600.0f, f, 0.0f, [&](Entity e, const Transform2D&) {
+                masked.push_back(e.id);
+                return true;
+            });
+            hash.OverlapCircle(s, {0, 0}, 600.0f, QueryFilter{}, 0.0f,
+                               [&](Entity e, const Transform2D&) {
+                                   if (const Meta* m = s.TryGet<Meta>(e)) {
+                                       if (m->team >= 32 || !(mask & (1u << m->team)))
+                                           return true; // 旧 PassFilter 语义（越界恒不命中）
+                                   }
+                                   manual.push_back(e.id);
+                                   return true;
+                               });
+            Expect(masked == manual, "mask query == manual filter (order included)");
+        }
+    }
+    // ⑥ HostileMask（TeamTable 行掩码）
+    {
+        TeamTable t = TeamTable::Default();
+        Expect(t.HostileMask(0) == (1u << 1), "player hostile to monsters only");
+        Expect(t.HostileMask(1) == ((1u << 0) | (1u << 3)),
+               "monsters hostile to player + bullets");
+        Expect(t.HostileMask(31) == 0, "unconfigured team = empty mask");
+        Expect(t.HostileMask(40) == 0, "out-of-range team = empty mask");
+    }
+}
+
 // 并发 Destroy（Scene::Destroy 数据竞争修复回归；ASan/TSan 下有效放大）
 void TestConcurrentDestroy() {
     World world; // 默认多线程 JobSystem
@@ -3485,6 +3596,7 @@ int main() {
     TestSceneArchive();
     TestTeamTable();
     TestSpatialHash();
+    TestSpatialHashQueryFastPath();
     TestSystemPipelineOrder();
     TestSimulationEndToEnd();
     TestSeparationForce();

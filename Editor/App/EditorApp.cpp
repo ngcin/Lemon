@@ -160,6 +160,11 @@ bool SeedBenchSurvivorScene(EditorContext& ctx) {
     s.Emplace<ecs::Health>(mob, ecs::Health{.max = 30.0f, .cur = 30.0f});
     s.Emplace<ecs::Knockback>(mob);
     s.Emplace<ecs::Velocity>(mob);
+    // Hazard 化（2026-09-24 方案 A 批）：对齐 vs-survivor 模板 Mob.prefab（dps 8/
+    // radius 24/tick 0.8）——Perf10k 压测（09 §6.10 注记）证实的"万怪密团 Hazard
+    // 查询"真实工作形状进回归口径
+    s.Emplace<ecs::Hazard>(mob, ecs::Hazard{.dps = 8.0f, .tickInterval = 0.8f,
+                                            .radius = 24.0f});
     // 动画（M5 批③）：clipId = anim.clip GUID 低 32 位（EnterPlay 建表；fps10×4 帧）
     s.Emplace<ecs::Animator2D>(mob).clipId = (uint32_t)kAnimClipGuid;
     ecs::Chase& ch = s.Emplace<ecs::Chase>(mob);
@@ -169,10 +174,11 @@ bool SeedBenchSurvivorScene(EditorContext& ctx) {
     ch.targetTeam = 0;
     const uint64_t pguid = ctx.MakePrefabFrom(mob);
     if (pguid == 0) return false;
-    // 玩家（Chase 目标；team 0）
+    // 玩家（Chase 目标；team 0）。HP 1e6：Hazard 化口径下防玩家死亡扰计量
+    // （Perf10k 同款——接触环 Hazard 实伤害照付，玩家局内不死）
     ecs::Entity player = ctx.CreateSpriteEntity("BenchPlayer", 3);
     s.Get<ecs::Meta>(player).team = 0;
-    s.Emplace<ecs::Health>(player, ecs::Health{.max = 500.0f, .cur = 500.0f});
+    s.Emplace<ecs::Health>(player, ecs::Health{.max = 1'000'000.0f, .cur = 1'000'000.0f});
     // 弹体模板 → prefab（M5 批⓪ 战斗化：万怪场真实战斗闭环进 destroyed 计量）。
     // 口径与 bench-sim 对齐：dmg 12 vs hp 30 → 3 击；pierce 0 = 命中即毁。
     // 模板弹挪出战场（出生环 ≤600 内不经过 (800,0)），寿命 2.5s 在 4s 预热内回收。
@@ -3553,8 +3559,15 @@ int EditorApp::Run(const EditorLaunch& launch) {
     uint32_t playAliveAtStop = 0;
     uint32_t benchTeam1Alive = 0, benchWavesStarted = 0;
     uint32_t benchAnimHit = 0, benchAnimTotal = 0;
+    float benchPlayerHp = -1.0f; // Hazard 化证据（方案 A 批）：玩家（收集者）掉血 =
+                                 // 万怪 Hazard tick 真实发生（<1e6 即证）
     if (launch.benchSurvivor && ctx_.Playing()) {
         benchPlayProfiles = ctx_.ActiveWorld().Pipeline().Profiles(); // ExitPlay 弃世界前留证
+        ctx_.ActiveScene().View<ecs::XpProgress>().each([&](auto ent, ecs::XpProgress&) {
+            if (const ecs::Health* hp = ctx_.ActiveScene().TryGet<ecs::Health>(
+                    ecs::Scene::FromEntt(ent)))
+                benchPlayerHp = hp->cur;
+        });
         // 导演化证据（M5 批②）：waveIndex=已生效波数；team1 存活突破 Spawner 8000
         // 闸门即导演出生实证（两通道同队，闸门语义见 03 §8 修订注）
         ctx_.ActiveScene().View<ecs::Meta>().each([&](auto, ecs::Meta& m) {
@@ -3612,7 +3625,10 @@ int EditorApp::Run(const EditorLaunch& launch) {
         const bool directorOk = benchWavesStarted >= 3 && benchTeam1Alive > 8000;
         // 动画化批（M5 批③）：万怪帧映射生效（全数命中切片区间）
         const bool animOk = benchAnimTotal >= 10000 && benchAnimHit == benchAnimTotal;
-        const bool pass = aliveOk && avg > 0.0 && avg <= 1000.0 / 45.0 && directorOk && animOk;
+        // Hazard 化批（2026-09-24 方案 A）：玩家掉血 = Hazard tick 进压测口径
+        const bool hazardOk = benchPlayerHp >= 0.0f && benchPlayerHp < 1'000'000.0f;
+        const bool pass =
+            aliveOk && avg > 0.0 && avg <= 1000.0 / 45.0 && directorOk && animOk && hazardOk;
         const double segN = benchFrameN ? (double)benchFrameN : 1.0;
         std::printf("[bench-survivor] 分段avg ms: pump=%.2f sim=%.2f glue=%.2f ui=%.2f "
                     "acquire=%.2f scene=%.2f uidraw=%.2f present=%.2f | segSum=%.2f\n",
@@ -3625,11 +3641,13 @@ int EditorApp::Run(const EditorLaunch& launch) {
         std::printf("[bench-survivor] frames=%u warmup=%u alive=%u stepAvg=%.2fms "
                     "frameAvg=%.2fms frameMax=%.2fms fps=%.0f present=IMMEDIATE(请求)"
                     " director(waves=%u teamAlive=%u/闸8000) anim(%u/%u 切片命中)"
+                    " hazard(playerHp=%.0f<1e6 掉血实证)"
                     " => %s\n",
                     (unsigned)frame, (unsigned)kBenchWarmup, playAliveAtStop,
                     benchSimSum / segN, avg,
                     benchFrameMax, fps, benchWavesStarted, benchTeam1Alive,
-                    benchAnimHit, benchAnimTotal, pass ? "PASS" : "FAIL");
+                    benchAnimHit, benchAnimTotal, benchPlayerHp,
+                    pass ? "PASS" : "FAIL");
         // 性能批②①：sim 系统级分解（测量窗口 = 预热后 ZeroProfiles 起；avg=totalMs/runs）
         {
             std::vector<ecs::SystemProfile> rows;

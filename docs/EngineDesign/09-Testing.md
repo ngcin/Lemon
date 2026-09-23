@@ -245,7 +245,8 @@ macOS 安全策略拒绝 lldb 原生 attach（Console.app 可见 debugserver 拒
 ```
 
 负载：编辑器全链（模拟 + 视口提取 + GameView 渲染 + ImGui 叠加 + present），临时项目
-程序化播种——怪 prefab（Health/Knockback/Velocity/Chase）经 SpawnFn 桥（清障②）由
+程序化播种——怪 prefab（Health/Knockback/Velocity/Chase/**Hazard（09-24 方案 A 批）**）
+经 SpawnFn 桥（清障②）由
 Spawner 拉满 1 万（interval 0 / burst 64 / capAlive 10000 = "导演拉满"），玩家作
 Chase 目标；**批⓪（M5-Plan T4）起兼弹幕源**：Shooter 20 发/s + 弹体 prefab
 （dmg 12 / pierce 0），命中/击退/击杀/补怪闭环真实发生并计入 destroyed。
@@ -271,6 +272,8 @@ Chase 目标；**批⓪（M5-Plan T4）起兼弹幕源**：Shooter 20 发/s + �
 | 批① 成长化（同日，三跑） | sim 12.84~13.92（Pickup 1.87）/ scene ~1.5 / ui 0.26 | frameAvg 15.53~16.29ms fps 61~64 **PASS** |
 | 批② 导演化（09-23，三跑） | sim 12.55~12.60（Director <0.1）/ scene ~1.3 / ui 0.26 | frameAvg 15.11~15.20ms fps 66 **PASS** |
 | 批③ 动画化（09-23，三跑） | sim 12.91~14.25（Animator 0.128）/ scene ~1.3 / ui 0.26 | frameAvg 14.89~17.27ms fps 58~67 **PASS** |
+| Hazard 化播种（09-24，修复前红字） | **sim 49.41（Hitbox 36.43）** / scene ~1.4 / ui 0.68 | frameAvg 52.05ms fps=19 **FAIL** |
+| 方案 A 查询快路径（09-24，三跑） | sim 9.90~10.05（**Hitbox 1.08** / Rebuild 0.57）/ scene ~1.4 / ui 0.26 | frameAvg 12.17~12.59ms fps 79~82 **PASS** |
 
 批② 导演化口径变更：Spawner 闸 10000→8000 让 2000 头寸给 BenchDirector（3 波 ×
 4 条目 180/s/波，t=1/6/11s）——判据在原两条（alive≥10000、frameAvg≤22.2ms）外加
@@ -284,6 +287,18 @@ Spawner 同款 30-tick O(n)）。
 （实测 10003/10003、三跑逐位一致；含玩家宝石等非动画实体外的全数怪群）。Animator
 系统成本 0.128ms（纯函数帧号 + 逐实体 TryGet 写 spriteId；优化路径预留：spriteId
 条件写/并行）。
+
+**Hazard 化口径变更（2026-09-24 方案 A 批）**：BenchMob prefab 增 `Hazard`（dps 8 /
+radius 24 / tick 0.8——参数对齐 vs-survivor 模板 Mob.prefab）+ 玩家 HP 500→1e6
+（防玩家死亡扰计量，Perf10k 同款）——"万怪密团 Hazard 查询"（模板怪真实工作形状）
+进回归口径，判据再加 **hazard 证据项** `playerHp<1e6`（掉血实证；红绿两跑与三跑
+绿字 playerHp=275793 逐位一致 = 行为零漂移旁证）。来源：Perf10k.scene 压测
+（DevLog 2026-09-23——万怪聚堆带 Hazard 51.1ms/帧 vs 去 Hazard 17.2ms，~66% 帧时
+在 HazardSystem 拒绝路径）。修复 = SpatialHash 查询侧两级加速（Item 内联 team/layer
+位 + cell 级 team 位图整格早退 + `TeamTable::HostileMask` 预过滤，03 §5 修订注）：
+Hitbox 36.43→1.08ms（~34×）、Rebuild 仅 +0.05ms（Meta 快照）；命中集合与回调序
+零漂移（差分等价单测 + 金回放 m5b2 三档原样 replay mismatches=0 零重录）。判据
+阈值不动（22.2ms），历史行不删——本行起"带 Hazard 模板怪海"即判据形状。
 
 批⓪ 战斗化后 fps 反升（76→86）非笔误：iFrames 递减修复使怪进入击杀-补充循环，
 蜂群密度被持续疏散，Separation 随之回落（sim 11.1→9.4ms）。frameMax 43~52ms

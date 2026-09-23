@@ -15,13 +15,23 @@ using ecs::Transform2D;
 void SpatialHash::Rebuild(Scene& scene) {
     items_.clear();
 
-    // 收集（Transform2D 池遍历；push_back 均摊零分配——容量只增）
+    // 收集（Transform2D 池遍历；push_back 均摊零分配——容量只增）。
+    // 内联过滤位同遍快照自 Meta（方案 A）：查询拒绝路径免逐候选 Meta 取
     auto view = scene.View<Transform2D>();
     items_.reserve(scene.Pool<Transform2D>().size());
     for (auto [ent, tf] : view.each()) {
         int32_t cx = (int32_t)std::floor(tf.pos.x * invCell_);
         int32_t cy = (int32_t)std::floor(tf.pos.y * invCell_);
-        items_.push_back({CellKey(cx, cy), (uint32_t)ent});
+        uint16_t bits = 0;
+        if (const ecs::Meta* m = scene.Registry().try_get<ecs::Meta>(ent)) {
+            if (m->team >= 32) bits |= kBitsBadTeam;         // 数据错误 → 恒不命中
+            else bits |= (uint16_t)(m->team & kTeamField);
+            if (m->layer >= 16) bits |= kBitsBadLayer;       // 同上（旧 PassFilter 语义）
+            else bits |= (uint16_t)((m->layer << 5) & kLayerField);
+        } else {
+            bits = kBitsNoMeta;                              // 无 Meta → 恒放行
+        }
+        items_.push_back({CellKey(cx, cy), (uint32_t)ent, bits, 0});
     }
 
     // 双关键字排序：cellKey → entityId（cell 内 id 升序 = 确定性命中序）
@@ -29,44 +39,44 @@ void SpatialHash::Rebuild(Scene& scene) {
         return a.key != b.key ? a.key < b.key : a.ent < b.ent;
     });
 
-    // 压出 cell 区间表（前缀）
+    // 压出 cell 区间表（前缀）+ cell 级 team 位图（整格早退）
     cellKeys_.clear();
+    cellInfos_.clear();
     cellStarts_.clear();
     cellStarts_.push_back(0);
     for (uint32_t i = 0; i < items_.size();) {
         uint64_t key = items_[i].key;
-        uint32_t begin = i;
-        while (i < items_.size() && items_[i].key == key) ++i;
+        CellInfo info;
+        while (i < items_.size() && items_[i].key == key) {
+            const uint16_t b = items_[i].bits;
+            if (b & kBitsNoMeta) info.hasNoMeta = true;
+            else if (!(b & kBitsBad)) info.teams |= 1u << (b & kTeamField);
+            ++i;
+        }
         cellKeys_.push_back(key);
+        cellInfos_.push_back(info);
         cellStarts_.push_back(i);
-        (void)begin;
     }
 }
 
-void SpatialHash::CellRange(uint64_t key, uint32_t& begin, uint32_t& end) const {
+bool SpatialHash::CellRange(uint64_t key, uint32_t& begin, uint32_t& end,
+                            uint32_t& cellIdx) const {
     // 二分 cellKeys_（元素少、缓存友好；cell 数 ≈ n/密度）
     auto it = std::lower_bound(cellKeys_.begin(), cellKeys_.end(), key);
     if (it == cellKeys_.end() || *it != key) {
-        begin = end = 0;
-        return;
+        begin = end = cellIdx = 0;
+        return false;
     }
-    uint32_t idx = (uint32_t)(it - cellKeys_.begin());
-    begin = cellStarts_[idx];
-    end = cellStarts_[idx + 1];
+    cellIdx = (uint32_t)(it - cellKeys_.begin());
+    begin = cellStarts_[cellIdx];
+    end = cellStarts_[cellIdx + 1];
+    return true;
 }
 
-bool SpatialHash::PassFilter(Scene& s, uint32_t entRaw, const QueryFilter& f) const {
+bool SpatialHash::PassSlow(Scene& s, uint32_t entRaw, const QueryFilter& f) const {
     entt::entity ent = (entt::entity)entRaw;
     if (!s.Registry().valid(ent)) return false; // 重建后已销毁
-    Entity e = Scene::FromEntt(ent);
-    if (e == f.exclude) return false;
-    const ecs::Meta* meta = s.TryGet<ecs::Meta>(e);
-    if (meta) {
-        // team/layer 均为位索引（0..31 / 0..15）；≥ 上限视为数据错误 → 静默不命中
-        //（审计修复：原判断写反，越界值实际会"跳过过滤"被放行）
-        if (meta->team >= 32 || !(f.teamMask & (1u << meta->team))) return false;
-        if (meta->layer >= 16 || !(f.layerMask & (1u << meta->layer))) return false;
-    }
+    if (Scene::FromEntt(ent) == f.exclude) return false;
     return true;
 }
 
@@ -81,12 +91,16 @@ void SpatialHash::OverlapCircle(Scene& scene, Vec2 center, float radius,
 
     for (int32_t cy = y0; cy <= y1; ++cy) {
         for (int32_t cx = x0; cx <= x1; ++cx) {
-            uint32_t begin, end;
-            CellRange(CellKey(cx, cy), begin, end);
+            uint32_t begin, end, ci;
+            if (!CellRange(CellKey(cx, cy), begin, end, ci)) continue;
+            // 整格早退：格内无可命中 team（无 Meta 实体除外——恒放行不得跳格）
+            if (!(cellInfos_[ci].teams & f.teamMask) && !cellInfos_[ci].hasNoMeta)
+                continue;
             for (uint32_t i = begin; i < end; ++i) {
+                if (FastReject(items_[i].bits, f)) continue;
                 uint32_t entRaw = items_[i].ent;
                 entt::entity ent = (entt::entity)entRaw;
-                if (!PassFilter(scene, entRaw, f)) continue;
+                if (!PassSlow(scene, entRaw, f)) continue;
                 const Transform2D* tf = scene.Registry().try_get<Transform2D>(ent);
                 if (!tf) continue;
                 float r2 = LengthSq(tf->pos - center);
@@ -109,12 +123,15 @@ void SpatialHash::OverlapBox(Scene& scene, Rect box, const QueryFilter& f,
 
     for (int32_t cy = y0; cy <= y1; ++cy) {
         for (int32_t cx = x0; cx <= x1; ++cx) {
-            uint32_t begin, end;
-            CellRange(CellKey(cx, cy), begin, end);
+            uint32_t begin, end, ci;
+            if (!CellRange(CellKey(cx, cy), begin, end, ci)) continue;
+            if (!(cellInfos_[ci].teams & f.teamMask) && !cellInfos_[ci].hasNoMeta)
+                continue;
             for (uint32_t i = begin; i < end; ++i) {
+                if (FastReject(items_[i].bits, f)) continue;
                 uint32_t entRaw = items_[i].ent;
                 entt::entity ent = (entt::entity)entRaw;
-                if (!PassFilter(scene, entRaw, f)) continue;
+                if (!PassSlow(scene, entRaw, f)) continue;
                 const Transform2D* tf = scene.Registry().try_get<Transform2D>(ent);
                 if (!tf) continue;
                 if (reach.Contains(tf->pos)) {
@@ -154,12 +171,15 @@ RayHit SpatialHash::Raycast(Scene& scene, Vec2 origin, Vec2 dir, float maxDist,
         // 该采样点 cell 及邻接 cell（防步长跨 cell 漏检）
         for (int32_t oy = -1; oy <= 1; ++oy) {
             for (int32_t ox = -1; ox <= 1; ++ox) {
-                uint32_t begin, end;
-                CellRange(CellKey(cx + ox, cy + oy), begin, end);
+                uint32_t begin, end, ci;
+                if (!CellRange(CellKey(cx + ox, cy + oy), begin, end, ci)) continue;
+                if (!(cellInfos_[ci].teams & f.teamMask) && !cellInfos_[ci].hasNoMeta)
+                    continue;
                 for (uint32_t i = begin; i < end; ++i) {
+                    if (FastReject(items_[i].bits, f)) continue;
                     uint32_t entRaw = items_[i].ent;
                     entt::entity ent = (entt::entity)entRaw;
-                    if (!PassFilter(scene, entRaw, f)) continue;
+                    if (!PassSlow(scene, entRaw, f)) continue;
                     const Transform2D* tf = scene.Registry().try_get<Transform2D>(ent);
                     if (!tf) continue;
                     // 精确：点到射线参数 t̂ 与垂距

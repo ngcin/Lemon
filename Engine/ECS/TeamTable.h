@@ -33,6 +33,16 @@ public:
     bool Hostile(uint32_t a, uint32_t b) const {
         return Relation(a, b) == TeamRelation::Hostile;
     }
+    /// team 的全部敌对队位掩码（查询侧 QueryFilter.teamMask 预过滤用——
+    /// 行内 32 字节顺序读，一次调用 ~免费；回调内 Hostile 复核保留）
+    uint32_t HostileMask(uint32_t team) const {
+        if (team >= kMaxTeams) return 0;
+        uint32_t mask = 0;
+        const uint8_t* row = &rel_[team * kMaxTeams];
+        for (uint32_t t = 0; t < kMaxTeams; ++t)
+            if (row[t] == (uint8_t)TeamRelation::Hostile) mask |= 1u << t;
+        return mask;
+    }
     bool SoftCollide(uint32_t a, uint32_t b) const {
         return Relation(a, b) == TeamRelation::SoftCollide;
     }

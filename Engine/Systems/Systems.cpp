@@ -557,6 +557,9 @@ void HitboxSystem::Tick(World& world, Scene& scene, float dt) {
         bool consumed = false;
         physics2d::QueryFilter f;
         f.exclude = Scene::FromEntt(ent);
+        // teamMask 预过滤（方案 A）：hostile 掩码入查询层，非敌对候选在
+        // SpatialHash 内联位/整格早退即拒——密团场景免逐候选 Meta 取
+        f.teamMask = teams.HostileMask(projTeam);
         // hitRadius = 有效判定半径全量（SpatialHash reach = radius + probe，probe=0）
         scene.Spatial().OverlapCircle(
             scene, tf.pos, pr.hitRadius, f, 0.0f,
@@ -628,6 +631,7 @@ void HitboxSystem::Tick(World& world, Scene& scene, float dt) {
         uint32_t zoneTeam = hm ? hm->team : 0;
         physics2d::QueryFilter f;
         f.exclude = Scene::FromEntt(ent);
+        f.teamMask = teams.HostileMask(zoneTeam); // 同弹幕侧：密团同队候选整格早退
         scene.Spatial().OverlapCircle(
             scene, tf.pos, hz.radius, f, 8.0f,
             [&](Entity hit, const Transform2D& htf) {

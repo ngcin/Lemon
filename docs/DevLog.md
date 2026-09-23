@@ -5,6 +5,55 @@
 
 ---
 
+## 2026-09-24 · 性能批：Hazard 万怪密团查询热路径——SpatialHash 查询侧两级加速（Perf10k 51.1→12.5ms 同形状）
+
+来源：2026-09-23 模拟人工验收轮的 Perf10k 压测遗留（09 §6.10 注记）——万怪聚堆
+带 Hazard **frameAvg 51.1ms（~19.6fps）**、去 Hazard 17.2ms，~66% 帧时在
+HitboxSystem 的 Hazard 查询。本轮分析与修复：
+
+**根因（代码走读 + 成本对账，非猜测）**：不是查询次数——tickPhase 默认 0（出生
+当帧首跳）+ 连续刷怪 960/s → tick 随出生时刻自然摊开 ≈ 208 查询/帧，无同帧风暴；
+是**单次查询拒绝路径**：万怪 Chase 原点聚成 ~3px 间距密团（数百实体/cell），每次
+`OverlapCircle(reach 32px)` 扫 1~4 格 ~800 候选，其中 ~100% 是必拒的同队怪，而
+拒绝一个候选 = `PassFilter` 取一次 Meta + 回调再取一次 Meta 判 Hostile（两次 entt
+随机访问 ~200ns）——208×800×200ns ≈ 33ms，恰对 51.1−17.2=33.9ms 实测差。
+DevLog 前注"距离平方早退"方向已存在（`r2<=reach²`）且排在两次 Meta 取之后，无效；
+Separation 不炸是因为有 10 邻居截断，Hazard 查询无任何截断。
+
+**修复（方案 A，查询层一处修，引擎级）**：
+- `SpatialHash` Item 内联 team/layer 位（重建时快照自 Meta——运行时零 `Meta.team`
+  突变路径，grep 实证；u64+u32 对齐 padding 复用，Item 仍 16B）：拒绝路径纯顺序
+  数组读，免逐候选 Meta 取；
+- cell 级 team 位图（`CellInfo{teams, hasNoMeta}` 平行数组）：查询前 `teamMask`
+  整格早退——密团格零候选扫描；无 Meta 实体恒放行不入位图（旧语义保持）；
+- `TeamTable::HostileMask(team)`（行内 32 字节扫）：Hitbox 弹幕/Hazard 两查询点
+  传入 hostile 掩码（回调内 Hostile 复核保留，纵深防御）。
+- 语义不变量（差分等价单测钉板）：越界 team/layer 恒不命中、无 Meta 恒放行、
+  掩码查询命中序 ≡ 默认查询 + 回调手过滤逐项一致。
+
+**验收（负向实验先行：播种红字 → 修复绿字）**：bench-survivor 播种 Hazard 化
+（BenchMob 加 Hazard dps 8/radius 24/tick 0.8 对齐 vs-survivor 模板 Mob.prefab；
+玩家 HP 500→1e6 防死亡扰计量；判据加 hazard 证据项 playerHp<1e6）：
+- **红字（修复前）**：frameAvg **52.05ms fps=19 FAIL**；sim 49.41、系统分解
+  **Hitbox avg 36.43ms**（弹幕路径本身 ~0.1ms 量级，几乎全是 Hazard 查询）；
+  hazard 证据 playerHp=275793 生效；
+- **绿字（修复后三跑）**：frameAvg **12.17~12.59ms fps 79~82 PASS**（12.59/
+  12.51/12.17）；**Hitbox 36.43→1.08ms（~34×）**、SpatialHashRebuild 0.52→0.57
+  （Meta 快照 +0.05ms 几乎免费）；alive/waves/anim/hazard 四证据与红字跑逐位
+  一致（playerHp 同为 275793 = Hazard 伤害行为零漂移的直接旁证）。
+- **回归全绿**：engine-tests **13173**（+15：内联位/整格早退/越界/noMeta 钉格/
+  HostileMask/差分等价）；ctest 3/3；**金回放 m5b2 三档原样 replay mismatches=0
+  （零重录——命中集合与回调序零漂移的机械证明，schema 一字不动）**；
+  editor-regression full **13/13**（smoke-ui 首轮即绿，无飘忽）。
+
+**台账口径决策（09 §6.10）**：播种并入而非独立变体档——Hazard 化后判据阈值不动
+（22.2ms），历史行不删，表加红绿两行 + 口径变更注记（批②③同款格式）；"带 Hazard
+模板怪海"自此为 bench-survivor 判据形状（Perf10k 同形状场，无需第二个命令）。
+Pickup 密核扫描观察项维持（Collectible 非 team 语义，掩码不适用——宝石侧查询
+降频/惰性自检属行为变更，仍留单独批）。
+
+---
+
 ## 2026-09-23 · M5 批③：表现层（clip .asset + Animator 帧映射 + 网格切片 + 素材包第一批）
 
 T1–T5 全完（分解 M5-Plan §16–§20）。核心决策六条（D1–D6）：clipId = `.clip` 资产
@@ -2154,3 +2203,66 @@ vs-survivor → Play 到死亡结算），编辑器 M4.8 零文档走查仍悬�
   （修复前必 DRIFTED）。此前 13 步回归没有任何一步覆盖"会话内二次开项目"。
 - **回归**：editor-regression full **13/13**（含新防线 `second-project ids
   identical => OK`）；ctest 3/3。金回放/bench 不经编辑器项目开路径，零扰动。
+
+## 2026-09-23 M5 模拟人工验收轮：svr-test 一整局 + 万级实体压测（Perf10k.scene）
+
+应用户要求对 `demo/svr-test` 做模拟人工测试（M5 验收表口径）+ 新建 scene 压测上万
+物体。**测试经由一个临时注入通道完成**（把 `--smoke-template` 的风筝走位/选卡/
+事件计数按环境变量 `LEMON_SIM` 门控泛化到任意 `--play` 会话——与现网注入同源；
+数据采完后**已按用户指示整体还原**，`EditorApp.cpp` 恢复原样并重建原版二进制，
+以下保留结果与问题记录。后续要做同款自动化需重新评审落地方式）。
+
+### 一局（Main.scene，38400 帧 ≈ 局内 640s 口径）
+
+- **链路全通**：16 波表前 6 波正常推进（WaveStart 事件/波次横幅）；击杀 286、
+  全实体死亡 874、升级 4 次、三选一 4 张全被选（固定序：移速→磁力→射速→穿透，
+  截图可见 PierceBullet 在场）；宝石掉落/磁吸正常（Prefab 实例化日志流）。
+- **死亡结算数学精确**：t=182s 第 6 波阵亡，`286×10+182 = 3042` 分，
+  HUD"★ 新纪录 3042 分！按 R 复活"；`Save.Flush` 落盘 `.lemon/saves/game.sav`
+  （hexdump 核对 `vs.best="3042"`）——判据"死亡结算/最高分存档"通过。
+- **存档回显链**：开局 HUD best 行首现"最高纪录 0"（空档载入）；`--smoke-template`
+  同日复跑全 OK（`saveLoad=YES`：预置 123 → EnterPlay 载入 → HUD 回显；
+  hud/wave/cards(seen/pick/hidden)/saveFile/second-project ids 全 OK）——
+  载入→回显机制机械证明在案。
+- **问题 1（待真人复验）：R 复活未触发**。死亡 60 帧后注入单帧 bit5（Confirm）
+  一次，over 行持续到局末、HP 恒 0——复活未发生。script-tests 有 Confirm 位探针
+  （批④判据），疑点在"单帧点按"与"真人按住"的差异或冻结期（Time.Scale=0）采样
+  时序；**真人开一局死一次按住 R 即可定论**。
+- **问题 2（验收观察点）：自动化口径未到 Boss 波**。风筝走位（绕原点 r≈200 匀速
+  圆）在第 6 波（t≈182s）承压阵亡，波表 16 波/t=565s Boss 未达。真人走位变向+
+  三选一取舍更优，10 分钟口径仍归真人验收；自动化只能证"前中段链路健康"。
+- **备注**：程序化 EnterPlay 不切 GameView 前台（`tabFocusPending_` 仅交互路径
+  置位）——HUD 不入自动化截图，真人路径无此问题；自动化启动若上次会话 autosave
+  较新会挂"崩溃恢复"模态无人应答（不阻 sim，观感问题）。
+
+### 万级实体压测（新建 `demo/svr-test/Scenes/Perf10k.scene`）
+
+场景 = 玩家（无脚本、HP 1e6，防脚本侧冻结干扰计量）+ 4 个 WaveDirector 并行刷怪
+（每导 4 条目 × interval 0.004 = 240/s/导，聚合 960/s；capAlive 闸门；4 导程
+range 320–560 环）。**功能验证全过**：载入 5 实体、Play 往返逐字节一致、
+alive 精准顶格 12005（=12000 闸门+玩家+4 导）、视口可见 12001、零 ImGui 错误。
+
+计时（本机、同进程口径；Fifo 但帧时远超 vsync 上限即真实负载；官方
+`--bench-survivor` 同机对照 PASS：alive 10435 / frameAvg 16.44ms / sim 13.98ms）：
+
+| 场景 | alive | 帧均 | fps | vs 22.2ms 预算 |
+|---|---|---|---|---|
+| Perf10k（capAlive 12000） | 12005 | 70.9ms | ~14 | 超预算 3.2× |
+| Perf10kCapped（10000） | 10004 | 51.1ms | ~19.6 | 超预算 2.3× |
+| 同上但 **Mob.prefab 去掉 Hazard** | 10006 | **17.2ms** | ~58 | **达标** |
+| 官方 bench-survivor（怪无 Hazard） | 10435 | 16.44ms | 61 | PASS |
+
+- **归因（对照实验，内容层变量）**：帧时的 ~66%（51.1→17.2ms）来自
+  **Mob.prefab 自带的 Hazard 组件**（dps 8/radius 24/tick 0.8）——万怪"聚堆成球"
+  （全部 Chase 向原点静止玩家）拓扑下，每怪近邻查询 = O(N×局部密度) 放大器。
+  bench 怪**不带** Hazard，这正是同数量级下 3× 差距的全部来源。
+- **发现（记 M6 优化，未改任何引擎代码）**：HazardSystem 在高密度场是主 sim 成本。
+  方向：按 `tickInterval` 错峰分帧（0.8s tick 本就允许每怪 1/48s 粒度）、查询
+  距离平方早退、或按格聚合一次查询多怪共享。模板场景"怪海围玩家"是该系统真实
+  工作形状，**M5 判据的 22.2ms 预算对"带 Hazard 的模板怪 10k"不成立**——
+  09 §6.10 台账若加"模板怪海"基线行应注明口径差。
+- 实体数边际成本 ~21µs/实体/帧（10004→12005 线性）；本次全部为内容层实验
+  （副本 `/tmp/lemon-svr-run` 内改 prefab/scene），**真实工程只新增
+  `Scenes/Perf10k.scene`，引擎零改动**。
+- 附：`--scene` 直开无选中实体 → smoke overlay 像素断言（sel/handle≥20）FAIL 属
+  冒烟前置不满足，非缺陷；不影响 playAlive/往返/错误数等其余断言。
