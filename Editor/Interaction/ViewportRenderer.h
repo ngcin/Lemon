@@ -94,6 +94,10 @@ public:
     void Init(rhi::Device& device, ImGuiBackend& ui);
     void OnDeviceRecreated(rhi::Device& device); // 设备丢失回调（图集/管线/RT 重建）
 
+    /// 换项目复位后重绑程序化页的 ImGui 纹理（M5 批④后修②：Reset+Build 产出新
+    /// 页句柄，paletteIconTex_/iconTex_ 的旧绑定须注销重注册——防泄漏/防采样旧句柄）
+    void RebindProceduralIcons();
+
     /// 每渲染帧（BuildUI 之后调用：overlay 已由面板注入；ImGui::Image 已引用 RT）
     void Render(rhi::CommandList& cl, EditorContext& ctx);
 

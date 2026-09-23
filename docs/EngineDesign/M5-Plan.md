@@ -1105,3 +1105,11 @@ mismatches=0）。②**AssetBrowser HiDPI 末列裁剪**——列数按硬码 92
 文件名 `PushTextWrapPos` 钉宽。回归：ctest 3/3（script-tests 1485，+8
 TestPlayDomainReset）+ 金回放三档 mismatches=0 + regression full 13/13。用户
 问询三项（编辑器动画创建 / 新技能作者路径 / 波次数值外置配置表）登记 08 §M6。
+
+**批④后修③（2026-09-23 用户实测 demo/svr-test：玩家/怪物全不显示）**：换项目
+spriteId 基号漂移——`OpenProjectPipeline` 基号取注册表现存计数+1，而注册表跨
+项目累计不复位；同会话第二个项目打开 → 全体 id 后移上个项目精灵数（实测 +31）
+→ 场景烘焙引用悬空。修 = 换项目注册表复位（Reset+Build+ClearPages+ImGui 重绑，
+设备重建同配方），基号恒定；用户项目删 manifest 重开自愈（hero 116==116）；
+回归防线 = smoke-template 同进程第二拷贝记账全等断言。regression 13/13。
+细节 DevLog 同日条目 + 06 §2 修订注记。

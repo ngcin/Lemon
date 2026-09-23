@@ -313,13 +313,20 @@ void ViewportRenderer::OnDeviceRecreated(rhi::Device& device) {
     assets_.Registry().Reset();
     assets_.Build(device); // 程序化页/字体页按原序重建 → spriteId 1..N 复原；
     // 导入页由 EditorApp 的 asset-gpu 回调按 DB 记账号升序重导入接续编号
-    if (ui_) {
-        paletteIconTex_ = ui_->RegisterViewportTexture(assets_.Page().id);
-        iconTex_ = ui_->RegisterViewportTexture(assets_.IconPage().id);
-    }
+    RebindProceduralIcons();
     const rhi::Format rtFormat = rhi::Format::RGBA8Unorm;
     sceneBatcher_.Init(device, 0, 1, rtFormat, /*ringSlot=*/0); // 管线经磁盘缓存重建；实例环形缓冲重建
     gameBatcher_.Init(device, 0, 1, rtFormat, /*ringSlot=*/1);
+}
+
+void ViewportRenderer::RebindProceduralIcons() {
+    // 设备重建路径（旧纹理已死，注销旧 id 仅防句柄表残留）与换项目复位路径
+    // （旧纹理活体，注销后再释放由 ProceduralAtlas 重建覆盖）共用
+    if (!ui_) return;
+    if (paletteIconTex_) ui_->UnregisterViewportTexture(paletteIconTex_);
+    if (iconTex_) ui_->UnregisterViewportTexture(iconTex_);
+    paletteIconTex_ = ui_->RegisterViewportTexture(assets_.Page().id);
+    iconTex_ = ui_->RegisterViewportTexture(assets_.IconPage().id);
 }
 
 void* ViewportRenderer::EnsureRenderTarget(uint32_t idx, uint32_t wantW, uint32_t wantH,

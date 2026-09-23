@@ -168,6 +168,16 @@ void AssetGpuCache::Evict(uint64_t guid) {
                                (unsigned long long)guid);
 }
 
+void AssetGpuCache::ClearPages() {
+    // 低频路径（换项目）同热重导入尺寸变化口径：在途帧可能采样旧页
+    if (device_ && !pages_.empty()) device_->WaitIdle();
+    for (const Page& p : pages_) {
+        if (p.thumb && ui_) ui_->UnregisterViewportTexture(p.thumb);
+        if (p.tex.IsValid() && device_) device_->DestroyTexture(p.tex);
+    }
+    pages_.clear();
+}
+
 void AssetGpuCache::RebuildAll(rhi::Device& device) {
     device_ = &device;
     pages_.clear(); // 纹理已随设备丢失销毁；登记号已由 AtlasRegistry.Reset 清空

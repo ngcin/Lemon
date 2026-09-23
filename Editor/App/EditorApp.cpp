@@ -1949,7 +1949,17 @@ bool EditorApp::OpenProjectPipeline(const std::string& projectRoot) {
     // 会话内切换支持（M4.6）：Start 对已运行 watcher 是 no-op，必须先停旧根
     watcher_.Stop();
     scriptWatcher_.Stop();
-    // spriteId 基址 = 程序化图集登记后首个可用号（跨会话稳定由 manifest 记账）
+    // [M5 批④后修②] 换项目 = 图集注册表复位到内置页。此前基号随"本会话先前
+    // 打开过的项目"累计漂移（demo/svr-test 实测：作第二个项目打开 → 全体
+    // spriteId 后移上个项目的精灵数 31 → 场景烘焙引用悬空、玩家/怪物全不渲染；
+    // 自动重开上个项目的新建向导流是稳定触发路径）。与设备重建回调同配方：
+    // Reset + Build 复原内置页（spriteId 1..N 恒定）→ 下方按 DB 记账号接续导入。
+    // 首次打开 = 幂等重建（同号）；既有项目的 id 稳定性仍由 manifest 记账保证。
+    viewport_->Assets().Registry().Reset();
+    viewport_->Assets().Build(*device_);
+    viewport_->RebindProceduralIcons();
+    gpuAssets_.ClearPages();
+    // spriteId 基址 = 程序化图集登记后首个可用号（恒定；跨会话稳定由 manifest 记账）
     const uint32_t spriteIdBase = viewport_->Assets().Registry().SpriteCount() + 1;
     if (!ctx_.Assets().OpenProject(projectRoot, spriteIdBase)) return false;
     gpuAssets_.Init(*device_, ui_.get(), &viewport_->Assets().Registry(),
@@ -3807,6 +3817,47 @@ int EditorApp::Run(const EditorLaunch& launch) {
             std::printf("[lemon] smoke-template: saveFile=%s => %s\n",
                         savOk ? "YES" : "NO", savOk ? "OK" : "FAIL");
             if (!savOk) exitCode = 1;
+            // 批④后修②回归防线：同进程再开第二个模板拷贝 → spriteId 记账必须与
+            // 第一个逐项一致（换项目注册表复位）。修复前第二个项目整体后移上个
+            // 项目的精灵数 → 场景烘焙引用悬空、玩家/怪物全不渲染（demo/svr-test
+            // 实测 +31；自动重开上次项目后走新建向导 = 稳定触发路径）。
+#ifdef LEMON_SCRIPT_DIR
+            {
+                auto SnapshotIds = [](const AssetDatabase& db) {
+                    std::vector<std::pair<std::string, std::string>> m;
+                    for (const AssetEntry& e : db.Entries())
+                        if (e.type == AssetType::Sprite && !e.missing)
+                            m.emplace_back(e.relPath,
+                                           std::to_string(e.spriteId) + "/" +
+                                               std::to_string(e.sliceBase) + "+" +
+                                               std::to_string(e.sliceCount));
+                    std::sort(m.begin(), m.end());
+                    return m;
+                };
+                const auto ids1 = SnapshotIds(ctx_.Assets());
+                namespace fs = std::filesystem;
+                const fs::path tmp2 =
+                    fs::temp_directory_path() /
+                    ("lemon-smoke-template2-" + std::to_string(::getpid()));
+                std::error_code ec2;
+                fs::remove_all(tmp2, ec2);
+                ProjectDesc d2;
+                d2.parentDir = tmp2.string();
+                d2.name = "VsSmoke2";
+                d2.sdkDir = LEMON_SCRIPT_DIR;
+                d2.engineVersion = "0.5.0-m5";
+                d2.templateName = "vs-survivor";
+                d2.templateDir = std::string(LEMON_TEMPLATE_DIR) + "/vs-survivor";
+                bool idOk = false;
+                if (const std::string root2 = ProjectWizard::Create(d2);
+                    !root2.empty() && OpenProjectPipeline(root2)) {
+                    idOk = SnapshotIds(ctx_.Assets()) == ids1;
+                }
+                std::printf("[lemon] smoke-template: second-project ids %s => %s\n",
+                            idOk ? "identical" : "DRIFTED", idOk ? "OK" : "FAIL");
+                if (!idOk) exitCode = 1;
+            }
+#endif
         }
         // ---- M4.5 终验（§6 #1/#2/#3/#6/#7 全量化）----
         bool finalOk = true;

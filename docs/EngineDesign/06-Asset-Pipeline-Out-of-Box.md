@@ -78,6 +78,16 @@ MyGame/                                   # 用户项目（升级永不触碰）
 > GPU 纹理保留到重启：登记号仍在 AtlasRegistry，销毁纹理会使引用中的 spriteId 采样
 > 悬空描述符）；体检红字覆盖孤儿 meta / GUID 冲突 / 缺失引用。
 > manifest 记账 spriteId 只增不减 → 已存场景引用不因增删资产漂移。
+> **M5 批④后修②（2026-09-23，demo/svr-test 实测）**：**换项目 = 图集注册表复位到
+> 内置页**（`OpenProjectPipeline`：`Registry().Reset()` + `ProceduralAtlas::Build`
+> + `AssetGpuCache::ClearPages` + ImGui 纹理重绑，设备重建回调同配方）——此前基号
+> 取"注册表现存计数 +1"，而注册表跨项目累计：**同一会话里作第二个项目打开 →
+> 全体 spriteId 后移上个项目的精灵数**（实测 +31）→ 模板场景烘焙引用全悬空、
+> 玩家/怪物全不渲染（自动重开上次项目 + 新建向导 = 稳定触发路径；`--smoke-template`
+> 一直是独立进程首开故从未命中）。复位后基号恒 = 内置页计数 +1（本机构建 104），
+> 无 manifest 的 fresh 项目在任意会话位置逐位可复现；**既有项目漂移自愈 = 删
+> `.lemon/manifest.json` 重开**（场景引用按确定性扫描重记账）。回归防线：
+> smoke-template 末尾同进程再开第二个模板拷贝，spriteId 记账逐项全等断言。
 > **M4.5 补记（2026-09-20）**：资产扫描根由 `Assets/` 扩为**项目根**（本册 §1 布局
 > 对齐）——根级 `Prefabs/` 入索引（prefab 导出/实例化读写改走项目根落位，M4.4 的
 > `Assets/Prefabs/` 落位偏差消除），`Game/Scenes/Data/Builds/obj/bin` 与点目录排除

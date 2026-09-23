@@ -32,6 +32,10 @@ public:
     /// 文件删除（墓碑）：纹理/缩略图释放（spriteId 号保留在 DB；场景引用悬空
     /// 由 Inspector 槽红显——不再渲染占位）。
     void Evict(uint64_t guid);
+    /// 换项目复位（M5 批④后修②）：旧项目导入页整体释放（纹理/缩略图注销）。
+    /// 必须与 AtlasRegistry::Reset 成对——槽位序（firstSlot_+pages_.size()）与
+    /// 新注册表的图集序要在空表上重新对齐，重导入由 OpenProjectPipeline 接续。
+    void ClearPages();
     /// 设备丢失后全量重建（AtlasRegistry.Reset 已清号；按 spriteId 升序重导入
     /// 与程序化页拼接 → 编号复原）
     void RebuildAll(rhi::Device& device);
