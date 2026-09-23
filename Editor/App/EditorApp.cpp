@@ -3993,6 +3993,8 @@ int EditorApp::Run(const EditorLaunch& launch) {
     ui_->Shutdown();
     SetLogSink(nullptr, nullptr);
     device_->SavePipelineCache();
+    viewport_.reset(); // 视口（含合批器）须先于设备拆毁：SpriteBatcher 析构反注册
+                       // 设备丢失回调（M9），设备已亡 = 解引用死指针（实测 SIGSEGV）
     device_.reset();
     window_.reset();
     return exitCode;

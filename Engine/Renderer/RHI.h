@@ -193,8 +193,10 @@ public:
     void SimulateDeviceLoss();                // 验收钩子：走与真实丢失同一条恢复路径
     // 恢复时按注册顺序调用（纹理/缓冲重上传、管线经缓存重建）；游戏态不丢。
     // 返回 token；拥有者析构时 RemoveRecreateCallback 反注册（M9：捕获 this 的
-    // 回调若不摘除，拥有者先于设备销毁后设备丢失重建 = UAF）。契约：注册者
-    // 生命周期必须短于 Device（编辑器/样例的成员序天然满足）。
+    // 回调若不摘除，拥有者先于设备销毁后设备丢失重建 = UAF）。契约：反注册方
+    // 必须在 Device 存活期间析构——编辑器 Run() 收尾显式 viewport_.reset() 先于
+    // device_.reset()（成员声明序不救：Run 内显式 reset 早于成员析构）；样例栈序
+    // 天然满足。
     using RecreateCallbackId = uint64_t;
     RecreateCallbackId AddRecreateCallback(const char* name, std::function<void(Device&)> fn);
     void RemoveRecreateCallback(RecreateCallbackId id);
