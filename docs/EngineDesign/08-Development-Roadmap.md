@@ -9,14 +9,14 @@
 
 | 里程碑 | 内容 | 周期 | 出口判据（全部满足才进下一个） |
 |---|---|---|---|
-| **M0 技术验证 spike** ✅ | Vulkan/EnTT/CoreCLR 三大风险各打一枪 | **3 周**（实际 1 天） | ✅ **GO**——全绿（[M0-Go-NoGo.md](./M0-Go-NoGo.md)） |
+| **M0 技术验证 spike** ✅ | Vulkan/EnTT/CoreCLR 三大风险各打一枪 | **3 周**（实际 1 天） | ✅ **GO**——全绿（[M0 Go/No-Go 报告](../Reports/2026-09-18-m0-go-no-go.md)） |
 | **M1 渲染内核** ✅ | RHI + 合批 + 图集 + 粒子 + 位图文本 | 6–8 周（实际 1 天） | ✅（2026-09-18）bench-mow 107fps；GPU 1.52ms；CPU 3.05ms；批数恒 4（[09 §7.5](./09-Testing.md)） |
 | **M2 ECS 运行时** ✅ | 组件目录 + 系统管线 + 空间哈希 + 查询层 + Team + F3 面板 | 4–6 周（实际 1 天） | ✅（2026-09-19）bench-sim 1 万怪 **avg 5.10ms**（判据 ≤8）；回放 5 分钟双档 PASS；11545 checks（含复审轮）（[09 §7](./09-Testing.md)） |
 | **M3 C# 脚本层** ✅ | CoreCLRHost 全量 + 档②批量系统 + 档①脚本组件 + 事件桥 + 异常隔离 + 调试通路（热重载移 M4，[ADR-010](../ADR/ADR-010-M3-Scope-Thread-RNG.md)；ALC 卸载经 M3-2b 实测降级为已知 runtime 限制，同 ADR 修订） | 4–6 周（实际 1 天） | ✅（2026-09-19）bench-script 5k 弹整步 **0.25ms**；100k 净时比 **1.43×**（判据分档见 ADR-010 D5）；回放 18000 帧双档 PASS；毒脚本 60 帧自动禁用不崩；托管分配硬 0（D6）；断点通路 ✅（[09 §7.6](./09-Testing.md)） |
-| **M4 编辑器 v1** ✅ | 面板框架 + SceneView + Inspector + Play 沙盒 + Undo + 资产浏览器 + C# 热重载（自 M3 移入，ADR-010） | 6–8 周（实际 1 天） | ✅（2026-09-20）判据链全量化 PASS：零代码判据场景 Play fps 59（≥45）、热重载 1.3s ≤2s StateBag 续跑 66/66、进出 4.3/0.4ms 逐字节一致、冷启 367ms（[M4-Editor-Plan.md](./M4-Editor-Plan.md)） |
-| **M4.6 编辑器可用性加固** | 会话闭环（项目中心最小形态/最近项目/目录选择）+ 编辑效率件（重命名/拖拽导入/新建脚本/编译提示）+ 交互路径冒烟（触发：M4 收官当日真人实测 3 阻断 bug，已修） | 2–2.5 周（M4.6a ✅ `2273e7f`；M4.6b ✅ 2026-09-20；交互冒烟 = `--smoke-ui` 21/21 ✅ 2026-09-21；30 分钟真人走查待收官执行） | 新用户 30 分钟零命令行零文档完成 新建项目→导入→摆场景→Play→保存→关闭；交互冒烟 errors=0（[M4.6-Editor-Usability-Plan.md](./M4.6-Editor-Usability-Plan.md)） |
-| **M4.7 编辑器 UI 精美化** ✅ | overlay 通道 P0 修复（网格/选框/Gizmo/标签四要素）+ 主题 token + 自绘图标 16 枚 + 工具栏三段式 + 网格 v2/v3 + 视口交互 v2（一段式拖拽/轴约束/Esc 取消）+ GameView Aspect + M4.7d 可选件（label-scrub/Console 折叠/面包屑/Layout 下拉） | 1–2 周（P0/a/b/c + d 全批次 ✅ 2026-09-21） | ✅（2026-09-21）批次判据全过：`--screenshot` 四要素可见、一段式拖拽 + Esc 恢复、全库无散落 ImVec4 字面量、`tools/editor-regression.sh` **11/11**；真人手测七轮暴露问题全修（1–5 轮 6 大类 14 项归档 [M4.7-HandTest-Fix-Summary.md](./M4.7-HandTest-Fix-Summary.md)；6–7 轮见 DevLog 同日两节）（[M4.7-Editor-UI-Polish-Plan.md](./M4.7-Editor-UI-Polish-Plan.md)） |
-| **M4.8 编辑器收官批** | 组件级重置 + File 最近场景 + 冒烟状态隔离（ini 漂移根治）+ 30 分钟零文档走查收官（触发：手测指南 C–L 段全量走查，修复批 `bd3ad93` 之后） | 2–4 天（a/b/c ✅ 2026-09-22；走查待用户执行） | 走查全绿 + smoke-drag 连跑 10 次全绿 + 回归 11/11（[M4.8-Editor-Closeout-Plan.md](./M4.8-Editor-Closeout-Plan.md)） |
+| **M4 编辑器 v1** ✅ | 面板框架 + SceneView + Inspector + Play 沙盒 + Undo + 资产浏览器 + C# 热重载（自 M3 移入，ADR-010） | 6–8 周（实际 1 天） | ✅（2026-09-20）判据链全量化 PASS：零代码判据场景 Play fps 59（≥45）、热重载 1.3s ≤2s StateBag 续跑 66/66、进出 4.3/0.4ms 逐字节一致、冷启 367ms（[Plans/M4/M4.md](../Plans/M4/M4.md)） |
+| **M4.6 编辑器可用性加固** | 会话闭环（项目中心最小形态/最近项目/目录选择）+ 编辑效率件（重命名/拖拽导入/新建脚本/编译提示）+ 交互路径冒烟（触发：M4 收官当日真人实测 3 阻断 bug，已修） | 2–2.5 周（M4.6a ✅ `2273e7f`；M4.6b ✅ 2026-09-20；交互冒烟 = `--smoke-ui` 21/21 ✅ 2026-09-21；30 分钟真人走查待收官执行） | 新用户 30 分钟零命令行零文档完成 新建项目→导入→摆场景→Play→保存→关闭；交互冒烟 errors=0（[M4.6 计划](../Plans/M4/2026-09-20-m4.6-usability.md)） |
+| **M4.7 编辑器 UI 精美化** ✅ | overlay 通道 P0 修复（网格/选框/Gizmo/标签四要素）+ 主题 token + 自绘图标 16 枚 + 工具栏三段式 + 网格 v2/v3 + 视口交互 v2（一段式拖拽/轴约束/Esc 取消）+ GameView Aspect + M4.7d 可选件（label-scrub/Console 折叠/面包屑/Layout 下拉） | 1–2 周（P0/a/b/c + d 全批次 ✅ 2026-09-21） | ✅（2026-09-21）批次判据全过：`--screenshot` 四要素可见、一段式拖拽 + Esc 恢复、全库无散落 ImVec4 字面量、`tools/editor-regression.sh` **11/11**；真人手测七轮暴露问题全修（1–5 轮 6 大类 14 项归档 [手测修复归档](../Reports/2026-09-21-m4.7-handtest-fix-summary.md)；6–7 轮见 DevLog 同日条目）（[M4.7 计划](../Plans/M4/2026-09-21-m4.7-ui-polish.md)） |
+| **M4.8 编辑器收官批** | 组件级重置 + File 最近场景 + 冒烟状态隔离（ini 漂移根治）+ 30 分钟零文档走查收官（触发：手测指南 C–L 段全量走查，修复批 `bd3ad93` 之后） | 2–4 天（a/b/c ✅ 2026-09-22；走查待用户执行） | 走查全绿 + smoke-drag 连跑 10 次全绿 + 回归 11/11（[M4.8 计划](../Plans/M4/2026-09-22-m4.8-closeout.md)） |
 | **M5 玩法 + VS 模板** | 技能/弹幕/命中/拾取/导演/HUD/存档 + vs-survivor 模板；**实体多脚本**（ScriptBox 多实例 + `.scene` `scripts[]` + Inspector 列表 + SDK `AddComponent<LemonBehaviour>` 路由，2026-09-22 用户实测登记；**批④ 未落地**——模板以单 PlayerBehaviour 规避，挂 M6 重排）；**编辑器后置项随消费者**：字段级重置（先补字段默认值元数据）、tag 资产化+下拉（等 FindByTag 用法）、Select 工具多选组操作、dotnet build 异步化（观察项转正评估） | 6–8 周 | **10 分钟完整一局可玩**（批④ 2026-09-23 代码面完成：vs-survivor 模板 + `--smoke-template` 机械链 PASS；真人 10 分钟一局验收待用户执行）；**压测 B 达标**（1 万怪 ≥45fps ✅）；**Play 调参 ADR**（ADR-011 显式不回灌 + Inspector 横幅 ✅） |
 | **M6 Tilemap + TD 模板** | Tilemap/自动瓦片/FlowField/波次 + tower-defense 模板 | 6–8 周 | TD 模板 10 波通关；千怪走流场 CPU ≤ 2ms |
 | **M7 发布管线** | packager + .baked + Steam + 存档云同步 | 4 周 | vs-survivor 一键出 Win 包 + Steam depot 上传成功；安装即玩 |
@@ -27,7 +27,7 @@
 ## 1. M0 技术验证 spike（Go/No-Go 关卡，3 周）
 
 > **✅ 2026-09-18 完成，判定 GO**——三判据全部达标（10 万精灵 270fps / C# 批量开销比 1.5× / 1 天完成三大 spike，验证层零错误）。
-> 实测数据与十条教训见 [M0-Go-NoGo.md](./M0-Go-NoGo.md)。遗留：跨 UCO 调用的 ALC 卸载 pin → M3 用 DomainManager 托管线程方案解决（已验证可行）。
+> 实测数据与十条教训见 [M0 Go/No-Go 报告](../Reports/2026-09-18-m0-go-no-go.md)。遗留：跨 UCO 调用的 ALC 卸载 pin → M3 用 DomainManager 托管线程方案解决（已验证可行）。
 > 回退保险解除（不再依赖 Prowl2D 回退）。
 
 > 目标：用最小代码验证三大技术风险。**任一 No-Go → 正式回退 Prowl2D 路线**（回退决策记录进 ADR-000）。
@@ -83,9 +83,9 @@ CoreCLRHost 全量（域线程模型，ADR-010）→ SDK 核心子集（~50 导�
 面板框架 → Hierarchy/Inspector/AssetBrowser/Console → SceneView（相机/Gizmo/拾取）→ Play 沙盒 + Undo → C# 热重载（文件监视 + StateBag 迁移 + ≤2s，ADR-010 自 M3 移入）→ 模式栈/焦点仲裁（Editor-RPG2D 拷贝）→ 资产导入器 + manifest → 新建项目向导（blank 模板）。
 **验收**：总表判据（纯编辑器搭出刷怪场景）+ 编辑器冷启动 < 2s + Play 进出 < 0.5s/0.3s。
 > **✅ 2026-09-20 完成**（判据数据见总表行）。收官追加两轮：**M4.6 可用性加固**（会话闭环 +
-> 编辑效率 + 交互冒烟，[M4.6-Editor-Usability-Plan.md](./M4.6-Editor-Usability-Plan.md)）与
-> **M4.7 UI 精美化**（P0/a/b/c/d 全批次，[M4.7-Editor-UI-Polish-Plan.md](./M4.7-Editor-UI-Polish-Plan.md)），
-> 手测修复归档 [M4.7-HandTest-Fix-Summary.md](./M4.7-HandTest-Fix-Summary.md)。阶段正式关闭仅剩
+> 编辑效率 + 交互冒烟，[M4.6 计划](../Plans/M4/2026-09-20-m4.6-usability.md)）与
+> **M4.7 UI 精美化**（P0/a/b/c/d 全批次，[M4.7 计划](../Plans/M4/2026-09-21-m4.7-ui-polish.md)），
+> 手测修复归档 [Reports/2026-09-21-m4.7-handtest-fix-summary.md](../Reports/2026-09-21-m4.7-handtest-fix-summary.md)。阶段正式关闭仅剩
 > 真人验收动作：30 分钟零文档走查 + 录屏（清单见
 > [Editor-Manual-Test-Guide.md](./Editor-Manual-Test-Guide.md) §5）。
 
@@ -162,7 +162,7 @@ CI 每日跑 bench-mow/bench-sim，数字写入构建报告（性能回退 > 10%
 
 ## 6. 节奏与追踪
 
-- **周循环**：周一排 3 个以内的周目标（对齐里程碑条目）；周五 GUI 冒烟 + bench 数字记录进 `docs/DevLog.md`。
+- **周循环**：周一排 3 个以内的周目标（对齐里程碑条目）；周五 GUI 冒烟 + 事件与新基线在 `docs/DevLog/` 新增条目。
 - **ADR**：凡推翻本套文档的决策写 `docs/ADR/ADR-0XX.md`（模板：背景/选项/决定/后果），文档正文加"已由 ADR-0XX 修订"标注。
 - **版本**：M0 起语义化 `0.x`；M7 后 `1.0-preview` 对外可发。
 

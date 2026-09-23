@@ -211,7 +211,7 @@ engine-tests；壳与面板渲染/字体/ID 冲突扫掠 = 基础冒烟；资产
 > **已知 P0 缺陷（修复前相关项跳过）**：Scene 视口 overlay 通道未渲染——网格线、
 > 选中选框、Gizmo 手柄、实体名标签全部不可见（C5/C6 拖拽视觉反馈、E2/E3/E5
 > Gizmo/吸附/F 聚焦的可见性暂无法验收）。详见
-> [M4.7-Editor-UI-Polish-Plan.md §2.6](./M4.7-Editor-UI-Polish-Plan.md)。
+> [M4.7 计划 §2.6](../Plans/M4/2026-09-21-m4.7-ui-polish.md)。
 
 - 新面板/图集切图/TilePalette/动画编辑器（M5/M6，M4-Plan §1 Out 清单）；框选多选（M5+）。
 - 已登记观察项：切项目 spriteId 红字自愈（`spriteId 记账漂移`——自愈重指是**设计行为**，

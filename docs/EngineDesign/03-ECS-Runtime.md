@@ -164,7 +164,7 @@ Neighbors(pos, radius, cb)                  // 分离力专用（迭代器形式
 > 通道随批③ clip 一并定，`onRagePhase`（狂暴相位）留后续波。M6 波次表编辑器在
 > 组件数据上盖专业 UI（增删波/条目、prefab 拖拽）。
 
-**状态机（顺序相位语义；决策见 M5-Plan §11.2 D3–D6）**：
+**状态机（顺序相位语义；决策见 M5.md §11.2 D3–D6）**：
 - 每导演实体 `time += dt`（缩放 dt——timeScale=0 冻结波次）；`time ≥ waves[i].startTime`
   → 波生效：发 **WaveStart**、重置运行时；波内条目按 `interval/rampMult` 节拍出生
   （每条目每 tick 至多 1，capAlive 顶格持币待发）；
@@ -207,7 +207,7 @@ clipId = `.clip` 资产 GUID 低 32 位（prefabId 同款映射约定）；编�
   clip.loop 仅档面默认。
 - `SpriteRenderer` 可缺 = 纯计时推进；在场则 `sr.spriteId = frames[curFrame]`。
 - **无 clip（clipId=0/表未命中）= M2 旧算术逐位保留**（time 推进 + 占位周期 1.0
-  回绕）——既有场景/金档零漂移（M5-Plan §18 零重录前提）；RNG 零消费。
+  回绕）——既有场景/金档零漂移（M5.md §18 零重录前提）；RNG 零消费。
 
 ## 9. Team 势力系统（照搬 yami `Data/teams.json` schema）
 

@@ -2,9 +2,9 @@
 
 > 目标：Unity 式工作流（Hierarchy / Inspector / Scene 视口 / Play-Stop），但轻量、秒开、无工程化负担；与运行时**同源双入口**，单一数据事实源，杜绝 yami 的"编辑器预览与实机两套实现"漂移。
 > 骨架：Luma 编辑器面板框架（MIT 可移植）+ MoteurJV 的 Play 快照沙盒 + Prowl2D 的 Undo 属性级双轨/Prefab 模式（ADR-009）+ Editor-RPG2D 三件套交互小件（开放署名，可拷）。
-> **M4 实施详细规划已定稿（2026-09-19）：[M4-Editor-Plan.md](./M4-Editor-Plan.md)**（面板集冻结/界面规格/子阶段分解/验收矩阵/砍单序）。本册保持设计总册地位。
-> M4 收官后追加轮（2026-09-20 定稿）：**M4.6 可用性加固见 [M4.6-Editor-Usability-Plan.md](./M4.6-Editor-Usability-Plan.md)**（会话闭环 + 编辑效率 + 交互路径回归）。
-> **M4.7 UI 精美化见 [M4.7-Editor-UI-Polish-Plan.md](./M4.7-Editor-UI-Polish-Plan.md)**（2026-09-21 P0/a/b/c/d 全批次完成：overlay 通道修复/主题 token/自绘图标/视口交互 v2；手测修复归档 [M4.7-HandTest-Fix-Summary.md](./M4.7-HandTest-Fix-Summary.md)）。
+> **M4 实施详细规划已定稿（2026-09-19）：[Plans/M4/M4.md](../Plans/M4/M4.md)**（面板集冻结/界面规格/子阶段分解/验收矩阵/砍单序）。本册保持设计总册地位。
+> M4 收官后追加轮（2026-09-20 定稿）：**M4.6 可用性加固见 [Plans/M4/2026-09-20-m4.6-usability.md](../Plans/M4/2026-09-20-m4.6-usability.md)**（会话闭环 + 编辑效率 + 交互路径回归）。
+> **M4.7 UI 精美化见 [Plans/M4/2026-09-21-m4.7-ui-polish.md](../Plans/M4/2026-09-21-m4.7-ui-polish.md)**（2026-09-21 P0/a/b/c/d 全批次完成：overlay 通道修复/主题 token/自绘图标/视口交互 v2；手测修复归档 [Reports/2026-09-21-m4.7-handtest-fix-summary.md](../Reports/2026-09-21-m4.7-handtest-fix-summary.md)）。
 
 ---
 
@@ -48,7 +48,7 @@ v1 面板清单：
 
 布局持久化（ImGui ini + 面板开关状态进项目 `.lemon/`，不进资产目录）。
 
-> M4 决议（2026-09-19）：**面板集冻结为核心 7**（Hierarchy/Inspector/SceneView/GameView/AssetBrowser/Console/Profiler），上表 TilePalette/AnimationEditor/ParticleEditor/TeamEditor/DirectorEditor 后移 M5/M6；**窗口形态 = 单 OS 窗口 docking**（multi-viewport 与 GameView 分屏推 M5+）。见 M4-Editor-Plan §1/§8。
+> M4 决议（2026-09-19）：**面板集冻结为核心 7**（Hierarchy/Inspector/SceneView/GameView/AssetBrowser/Console/Profiler），上表 TilePalette/AnimationEditor/ParticleEditor/TeamEditor/DirectorEditor 后移 M5/M6；**窗口形态 = 单 OS 窗口 docking**（multi-viewport 与 GameView 分屏推 M5+）。见 M4.md §1/§8。
 > M4.7c 修订（2026-09-21）：GameView **Aspect 下拉**（Free/16:9/4:3/1:1 letterbox）已交付；分屏与 multi-viewport 维持 M5+。
 > M5 批①（2026-09-22）：GameView **Game RT UI 通道**已交付——Play 时画 `World.RtUi` 定长 8 槽
 > （C# `Lemon.Ui.Set(key, text, frac)` 写入；左上角文本 + frac≥0 附进度条）。M8 完整 HUD
@@ -112,9 +112,9 @@ bool SceneAcceptsInput() { return Element_pressed == nullptr || Element_pressed 
 > 快照器即引擎序列化器（03 §13）——Play/Stop 沙盒与存档/场景文件同一份代码，一处优化全局受益。属性级 Undo 的 PropertyRecord 也由同一序列化器生成（字段级粒度）。
 
 **Play 中编辑**：v1 禁止改 Edit World（提示"Stop 后可改"）；v1.x 提供"Play 中改动选择回灌"（记录 Play 侧 diff，Stop 时勾选回灌）——这是 VS 类调参的核心爽点，列 M5 验收项。
-> M4 决议（2026-09-19，细化上一段）：Play 中**允许编辑、改动只落 Play World**（Unity 心智，Stop 即丢，无确认），Edit World 语义不变；Undo 在 Play 中禁用；回灌仍属 M5。验收 = Stop 后序列化与进 Play 前快照逐字节一致。见 M4-Editor-Plan §2.4/§3.4。
+> M4 决议（2026-09-19，细化上一段）：Play 中**允许编辑、改动只落 Play World**（Unity 心智，Stop 即丢，无确认），Edit World 语义不变；Undo 在 Play 中禁用；回灌仍属 M5。验收 = Stop 后序列化与进 Play 前快照逐字节一致。见 M4.md §2.4/§3.4。
 >
-> 保存与崩溃恢复（M4 新增决议，原设计空白）：脏标记 + Ctrl+S + 关闭确认 + 定时自动备份（`.lemon/autosave/`）与启动恢复。见 M4-Editor-Plan §3.8。
+> 保存与崩溃恢复（M4 新增决议，原设计空白）：脏标记 + Ctrl+S + 关闭确认 + 定时自动备份（`.lemon/autosave/`）与启动恢复。见 M4.md §3.8。
 
 ## 5. Inspector：反射注册表驱动
 
@@ -133,7 +133,7 @@ struct Chase { LEMON_FIELD(speed, Range{0,500}); LEMON_FIELD(aggroRange); LEMON_
   （AssetRef）同模式先例。
 - **C# 脚本组件的 Inspector**：SDK 侧 `[ShowInInspector]` + 字段特性经元数据通道导出，编辑器绘制同样走注册表路径（C# 组件与 C++ 组件在 Inspector 里体验一致）。
 - **Prefab 覆盖与头栏（ADR-009，PrefabLink 驱动，03 §2）**：改过字段蓝标 + 逐字段 Revert；组件头 Prefab 栏 Apply / Revert / Break / Select（Prowl2D PrefabUtility 模式）——v1 核心（M4）。
-  > M4 范围修订（2026-09-19）：M4 做最小集（实例化/Apply/Break/整体 Revert）；**逐字段 override 蓝标列 M4 砍单候补首位**（富余则做，否则移 M5 记 ADR）。见 M4-Editor-Plan §3.9。
+  > M4 范围修订（2026-09-19）：M4 做最小集（实例化/Apply/Break/整体 Revert）；**逐字段 override 蓝标列 M4 砍单候补首位**（富余则做，否则移 M5 记 ADR）。见 M4.md §3.9。
 
 ## 6. SceneView 视口工具
 

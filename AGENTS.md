@@ -1,6 +1,6 @@
 # Lemon 引擎 — 主工程说明
 
-**Lemon**：纯 2D 高性能游戏引擎（C++20 + Vulkan 内核 + C# 脚本 + Unity 风格 ECS 编辑器），目标品类 ARPG/塔防/吸血鬼幸存者/增量，坚决不做 3D、不做重物理。当前阶段：**M0–M3 已完成（含 M3.5 anim-smoke）；M4 已完成（M4.0–M4.8，收官走查余项归用户）；M5 玩法 + vs-survivor 模板代码面已收口（2026-09-23 批⓪–批④全勾销：战斗/成长/导演/表现层/存档 + HUD 完整版 + Templates/vs-survivor + ADR-011，分解与完工记录见 [docs/EngineDesign/M5-Plan.md](./docs/EngineDesign/M5-Plan.md)；回归 13/13、金回放零重录、bench-survivor ≥55fps。真人验收两件待用户：M5 模板 10 分钟一局 + M4.8 零文档走查）；余项（多脚本 scripts[] 等）重排 M6**（[08-Development-Roadmap.md](./docs/EngineDesign/08-Development-Roadmap.md)）。
+**Lemon**：纯 2D 高性能游戏引擎（C++20 + Vulkan 内核 + C# 脚本 + Unity 风格 ECS 编辑器），目标品类 ARPG/塔防/吸血鬼幸存者/增量，坚决不做 3D、不做重物理。当前阶段：**M0–M3 已完成（含 M3.5 anim-smoke）；M4 已完成（M4.0–M4.8，收官走查余项归用户）；M5 玩法 + vs-survivor 模板代码面已收口（2026-09-23 批⓪–批④全勾销：战斗/成长/导演/表现层/存档 + HUD 完整版 + Templates/vs-survivor + ADR-011，分解与完工记录见 [docs/Plans/M5/](./docs/Plans/M5/M5.md)；回归 13/13、金回放零重录、bench-survivor ≥55fps。真人验收两件待用户：M5 模板 10 分钟一局 + M4.8 零文档走查）；余项（多脚本 scripts[] 等）重排 M6**（[08-Development-Roadmap.md](./docs/EngineDesign/08-Development-Roadmap.md)）。
 
 > 工作区根目录的目录地图与参考目录只读红线见根 [`../AGENTS.md`](../AGENTS.md)；本文件是 Lemon 工程内的权威指令。
 
@@ -31,11 +31,12 @@ cmake --preset mac && cmake --build --preset mac     # Release；Debug 用 mac-d
 - **SpvToCpp 字节序**：`file(READ HEX)` 是字节序列，拼小端 uint32 每 8 位 hex 需按字节倒序。
 - **SDL3 3.2.14**：Vulkan 函数在 `<SDL3/SDL_vulkan.h>`；`SDL_Vulkan_GetInstanceExtensions(Uint32*)` 单次调用直接返回数组；`SDL_Vulkan_CreateSurface` 返回 bool。
 - **交换链同步**：present 信号量按交换链图像持有 + acquire 走 fence-only（spike-01 已验证层归零，M1 RHI 沿用）。
-- **hostfxr/C# 宿主**：本机 libhostfxr 不导出 `hostfxr_close_handle`（按可选处理）；类库工程不生成 runtimeconfig.json（用模板 `spike/03-csharp/LemonSpike.runtimeconfig.json`）；`load_assembly_and_get_function_pointer` 用托管方法名而非 EntryPoint 名；`MethodHandle.GetFunctionPointer()` 会 pin 可回收 ALC（批量入口用托管委托）；跨 UnmanagedCallersOnly 调用的 ALC 卸载有 pin 遗留（M3 用 DomainManager 常驻托管线程解决，见 `docs/EngineDesign/M0-Go-NoGo.md` 教训 7/8）。
+- **hostfxr/C# 宿主**：本机 libhostfxr 不导出 `hostfxr_close_handle`（按可选处理）；类库工程不生成 runtimeconfig.json（用模板 `spike/03-csharp/LemonSpike.runtimeconfig.json`）；`load_assembly_and_get_function_pointer` 用托管方法名而非 EntryPoint 名；`MethodHandle.GetFunctionPointer()` 会 pin 可回收 ALC（批量入口用托管委托）；跨 UnmanagedCallersOnly 调用的 ALC 卸载有 pin 遗留（M3 用 DomainManager 常驻托管线程解决，见 `docs/Reports/2026-09-18-m0-go-no-go.md` 教训 7/8）。
 - **验证层第一天就开**：Vulkan 改动默认带 `--validate` 自测；两条实测教训（信号量竞态、UNORM/UINT 与 shader `in uint` 匹配）都靠它抓的。
 
 ## 流程约定
 
-- 里程碑出口判据在 `docs/EngineDesign/08-Development-Roadmap.md`，每步必须有**可运行/可量化验收**（"单测全绿≠可用"是 Prowl2D 的教训）；实测数据写入 `docs/EngineDesign/` 对应文档与 `docs/DevLog.md`。
+- 里程碑出口判据在 `docs/EngineDesign/08-Development-Roadmap.md`，每步必须有**可运行/可量化验收**（"单测全绿≠可用"是 Prowl2D 的教训）；实测数据写入 `docs/EngineDesign/` 对应分册，事件流水在 `docs/DevLog/` **新增条目文件**（`YYYY-MM-DD-<slug>.md`，一条目一文件，不追加旧文件）。
+- **文档组织**：五区制（`EngineDesign/` 设计基准 · `Plans/<里程碑>/` 批次计划（一批一文件 + `Status:` 头）· `DevLog/` 事件流水 · `Reports/` 一次性快照 · `Archive/` 冻结历史）；命名与生命周期规约见 [`docs/README.md`](./docs/README.md)，单文件超 ~30KB 即按该规约拆分。
 - 推翻既定设计的决策需在 `docs/ADR/`（ADR-009/010 已有）或设计文档内标注修订。
 - 本仓库（`Lemon/`）是工作区唯一活跃 git 仓库，`docs/` 与本文件已随仓库版本管理；`Prowl2D/` 等参考目录是独立仓库。未经用户明确要求不要 commit。

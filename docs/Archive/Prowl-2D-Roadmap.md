@@ -1,5 +1,7 @@
 # Prowl2D：基于 Prowl 的纯 2D 游戏引擎重构路线图
 
+> **已归档冻结**（2026-09-24 迁入）：Prowl2D 路线已由 Lemon 原生路线（EngineDesign/08-Development-Roadmap.md）取代；本文件仅作历史参照，不再更新、不作现行依据。
+
 > ⚠️ **已归档（2026-09-18）**：主线已转向新引擎 Lemon（C++ + Vulkan + C# 脚本 + ECS 编辑器），设计见 [EngineDesign/](./EngineDesign/00-Executive-Summary.md)。本路线的 M0 已完成并保留为参考；其结论（图集/合批先行、品类优先级、压测场景设计、"GUI 级验收"纪律）已并入新设计文档。若新引擎 M0 技术验证（见 EngineDesign/08）No-Go，则按该文档的回退预案重启本路线 M1。
 
 > 目标玩法类型：**塔防（TD）+ 吸血鬼幸存者类（VS-like）**

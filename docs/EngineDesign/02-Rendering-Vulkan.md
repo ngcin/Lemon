@@ -126,7 +126,7 @@ void main() { oColor = texture(sampler2D(uAtlases[pcf.atlasIndex], uSamplers[pcf
 - **正交相机组件**：`Camera2D { halfSize; pixelPerfect; snapToGrid; bounds; follow; }`；像素完美 = 整数缩放 + 像素网格 snap（像素风默认开）。
 - **跟随**：指数阻尼跟随（smooth-damp 手感）+ 可选 look-ahead 预判；有界钳制 clamp 到世界包围盒（TD/ARPG 刚需）。
 - **编辑器相机自愈**：resize/失焦恢复后自动校正 zoom 与焦点（Prowl2D `[ExecuteAlways]` 自愈教训）；编辑相机与游戏相机共用同一 Camera2D，仅输入来源不同（编辑器走真渲染管线，§1）。
-- **呈现模式**：FIFO 默认、IMMEDIATE 仅 bench；MoltenVK 无 MAILBOX 的现实纳入质量分级逻辑（M0-Go-NoGo §4）。
+- **呈现模式**：FIFO 默认、IMMEDIATE 仅 bench；MoltenVK 无 MAILBOX 的现实纳入质量分级逻辑（M0 Go/No-Go 报告 §4）。
 
 ## 4. Pass 结构与后处理链
 
@@ -227,5 +227,5 @@ struct ParticleGPUData {                   // GPU 平行数组 = 4×vec4，上�
 - §9 预算的"提取 1.0ms"是压测 A 剔除后 1.5k 可见实体口径；bench-mow 10 万**全可见**
   时提取 4.1ms（剔除遍历 O(全实体)），判据按压测 A 构成实测 3.05ms 达标。
 - 热路径优化四件套（批键完整哈希分组 / 计数桶免排序 / sin-cos LUT / 单遍提取+搬运
-  分桶）与三条 MoltenVK 教训记录于 `docs/DevLog.md`。
+  分桶）与三条 MoltenVK 教训记录于 `docs/DevLog/` 对应日期条目。
 - 帧时间看门狗（EMA>250ms 中止）进全部 bench——防"填充率失控拖死桌面"事故重演。

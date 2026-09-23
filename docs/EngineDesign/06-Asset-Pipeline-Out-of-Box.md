@@ -72,7 +72,7 @@ MyGame/                                   # 用户项目（升级永不触碰）
 >   覆盖重切（号不变）。多表 MaxRects 打包/手动切片 UI/AnimationEditor 归 M6。
 > - 第一批素材包入库 `Samples/Assets/yami-dungeon/`（见 §7 注记）。
 
-> **M4.4 落地范围注记（与 05/M4-Editor-Plan §1.2 对齐）**：sprite 族先行——每 PNG
+> **M4.4 落地范围注记（与 05/M4.md §1.2 对齐）**：sprite 族先行——每 PNG
 > 独立纹理页（bindless 槽 2..，上限 kMaxTextureSlots=64）+ 一页一全幅 sprite；
 > 切片/手动划分与 MaxRects 图集打包随消费者落 M5+/M6。删除资产 = **墓碑**（号与
 > GPU 纹理保留到重启：登记号仍在 AtlasRegistry，销毁纹理会使引用中的 spriteId 采样

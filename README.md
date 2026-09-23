@@ -1,16 +1,16 @@
 # Lemon
 
 > 纯 2D 高性能游戏引擎：C++20 + Vulkan 1.3 内核 + C# 脚本 + Unity 风格 ECS 编辑器。
-> 当前进度：**M1 渲染内核完成**（RHI/合批/图集/粒子/位图文本/相机/质量分级，验收数字见
-> `../docs/DevLog.md`）。
+> 当前进度：**M0–M5 代码面完成**（M5 于 2026-09-23 收口，里程碑与验收数字见
+> `docs/EngineDesign/08-Development-Roadmap.md`，事件流水见 `docs/DevLog/`）。
 
 **纯 2D 高性能游戏引擎**：C++20 + Vulkan 渲染内核、C# 脚本（CoreCLR 宿主，混合模型）、
 Unity 风格 ECS 编辑器。目标品类：ARPG / 塔防 / 吸血鬼幸存者 / 增量——海量怪物，割草爽感，
 不做 3D、不做重物理。
 
-设计文档：`../docs/EngineDesign/`（00 执行总纲是入口）。
+文档：地图与规约见 [`docs/README.md`](./docs/README.md)；设计基准入口 `docs/EngineDesign/00-Executive-Summary.md`（00 总纲 → 01 架构 → 02–09 分册）。
 
-## 当前阶段：M0 技术验证 —— ✅ GO（2026-09-18）
+## 里程碑：M0 技术验证 —— ✅ GO（2026-09-18；后续 M1–M5 见 08 路线图）
 
 | Spike | 内容 | 结果 |
 |---|---|---|
@@ -18,7 +18,7 @@ Unity 风格 ECS 编辑器。目标品类：ARPG / 塔防 / 吸血鬼幸存者 /
 | `spike/02-sprites` | 实例化精灵压测（单 draw call） | ✅ **10 万 270fps / 30 万 189fps / 50 万 137fps** |
 | `spike/03-csharp` | CoreCLR 宿主 + Collectible ALC + EnTT | ✅ 批量开销比 1.5×；EnTT 0.66ms；热重载功能可用（ALC 完全卸载遗留 M3） |
 
-实测数据与判定：`../docs/EngineDesign/M0-Go-NoGo.md`。下一步：M1 渲染内核（RHI 完整化 + 合批 + 图集 + 粒子）。
+实测数据与判定：`docs/Reports/2026-09-18-m0-go-no-go.md`。
 
 ## 构建（macOS / MoltenVK）
 

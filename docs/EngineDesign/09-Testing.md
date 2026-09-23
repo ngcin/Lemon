@@ -1,7 +1,7 @@
 # 09 · 测试方法与实测记录
 
 > 本册回答两个问题：**Lemon 怎么测**（方法/命令/判读）与**测出了什么**（最新结论）。
-> 完整的数字历史与事件流水在 `docs/DevLog.md`；本册记可复现的方法和当前基线。
+> 完整的数字历史与事件流水在 `docs/DevLog/`（一条目一文件）；本册记可复现的方法和当前基线。
 > 每个里程碑验收、每次新增专项测试后更新本册（§9 约定）。
 >
 > **编辑器使用级测试**（手测清单 70+ 项 + 一键自动化 `tools/editor-regression.sh`）
@@ -248,7 +248,7 @@ macOS 安全策略拒绝 lldb 原生 attach（Console.app 可见 debugserver 拒
 程序化播种——怪 prefab（Health/Knockback/Velocity/Chase/**Hazard（09-24 方案 A 批）**）
 经 SpawnFn 桥（清障②）由
 Spawner 拉满 1 万（interval 0 / burst 64 / capAlive 10000 = "导演拉满"），玩家作
-Chase 目标；**批⓪（M5-Plan T4）起兼弹幕源**：Shooter 20 发/s + 弹体 prefab
+Chase 目标；**批⓪（M5.md T4）起兼弹幕源**：Shooter 20 发/s + 弹体 prefab
 （dmg 12 / pierce 0），命中/击退/击杀/补怪闭环真实发生并计入 destroyed。
 
 **测量口径**（vsync 问题在此定死）：
@@ -367,7 +367,7 @@ Hierarchy 面板）。回归口径 = 本命令三跑稳定。
 | 多图集不闪帧 | ✅ | 批数恒 4，帧间零波动 |
 | 设备丢失自动恢复 | ✅ | 验证层零错误 |
 
-完整分场景数字与优化过程见 `docs/DevLog.md`。
+完整分场景数字与优化过程见 `docs/DevLog/` 对应日期条目。
 
 ## 7.6 M3 验收结果汇总（2026-09-19，本机 6C，.NET 10.0.12）
 
@@ -396,12 +396,12 @@ Hierarchy 面板）。回归口径 = 本命令三跑稳定。
 - Dock 最小化时 acquire 的 0 尺寸分支（resize 压测已覆盖退化尺寸的相邻路径）。
 - 多窗口（M1 范围外；M4 决议 #7 定单窗口 docking 交付，multi-viewport 补课顺延 **M5+**）。
 - Windows 平台（CMake 预设 `win` 待加，见 README）。
-- 编辑器交互覆盖边界（M4-Editor-Plan §6 提案已落地）：无头冒烟 `--smoke`（含 overlay
+- 编辑器交互覆盖边界（M4.md §6 提案已落地）：无头冒烟 `--smoke`（含 overlay
   可见性像素断言）/ `--smoke-close`（关闭状态机）/ `--smoke-drag`（视口注入五段）/
   `--smoke-anim`（切片 + clip + Animator 帧映射链，M5 批③起）/ `--smoke-template`
   （向导复制模板 → build → Play → HUD/存档/波次/击杀/升级卡片断言，M5 批④起）/
   `--final`（终验链）经 `tools/editor-regression.sh` 一键 13 步；**未脚本化**的纯观感路径
-  （Inspector 控件手感、面板排版）仍靠 [Editor-Manual-Test-Guide.md](./EngineDesign/Editor-Manual-Test-Guide.md) 真人清单。
+  （Inspector 控件手感、面板排版）仍靠 [Editor-Manual-Test-Guide.md](./Editor-Manual-Test-Guide.md) 真人清单。
 - M2：bench-sim 早期怪群聚拢阶段存在 max ~145ms 单步尖峰（avg 判据不受影响；哈希重建
   并行化是已预留路径，触发 M5 压测 B 再做）；投射物穿透去重用全量 iFrames 策略（M5 细化）；
   Patrol 端点暂停未实现（M5 随 clip 资产补）；~~Animator 帧映射待 clip 资产表（M5）~~ 已落（批③，03 §8.1）。
@@ -413,6 +413,6 @@ Hierarchy 面板）。回归口径 = 本命令三跑稳定。
 
 ## 9. 更新约定
 
-- 新测试跑完：数字与事件记 `docs/DevLog.md`（带日期）；方法若可复用，写入本册对应节。
+- 新测试跑完：在 `docs/DevLog/` 新增条目 `YYYY-MM-DD-<slug>.md`；方法若可复用，写入本册对应节。
 - 新里程碑：验收判据在 08；本册 §7 换新表，§2 程序表补新 bench（M2 将加 bench-sim）。
 - 性能回退 >10%（对 DevLog 上一基线）视为阻断，先定位再合入。

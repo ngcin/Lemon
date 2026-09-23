@@ -111,7 +111,7 @@
 | Camera2D 清单（像素完美 snap / 指数阻尼跟随 / 边界钳制 / 编辑器相机自愈） | `Prowl2D/Prowl.Runtime/Components/Camera2D.cs` | 02 §3.5 相机分册（M1） |
 | async/await 主线程上下文（协程替代） | `Prowl2D/Prowl.Runtime/Tasks/MainThreadContext*` | 04 §3.1（C++ 定时器队列底座） |
 | UGUI 式运行时 UI（RectTransform/GameCanvas/Layout，6.5k 行 C#） | `Prowl2D/Prowl.Runtime/Components/UI/` | ADR-008 第四候选（M5 决策，对照不拷） |
-| 品类优先级结论（图集+合批+排序层先行） | `docs/Prowl-2D-Roadmap.md` §4 | 排期依据（M1 顺序） |
+| 品类优先级结论（图集+合批+排序层先行） | `docs/Archive/Prowl-2D-Roadmap.md` §4 | 排期依据（M1 顺序） |
 | 压测场景设计（500 怪压测模板） | 同上 | Samples/bench 场景蓝本 |
 | "单测全绿 ≠ 编辑器可用"教训 | `.zcode/plans` S8 计划 | 每里程碑 GUI 冒烟验收纪律（08） |
 | Roslyn 脚本编译集成 | `Prowl2D/Prowl.Editor/Projects/Scripting/RoslynScriptBackend.cs` | M3 后期内嵌编译参考（自有代码可拷） |
