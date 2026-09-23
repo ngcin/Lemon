@@ -71,6 +71,10 @@ struct Hazard        { float dps; float tickInterval; float radius; };   // 持�
 struct Collectible   { uint8_t kind; /*gem/coin/heart*/ float magnetRadius; float magnetSpeed; float value; uint8_t state; Entity target; }; // M5批①：磁吸三参数 + RT 状态；触程 = max(magnetRadius, 收集者 Stats.pickupRadius)，收集者 = 持 XpProgress 实体；state/target 运行时
 struct Trigger2D     { uint32_t triggerId; bool once; };                 // 进入/离开事件
 struct Knockback     { float decay; };                                   // 受击退（割草手感核心）
+// M5 批②：导演波次表（1260B；§8 修订形态）——16 波 × 每波 4 条目定长数组段
+struct WaveEntry     { uint32_t prefabId; uint16_t count; float interval; float range; }; // 条目：prefab/总量/间隔(受 rampMult 加速)/出生环半径
+struct WaveDef       { float startTime; float rampMult; uint8_t entryCount; WaveEntry entries[4]; }; // 波（表序=生效序，重叠=后波接管）
+struct WaveDirector  { uint32_t spawnTeam; int32_t capAlive; uint8_t waveCount; WaveDef waves[16]; /* RT: time/waveIndex/cd[4]/spawned[4] */ }; // 挂此组件+Transform2D=出生中心；capAlive 同队闸门(30 tick 普查)
 ```
 
 ### 3.4 Gameplay（RPG/数值面，ARPG 与增量共用）
@@ -91,7 +95,7 @@ struct IncrementalState { double rate, multiplier; double cached; };     // 增�
 | # | 系统 | 读 | 写 | 并行 | 说明 |
 |---|---|---|---|---|---|
 | 1 | InputSnapshot | 输入队列 | — | — | 主线程采样→模拟线程消费 |
-| 2 | DirectorSystem | 导演配置/事件 | Spawner 命令 | — | 波次/刷怪调度（§8） |
+| 2 | DirectorSystem | WaveDirector 波次表 | WaveStart/Spawn 事件 + 出生（经 SpawnFn） | — | 波次调度（§8；M5 批②落地：直接出生通道，非 Spawner 配额） |
 | 3 | SpawnSystem | 销毁队列/池 | Transform2D 等 | — | 池取用 + 事件入队 onSpawn |
 | 4 | AISystem(Behavior) | Chase/Patrol/Flee/Shooter | Velocity | ✅ grain 256 | 纯函数逐实体 |
 | 5 | NavigationSystem | Chase | Velocity | — | 采样 FlowField/避障（§7） |
@@ -144,18 +148,39 @@ Neighbors(pos, radius, cb)                  // 分离力专用（迭代器形式
 
 ## 8. 刷怪导演（Director）
 
-```cpp
-struct DirectorConfig {                  // 资产化（JSON），波次表驱动
-    struct Wave { float startTime; float rampMult; SmallVec<SpawnEntry,4> entries; };
-    SpawnEntry { uint32_t prefabId; float weight; float budgetCost; };
-    float budgetCurve;                   // 时间→强度曲线（VS 的"分钟数=危险度"）
-    int32_t capAlive;                    // 同屏上限（压测红线保护）
-};
-```
+> **M5 批②修订（2026-09-23）**：原案 `DirectorConfig` 独立资产 + "向激活 Spawner
+> 派发配额"修订为**组件内联波次表 + 直接出生通道**——数据驱动落点 = WaveDirector
+> 组件（§3.3；场景/prefab 档即数据源，Inspector 可编辑数组段即编辑面），导演直接
+> 经 `World::GetSpawnFn()` 出生（与 SpawnSystem 平行的第二条刷怪通道；Spawner 保留
+> 常驻环境刷怪语义，互不派发）。理由：数组段机制零新基建；配额派发需按 prefabId
+> 跨实体匹配、语义绕；两通道各司其职，M6 TD 模板波次同消费导演。原 `budgetCurve`
+> 由波表自身表达（波表 startTime/rampMult/count 即强度曲线）；独立 `.asset` 数据
+> 通道随批③ clip 一并定，`onRagePhase`（狂暴相位）留后续波。M6 波次表编辑器在
+> 组件数据上盖专业 UI（增删波/条目、prefab 拖拽）。
 
-- 导演每 tick 按 `budget(time)` 与场上存活数（按 Team 统计）向激活的 Spawner 派发配额；Spawner 负责出生点（环形 off-screen + 磁吸避墙）。
-- 事件：`onWaveStart/onRagePhase`（狂暴阶段切换）供 C#/表现层订阅。
-- **压测保护**：`capAlive` 达到即停止 spawn 并告警（引擎内建，不是用户纪律）。
+**状态机（顺序相位语义；决策见 M5-Plan §11.2 D3–D6）**：
+- 每导演实体 `time += dt`（缩放 dt——timeScale=0 冻结波次）；`time ≥ waves[i].startTime`
+  → 波生效：发 **WaveStart**、重置运行时；波内条目按 `interval/rampMult` 节拍出生
+  （每条目每 tick 至多 1，capAlive 顶格持币待发）；
+- **波重叠 = 后波接管**（同 tick 多波到期按表序生效，仅末波持运行时，前波余量废止）；
+- **capAlive** 同队闸门：30 tick 普查 + 乐观自增（与 SpawnSystem.maxAlive 同款"约"
+  语义；两闸门独立计数，组合过冲 ≤ 每 tick 出生和 × 普查周期）；
+- RNG 子流 1（导演注册序；Spawn 的 2 独立）；多导演共享子流按池序消费（确定性）；
+  出生点 = 导演实体 Transform + 条目 range 环（"环形 off-screen/避墙"归玩法层——
+  模板把导演实体挂玩家跟随）；prefab 失败（工厂返 Null）即废止该条目不重试。
+
+**事件**：`WaveStart`（payload `[0]`=波序号 0 起、`[1]`=本波计划总数 Σcount、`[2]`
+=配置时刻；src=导演实体）＋每次出生发 `Spawn`（与 SpawnSystem 同口径）。空波
+（Σcount=0）照发 WaveStart——纯宣告波是合法用法。C# `Events.Subscribe(GameEvent.
+WaveStart)` 开箱即用（样例：TestScript.WaveBannerBehaviour → `Ui.Set` 波次横幅）。
+
+`.scene` JSON 形态（数组段序列化；手改档即可作者，M6 前的过渡路径）：
+
+```json
+"WaveDirector": { "spawnTeam": 1, "capAlive": 10000, "waveCount": 3,
+  "waves": [ { "startTime": 1.0, "rampMult": 1.0, "entryCount": 4,
+      "e0prefab": 3735928559, "e0count": 999, "e0interval": 0.0167, "e0range": 550.0, ... } ] }
+```
 
 ## 9. Team 势力系统（照搬 yami `Data/teams.json` schema）
 
@@ -185,6 +210,7 @@ RingQueue<EventPacket> gEvents;          // 系统只入队，帧末 ScriptEvent
 ```
 
 - C++ 内部系统也走同一队列（导演/成就/任务监听），保证语义一致与可录制。
+- payload 约定（M5 累积）：`WaveStart` `[0]`波序号 0 起/`[1]`计划总数/`[2]`配置时刻（src=导演实体）；`Pickup` `[0]`kind/`[1]`value/`[2][3]`拾取点 xy。
 - 自定义事件：用户在资产里注册 id + 参数 schema，编辑器指令/可视化事件树（M8 后评估）复用同一通道。
 
 ## 12. 确定性与回放（廉价内置）

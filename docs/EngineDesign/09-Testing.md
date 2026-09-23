@@ -192,6 +192,13 @@ RESULT 行判读：`sim avg ≤ 8ms`（08 §3 判据）；`alive` 稳定在 n �
 > 既有基准场景无其驱动组件（Collectible/XpProgress 皆空）→ 系统空转 → 状态哈希流
 > 不变 → **批⓪金档原样 `--replay` 三档 mismatches=0**（sim mt/st + script）。即：
 > 行为零漂移的系统插入可以且应当用旧档回放作机械证明，而非默认重录。
+>
+> **重录先例（M5 批②，2026-09-23）**：`ComputeStateHash` 对注册表**每个组件名
+> 无条件入哈希**（schema 漂移绊线，含零实体组件）——故**新增组件（WaveDirector）
+> 即全帧哈希漂移**，与布局变更同类，属重录口径（行为零漂移的旁证：bench-sim 终态
+> alive/created/destroyed 与旧档逐项一致）。金档换代 m5b0 → **m5b2**（sim mt/st +
+> script 三档，重录后 replay mismatches=0）。推论：**加字段可零重录（空组件名已在
+> 哈希流），加组件必重录**——批次规划时按此预判。
 
 ### 6.9 bench-script —— M3 脚本验收场（无渲染，CoreCLR 域线程）
 
@@ -256,6 +263,13 @@ Chase 目标；**批⓪（M5-Plan T4）起兼弹幕源**：Shooter 20 发/s + �
 | 性能批②（同日，三跑） | sim 11.04~11.18 / scene 1.21~1.31 / **ui 0.25~0.26** | frameAvg 13.09~13.25ms fps 75~76 **PASS** |
 | 批⓪ 战斗化（同日，三跑） | **sim 9.37~9.49** / scene ~1.3 / ui 0.25 | frameAvg 11.48~11.64ms fps 86~87 **PASS** |
 | 批① 成长化（同日，三跑） | sim 12.84~13.92（Pickup 1.87）/ scene ~1.5 / ui 0.26 | frameAvg 15.53~16.29ms fps 61~64 **PASS** |
+| 批② 导演化（09-23，三跑） | sim 12.55~12.60（Director <0.1）/ scene ~1.3 / ui 0.26 | frameAvg 15.11~15.20ms fps 66 **PASS** |
+
+批② 导演化口径变更：Spawner 闸 10000→8000 让 2000 头寸给 BenchDirector（3 波 ×
+4 条目 180/s/波，t=1/6/11s）——判据在原两条（alive≥10000、frameAvg≤22.2ms）外加
+**导演证据项** `waves≥3 且 teamAlive>8000`（实测 waves=3、teamAlive 10002 顶满
+capAlive=10000；alive 10435、三跑逐位一致）。Director 系统成本 <0.1ms（普查与
+Spawner 同款 30-tick O(n)）。
 
 批⓪ 战斗化后 fps 反升（76→86）非笔误：iFrames 递减修复使怪进入击杀-补充循环，
 蜂群密度被持续疏散，Separation 随之回落（sim 11.1→9.4ms）。frameMax 43~52ms

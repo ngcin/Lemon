@@ -217,6 +217,7 @@ public readonly struct Transform               // 视图结构：逐属性访问
 
 - 帧末一次 `lemon_events_drain(ptr, capacity)`：C# 侧 `NativeQueue<EventPacket>` 拷走整段（`unsafe` 固定指针 memcpy），随后托管内分发到 `Events.Subscribe<T>` 与脚本组件 `OnGameEvent`。
 - 数量护栏：单帧事件 > 50k（压测 A 死亡潮）时分批派发并跳过无订阅者类型（订阅表预筛）。
+- **事件回调与 Update 同 native 窗口（M5 批②）**：`#16 ScriptEventDispatch` 派发期间 `g_world/g_scene` 照常置位——订阅方在回调内可调 `Ui.Set/Time.Scale/Instantiate`（此前窗口只盖 `TickBatch`，回调内 native 调用会静默空转）。落地样例：`TestScript.WaveBannerBehaviour`（`Events.Subscribe(GameEvent.WaveStart)` → `Ui.Set` 波次横幅，payload 约定见 03 §8/§11）。
 
 ## 5. 边界成本预算与 GC 纪律
 

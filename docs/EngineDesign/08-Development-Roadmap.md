@@ -115,7 +115,7 @@ packager（烘焙/打包/安装器）→ Steam 集成（steamworks 动态加载 
 |---|---|---|
 | bench-mow | 10 万实例化精灵 + 5 万粒子，无逻辑 | M1 起：≥ 60fps（基线 **107fps**，2026-09-18） |
 | bench-sim | 1 万怪全系统模拟，无渲染 | M2 起：≤ 8ms/步（基线 **avg 5.10ms** 多线程 / 19.9ms 单线程诊断档，2026-09-19） |
-| bench-survivor | vs-survivor 模板 + 导演拉满（capAlive=上限） | M5 起：≥ 45fps（编辑器内；口径 = `lemon-editor --bench-survivor`，09 §6.10。2026-09-22 建场基线 28~30fps FAIL → 同日性能批修视口层 O(N²) 差集 + 万级标签全画，**58fps PASS**；同日批⓪ 战斗化（玩家弹幕 20 发/s，命中/击退/击杀全链路）**86fps PASS**；同日批① 成长化（宝石 Spawner 40 颗/s + 磁吸/拾取/XP/升级全链路）**61~64fps PASS**，Pickup 密核扫描余量观察项见 09 §6.10） |
+| bench-survivor | vs-survivor 模板 + 导演拉满（capAlive=上限） | M5 起：≥ 45fps（编辑器内；口径 = `lemon-editor --bench-survivor`，09 §6.10。2026-09-22 建场基线 28~30fps FAIL → 同日性能批修视口层 O(N²) 差集 + 万级标签全画，**58fps PASS**；同日批⓪ 战斗化（玩家弹幕 20 发/s，命中/击退/击杀全链路）**86fps PASS**；同日批① 成长化（宝石 Spawner 40 颗/s + 磁吸/拾取/XP/升级全链路）**61~64fps PASS**，Pickup 密核扫描余量观察项见 09 §6.10；2026-09-23 批② 导演化（BenchDirector 3 波 ×4 条目直接出生 + WaveStart 事件，Spawner 闸 8000 让位、teamAlive 顶满 capAlive 10000）**66fps PASS**，Director avg 0.068ms） |
 | 压测 A（终验） | 00 文档 §4 全量 | M8：≥ 60fps |
 
 CI 每日跑 bench-mow/bench-sim，数字写入构建报告（性能回退 > 10% 自动标红）。
