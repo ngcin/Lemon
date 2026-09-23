@@ -162,12 +162,23 @@ std::span<const SpritePacket> RenderableManager::Extract(const AtlasRegistry& at
         slotOf_.push_back((uint8_t)si);
     }
 
-    // 纯搬运分桶（不重算剔除/插值）
+    // 桶序即绘制序（Bake 按连续同键段录制，下游无重排）：偏移须按（layer, hash）
+    // 分配——首遇序会把先创建的高层整桶画到低层下面，违背排序契约
+    uint8_t order[kMaxSpriteKeys];
+    for (uint32_t si = 0; si < slotCount; ++si) order[si] = (uint8_t)si;
+    std::sort(order, order + slotCount, [&](uint8_t a, uint8_t b) {
+        const KeySlot& sa = slots[a];
+        const KeySlot& sb = slots[b];
+        return sa.key.layer != sb.key.layer ? sa.key.layer < sb.key.layer
+                                            : sa.key.hash < sb.key.hash;
+    });
+
+    // 纯搬运分桶（不重算剔除/插值；slots 原地不动，slotOf_ 存的槽下标仍有效）
     uint32_t visible = (uint32_t)packets_.size();
     uint32_t offset = 0;
-    for (uint32_t si = 0; si < slotCount; ++si) {
-        slots[si].cursor = offset;
-        offset += slots[si].count;
+    for (uint32_t k = 0; k < slotCount; ++k) {
+        slots[order[k]].cursor = offset;
+        offset += slots[order[k]].count;
     }
     staging_.resize(visible);
     for (uint32_t i = 0; i < visible; ++i)

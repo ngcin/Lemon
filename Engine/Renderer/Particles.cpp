@@ -88,7 +88,7 @@ std::span<const SpritePacket> ParticleSystem::Extract(const AtlasRegistry& atlas
                                                       Vec2 viewCenter, float viewHalfW,
                                                       float viewHalfH) {
     // 计数桶分组（单遍生成 + 槽缓存 + 纯搬运分桶，与 RenderableManager 同方案）：
-    // 粒子层内 order 恒 0，桶序即稳定序 → O(n) 免排序（std::sort 实测 8 万粒子 4.9ms）
+    // 桶间按（layer, hash）排、桶内池序即稳定序（层内 order 恒 0）→ O(n) 免逐包排序
     struct KeySlot {
         SpriteBatchKey key;
         uint32_t spriteId;
@@ -106,6 +106,9 @@ std::span<const SpritePacket> ParticleSystem::Extract(const AtlasRegistry& atlas
         if (p.pos.x < view.min.x || p.pos.x > view.max.x || p.pos.y < view.min.y ||
             p.pos.y > view.max.y)
             continue;
+        // spriteId 无效（未设默认 0/越界/空洞退役号）= 不渲染，与 RenderableManager
+        // 同语义（Unity Sprite=None）；EmitterConfig 默认 0，无此过滤 GetSprite(0) 必断言
+        if (!atlas.IsValidSprite(p.spriteId)) continue;
         uint32_t si = 0;
         while (si < slotCount &&
                !(slots[si].spriteId == p.spriteId && slots[si].key.blend == p.blend &&
@@ -140,12 +143,23 @@ std::span<const SpritePacket> ParticleSystem::Extract(const AtlasRegistry& atlas
         slotOf_.push_back((uint8_t)si);
     }
 
-    // 纯搬运分桶
+    // 桶序即绘制序（Bake 按连续同键段录制，下游无重排）：偏移按（layer, hash）
+    // 分配——首遇序会把后遇的低层整桶画到高层下面
+    uint8_t order[kMaxParticleKeys];
+    for (uint32_t si = 0; si < slotCount; ++si) order[si] = (uint8_t)si;
+    std::sort(order, order + slotCount, [&](uint8_t a, uint8_t b) {
+        const KeySlot& sa = slots[a];
+        const KeySlot& sb = slots[b];
+        return sa.key.layer != sb.key.layer ? sa.key.layer < sb.key.layer
+                                            : sa.key.hash < sb.key.hash;
+    });
+
+    // 纯搬运分桶（slots 原地不动，slotOf_ 存的槽下标仍有效）
     uint32_t visible = (uint32_t)packets_.size();
     uint32_t offset = 0;
-    for (uint32_t si = 0; si < slotCount; ++si) {
-        slots[si].cursor = offset;
-        offset += slots[si].count;
+    for (uint32_t k = 0; k < slotCount; ++k) {
+        slots[order[k]].cursor = offset;
+        offset += slots[order[k]].count;
     }
     staging_.resize(visible);
     for (uint32_t i = 0; i < visible; ++i)

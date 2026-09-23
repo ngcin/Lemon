@@ -239,6 +239,69 @@ void TestParticles() {
     for (size_t i = 1; i < packets2.size(); ++i)
         if (!packets2[i].key.SameBatch(packets2[i - 1].key)) ++switches2;
     Expect(switches2 == 1, "different blend splits contiguous runs");
+
+    // spriteId 无效（EmitterConfig 默认 0）：提取跳过、不渲染（修复前 GetSprite(0)
+    // 直接断言 abort——粒子路径无精灵路径的合法性过滤）
+    ParticleSystem ps3;
+    ps3.SetBudget(100);
+    EmitterConfig eBad; // spriteId 默认 0
+    float accBad = 0;
+    ps3.Emit(eBad, 1.0f, 7, accBad);
+    Expect(ps3.AliveCount() == 100, "invalid-sprite emitter still simulates");
+    Expect(ps3.Extract(atlas, {32, 32}, 1000, 1000).empty(),
+           "invalid spriteId particles skipped in extract");
+
+    // 桶序 =（layer, hash）而非首遇序：高层发射器先发射，低层段仍须排前
+    ParticleSystem ps4;
+    ps4.SetBudget(1000);
+    EmitterConfig eHigh = e2, eLow = e2;
+    eHigh.sortingLayer = 10;
+    eLow.sortingLayer = 2;
+    float acc4a = 0, acc4b = 0;
+    ps4.Emit(eHigh, 0.1f, 1, acc4a); // 10 个高层（先遇）
+    ps4.Emit(eLow, 0.1f, 2, acc4b);  // 10 个低层（后遇）
+    auto pk4 = ps4.Extract(atlas, {32, 32}, 1000, 1000);
+    Expect(pk4.size() == 20, "both emitter layers visible");
+    Expect(pk4.front().key.layer == 2 && pk4.back().key.layer == 10,
+           "particle buckets ordered by layer, not first-encounter");
+}
+
+void TestRenderableExtractOrder() {
+    // 桶序即绘制序（Bake 连续段录制，下游无重排）：跨桶须按（layer, hash），
+    // 与创建序无关——修复前按首遇序排桶，先建的高层整桶画到低层下面
+    AtlasRegistry atlas;
+    atlas.RegisterAtlas(0, rhi::Texture{1}, 64, 64);
+    atlas.RegisterAtlas(1, rhi::Texture{2}, 64, 64);
+    uint32_t spr0 = atlas.AddSprite(0, 0, 0, 16, 16);
+    uint32_t spr1 = atlas.AddSprite(1, 0, 0, 16, 16);
+
+    RenderableManager rm;
+    RenderableDesc d;
+    d.spriteId = spr0;
+    const uint8_t layers[] = {5, 0, 9, 0, 5, 1}; // 创建序故意高层在前
+    for (uint8_t ly : layers) {
+        d.sortingLayer = ly;
+        rm.Create(d);
+    }
+    auto packets = rm.Extract(atlas, 1.0f); // 无视口 → 无剔除
+    Expect(packets.size() == 6, "all visible without viewport");
+    for (size_t i = 1; i < packets.size(); ++i)
+        Expect(packets[i - 1].key.layer <= packets[i].key.layer, "layers monotonic in draw order");
+    Expect(packets.front().key.layer == 0 && packets.back().key.layer == 9,
+           "lowest layer drawn first, highest last");
+
+    // 同层跨图集：按批键 hash 稳定排段（与 atlas 创建/遇到序无关）
+    RenderableManager rm2;
+    RenderableDesc d2;
+    d2.sortingLayer = 3;
+    d2.spriteId = spr1;
+    rm2.Create(d2); // atlas 1 先建
+    d2.spriteId = spr0;
+    rm2.Create(d2); // atlas 0 后建
+    auto pk2 = rm2.Extract(atlas, 1.0f);
+    Expect(pk2.size() == 2 && pk2[0].key.textureAtlas != pk2[1].key.textureAtlas,
+           "same layer split by atlas");
+    Expect(pk2[0].key.hash < pk2[1].key.hash, "same-layer buckets ordered by key hash");
 }
 
 void TestCamera2D() {
@@ -3407,6 +3470,7 @@ int main() {
     TestBatchKey();
     TestSortStability();
     TestParticles();
+    TestRenderableExtractOrder();
     TestCamera2D();
     TestQuality();
     TestBitmapFontLayout();
