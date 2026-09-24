@@ -1,6 +1,7 @@
 # Lemon 引擎设计 — 02 渲染内核（Vulkan）
 
 > 目标：一条管线画完"万级怪物 + 弹幕 + 粒子 + 地形 + HUD"，模拟与渲染解耦，Windows 原生 Vulkan 1.3。
+> 运行时下限（2026-09-24 F-12 契约化）：**Vulkan 1.2**——`descriptorIndexing`/`hostQueryReset` 走 1.2 core 特性链，动态渲染/同步 2 低于 1.3 走 KHR 扩展分支；1.1/1.0 设备在枚举期明确拒绝（不实现 EXT 版 feature 链——受益设备近空集，bindless 驱动质量不可信任）。交换链 usage/合成 alpha 按 surface 能力交集选择（`TRANSFER_SRC` 缺能力时调试截屏降级）。
 > 蓝本：Luma 的"提取-双缓冲-插值-合批"流水线与 Nut RHI 切面（MIT，可移植）；Looper 的裸 Vulkan 实例化渲染作为实现期对照（暂仅借鉴）。
 
 ---

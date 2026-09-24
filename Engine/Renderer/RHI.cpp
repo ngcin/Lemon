@@ -311,6 +311,16 @@ struct Device::Impl {
                 if (!std::strcmp(e.extensionName, VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME)) hasSync2 = true;
             }
             if (!hasSwap) continue;
+            // F-12（2026-09-24）：下限契约 = Vulkan 1.2（descriptorIndexing/hostQueryReset
+            // 为 1.2 core + legacy KHR 分支）。1.1/1.0 设备即使带 dynR/sync2 扩展，1.2
+            // core 特性链也无法启用——在此明确拒绝并留可解释日志，而非走到设备创建
+            // 才断言/验证层报错（02 分册口径：目标 1.3，容忍下限 1.2）。
+            if (props.apiVersion < VK_API_VERSION_1_2) {
+                LEMON_WARN("skip %s: Vulkan %u.%u < 1.2 floor（bindless core 特性不可用）",
+                           props.deviceName, VK_API_VERSION_MAJOR(props.apiVersion),
+                           VK_API_VERSION_MINOR(props.apiVersion));
+                continue;
+            }
             bool needLegacyExt = props.apiVersion < VK_API_VERSION_1_3;
             if (needLegacyExt && (!hasDynR || !hasSync2)) continue; // 动态渲染是 M1 硬前提
             VkPhysicalDeviceProperties cur{};
@@ -596,6 +606,23 @@ struct Device::Impl {
 
         uint32_t imageCount =
             std::clamp<uint32_t>(3, caps.minImageCount, caps.maxImageCount ? caps.maxImageCount : 8);
+        // F-12（2026-09-24）：usage/alpha 按 surface 能力交集选择——硬请求
+        // TRANSFER_SRC/OPAQUE 在部分 surface（Wayland/远程桌面/VM）会整链创建失败。
+        // COLOR_ATTACHMENT 是渲染硬前提；TRANSFER_SRC 仅供调试截屏，缺能力时降级。
+        VkImageUsageFlags usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+        if (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT)
+            usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        else
+            LEMON_WARN("swapchain: surface 不支持 TRANSFER_SRC——调试截屏在该 surface 降级不可用");
+        // 合成 alpha：优先 OPAQUE（2D 不透明窗口），按 supportedCompositeAlpha 回退
+        // （规范保证至少一位置位）
+        VkCompositeAlphaFlagBitsKHR alpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+        if (!(caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR))
+            alpha = (caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR)
+                        ? VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR
+                        : (caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR)
+                              ? VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR
+                              : VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR;
         VkSwapchainCreateInfoKHR ci{VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};
         ci.surface = surface;
         ci.minImageCount = imageCount;
@@ -603,11 +630,10 @@ struct Device::Impl {
         ci.imageColorSpace = format.colorSpace;
         ci.imageExtent = extent;
         ci.imageArrayLayers = 1;
-        ci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-                        VK_IMAGE_USAGE_TRANSFER_SRC_BIT; // SRC 供调试截屏（编辑器冒烟/CI）
+        ci.imageUsage = usage;
         ci.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
         ci.preTransform = caps.currentTransform;
-        ci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+        ci.compositeAlpha = alpha;
         ci.presentMode = presentMode;
         ci.clipped = VK_TRUE;
         VK_CHECK(vkCreateSwapchainKHR(device, &ci, nullptr, &swapchain));
