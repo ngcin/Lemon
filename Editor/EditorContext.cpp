@@ -237,9 +237,12 @@ std::string EditorContext::SceneName() const {
 }
 
 ecs::Entity EditorContext::CreateEntity(const char* tag) {
-    ecs::Entity e = scene_->Create();
-    scene_->Emplace<ecs::Transform2D>(e);
-    ecs::Meta& m = scene_->Emplace<ecs::Meta>(e);
+    // Play 态创建 = 落 play 世界（可见、随 Stop 丢弃，ADR-011 横幅口径）；原恒走
+    // scene_（edit 世界）= Play 态创建不可见且 Stop 后残留
+    ecs::Scene& s = ActiveScene();
+    ecs::Entity e = s.Create();
+    s.Emplace<ecs::Transform2D>(e);
+    ecs::Meta& m = s.Emplace<ecs::Meta>(e);
     m.guid = GenerateGuid();
     std::snprintf(m.tag, sizeof(m.tag), "%s", tag);
     dirty = true;
@@ -248,7 +251,7 @@ ecs::Entity EditorContext::CreateEntity(const char* tag) {
 
 ecs::Entity EditorContext::CreateSpriteEntity(const char* tag, uint32_t spriteId) {
     ecs::Entity e = CreateEntity(tag);
-    ecs::SpriteRenderer& sr = scene_->Emplace<ecs::SpriteRenderer>(e); // 默认启用
+    ecs::SpriteRenderer& sr = ActiveScene().Emplace<ecs::SpriteRenderer>(e); // 默认启用
     sr.spriteId = spriteId;
     return e;
 }
@@ -262,7 +265,7 @@ ecs::Entity EditorContext::CreateSpriteEntityByGuid(const char* tag, uint64_t sp
         entry = nullptr;
     }
     ecs::Entity e = CreateEntity(tag);
-    ecs::SpriteRenderer& sr = scene_->Emplace<ecs::SpriteRenderer>(e); // 默认启用
+    ecs::SpriteRenderer& sr = ActiveScene().Emplace<ecs::SpriteRenderer>(e); // 默认启用
     sr.spriteGuid = spriteGuid;
     // 切片表默认 0 号 cell（T4 生成器惯例：首帧 = cell 0）；整图 = 本体号
     sr.spriteId = entry ? (entry->sliceCount > 0 ? entry->sliceBase : entry->spriteId) : 0;
@@ -278,8 +281,9 @@ ecs::Entity EditorContext::CreateSpriteEntityFromAsset(const char* tag, uint64_t
         return ecs::Entity::Null();
     }
     ecs::Entity e = CreateSpriteEntity(tag, entry->spriteId);
-    scene_->Get<ecs::Transform2D>(e).pos = pos;
-    scene_->Get<ecs::SpriteRenderer>(e).spriteGuid = assetGuid; // M6a 批⓪ T2：双写
+    ecs::Scene& s = ActiveScene();
+    s.Get<ecs::Transform2D>(e).pos = pos;
+    s.Get<ecs::SpriteRenderer>(e).spriteGuid = assetGuid; // M6a 批⓪ T2：双写
     return e;
 }
 
@@ -636,24 +640,30 @@ void EditorContext::BreakPrefabInstance(ecs::Entity e) {
 }
 
 ecs::Entity EditorContext::DuplicateEntity(ecs::Entity e) {
-    if (e.IsNull() || !scene_->Alive(e)) return ecs::Entity::Null();
+    // Play 态复制落 play 世界（与 Create 同口径；句柄 e 属 ActiveScene，经 edit 世界
+    // 的 SaveEntityTree 轻 = 越池访问/错复制）
+    ecs::Scene& s = ActiveScene();
+    if (e.IsNull() || !s.Alive(e)) return ecs::Entity::Null();
     // C8：整子树复制——走 CopySelection/PasteClipboard 同一 SaveEntityTree/
     // LoadEntityTree 链（组件全量、子树内 EntityRef 重映射/跨树置空、guid 全换新）。
     // 此前只平移单实体组件表（"Hierarchy 不复制"），父子链 Ctrl+D 只得根。
     // 副本原位（对齐 Unity Ctrl+D；粘贴的 +24/+24 防叠偏移不在此路径）
-    const std::string tree = ecs::SceneArchive::SaveEntityTree(*scene_, e);
-    ecs::Entity copy = ecs::SceneArchive::LoadEntityTree(*scene_, tree);
+    const std::string tree = ecs::SceneArchive::SaveEntityTree(s, e);
+    ecs::Entity copy = ecs::SceneArchive::LoadEntityTree(s, tree);
     if (!copy.IsNull()) dirty = true;
     return copy;
 }
 
 void EditorContext::DestroyEntityTree(ecs::Entity e) {
-    if (e.IsNull() || !scene_->Alive(e)) return;
-    SceneDestroyEntityTree(*scene_, e);
+    // Play 态删除作用于 play 世界（选中句柄来自 ActiveScene；原恒走 scene_ = 拿
+    // play 句柄戳 edit 世界，no-op 或 id 撞车错删）
+    ecs::Scene& s = ActiveScene();
+    if (e.IsNull() || !s.Alive(e)) return;
+    SceneDestroyEntityTree(s, e);
     // 立即提交销毁（默认帧末 DestroyCommit 系统做）——结构轨 PushStructuralUndo
     // 在调用方"销毁后"快照 after，若销毁仍在队列中，快照含待删实体 → Redo 会
     // 复活被删实体（smoke-ui 真人链路抓到；右键删除/Delete 键同路径）。
-    scene_->CommitDestroys();
+    s.CommitDestroys();
     PruneSelection();
     dirty = true;
 }
