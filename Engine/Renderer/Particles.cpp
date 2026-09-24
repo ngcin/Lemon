@@ -35,6 +35,18 @@ ParticleData* ParticleSystem::Alloc() {
 void ParticleSystem::Emit(const EmitterConfig& e, float dt, uint64_t streamSeed, float& accum) {
     uint64_t rng = streamSeed * 6364136223846793005ull + 1442695040888963407ull;
     Xorshift(rng);
+    // 批键位宽防御（与 RenderableManager::Create 同款）：blend/filter 为数据驱动
+    // uint8_t，越界值经 SpritePacket 直达 SpriteBatcher 固定数组（4 管线/2 采样器）
+    uint8_t blend = e.blend, filter = e.filter;
+    if (blend > (uint8_t)BlendKind::Multiply || filter > (uint8_t)FilterKind::Point) {
+        if (!warnedSanitize_) {
+            warnedSanitize_ = true;
+            LEMON_WARN("emitter blend/filter out of range (blend=%u filter=%u) — clamped",
+                       blend, filter);
+        }
+        blend &= 3u;
+        filter &= 1u;
+    }
     accum += e.rate * dt;
     uint32_t n = (uint32_t)accum;
     accum -= (float)n;
@@ -58,8 +70,8 @@ void ParticleSystem::Emit(const EmitterConfig& e, float dt, uint64_t streamSeed,
         p->rotSpeed = (Frand(rng) * 2.0f - 1.0f) * e.rotSpeedMax;
         p->drag = e.drag;
         p->spriteId = e.spriteId;
-        p->blend = e.blend;
-        p->filter = e.filter;
+        p->blend = blend;
+        p->filter = filter;
         p->sortingLayer = e.sortingLayer;
         ++stats_.emittedThisTick;
     }

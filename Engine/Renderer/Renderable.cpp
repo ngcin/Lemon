@@ -136,7 +136,10 @@ std::span<const SpritePacket> RenderableManager::Extract(const AtlasRegistry& at
         if (hasViewport_) {
             float radX = 0.5f * scale.x * spr.widthPx;
             float radY = 0.5f * scale.y * spr.heightPx;
-            float r = std::max(radX, radY);
+            // 轴对齐时半宽/半高即紧界；带旋转的角点最远到半对角线——max 界对旋转
+            // 矩形欠估，屏幕边缘旋转中的精灵会整帧消失。半对角线只是保守不多剔。
+            float r = rot != 0.0f ? std::sqrt(radX * radX + radY * radY)
+                                  : std::max(radX, radY);
             if (pos.x + r < viewport_.min.x || pos.x - r > viewport_.max.x ||
                 pos.y + r < viewport_.min.y || pos.y - r > viewport_.max.y) {
                 ++stats_.culled;

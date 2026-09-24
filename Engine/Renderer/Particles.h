@@ -81,6 +81,7 @@ private:
     std::vector<SpritePacket> staging_; // 分桶搬运缓冲
     std::vector<uint8_t> slotOf_;       // 单遍生成时的槽索引缓存
     Stats stats_;
+    bool warnedSanitize_ = false; // blend/filter 钳制告警只响一次
 };
 
 } // namespace lemon::renderer
