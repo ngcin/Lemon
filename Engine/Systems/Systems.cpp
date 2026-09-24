@@ -117,6 +117,20 @@ void DirectorSystem::Tick(World& world, Scene& scene, float dt) {
     Rng& rng = world.SystemRng(1); // 子流 id = 本系统注册序（Spawn 持 2）
     const float minInterval = dt > 0.0f ? dt : (1.0f / 60.0f); // 每条目每 tick 至多 1 生
 
+    // spawn 请求表（循环外统一执行，2026-09-24 审查）：工厂会向 WaveDirector/
+    // Transform2D 等组件池追加（嵌套导演/prefab 带 Transform），池扩容搬移使
+    // wd/tf/wave 引用与 view 迭代器在迭代中悬空。RNG 在请求时消耗、事件按请求序
+    // 推 = 与旧实现逐位同序列（金回放不受影响）
+    struct DeferredSpawn {
+        Entity director; // 失败时回写该导演的 waveSpawned（重取，池可能已搬移）
+        uint8_t entry;   // 波内条目下标
+        uint32_t prefabId;
+        uint32_t team;
+        Vec2 pos;
+    };
+    std::vector<DeferredSpawn> deferred;
+    deferred.reserve(16);
+
     for (auto [ent, wd, tf] : scene.View<WaveDirector, Transform2D>().each()) {
         // 容量防御钳（Inspector/JSON 手改超容；读档侧 ReadArraySeg 另有一道）
         const uint8_t waveCount = wd.waveCount > 16 ? 16 : wd.waveCount;
@@ -164,25 +178,32 @@ void DirectorSystem::Tick(World& world, Scene& scene, float dt) {
             Vec2 offset = e.range > 0.0f ? rng.UnitVec2() * e.range * rng.Float01()
                                          : Vec2::Zero();
             const Vec2 pos = tf.pos + offset;
-            Entity spawned = spawn(scene, e.prefabId, pos, wd.spawnTeam);
-            if (spawned.IsNull()) { // 工厂不认此 prefab：废止条目（不逐 tick 重试）
-                wd.waveSpawned[i] = e.count;
-                continue;
-            }
-            ++wd.waveSpawned[i];
-            ++alive; // 乐观自增（普查刷新前的本 tick 内闸门）
-
-            EventPacket p{};
-            p.type = GameEvent::Spawn; // 与 SpawnSystem 同口径
-            p.src = spawned;
-            p.payload[0] = pos.x;
-            p.payload[1] = pos.y;
-            world.Events().Push(p);
+            deferred.push_back({Scene::FromEntt(ent), i, e.prefabId, wd.spawnTeam, pos});
+            ++wd.waveSpawned[i]; // 交货计数随请求（失败在执行段废止 + 回退配额）
+            ++alive;             // 乐观自增（普查刷新前的本 tick 内闸门）
 
             const float interval =
                 wave.rampMult > 0.0f ? e.interval / wave.rampMult : e.interval;
             wd.waveCooldown[i] += interval > minInterval ? interval : minInterval;
         }
+    }
+
+    for (const DeferredSpawn& d : deferred) {
+        Entity spawned = spawn(scene, d.prefabId, d.pos, d.team);
+        if (spawned.IsNull()) { // 工厂不认此 prefab：废止条目（不逐 tick 重试）
+            --teamCounts_[d.team & 63]; // 请求段乐观自增的回退
+            if (WaveDirector* dw = scene.TryGet<WaveDirector>(d.director))
+                if (dw->waveIndex > 0 && d.entry < 4)
+                    dw->waveSpawned[d.entry] =
+                        dw->waves[dw->waveIndex - 1].entries[d.entry].count;
+            continue;
+        }
+        EventPacket p{};
+        p.type = GameEvent::Spawn; // 与 SpawnSystem 同口径
+        p.src = spawned;
+        p.payload[0] = d.pos.x;
+        p.payload[1] = d.pos.y;
+        world.Events().Push(p);
     }
 }
 
@@ -213,9 +234,21 @@ void SpawnSystem::Tick(World& world, Scene& scene, float dt) {
         return;
     }
 
-    auto view = scene.View<Spawner, Transform2D>();
+    // spawn 请求表（循环外统一执行，2026-09-24 审查，与 DirectorSystem 同修）：
+    // 工厂向组件池追加会使 view 迭代器与 sp/tf 引用迭代中悬空。RNG 在请求时消耗、
+    // 事件按请求序推 = 与旧实现逐位同序列
+    struct DeferredSpawn {
+        uint32_t prefabId;
+        uint32_t team;
+        Vec2 pos;
+        int group; // 所属 Spawner（组号：工厂不认 prefab 时跳过该组余量 = 旧 break）
+    };
+    std::vector<DeferredSpawn> deferred;
+    deferred.reserve(16);
+    int group = 0;
 
-    for (auto [ent, sp, tf] : view.each()) {
+    for (auto [ent, sp, tf] : scene.View<Spawner, Transform2D>().each()) {
+        ++group;
         sp.cooldown -= dt;
         if (sp.cooldown > 0.0f) continue;
         sp.cooldown += sp.interval;
@@ -231,16 +264,29 @@ void SpawnSystem::Tick(World& world, Scene& scene, float dt) {
                 break;
             Vec2 offset = sp.range > 0.0f ? rng.UnitVec2() * sp.range * rng.Float01()
                                           : Vec2::Zero();
-            Entity e = spawn(scene, sp.prefabId, tf.pos + offset, sp.spawnTeam);
-            if (e.IsNull()) break;
-            ++teamCounts_[sp.spawnTeam & 63];
-            EventPacket p{};
-            p.type = GameEvent::Spawn;
-            p.src = e;
-            p.payload[0] = tf.pos.x + offset.x;
-            p.payload[1] = tf.pos.y + offset.y;
-            world.Events().Push(p);
+            deferred.push_back({sp.prefabId, sp.spawnTeam, tf.pos + offset, group});
+            ++teamCounts_[sp.spawnTeam & 63]; // 请求时占额（失败/跳过在执行段回退）
         }
+    }
+
+    int failedGroup = -1;
+    for (const DeferredSpawn& d : deferred) {
+        if (d.group == failedGroup) {
+            --teamCounts_[d.team & 63];
+            continue;
+        }
+        Entity e = spawn(scene, d.prefabId, d.pos, d.team);
+        if (e.IsNull()) { // 工厂不认 prefab：本 Spawner 余量跳过（旧 break 语义）
+            failedGroup = d.group;
+            --teamCounts_[d.team & 63];
+            continue;
+        }
+        EventPacket p{};
+        p.type = GameEvent::Spawn;
+        p.src = e;
+        p.payload[0] = d.pos.x;
+        p.payload[1] = d.pos.y;
+        world.Events().Push(p);
     }
 }
 
@@ -865,15 +911,19 @@ void CSharpBatchSystem::Tick(World& world, Scene& scene, float dt) {
 void ScriptEventDispatchSystem::Tick(World& world, Scene& scene, float dt) {
     (void)scene; (void)dt;
     auto& events = world.Events();
-    // C# 桥（M3-4）：头部拉脚本 pending 入队（当帧派发）+ 两段零拷贝转发 C# 订阅者
-    if (auto* backend = world.ScriptBackend()) backend->DispatchEvents(world, scene);
+    // C# 桥（M3-4）：头部拉脚本 pending 入队（并入当帧批次）
+    if (auto* backend = world.ScriptBackend()) backend->PullPendingEvents(world);
     const World::EventSink& sink = world.GetEventSink();
-    const uint32_t count = events.Size();
-    for (uint32_t i = 0; i < count; ++i) {
-        const EventPacket& p = events.At(i);
-        if (sink) sink(world, p);
-    }
-    events.Clear(); // 帧末清空（03 §11）
+    // 派发前整体取走（2026-09-24 审查 P5）：旧实现 At(i) 引用 + 末尾 Clear()——
+    // 回调（sink/C# 订阅者）内再 Push 的事件被整体清掉（静默丢失），Push 触发
+    // Grow 扩容时 At 引用/桥侧段指针悬空（UAF）。取走后本帧从稳定快照派发，
+    // 窗口内新入队事件留在队列、下帧派发（03 §11"帧末批量消费"语义不变）
+    events.TakeAll(dispatchBuf_);
+    if (auto* backend = world.ScriptBackend())
+        backend->DispatchEvents(world, scene, dispatchBuf_.data(),
+                                (uint32_t)dispatchBuf_.size());
+    if (sink)
+        for (const EventPacket& p : dispatchBuf_) sink(world, p);
 }
 
 // ---------------------------------------------------- #17 销毁提交 --------

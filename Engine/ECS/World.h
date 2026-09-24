@@ -72,7 +72,13 @@ struct RtUiCards {
 struct IScriptBackend {
     virtual ~IScriptBackend() = default;
     virtual void TickBatch(World& world, Scene& scene, float dt) = 0;       // #15 调用
-    virtual void DispatchEvents(World& world, Scene& scene) = 0;            // #16 调用
+    /// #16 头部：拉脚本 pending 事件入队（并入当帧派发批次）
+    virtual void PullPendingEvents(World& world) = 0;                       // #16 调用
+    /// #16 主体：转发事件给 C# 订阅者。events 指向 #16 取出的稳定快照（与队列
+    /// 底层分离）——订阅方回调内可安全再入队（2026-09-24 审查 P5：旧签名直读
+    /// 队列段指针，回调 Push 触发扩容即悬空）
+    virtual void DispatchEvents(World& world, Scene& scene, const EventPacket* events,
+                                uint32_t count) = 0;                        // #16 调用
     virtual void ApplyStructural(World& world, Scene& scene) = 0;           // DestroyCommit 前调用
     /// 销毁提交前补通知（2026-09-24 审查 F-08.2）：C++ 系统路径入队的销毁在此
     /// 触发脚本 OnDestroy——此前只有脚本命令路径通知，托管实例/订阅残留到换域。

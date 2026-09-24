@@ -156,7 +156,9 @@ public:
 
     // ---- IScriptBackend（World 注入；#14/#15 调用）----
     void TickBatch(ecs::World& world, ecs::Scene& scene, float dt) override;
-    void DispatchEvents(ecs::World& world, ecs::Scene& scene) override;
+    void PullPendingEvents(ecs::World& world) override; // #16 头部：pending → Events()
+    void DispatchEvents(ecs::World& world, ecs::Scene& scene, const ecs::EventPacket* events,
+                        uint32_t count) override; // #16 主体：快照 → C# 订阅者
     void ApplyStructural(ecs::World& world, ecs::Scene& scene) override; // 帧首 Essential
     /// CommitDestroys 前遍历待销毁队列：带 ScriptBox 且未通知过的实体补发
     /// OnDestroy（F-08.2——C++ 系统销毁与脚本命令销毁统一在此汇合，恰好一次）

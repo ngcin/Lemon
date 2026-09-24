@@ -509,6 +509,16 @@ void TestRng() {
     Expect(r.Range(7u, 7u) == 7u, "range single point returns lo (no hang)");
     Expect(r.Range(9u, 3u) == 9u, "range inverted contract returns lo (no hang)");
 
+    // span 为二次幂（整除 2^32、无拒绝区间）：老实现 zone 截 0、同样永久死循环
+    // （Range(0,1) 抛硬币即中招——与 Pcg32.cs 双端同修，script-tests 对拍）
+    bool seenPow2[4] = {};
+    for (int i = 0; i < 10000; ++i) {
+        uint32_t v01 = r.Range(0u, 1u);
+        Expect(v01 <= 1u, "range pow2 span (0,1) in bounds (no hang)");
+        seenPow2[r.Range(0u, 3u)] = true;
+    }
+    for (int i = 0; i < 4; ++i) Expect(seenPow2[i], "range pow2 span (0,3) covers all values");
+
     // UnitVec2 长度 ≈ 1（FastSinCos LUT 误差界内）
     for (int i = 0; i < 100; ++i) {
         Vec2 v = r.UnitVec2();
@@ -1417,9 +1427,10 @@ void TestSpatialHashQueryFastPath() {
                            });
         Expect(hits == 0, "pure-team1 cell skipped for team2 mask");
     }
-    // ④ layerMask 过滤走内联位
+    // ④ layerMask 过滤走内联位（t2 的 Meta 在布置段已建——此处 Get 即可；
+    // 重复 Emplace 在 Debug 撞 EnTT "Slot not available"、Release 静默重复入池）
     {
-        s.Emplace<Meta>(t2).layer = 3;
+        s.Get<Meta>(t2).layer = 3;
         hash.Rebuild(s);
         int hits = 0;
         QueryFilter f;
@@ -1429,7 +1440,7 @@ void TestSpatialHashQueryFastPath() {
             return e == t2 || e == noMeta; // 命中只允许 t2 与无 Meta 实体
         });
         Expect(hits == 2, "layer mask via inline bits");
-        s.Emplace<Meta>(t2).layer = 0;
+        s.Get<Meta>(t2).layer = 0;
         hash.Rebuild(s);
     }
     // ⑤ 差分等价：掩码查询命中序 ≡ 默认查询 + 回调内手过滤（含跨格排序）
@@ -1588,7 +1599,9 @@ void TestDestroyNotifyWiring() {
         std::vector<uint64_t> notified;
         int structuralCalls = 0;
         void TickBatch(ecs::World&, ecs::Scene&, float) override {}
-        void DispatchEvents(ecs::World&, ecs::Scene&) override {}
+        void PullPendingEvents(ecs::World&) override {}
+        void DispatchEvents(ecs::World&, ecs::Scene&, const ecs::EventPacket*,
+                            uint32_t) override {}
         void ApplyStructural(ecs::World&, ecs::Scene&) override { ++structuralCalls; }
         void NotifyPendingDestroys(ecs::World&, ecs::Scene& s) override {
             // 与 ScriptHost 实现同形状：待销毁 ∩ ScriptBox，实体级 notified 去重
@@ -4014,6 +4027,7 @@ void TestPlaySpawnPrefab() {
     sp.spawnTeam = 1;
     sp.cooldown = 0.0f;
     const uint32_t editAlive = ctx.EditScene().AliveCount(); // Mob+Hat+Spawner = 3
+    const uint64_t mobGuid = ctx.EditScene().Get<Meta>(mob).guid; // ExitPlay 后句柄失效，按 guid 重找
 
     Expect(ctx.EnterPlay(), "enter play");
     Expect(ctx.Playing() && ctx.ActiveWorld().GetSpawnFn(), "play spawn fn registered");
@@ -4045,10 +4059,16 @@ void TestPlaySpawnPrefab() {
     Expect(spawned >= 4, "Spawner ticking via factory (>= 2 bursts, tree roots)");
     Expect(ctx.ActiveScene().AliveCount() > playAlive0, "play alive grows");
 
-    // Stop：编辑场景零状态泄漏（快照重建）
+    // Stop：编辑场景零状态泄漏（快照重建）。实体全部重建 = 进 Play 前的句柄
+    // （含版本位）已失效——按 guid 重找再校验（Debug 档 EnTT 会断言拒绝死句柄）
     Expect(ctx.ExitPlay(), "exit play");
     Expect(ctx.EditScene().AliveCount() == editAlive, "edit scene restored");
-    bool editLinked = ctx.EditScene().Get<Meta>(mob).prefabId == pguid;
+    Entity mobRestored = Entity::Null();
+    ctx.EditScene().Each([&](Entity e) {
+        if (ctx.EditScene().Get<Meta>(e).guid == mobGuid) mobRestored = e;
+    });
+    bool editLinked = !mobRestored.IsNull() &&
+                      ctx.EditScene().Get<Meta>(mobRestored).prefabId == pguid;
     Expect(editLinked, "edit scene prefab link intact");
 
     fs::remove_all(root, ec);

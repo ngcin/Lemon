@@ -53,6 +53,18 @@ public:
     /// 下标访问（0 = Front），供帧末批量派发遍历（消费不清底层存储，清空用 Clear）
     T& At(uint32_t i) { return buf_[(head_ + i) & mask_]; }
 
+    /// 取走全部现有元素（保序移入 out；队列清空、容量保留）。派发侧专用：
+    /// 取出后 out 与队列底层彻底分离——派发回调内再 Push 落回队列（下帧派发），
+    /// 即使触发 Grow 扩容也不影响 out 的引用（2026-09-24 审查 P5：原"At(i) 引用 +
+    /// 末尾 Clear()"在回调再入队时吞事件、回调 Push 扩容时引用悬空）
+    void TakeAll(std::vector<T>& out) {
+        out.clear();
+        out.reserve(size_);
+        for (uint32_t i = 0; i < size_; ++i) out.push_back(std::move(buf_[(head_ + i) & mask_]));
+        head_ = 0;
+        size_ = 0;
+    }
+
     /// 首连续段（桥侧两段零拷贝派发用）：[ptr, ptr+n)，n ≤ Size()；回绕余量走 TailSpan
     void HeadSpan(const T*& ptr, uint32_t& n) const {
         uint32_t first = (uint32_t)buf_.size() - head_;

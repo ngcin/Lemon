@@ -615,8 +615,8 @@ void ScriptHost::NotifyPendingDestroys(ecs::World& world, ecs::Scene& scene) {
     }
 }
 
-void ScriptHost::DispatchEvents(ecs::World& world, ecs::Scene& scene) {
-    // M3-4：#15 头部先拉脚本 pending 入队（当帧派发），再两段零拷贝转发 C#
+void ScriptHost::PullPendingEvents(ecs::World& world) {
+    // M3-4：#16 头部拉脚本 pending 入队（当帧派发批次）
     if (eventsPullFn_ && pullBuf_.empty()) pullBuf_.resize(256);
     while (eventsPullFn_) {
         int n = eventsPullFn_(pullBuf_.data(), (int)pullBuf_.size());
@@ -624,19 +624,20 @@ void ScriptHost::DispatchEvents(ecs::World& world, ecs::Scene& scene) {
             if (!world.Events().Push(pullBuf_[i])) break; // 满上限丢弃计数由队列管
         if (n < (int)pullBuf_.size()) break; // 拉空
     }
+}
 
-    auto& q = world.Events();
-    const ecs::EventPacket* seg = nullptr;
-    uint32_t n = 0;
+void ScriptHost::DispatchEvents(ecs::World& world, ecs::Scene& scene,
+                                const ecs::EventPacket* events, uint32_t count) {
+    // 入参 = #16 取出的稳定快照（与队列底层分离）：订阅方回调内 Events().Push
+    // 落回队列、下帧派发，不再有旧 HeadSpan/TailSpan 直指队列缓冲、回调 Push 触发
+    // Grow 即段指针悬空的窗口（2026-09-24 审查 P5；快照拷贝 48B×N 代价可忽略）
+    if (!eventsDispatchFn_ || !events || count == 0) return;
     // M5 批②：事件回调与 Update 同一 native 窗口（g_world/g_scene）——订阅方在
     // WaveStart 等回调内可调 Ui.Set/Time.Scale/Instantiate。此前窗口只盖 TickBatch，
     // #16 派发期的回调内 native 调用会静默空转（批① xp 样例恰在 Update 内调用
     // 故未暴露）。
     NativeApiWindow win(&world, &scene);
-    q.HeadSpan(seg, n);
-    if (n) eventsDispatchFn_(seg, (int)n);
-    q.TailSpan(seg, n);
-    if (n) eventsDispatchFn_(seg, (int)n);
+    eventsDispatchFn_(events, (int)count);
 }
 
 } // namespace lemon::scripting

@@ -93,11 +93,14 @@ bool SceneSetParent(Scene& s, Entity child, Entity newParent) {
     if (s.Has<Hierarchy>(child)) Unlink(s, child);
     if (newParent.IsNull()) return true; // 摘根完成
 
-    // 挂到 newParent 子链头（新子插头：O(1)；Hierarchy 不存在则建，已存在则复用）
-    Hierarchy& c = s.Has<Hierarchy>(child) ? s.Get<Hierarchy>(child)
-                                           : s.Emplace<Hierarchy>(child);
-    Hierarchy& p = s.Has<Hierarchy>(newParent) ? s.Get<Hierarchy>(newParent)
-                                               : s.Emplace<Hierarchy>(newParent);
+    // 挂到 newParent 子链头（新子插头：O(1)；Hierarchy 不存在则建，已存在则复用）。
+    // 先确保两个组件都存在、再取引用写链：两次取引用之间夹对同一组件池的
+    // Emplace，EnTT 池底层 vector 扩容搬移会使先取的引用悬空——child/newParent
+    // 均无 Hierarchy 的首次挂接（池 0→1→2 连续扩容）几乎必中（2026-09-24 审查）
+    if (!s.Has<Hierarchy>(child)) s.Emplace<Hierarchy>(child);
+    if (!s.Has<Hierarchy>(newParent)) s.Emplace<Hierarchy>(newParent);
+    Hierarchy& c = s.Get<Hierarchy>(child);
+    Hierarchy& p = s.Get<Hierarchy>(newParent);
     c.parent = newParent;
     c.prev = Entity::Null();
     c.next = p.firstChild;

@@ -9,6 +9,7 @@
 
 #include "Core/Math.h"
 #include "ECS/Entity.h"
+#include "ECS/Events.h"
 #include "ECS/SystemPipeline.h"
 
 namespace lemon::ecs {
@@ -191,6 +192,9 @@ class ScriptEventDispatchSystem final : public ISystem {
 public:
     const char* Name() const override { return "ScriptEventDispatch"; }
     void Tick(World& world, Scene& scene, float dt) override;
+
+private:
+    std::vector<EventPacket> dispatchBuf_; // 派发快照（跨帧复用；与队列底层分离）
 };
 
 // ---- Essential -------------------------------------------------------------
