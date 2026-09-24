@@ -57,7 +57,7 @@ MyGame/                                   # 用户项目（升级永不触碰）
 | particles | json | 发射器资产 | ParticleEditor 产出 |
 | tileset | png + json | 图集 + 碰撞标志 + 自动瓦片变体表 | 05 §7 |
 | curve/data | json | 曲线、Team 表、波次表 | 数据资产 |
-| audio | wav/ogg | 2D 声源（预解码缓存 + 流式 BGM；烘焙入 .baked） | **M6.5**（2026-09-24 登记，08 §M6.5） |
+| audio | wav/ogg | 2D 声源（预解码缓存 + 流式 BGM；烘焙入 .baked） | **M6b**（2026-09-24 登记，原 M6.5 前移改号，08 §M6b） |
 
 - **热重载**：`FileWatcher`（线程轮询，Luma 同款）触发增量导入 → 按依赖图通知（纹理变更 → 重建图集页 → 受影响场景视口刷新标记）。运行中 Play 的资产热替换（贴图/参数即时生效，音效不中断）。
 
@@ -70,7 +70,8 @@ MyGame/                                   # 用户项目（升级永不触碰）
 >   "frames":[c,r]}`——**frames 由作者声明**（yami .anim hframes 同款；DB 零解码
 >   即记账连号切片块，manifest 持久）；AssetGpuCache 校验像素整除后一页登记
 >   全幅 sprite + 连号切片（`AddSpriteAt`）。热重导网格/尺寸变化 = `SetSpriteAt`
->   覆盖重切（号不变）。多表 MaxRects 打包/手动切片 UI/AnimationEditor 归 M6。
+>   覆盖重切（号不变）。多表 MaxRects 打包/手动切片 UI 归 M6c；AnimationEditor 归
+>   M6a 批②（2026-09-24 重排）。
 > - 第一批素材包入库 `Samples/Assets/yami-dungeon/`（见 §7 注记）。
 
 > **M4.4 落地范围注记（与 05/M4.md §1.2 对齐）**：sprite 族先行——每 PNG
@@ -127,7 +128,7 @@ MyGame/                                   # 用户项目（升级永不触碰）
 - 运行时零解析：spriteId → (页, uvRect) 静态表（02 §3.2）。
 - **M5 批③最小集注记**：MaxRects 打包前，已落"单页网格切片"（一 PNG 一页 +
   连号切片块，见 §2.2 注记）——切片消费面 = clip 帧引用；sprite 槽直接引用切片的
-  UI 与跨表打包归本节 M6 工作。
+> UI 与跨表打包归本节 M6c 工作（2026-09-24 重排）。
 
 ## 6. 发布管线与 Steam
 
@@ -150,7 +151,7 @@ MyGame/                                   # 用户项目（升级永不触碰）
 | 模板 | 内容 | 验收 |
 |---|---|---|
 | **vs-survivor**（首发） | 一张竞技场、玩家 8 向移动、3 种武器（直射/环绕/穿透）、经验宝石与升级三选一、波次导演、Boss 计时、HUD（血条/经验/计时/击杀数）、死亡结算 | 新建 → Play，10 分钟完整一局可玩 |
-| **tower-defense**（M6） | 网格地图、路径点、3 种塔（单体/溅射/减速）、波次表、经济、建造/升级/出售 UI | 10 波完整通关 |
+| **tower-defense**（M6c） | 网格地图、路径点、3 种塔（单体/溅射/减速）、波次表、经济、建造/升级/出售 UI | 10 波完整通关 |
 | **incremental**（M6+） | 离线收益、大数值格式化（K/M/B/科学）、自动购买、升档重置 | 30 分钟循环 + 离线结算正确 |
 | **blank** | 空场景 + 最小脚本 | — |
 
@@ -166,7 +167,8 @@ MyGame/                                   # 用户项目（升级永不触碰）
 > monster×2 / boss 精灵表（16px/32px 格，帧数与 yami .anim hframes 核对）+ 3 份
 > `.clip` 样例 + README；`THIRD_PARTY.md` 已登记（MIT）。机械验证 = `--smoke-anim`
 > （程序化表必验 + yami 表在场即验）；bench-survivor 动画化暂用程序化表自播种
-> （hermetic），"bench 直接用默认素材"全面接轨推 M6 模板打包。音效/UI/tileset 后续批。
+> （hermetic），"bench 直接用默认素材"全面接轨推 M6c 模板打包。音效归 M6b；
+> UI/tileset 后续批。
 > **vs-survivor 模板已交付（M5 批④，2026-09-23）**：`Templates/vs-survivor/`——完整
 > 项目（yami 5 表 + 3 clip 拷贝 + 程序化 gem/bullet/pierce/blade + 6 prefab 固定
 > guid + Main.scene 玩家/导演 16 波含 Boss + Game/PlayerBehaviour 单脚本全家桶）。
@@ -175,7 +177,7 @@ MyGame/                                   # 用户项目（升级永不触碰）
 > 生成器 = `--gen-vs-template`（改玩法后重跑重生成）；机械验收 = `--smoke-template`
 > （进回归第 13 步：向导复制 → build → Play → HUD 四要素/存档载入回显/波次/击杀/
 > 升级卡片出现-选择-隐藏断言）。多脚本（scripts[] schema）M5 未落地——模板以
-> 单 PlayerBehaviour 规避，余项挂 M6。
+> 单 PlayerBehaviour 规避，余项挂 M6a（2026-09-24 重排）。
 
 ## 8. 运行时 UI（分阶段，决策 ADR-008）
 
@@ -189,12 +191,12 @@ MyGame/                                   # 用户项目（升级永不触碰）
 > **color**——批④ 着色）+ `Cards`（三选一：ShowCards/CardPick 消费式回读），
 > GameView Play 时叠加画（着色文本/进度条 + 居中卡片面板 + 数字键 1/2/3）；
 > "独立 ImGui 上下文 + 皮肤主题化"推 M8 打包 HUD（编辑器内嵌 ImGui 即 v1 形态）；
-> 位图数字/世界空间血条飘字（sprite 管线）M6。
+> 位图数字/世界空间血条飘字（sprite 管线）M6a 批①（2026-09-24 重排）。
 
 ## 9. 本地化
 
 - 字符串表：`Data/locales/{zh-CN,en}.json`（键值 + 复数规则）；编辑器 StringTable 面板 + 脚本 `Tr.Key` API。
-- 字体按 locale 切换字体资产；C# 脚本字符串编译期扫描提取（Source Generator，M6）。
+- 字体按 locale 切换字体资产；C# 脚本字符串编译期扫描提取（Source Generator，v1.1——2026-09-24 重排：v1 中文单语即可）。
 
 ## 10. 存档（双通道，接口形状借鉴 yami `data.ts`）
 
@@ -216,9 +218,9 @@ public static class Save
 > **M5 批④ 落地口径（2026-09-23 修订）**：用户数据段已交付——`Lemon.Save`
 > （Set/Get/SetString/GetString/HasKey/Flush）→ World 级 SaveChannel（内存 KV）→
 > 宿主 IO 钩子落盘（编辑器 = `.lemon/saves/game.sav`）。**M5 版简化三处**：
-> ①单档单文件（slot_N/settings/meta 三类分档推 M6，模板以 key 前缀区分语义如
+> ①单档单文件（slot_N/settings/meta 三类分档推 M6a 批②，模板以 key 前缀区分语义如
 > `vs.best`）；②定长头二进制无压缩（gzip 归 M7 packager 引 zlib 时一并）；
-> ③场景快照入档推 M6（VS 一局 10 分钟无续局刚需；增量品类"数值快照 + 时间戳"
+> ③场景快照入档推 M6c 后（VS 一局 10 分钟无续局刚需；增量品类"数值快照 + 时间戳"
 > 口径即本形态）。防损坏三件套齐：版本头 + 原子改名（tmp→rename）+ `.bak`
 > 上一代备份（坏档自动回退）。EnterPlay 自动载入 / ExitPlay 兜底落盘 / Flush 显式
 > 立即落盘（幂等）。

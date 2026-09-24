@@ -72,9 +72,9 @@
 | 编辑器模式栈 | `src/EditorsManager.cpp`（~40 行） | A | `Editor/Interaction/ModeStack` | M4 |
 | GUI 双指针焦点仲裁 | `src/GUIManager.cpp:32-33` | A（并入 ImGui 语义） | `Editor/Interaction/Focus` | M4 |
 | "GUI 未占用才轮到场景"约定 | `CursorOnMap.cpp:402` 附近 | A | 同上 | M4 |
-| 放置交互状态机 | `src/Editors/MapEditor/Map/CursorOnMap.cpp`（719 行） | B（SFML→引擎视口） | `Editor/Interaction/PlacementTool` | M6（塔防摆塔复用） |
-| 自动瓦片 Group+friends | `include/Tileset.hpp`（坐标表外置数据） | B | `Assets/Tileset` 数据结构 | M6 |
-| chunk 烘焙 + 相机剔除 | `Chunk.cpp`、`Map.cpp:198-219` | B（VertexArray→Vulkan 顶点段） | 02 §3.3 路径 B | M6 |
+| 放置交互状态机 | `src/Editors/MapEditor/Map/CursorOnMap.cpp`（719 行） | B（SFML→引擎视口） | `Editor/Interaction/PlacementTool` | M6c（塔防摆塔复用） |
+| 自动瓦片 Group+friends | `include/Tileset.hpp`（坐标表外置数据） | B | `Assets/Tileset` 数据结构 | M6c |
+| chunk 烘焙 + 相机剔除 | `Chunk.cpp`、`Map.cpp:198-219` | B（VertexArray→Vulkan 顶点段） | 02 §3.3 路径 B | M6c |
 | Shader 降级守卫模式 | `src/ShadersManager.cpp` | C（推广到所有资源类型） | 02 §2 纪律 | M1 |
 | macOS bundle 定位 + CMake 资源拷贝 | `src/main.cpp:62-77`、`CMakeLists.txt` | A | 编辑器打包脚本 | M4 |
 | 二进制序列化骨架（加 magic/version + UTF-8 改造） | `src/BinaryWriter.cpp` | C（仅骨架思想，烘焙格式参考） | 06 §4 .baked | M7 |
@@ -84,8 +84,8 @@
 
 | 项 | 源 | 级 | 去处 | 里程碑 |
 |---|---|---|---|---|
-| Tilemap dirty-rect 更新协议 + 32×32 扇区碰撞 | `Source/Plugins/Tilemaps/` | B | Tilemap 运行时（03/05） | M6 |
-| Tilemap gzip 版本化序列化 | 同上 | B | 场景 codec 的 tilemap 段 | M6 |
+| Tilemap dirty-rect 更新协议 + 32×32 扇区碰撞 | `Source/Plugins/Tilemaps/` | B | Tilemap 运行时（03/05） | M6c |
+| Tilemap gzip 版本化序列化 | 同上 | B | 场景 codec 的 tilemap 段 | M6c |
 | SpriteAnimator（LoopMode/自定义帧序列/帧混合思想） | `Source/Plugins/.../SpriteAnimator` | C | `Animator2D`（03 §3.2） | M5 |
 | GameObject/Component 组合模式 | `Source/Core/Duality/` | C（心智模型，我们走 ECS） | — | — |
 
@@ -123,11 +123,11 @@
 |---|---|
 | **M0 spike** | Luma JobSystem（B）、CoreCLRHost 最小闭环（B）、Luma 构建体系（C）、Looper 实例化渲染（D）、MoteurJV 零泄漏纪律（C） |
 | **M1 渲染** | Luma RenderableManager（B）、批键（A）、粒子全套（B）、Nut RHI 切面（C）、Editor-RPG2D 降级守卫（C）、Prowl2D Camera2D 清单（C） |
-| **M2 ECS** | MoteurJV 组件目录（C ✅ 27 组件+注册表）、yami Team schema（C ✅ 内联默认表）/RLE codec（M6）/分区自适应（M6）、Luma JobSystem（B ✅ 值语义修正）+ 系统调度（C ✅）、F3 清单（C ✅ 统计层+--stats 文本）；新增第三方 nlohmann/json v3.11.3（.scene 序列化，THIRD_PARTY 已登记） |
+| **M2 ECS** | MoteurJV 组件目录（C ✅ 27 组件+注册表）、yami Team schema（C ✅ 内联默认表）/RLE codec（M6c）/分区自适应（M6c）、Luma JobSystem（B ✅ 值语义修正）+ 系统调度（C ✅）、F3 清单（C ✅ 统计层+--stats 文本）；新增第三方 nlohmann/json v3.11.3（.scene 序列化，THIRD_PARTY 已登记） |
 | **M3 脚本** | Luma CoreCLRHost 全量 + ScriptLoadContext（B）、yami 生命周期形状（C）、Prowl2D SceneDispatcher 调度 / 命名级 API 面 / MainThreadContext（C）、Prowl Roslyn（C，后期） |
 | **M4 编辑器** | Luma 面板框架与面板集（B）、MoteurJV Play 快照（C）、Prowl2D Undo 双轨 / PrefabLink + Inspector override（C）、Editor-RPG2D 模式栈/焦点仲裁/放行约定（A）、yami GUID+manifest（C）；新增第三方 Dear ImGui v1.92.9b-docking（MIT，编辑器 UI，THIRD_PARTY 已登记，M4.0）+ stb（公有领域，PNG 导入/截屏，M4.0） |
 | **M5 VS 模板** | duality SpriteAnimator 思想（C）、yami 存档接口（C）、yami 默认素材底包（MIT 直用）；新增第三方 **RmlUi 6.3**（MIT，v1.x 富 UI 首选，spike-04 三判据验收通过，ADR-008；CPM 锁 tag，THIRD_PARTY 已登记）+ **rbfx**（MIT fork，RmlUi↔引擎渲染层适配 D 级对照，ADR-008 接入形态依据）；FreeType 走系统 brew 2.14.3（RmlUi 字体引擎，暂不 vendored） |
-| **M6 TD 模板** | duality Tilemaps（B）、Editor-RPG2D 放置状态机/自动瓦片/chunk 烘焙（B） |
+| **M6c TD 模板** | duality Tilemaps（B）、Editor-RPG2D 放置状态机/自动瓦片/chunk 烘焙（B） |
 | **M7 发布** | yami Deployment 清单（C）、Editor-RPG2D 序列化骨架（C） |
 | **M8 光照** | Luma 延迟光照裁剪版（B，含 WGSL→GLSL 直译） |
 
