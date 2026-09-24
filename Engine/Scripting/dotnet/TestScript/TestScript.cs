@@ -221,7 +221,8 @@ public sealed class WaveBannerBehaviour : Lemon.LemonBehaviour
 /// + InputButton.Confirm 验收（typeId 6，表尾注册同上约定）。
 /// 帧1 Save.SetString + Ui.Set 着色 + Ui.Set/Clear；帧2 读回（含原始字节档与
 /// HasKey）+ ShowCards；帧3 CardPick 消费 ×2（C++ 帧间置 pick=1）+ HideCards +
-/// Input.Confirm + Save.Flush（无钩子宿主 = 安全 no-op）后自毁。</summary>
+/// Input.Confirm + Save.Flush（无钩子宿主 = 安全 no-op）；帧4 ShowDialog（批④后
+/// 修④单按钮对话框，B/C 留空）；帧5 对话框 pick=0 消费 + Hide 后自毁。</summary>
 public sealed class SaveCardsProbeBehaviour : Lemon.LemonBehaviour
 {
     protected override void Update()
@@ -251,6 +252,13 @@ public sealed class SaveCardsProbeBehaviour : Lemon.LemonBehaviour
                               (ushort)(960 + (Lemon.Input.Confirm ? 5 : 0)), default, default);
             Lemon.Ui.HideCards();
             Lemon.Save.Flush(); // 无 IO 钩子宿主：红字一次后 no-op（不炸即验收）
+        } else if (fc == 4) {
+            Lemon.Ui.ShowDialog("阵亡了，再战一局？", "复活"); // 批④后修④：对话框复活
+        } else if (fc == 5) {
+            int pick = Lemon.Ui.CardPick(); // C++ 帧间置 0（对话框唯一按钮）
+            Lemon.Events.Push(Lemon.Interop.GameEvent.Custom,
+                              (ushort)(980 + (pick < 0 ? 9 : pick)), default, default);
+            Lemon.Ui.HideCards();
             gameObject.Destroy();
         }
     }

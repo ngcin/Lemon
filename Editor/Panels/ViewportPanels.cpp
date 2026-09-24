@@ -745,7 +745,7 @@ void GameViewPanel::OnGui(EditorApp& app) {
         if (app.Ctx().Playing()) {
             ImGui::SetCursorPos(ImVec2(6, 6));
             ImGui::TextDisabled("%s", ImGui::IsWindowFocused() && ImGui::IsWindowHovered()
-                                         ? "输入已路由至 Play World（WASD/空格/R=确认）"
+                                         ? "输入已路由至 Play World（WASD/空格；对话框=点击或数字键）"
                                          : "点击聚焦后键鼠进游戏");
             // M5 批①：Game RT UI 通道——C# Lemon.Ui.Set 写 World.RtUi 定长槽，
             // Play 时叠画在游戏画面左上角（M8 完整 HUD 前的最小形态；frac≥0 附进度条）
@@ -780,19 +780,25 @@ void GameViewPanel::OnGui(EditorApp& app) {
                 ImGui::TextUnformatted(cards.title);
                 ImGui::Separator();
                 ImGui::Spacing();
+                // 空标签槽不渲染（批④后修④：Ui.ShowDialog 单按钮对话框 = B/C 留空）
+                bool anyBtn = false;
                 for (int i = 0; i < 3; ++i) {
-                    if (i) ImGui::SameLine();
+                    if (cards.labels[i][0] == '\0') continue;
+                    if (anyBtn) ImGui::SameLine();
                     ImGui::PushID(i);
                     if (ImGui::Button(cards.labels[i], ImVec2(200.0f, 64.0f)))
                         cards.pick = i; // 点击回写（消费归 C# CardPick）
                     ImGui::PopID();
+                    anyBtn = true;
                 }
                 ImGui::Spacing();
-                ImGui::TextDisabled("%s", "点击或按数字键 1/2/3 选择");
-                // 数字键选择（Game 面板或卡片窗任一聚焦即生效；模拟已冻结无输入冲突）
+                ImGui::TextDisabled("%s", "点击或按数字键选择（对话框 = 1）");
+                // 数字键选择（Game 面板或卡片窗任一聚焦即生效；模拟已冻结无输入冲突；
+                // 空槽键位无效——单按钮对话框按 2/3 不写越界 pick）
                 if (gvFocus || ImGui::IsWindowFocused())
                     for (int k = 0; k < 3; ++k)
-                        if (ImGui::IsKeyPressed((ImGuiKey)(ImGuiKey_1 + k))) cards.pick = k;
+                        if (cards.labels[k][0] != '\0' &&
+                            ImGui::IsKeyPressed((ImGuiKey)(ImGuiKey_1 + k))) cards.pick = k;
                 ImGui::End();
             }
         }

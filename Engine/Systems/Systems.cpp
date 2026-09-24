@@ -12,6 +12,7 @@
 #include "ECS/Scene.h"
 #include "ECS/World.h"
 #include "Physics2D/SpatialHash.h"
+#include "Scripting/ScriptBox.h"
 
 namespace lemon::ecs {
 
@@ -599,7 +600,11 @@ void HitboxSystem::Tick(World& world, Scene& scene, float dt) {
                     death.type = GameEvent::Death;
                     death.src = hit;
                     events.Push(death);
-                    scene.Destroy(hit); // 两阶段：当帧仍可访问
+                    // 脚本实体生死处置归脚本（死亡→对话框复活/重开走脚本逻辑；
+                    // 批④后修④：此前无条件销毁，模板玩家死后 Revive 读已毁实体
+                    // 连续报错被异常隔离禁用）。无脚本数据实体照旧两阶段清场
+                    if (!scene.TryGet<scripting::ScriptBox>(hit))
+                        scene.Destroy(hit); // 两阶段：当帧仍可访问
                 }
 
                 if (pr.pierce > 0) {
@@ -653,7 +658,9 @@ void HitboxSystem::Tick(World& world, Scene& scene, float dt) {
                         death.type = GameEvent::Death;
                         death.src = hit;
                         events.Push(death);
-                        scene.Destroy(hit);
+                        // 同上（弹道侧）：脚本实体不自动销毁
+                        if (!scene.TryGet<scripting::ScriptBox>(hit))
+                            scene.Destroy(hit);
                     }
                 }
                 return true;

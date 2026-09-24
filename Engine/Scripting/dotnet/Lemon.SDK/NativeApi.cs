@@ -167,7 +167,12 @@ internal static unsafe class Native
         }
         byte[] b = System.Text.Encoding.UTF8.GetBytes(s);
         int m = System.Math.Min(b.Length, maxBytes);
-        while (m > 0 && (b[m - 1] & 0xC0) == 0x80) m--; // 尾部连续 10xxxxxx = 半个字符
+        if (m < b.Length) { // 仅真截断时回退到多字节边界。批④后修④：原无条件
+            // 回退会吃掉 CJK 结尾完整串的最后一字，且停在孤立前导字节——
+            // "复活"→"复"；ASCII 结尾串（"磁力 +25%"）不触发故潜伏至今。
+            while (m > 0 && (b[m - 1] & 0xC0) == 0x80) m--; // 尾部 10xxxxxx 连续段
+            if (m > 0 && (b[m - 1] & 0x80) != 0) m--;       // 孤立前导字节一并去
+        }
         for (int i = 0; i < m; i++) dst[i] = b[i];
         dst[m] = 0;
     }

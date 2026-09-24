@@ -642,13 +642,14 @@ void TestSaveChannelAndUiCards() {
     w.Pipeline().AddSystem(std::make_unique<ScriptEventDispatchSystem>());
     w.Pipeline().ResolveOrder();
 
-    int saw700 = 0, saw800 = 0, saw900 = 0, saw960 = 0;
+    int saw700 = 0, saw800 = 0, saw900 = 0, saw960 = 0, saw980 = 0;
     w.SetEventSink([&](World&, const EventPacket& p) {
         if (p.type != GameEvent::Custom) return;
         if (p.user == 700) ++saw700;
         else if (p.user == 801) ++saw800;
         else if (p.user == 910) ++saw900;
         else if (p.user == 965) ++saw960;
+        else if (p.user == 980) ++saw980;
     });
 
     opsSubmit(0, 0, 0x8000000000000006ull); // Create + Attach SaveCardsProbe（typeId 6 表尾）
@@ -675,10 +676,18 @@ void TestSaveChannelAndUiCards() {
     in.buttons = 1ull << 5; // bit5 confirm（R 键语义）
     w.ApplyInput(in);
 
-    w.Step(0.25f); // 帧3：CardPick 消费 + Confirm + Hide + Flush(no-op) + 自毁
+    w.Step(0.25f); // 帧3：CardPick 消费 + Confirm + Hide + Flush(no-op)
     Expect(saw900 == 1, "card pick consumed once (Custom 910: pick=1,again=-1)");
     Expect(saw960 == 1, "Input.Confirm bit5 reached C# (Custom 965)");
     Expect(!w.Cards().active, "cards hidden after pick");
+    w.Step(0.25f); // 帧4：ShowDialog（批④后修④单按钮对话框——B/C 留空）
+    Expect(w.Cards().active && std::strcmp(w.Cards().labels[0], "复活") == 0 &&
+               w.Cards().labels[1][0] == '\0' && w.Cards().labels[2][0] == '\0',
+           "ui dialog shown (single button; B/C empty)");
+    w.Cards().pick = 0; // 对话框唯一按钮（点击/数字键 1 同通道）
+    w.Step(0.25f); // 帧5：对话框 pick 消费 + Hide + 自毁
+    Expect(saw980 == 1, "dialog pick consumed (Custom 980: pick=0)");
+    Expect(!w.Cards().active, "dialog hidden after pick");
     w.Step(0.25f); // 销毁提交
 }
 

@@ -32,6 +32,12 @@ public static class Ui
                                  string optionC)
         => Native.UiCards(true, title, optionA, optionB, optionC);
 
+    /// <summary>显示单按钮对话框（卡片通道复用：B/C 留空即不渲染按钮）。
+    /// 确认型交互首选——死亡复活/结算重开等；点击或数字键 1 触发 CardPick() == 0
+    /// （批④后修④：取代模板 R 键复活，交互不依赖键盘焦点路由）。</summary>
+    public static void ShowDialog(string title, string okLabel)
+        => Native.UiCards(true, title, okLabel, "", "");
+
     /// <summary>隐藏卡片（选完/超时）。</summary>
     public static void HideCards()
         => Native.UiCards(false, "", "", "", "");
