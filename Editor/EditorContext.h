@@ -21,6 +21,12 @@ class ScriptHost;
 
 namespace lemon::editor {
 
+/// sprite 引用解析统计（M6a 批⓪ T2；OpenScene 聚合告警用）
+struct SpriteRefStats {
+    uint32_t danglingGuid = 0; // guid≠0 查无/missing（spriteId 保留旧值渲染）
+    uint32_t backfilled = 0;   // 存量 guid=0 → 补写（保存后升级 guid 主键）
+};
+
 class EditorContext {
 public:
     EditorContext();
@@ -80,6 +86,9 @@ public:
     // ---- 实体操作（编辑器创建的实体恒带 guid + Meta + Transform2D）----
     ecs::Entity CreateEntity(const char* tag);
     ecs::Entity CreateSpriteEntity(const char* tag, uint32_t spriteId = 4); // 默认柠檬黄
+    /// guid 版（生成器/模板链）：guid → 查表 spriteId 双写（查无 = id 0 + 告警，
+    /// 实体仍建——比 FromAsset 宽容：模板链断资不炸，Inspector ⚠ 可见）
+    ecs::Entity CreateSpriteEntityByGuid(const char* tag, uint64_t spriteGuid);
     /// 资产落地版：sprite 资产 GUID → spriteId（找不到/悬空 = Null + 红字）
     ecs::Entity CreateSpriteEntityFromAsset(const char* tag, uint64_t assetGuid, Vec2 pos);
     /// 深拷贝组件（注册表驱动 POD 复制）；副本 = 新根 + 新 guid；
@@ -161,6 +170,8 @@ public:
 
 private:
     void BackfillGuids(); // 打开旧档（无 guid 字段）时补齐
+    /// M6a 批⓪ T2：spriteGuid → spriteId 归一 + 存量回填（装载/恢复/Undo/Prefab 落地）
+    SpriteRefStats ResolveSpriteRefs();
     void ResolvePlayScripts(); // EnterPlay：ScriptBox.className → typeId → AttachBehaviour
     std::string AutosavePathFor(const std::string& sceneStem) const; // .lemon/autosave/<stem>.scene
     // M5 清障②：Play 世界 Spawner/Shooter 工厂桥

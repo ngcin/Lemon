@@ -104,25 +104,30 @@ bool EditorContext::OpenScene(const std::string& path) {
     scenePath_ = CanonicalPath(path);
     selection_.clear();
     BackfillGuids();
-    // 悬空 spriteId 聚合告警（2026-09-22 测试报告观察 6）：AtlasRegistry 无此 id =
-    // 渲染静默缺失（"sprite 不显示"排查半天的第一案发现场）。装载期一次性列出
-    // 计数，不逐实体刷屏。合法域 = 程序化页（< 基号）∪ DB 记账号（含墓碑——
-    // 源文件缺失走 Inspector ⚠，不在此重复报）。0 = 未设置，跳过。
+    // M6a 批⓪ T2：guid → spriteId 归一（改名/移位/重开 id 重排不断链）+ 存量回填
+    const SpriteRefStats st = ResolveSpriteRefs();
+    // 悬空引用聚合告警（2026-09-22 测试报告观察 6）：guid 悬空（资产被删/manifest
+    // 丢失）∪ 存量数字号未登记 = 渲染静默缺失（"sprite 不显示"排查半天的第一案
+    // 发现场）。装载期一次性列出计数，不逐实体刷屏。合法域 = 程序化页（< 基号）
+    // ∪ DB 记账号（含切片区间与墓碑——源文件缺失走 Inspector ⚠，不在此重复报）。
     if (!assets_.ProjectRoot().empty()) {
         uint32_t dangling = 0;
         scene_->Each([&](ecs::Entity e) {
             if (const ecs::SpriteRenderer* sr = scene_->TryGet<ecs::SpriteRenderer>(e)) {
+                if (sr->spriteGuid != 0) return; // guid 路径已由 st.danglingGuid 计
                 const uint32_t id = sr->spriteId;
                 if (id != 0 && id >= assets_.SpriteIdBase() &&
                     !assets_.SpriteIdRegistered(id)) // M5 批④：含切片区间（模板场景
                     ++dangling;                      // 引用 cell 号是常态，勿误报）
             }
         });
-        if (dangling)
-            LEMON_WARN("场景装载：%u 个 SpriteRenderer.spriteId 未在资产库（渲染将缺失；"
-                       "Inspector sprite 槽重指可修）", dangling);
+        if (st.danglingGuid || dangling)
+            LEMON_WARN("场景装载：%u 个 spriteGuid 失效 + %u 个存量 spriteId 未登记"
+                       "（渲染将缺失；Inspector sprite 槽重指可修）",
+                       st.danglingGuid, dangling);
     }
-    dirty = false;
+    // 回填过 guid = 档内容已升级，保持 dirty 提示保存（下次装载不再回填）
+    dirty = st.backfilled > 0;
     RecordRecentScene(scenePath_);
     LEMON_LOG("场景已打开：%s（%u 实体）", scenePath_.c_str(), scene_->AliveCount());
     return true;
@@ -243,6 +248,7 @@ bool EditorContext::OpenSceneRecovery(const std::string& autosavePath) {
     // scenePath_ 保持指向原 .scene（untitled 则保持空）——落盘与否由用户决定
     selection_.clear();
     BackfillGuids();
+    ResolveSpriteRefs(); // M6a 批⓪ T2：autosave 可能来自旧进程（id 口径漂移）
     dirty = true;
     LEMON_LOG("已恢复自动备份（未落盘，Ctrl+S 保存 / 关闭确认丢弃）：%s", autosavePath.c_str());
     return true;
@@ -271,6 +277,21 @@ ecs::Entity EditorContext::CreateSpriteEntity(const char* tag, uint32_t spriteId
     return e;
 }
 
+ecs::Entity EditorContext::CreateSpriteEntityByGuid(const char* tag, uint64_t spriteGuid) {
+    // guid/id 双写（M6a 批⓪ T2）：查无/悬空不炸——id=0 + guid 留底，Inspector ⚠ 可见
+    const AssetEntry* entry = assets_.FindByGuid(spriteGuid);
+    if (!entry || entry->missing || entry->type != AssetType::Sprite || entry->spriteId == 0) {
+        LEMON_WARN("创建精灵：guid %016llx 未命中 sprite 资产（引用留底，重开项目后重解析）",
+                   (unsigned long long)spriteGuid);
+        entry = nullptr;
+    }
+    ecs::Entity e = CreateEntity(tag);
+    ecs::SpriteRenderer& sr = scene_->Emplace<ecs::SpriteRenderer>(e); // 默认启用
+    sr.spriteGuid = spriteGuid;
+    sr.spriteId = entry ? entry->spriteId : 0;
+    return e;
+}
+
 ecs::Entity EditorContext::CreateSpriteEntityFromAsset(const char* tag, uint64_t assetGuid,
                                                        Vec2 pos) {
     const AssetEntry* entry = assets_.FindByGuid(assetGuid);
@@ -281,6 +302,7 @@ ecs::Entity EditorContext::CreateSpriteEntityFromAsset(const char* tag, uint64_t
     }
     ecs::Entity e = CreateSpriteEntity(tag, entry->spriteId);
     scene_->Get<ecs::Transform2D>(e).pos = pos;
+    scene_->Get<ecs::SpriteRenderer>(e).spriteGuid = assetGuid; // M6a 批⓪ T2：双写
     return e;
 }
 
@@ -456,6 +478,9 @@ ecs::Entity EditorContext::InstantiatePrefabAsset(uint64_t prefabGuid, Vec2 pos)
     ecs::Scene& s = ActiveScene(); // Play 中脚本 Instantiate.Prefab 落 Play World
     ecs::Entity root = InstantiatePrefabJson(s, json, prefabGuid, pos);
     if (root.IsNull()) return root;
+    // M6a 批⓪ T2：编辑态落地才解析（prefab 档可能带跨进程/改名后漂移 id；
+    // Play 态 = 同进程 spawn，id 即真值，热路径零扫表）
+    if (!Playing()) ResolveSpriteRefs();
     dirty = !Playing(); // Play 中 = 落 Play World，不动编辑侧脏标记（决议 #5）
     LEMON_LOG("Prefab 实例化：%s（%u 实体）", entry->relPath.c_str(), s.AliveCount());
     return root;
@@ -805,6 +830,10 @@ bool EditorContext::ExitPlay() {
         return false;
     }
     BackfillGuids();
+    // M6a 批⓪ T2：Play 期资产可能被改名/移位（watcher 不因 Play 停摆）——按
+    // guid 归一到新 id。放在逐字节比对前：无资产变动 = 幂等无写、比对照常成立；
+    // 真有变动 = 比对如实报"与快照不一致"（引用升级，非 Play 状态泄漏）。
+    ResolveSpriteRefs();
     // §3.4-3：恢复选中集（按 guid 找回）
     selection_.clear();
     for (uint64_t g : savedSelectionGuids_)
@@ -884,6 +913,7 @@ void EditorContext::PushStructuralUndo(const char* name, const std::string& befo
                         return;
                     }
                     BackfillGuids();
+                    ResolveSpriteRefs(); // M6a 批⓪ T2：快照可能先于资产变动
                     PruneSelection();
                     dirty = true;
                 }});
@@ -896,6 +926,44 @@ void EditorContext::BackfillGuids() {
         ecs::Meta& m = scene_->Get<ecs::Meta>(e);
         if (m.guid == 0) m.guid = GenerateGuid();
     });
+}
+
+// ---- M6a 批⓪ T2：sprite 引用 GUID 主键化 ----
+// .scene 双写 {spriteGuid（真源，.meta 随文件走）, spriteId（AtlasRegistry 进程内
+// 派生号）}。装载/恢复/Undo 重建/编辑态 Prefab 落地后调本函数归一：
+//   * guid≠0 命中 → 覆写 spriteId（改名/移位/manifest 重建 id 漂移后引用不断链）
+//   * guid≠0 查无/missing/非 sprite → 保留 spriteId + 计入 danglingGuid（渲染仍
+//     用旧号，Inspector sprite 槽 ⚠ 重指可修；不静默清零）
+//   * guid=0 且 spriteId 恰为资产本体号 → 回填 guid（FindBySpriteId 只匹配本体
+//     号：切片 cell 号/程序化页号查无 = 天然不回填，防 cell 号被升级成整图
+//     guid 后解析覆写掉切片）。回填标 dirty——存量档下次保存即升级 guid 主键。
+// Play 期 spawn 工厂（InstantiatePrefabJson 高频路径）不走此函数：同进程 id 即
+// 真值，热路径保持零扫表。
+SpriteRefStats EditorContext::ResolveSpriteRefs() {
+    SpriteRefStats st;
+    if (assets_.ProjectRoot().empty()) return st;
+    scene_->Each([&](ecs::Entity e) {
+        ecs::SpriteRenderer* sr = scene_->TryGet<ecs::SpriteRenderer>(e);
+        if (!sr) return;
+        if (sr->spriteGuid != 0) {
+            const AssetEntry* en = assets_.FindByGuid(sr->spriteGuid);
+            if (en && !en->missing && en->spriteId != 0)
+                sr->spriteId = en->spriteId;
+            else
+                ++st.danglingGuid;
+        } else if (sr->spriteId >= assets_.SpriteIdBase()) {
+            if (const AssetEntry* en = assets_.FindBySpriteId(sr->spriteId);
+                en && en->type == AssetType::Sprite) {
+                sr->spriteGuid = en->guid;
+                ++st.backfilled;
+            }
+        }
+    });
+    if (st.backfilled) {
+        dirty = true;
+        LEMON_LOG("sprite 引用：%u 个存量 spriteId 回填 guid（保存后生效）", st.backfilled);
+    }
+    return st;
 }
 
 } // namespace lemon::editor

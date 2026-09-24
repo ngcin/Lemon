@@ -56,9 +56,9 @@ public struct DestroyQueueTag // 1B（空 tag 组件）
 
 // ---- Render（注册 id 5..8）----
 [StructLayout(LayoutKind.Sequential)]
-public struct SpriteRenderer // 12B
+public struct SpriteRenderer // 24B（M6a 批⓪：尾加 SpriteGuid，12→24 与 C++ 同步）
 {
-    public uint SpriteId;
+    public uint SpriteId;     // 进程内派生缓存；真源 = SpriteGuid（装载期归一）
     public uint ColorRGBA;
     public short SortOrder;
     public byte SortingLayer;
@@ -66,6 +66,7 @@ public struct SpriteRenderer // 12B
                               // 注意：引擎侧新增组件默认启用（RenderComponents.h），
                               // 但 C# default(SpriteRenderer) 是零值 = 禁用——
                               // SetComponent 整写前须置 Flags = 0x4（否则不渲染）。
+    public ulong SpriteGuid;  // 资产 GUID（0 = 存量未回填；脚本侧通常只读）
 }
 
 [StructLayout(LayoutKind.Sequential)]

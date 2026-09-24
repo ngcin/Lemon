@@ -3562,6 +3562,106 @@ void TestScriptBoxArchive() {
     });
     Expect(dedupOk, "duplicate className deduped (first wins)");
 }
+// ---- M6a 批⓪ T2：sprite 引用 GUID 化（存量回填 / id 漂移解析 / 悬空 / 程序化页）----
+// 链路主角 = EditorContext::ResolveSpriteRefs（随 OpenScene 乘）。id 漂移用
+// 「删 manifest + 字典序插队资产 + 新 ctx 重开项目」模拟跨进程重排（.meta 只带
+// guid、guid 随文件走——T5 --smoke-guid 将在编辑器全链复证同一命题）。
+void TestSpriteGuidResolve() {
+    namespace fs = std::filesystem;
+    using lemon::editor::EditorContext;
+    using lemon::editor::AssetEntry;
+    using namespace lemon::ecs;
+
+    const fs::path root = fs::temp_directory_path() /
+                          ("lemon-test-spriteguid-" + std::to_string(::getpid()));
+    std::error_code ec;
+    fs::remove_all(root, ec);
+
+    EditorContext ctx;
+    Expect(ctx.Assets().OpenProject(root.string(), /*spriteIdBase=*/100), "ctx open project");
+    fs::create_directories(root / "Assets", ec);
+    { std::ofstream f(root / "Assets" / "coin.png", std::ios::binary); f << "png-C"; }
+    { std::ofstream f(root / "Assets" / "coin.png.meta", std::ios::trunc);
+      f << "{\"guid\":\"1122334455667788\",\"type\":\"sprite\"}"; }
+    { std::ofstream f(root / "Assets" / "hero.png", std::ios::binary); f << "png-H"; }
+    ctx.Assets().Rescan();
+    const AssetEntry* coin = ctx.Assets().FindByPath("Assets/coin.png");
+    const AssetEntry* hero = ctx.Assets().FindByPath("Assets/hero.png");
+    Expect(coin && hero && coin->spriteId == 100 && hero->spriteId == 101,
+           "ids allocated in path order");
+    const uint64_t coinGuid = coin->guid;
+    Expect(coinGuid == 0x1122334455667788ull, "preset meta guid honored");
+    // 按 spriteId 找实体的 SpriteRenderer（多实体场景断言用）
+    auto findSr = [](Scene& s, uint32_t id) {
+        const SpriteRenderer* out = nullptr;
+        s.Each([&](Entity e) {
+            if (const SpriteRenderer* p = s.TryGet<SpriteRenderer>(e); p && p->spriteId == id)
+                out = p;
+        });
+        return out;
+    };
+
+    // ① 存量回填：v2 档只写 spriteId（等价批⓪ 前全部存量档）→ 打开即回填 + 标
+    //    dirty；程序化页号（< 基号）无 guid 语义，保持 0 不回填
+    const fs::path sc = root / "Scenes" / "b.scene";
+    fs::create_directories(sc.parent_path(), ec);
+    {
+        std::ofstream f(sc, std::ios::trunc);
+        f << "{\"schemaVersion\":2,\"name\":\"b\",\"entities\":["
+             "{\"components\":{\"SpriteRenderer\":{\"spriteId\":100,\"colorRGBA\":"
+             "4294967295,\"sortOrder\":0,\"sortingLayer\":0,\"flags\":4}},"
+             "\"scripts\":[]},"
+             "{\"components\":{\"SpriteRenderer\":{\"spriteId\":4,\"colorRGBA\":"
+             "4294967295,\"sortOrder\":0,\"sortingLayer\":0,\"flags\":4}},"
+             "\"scripts\":[]}]}";
+    }
+    Expect(ctx.OpenScene(sc.string()), "legacy-id scene opens");
+    const SpriteRenderer* sr = findSr(ctx.EditScene(), 100);
+    Expect(sr && sr->spriteGuid == coinGuid, "legacy spriteId backfilled to guid");
+    const SpriteRenderer* srProcedural = findSr(ctx.EditScene(), 4);
+    Expect(srProcedural && srProcedural->spriteGuid == 0, "procedural page id not backfilled");
+    Expect(ctx.dirty, "backfill marks dirty (save upgrades the file)");
+
+    // ② 保存 → 跨进程 id 重排（删 manifest + aaa.png 字典序插队 + 新 ctx 重开）
+    //    → coin 100→101；重开档 guid 不变、spriteId 归一到新号、不再回填
+    Expect(ctx.SaveScene(), "scene saved with guid");
+    {
+        std::ifstream f(sc, std::ios::binary);
+        const std::string text((std::istreambuf_iterator<char>(f)),
+                               std::istreambuf_iterator<char>());
+        Expect(text.find("spriteGuid") != std::string::npos &&
+                   text.find(std::to_string(coinGuid)) != std::string::npos,
+               "spriteGuid serialized (decimal)");
+    }
+    fs::remove(root / ".lemon" / "manifest.json", ec);
+    { std::ofstream f(root / "Assets" / "aaa.png", std::ios::binary); f << "png-A"; }
+    EditorContext ctx2; // 新 ctx = 模拟重开进程（DB 空表、无 manifest 记账）
+    Expect(ctx2.Assets().OpenProject(root.string(), 100), "reopen project (manifest gone)");
+    const AssetEntry* coin2 = ctx2.Assets().FindByPath("Assets/coin.png");
+    Expect(coin2 && coin2->spriteId == 101 && coin2->guid == coinGuid,
+           "id drift as designed (aaa takes 100, guid rides .meta)");
+    Expect(ctx2.OpenScene(sc.string()), "reopen saved scene");
+    const SpriteRenderer* sr2 = findSr(ctx2.EditScene(), 101);
+    Expect(sr2 && sr2->spriteGuid == coinGuid,
+           "guid resolves to fresh id (rename/move/manifest-loss proof)");
+    Expect(!ctx2.dirty, "guid-bearing scene opens clean (backfill is one-shot)");
+
+    // ③ 悬空 guid：查无 → spriteId 保留旧号（不静默清零）、场景照常可用
+    const fs::path sc3 = root / "Scenes" / "d.scene";
+    {
+        std::ofstream f(sc3, std::ios::trunc);
+        f << "{\"schemaVersion\":2,\"name\":\"d\",\"entities\":["
+             "{\"components\":{\"SpriteRenderer\":{\"spriteId\":101,\"colorRGBA\":"
+             "4294967295,\"sortOrder\":0,\"sortingLayer\":0,\"flags\":4,"
+             "\"spriteGuid\":999}},\"scripts\":[]}]}";
+    }
+    Expect(ctx2.OpenScene(sc3.string()), "dangling-guid scene opens");
+    const SpriteRenderer* sr3 = findSr(ctx2.EditScene(), 101);
+    Expect(sr3 && sr3->spriteGuid == 999,
+           "dangling guid keeps legacy id rendering");
+
+    fs::remove_all(root, ec);
+}
 // ---- M4.4-d：EditorContext Prefab 操作端到端（导出/实例化/Break/Apply/Revert）----
 void TestEditorContextPrefabOps() {
     namespace fs = std::filesystem;
@@ -4035,6 +4135,7 @@ int main() {
     TestAutosaveRecovery();
     TestEntityTreeArchive();
     TestScriptBoxArchive();
+    TestSpriteGuidResolve();
     TestEditorContextPrefabOps();
     TestPlaySpawnPrefab();
     TestRecentScenesAliasSafety();

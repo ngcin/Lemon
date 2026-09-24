@@ -106,7 +106,8 @@ public static unsafe class LayoutTables
             F("colorRGBA", FieldTypeCode.UInt32, 0, O(p, &p->ColorRGBA)),
             F("sortOrder", FieldTypeCode.Int16, 0, O(p, &p->SortOrder)),
             F("sortingLayer", FieldTypeCode.UInt8, 0, O(p, &p->SortingLayer)),
-            F("flags", FieldTypeCode.UInt8, 0, O(p, &p->Flags)) }); }
+            F("flags", FieldTypeCode.UInt8, 0, O(p, &p->Flags)),
+            F("spriteGuid", FieldTypeCode.UInt64, 0, O(p, &p->SpriteGuid)) }); }
         { Animator2D t = default; Animator2D* p = &t;
           Add<Animator2D>("Animator2D", (uint)sizeof(Animator2D), new[] {
             F("clipId", FieldTypeCode.UInt32, 0, O(p, &p->ClipId)),

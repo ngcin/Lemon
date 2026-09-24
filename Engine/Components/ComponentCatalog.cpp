@@ -56,10 +56,16 @@ constexpr FieldMeta kDestroyQueueTag[] = {};
 constexpr FieldMeta kSpriteRenderer[] = {
     FIELD(SpriteRenderer, spriteId, UInt32), FIELD(SpriteRenderer, colorRGBA, UInt32),
     FIELD(SpriteRenderer, sortOrder, Int16), FIELD(SpriteRenderer, sortingLayer, UInt8),
-    FIELD(SpriteRenderer, flags, UInt8)};
+    FIELD(SpriteRenderer, flags, UInt8),
+    // M6a 批⓪：引用真源（改名/移位后 spriteId 漂移，装载期按 guid 归一）。
+    // 登记为普通字段 = 入档 + 入状态哈希（金档基准场零 SpriteRenderer 实例，
+    // 哈希流只含空组件名 → 零重录，09 §6.8）。ED_HIDE 同 Meta.guid 手法：
+    // 作者面双写走 spriteId 槽（DrawSpriteSlot），不另绘裸 guid 数。
+    FIELD(SpriteRenderer, spriteGuid, UInt64)};
 constexpr FieldEditorMeta kEdSpriteRenderer[] = {
     ED_ASSET("精灵资产槽（AssetBrowser 拖入 / 下拉选择；M4.4 接通）"), ED_COLOR, ED, ED,
-    ED_TIP("bit2 enabled / bit0 flipX / bit1 flipY")};
+    ED_TIP("bit2 enabled / bit0 flipX / bit1 flipY"),
+    ED_HIDE};
 constexpr FieldMeta kAnimator2D[] = {
     FIELD(Animator2D, clipId, UInt32), FIELD(Animator2D, time, Float),
     FIELD(Animator2D, speed, Float), FIELD(Animator2D, loop, UInt8),

@@ -199,6 +199,7 @@ bool DrawSpriteSlot(EditorApp& app, uint8_t* p, ecs::SpriteRenderer& sr) {
                           e.relPath.c_str());
             if (ImGui::Selectable(item, e.spriteId == id)) {
                 id = e.spriteId;
+                sr.spriteGuid = e.guid; // M6a 批⓪ T2：guid/id 双写（guid 真源）
                 sr.flags |= ecs::kSrEnabled;
                 ctx.dirty = true;
             }
@@ -212,6 +213,7 @@ bool DrawSpriteSlot(EditorApp& app, uint8_t* p, ecs::SpriteRenderer& sr) {
             std::memcpy(&d, pay->Data, sizeof(d));
             if (d.kind == 0 && d.spriteId != 0) {
                 id = d.spriteId;
+                sr.spriteGuid = d.guid; // M6a 批⓪ T2：拖入载荷带 guid（AssetBrowser）
                 sr.flags |= ecs::kSrEnabled;
                 ctx.dirty = true;
             }
@@ -221,6 +223,7 @@ bool DrawSpriteSlot(EditorApp& app, uint8_t* p, ecs::SpriteRenderer& sr) {
     if (ImGui::BeginPopupContextItem("slot_ctx")) {
         if (ImGui::MenuItem("清空引用")) {
             id = 0;
+            sr.spriteGuid = 0; // M6a 批⓪ T2：双清（防残留 guid 在下轮装载复活旧引用）
             ctx.dirty = true;
         }
         ImGui::EndPopup();
