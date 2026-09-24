@@ -67,6 +67,8 @@ struct LabelScrubState {
 } scrub_;
 bool g_scrubActive = false; // 本帧拖拽进行中（DrawComponent 属性轨 → anyActive）
 bool g_scrubEnded = false;  // 本帧拖拽刚结束（→ anyDeactivated 提交属性轨）
+// 注：两标志兼作"控件后缀捕获"通道——末控件后还画 Text 后缀的分支（Degree 字段）
+// 须在后缀前就地 |= 进来（后缀会把最后项换成恒不 active 的 Text）。
 
 /// 在 label 文本项之后调用（hover 语义跟随上一项）。返回本帧 dx（0 = 未拖）。
 float LabelScrubDelta(ImGuiID id) {
@@ -147,15 +149,18 @@ bool DrawEnumControl(const FieldMeta& f, const FieldEditorMeta& ed, uint8_t* p) 
     };
     const int64_t cur = read();
     const char* label = (uint32_t)cur < ed.enumCount ? ed.enumNames[cur] : "?";
+    bool wrote = false;
     if (ImGui::BeginCombo("##v", label)) {
         for (uint32_t i = 0; i < ed.enumCount; ++i)
             if (ImGui::Selectable(ed.enumNames[i], (int64_t)i == cur)) {
                 write(i);
-                return true;
+                wrote = true;
             }
+        // 命中不可提前 return：Begin/EndCombo 必须配对（原 early-return 跳过
+        // EndCombo = ImGui ID/弹出栈错乱）
         ImGui::EndCombo();
     }
-    return false;
+    return wrote;
 }
 
 /// sprite 资产槽（FieldHint::AssetRef + UInt32 spriteId；M4.4 接通）。
@@ -468,6 +473,11 @@ FieldResult DrawField(EditorApp& app, const ecs::ComponentMeta& meta, ecs::Entit
                         *(float*)p = deg / 57.29577951f;
                         changed = true;
                     }
+                    // 属性轨捕获点：后面 TextDisabled 后缀会把"最后项"换成 Text
+                    //（恒不 active/deactivated）→ 拖拽态须就地汇入 scrub 通道，
+                    // 否则度数拖拽全程属性轨失明（快照持续刷新、松手不入 Undo）
+                    g_scrubActive |= ImGui::IsItemActive();
+                    g_scrubEnded |= ImGui::IsItemDeactivated();
                     ImGui::SameLine();
                     ImGui::TextDisabled("deg");
                 } else if (ImGui::DragFloat("##v", &v, 1.0f)) {
