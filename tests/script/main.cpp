@@ -306,11 +306,11 @@ void TestDomainManager() {
         Expect(d2 == (double)0.1f, "hot-reload new domain fresh state");
         Expect(leaks >= 0 && leaksFn && leaksFn() == leaks, "leak count visible + consistent");
         Expect(reloadsFn && reloadsFn() >= 1, "reload count visible");
-        // 换装后新域 GameMain.Configure 已跑：behaviours 列表可拉（8 个类型）
+        // 换装后新域 GameMain.Configure 已跑：behaviours 列表可拉（11 个类型）
         auto listFn = (int (*)(char*, int))GetExport("lemon_behaviours_list");
         char buf[4096];
         int n = listFn ? listFn(buf, (int)sizeof buf) : -1;
-        Expect(n == 10, "behaviours list after hot reload (+M11/M15/F-08.2 probes)");
+        Expect(n == 11, "behaviours list after hot reload (+M11/M15/F-08.2/T3 probes)");
         // M4.6 回归（用户实测闪退根因）：相对路径进 dm_reload 曾抛 ArgumentException
         // 逃逸 UnmanagedCallersOnly → coreclr abort。拦截层必须转 0 返回且进程存活
         // （本断言能跑到 = 进程没死）。换装失败后旧域已弃——再换一次真路径恢复。
@@ -926,6 +926,96 @@ void TestCppDestroyNotify() {
     g_sh.ResetPlayDomain(); // 收尾自清（同上）
 }
 
+// M6a 批⓪ T3：GameObject 统一门面双路由（C# DualRouteProbe typeId 10 订阅驱动）。
+// 覆盖：AddComponent 值组件(op2)/脚本(op4 ×2 幂等 get-or-add)、GetComponent 帧边界
+//（命令帧首应用——同帧脚本查 = null）与实例命中/值读回、RemoveComponent 脚本
+//（op5：单槽 OnDestroy+退订+槽移除，空盒随卸）与值组件(op3)。回报码 15xx = ok。
+void TestSdkDualRoute() {
+    using namespace lemon::ecs;
+    using lemon::scripting::ScriptBox;
+    auto attachedFn = (int (*)())GetExport("lemon_behaviours_attached");
+    auto timeResetFn = (void (*)())GetExport("lemon_time_reset");
+    Expect(attachedFn && timeResetFn, "dual-route exports resolved");
+    timeResetFn();
+
+    WorldDesc d;
+    d.threadCount = 1;
+    World w(d);
+    Scene& s = w.CreateScene("DualRoute");
+    w.SetActiveScene(&s);
+    w.SetScriptBackend(&g_sh);
+    w.Pipeline().AddSystem(std::make_unique<DestroyCommitSystem>());
+    w.Pipeline().AddSystem(std::make_unique<CSharpBatchSystem>());
+    w.Pipeline().AddSystem(std::make_unique<ScriptEventDispatchSystem>());
+    w.Pipeline().ResolveOrder();
+
+    int ok1541 = 0, ok1542 = 0, ok1543 = 0, ok1544 = 0, bad = 0;
+    w.SetEventSink([&](World&, const EventPacket& p) {
+        if (p.type != GameEvent::Custom) return;
+        if (p.user == 1541) ++ok1541;
+        else if (p.user == 1542) ++ok1542;
+        else if (p.user == 1543) ++ok1543;
+        else if (p.user == 1544) ++ok1544;
+        else if (p.user >= 2541 && p.user <= 2543) ++bad;
+    });
+
+    Entity e = s.Create();
+    s.Emplace<Transform2D>(e);
+    g_sh.AttachBehaviour(w, s, e, 10); // DualRouteProbe（表尾 typeId 10）
+    w.Step(0.25f); // 帧1：订阅就位
+    const int attached0 = attachedFn();
+
+    auto push = [&](unsigned user) {
+        EventPacket p{};
+        p.type = GameEvent::Custom;
+        p.user = (uint16_t)user;
+        p.src = e;
+        w.Events().Push(p);
+    };
+
+    // 相位1（1500）：值组件 + 脚本 ×2（门面去重）。帧2 分发回调入命令；
+    // 帧3 帧首应用（Health + InputMover 槽/实例），#15 送达 1541。
+    push(1500);
+    w.Step(0.25f);
+    w.Step(0.25f);
+    Expect(attachedFn() == attached0 + 1,
+           "AddComponent x2 deduped (get-or-add facade gate)");
+    Expect(s.Has<Health>(e), "AddComponent value route emplaced Health");
+    if (const ScriptBox* sb = s.TryGet<ScriptBox>(e))
+        Expect(sb->count == 2 && sb->slots[1].typeId == 2,
+               "script route appended one InputMover slot");
+    else
+        Expect(false, "ScriptBox present after script AddComponent");
+    w.Step(0.25f); // 送达余量
+    Expect(ok1541 == 1, "same-frame GetComponent after AddComponent = null (frame boundary)");
+    Expect(bad == 0, "no failure markers from phase 1");
+
+    // 相位2（1501）：实例命中 + 值读回 → 卸双份（op5 + op3，帧首应用）
+    push(1501);
+    w.Step(0.25f);
+    w.Step(0.25f);
+    Expect(!s.Has<Health>(e), "RemoveComponent value route removed Health");
+    if (const ScriptBox* sb = s.TryGet<ScriptBox>(e))
+        Expect(sb->count == 1 && sb->slots[0].typeId == 10,
+               "op5 removed script slot in place (DualRoute remains)");
+    else
+        Expect(false, "ScriptBox remains while DualRoute attached");
+    Expect(attachedFn() == attached0, "InputMover instance detached (attached back to base)");
+    w.Step(0.25f);
+    Expect(ok1542 == 1 && ok1543 == 1, "GetComponent hits: instance + value copy");
+    Expect(bad == 0, "no failure markers from phase 2");
+
+    // 相位3（1502）：自卸 → 空盒随卸（ScriptBox 组件整体移除）+ OnDestroy 恰一次
+    push(1502);
+    w.Step(0.25f);
+    w.Step(0.25f);
+    Expect(!s.Has<ScriptBox>(e), "empty ScriptBox removed after last detach");
+    Expect(attachedFn() == attached0 - 1, "self-detach released the instance");
+    w.Step(0.25f);
+    Expect(ok1544 == 1, "self-detach fired OnDestroy exactly once");
+    Expect(attachedFn() == attached0 - 1 && bad == 0, "final state consistent");
+}
+
 } // namespace
 
 int main() {
@@ -976,6 +1066,7 @@ int main() {
     TestAwakeWindowAndDoubleAdd();
     TestSubscribeAutoUnsubscribe();
     TestCppDestroyNotify();
+    TestSdkDualRoute();
 
     // M4.6 探针（编辑器切项目场景）：同进程二次 ScriptHost 生命周期。CoreCLR 运行时
     // 进程单例——第二次 Initialize 的真实行为必须钉板（成功/失败都合法，崩 = 缺陷）。

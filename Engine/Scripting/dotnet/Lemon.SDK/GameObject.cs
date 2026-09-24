@@ -25,11 +25,99 @@ public readonly struct GameObject
     /// <summary>读组件（拷贝语义；语法糖——热路径用 Chunk）。</summary>
     public bool TryGetComponent<T>(out T c) where T : unmanaged => Native.Read(Entity.Id, out c);
 
-    public T GetComponent<T>() where T : unmanaged
+    // ---- M6a 批⓪ T3：组件/脚本统一门面（Unity 习惯名，typeof(T) 双路由）----
+    // AddComponent/GetComponent/RemoveComponent 一个名字管两类：值组件（IComponent
+    // 镜像 struct → op2/3 + 原生读写）∪ 脚本组件（LemonBehaviour 子类 → op4/5 +
+    // Behaviours 实例表）。C# 约束限制：unmanaged 不能上提到 notnull 门面 → 值
+    // 组件读经开放泛型策略类反射实例化一次（接口直调零装箱；逐 T 静态缓存）。
+    // 低频语法糖口径（04 §2.1）；热路径仍推 TryGetComponent/Chunk。
+
+    /// <summary>加组件（结构命令，帧首应用）。值组件 = op2；脚本 = op4（幂等
+    /// get-or-add：实例在/待决命令在 = no-op——同类型唯一决策 4 的门面侧闸）。
+    /// 未注册脚本/非组件类型 = 抛（注册期错误当场响亮）。</summary>
+    public void AddComponent<T>() where T : notnull
     {
-        if (!Native.Read(Entity.Id, out T c)) throw new System.InvalidOperationException(
-            $"component {typeof(T).Name} missing on entity");
-        return c;
+        var t = typeof(T);
+        if (typeof(LemonBehaviour).IsAssignableFrom(t)) {
+            int id = Behaviours.TypeIdOf(t.Name);
+            if (id < 0) throw new System.InvalidOperationException(
+                $"behaviour '{t.Name}' not registered (Behaviours.Register in GameMain.Configure)");
+            if (Behaviours.GetInstance(t.Name, Entity) != null) return;
+            if (SceneOps.HasPendingAttach(Entity, id)) return;
+            SceneOps.AttachScript(Entity, id);
+            return;
+        }
+        if (ComponentTable.TryId(t, out byte cid)) {
+            SceneOps.SubmitRaw((byte)SceneOpType.AddComponent, cid, Entity.Id);
+            return;
+        }
+        throw new System.InvalidOperationException(
+            $"AddComponent<{t.Name}>: 既非 IComponent 组件也非 LemonBehaviour");
+    }
+
+    /// <summary>读组件。脚本分路 = 挂载实例引用（未挂 = null；含 Disabled，Unity
+    /// 同口径；注意帧边界——AddComponent 同帧查 = null）；值组件分路 = 拷贝
+    /// （缺 = throw，旧 unmanaged 契约保持）。</summary>
+    public T? GetComponent<T>() where T : notnull
+    {
+        if (Route<T>.IsBehaviour)
+            return (T?)(object?)Behaviours.GetInstance(typeof(T).Name, Entity);
+        return Route<T>.ReadStruct(Entity.Id);
+    }
+
+    /// <summary>移除组件（结构命令，帧首应用）。脚本分路 = op5（单槽：OnDestroy+
+    /// 实例级订阅退订）；值组件 = op3。返回 = 是否已入队（类型未注册/未绑定 = false）。</summary>
+    public bool RemoveComponent<T>() where T : notnull
+    {
+        var t = typeof(T);
+        if (typeof(LemonBehaviour).IsAssignableFrom(t)) {
+            int id = Behaviours.TypeIdOf(t.Name);
+            if (id < 0) return false;
+            SceneOps.DetachScript(Entity, id);
+            return true;
+        }
+        if (ComponentTable.TryId(t, out byte cid)) {
+            SceneOps.SubmitRaw((byte)SceneOpType.RemoveComponent, cid, Entity.Id);
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>双路由判定缓存（逐 T 一次静态构造；反射无逐调用开销）。</summary>
+    private static class Route<T> where T : notnull
+    {
+        public static readonly bool IsBehaviour =
+            typeof(LemonBehaviour).IsAssignableFrom(typeof(T));
+        private static readonly IStructReader<T>? s_reader = Build();
+        private static IStructReader<T>? Build()
+        {
+            if (IsBehaviour || !typeof(T).IsValueType) return null;
+            try {
+                // sealed 类实例化必非 null（ArgumentException 分支已拦约束拒绝）
+                return (IStructReader<T>)System.Activator.CreateInstance(
+                    typeof(StructReader<>).MakeGenericType(typeof(T)))!;
+            } catch (System.ArgumentException) {
+                return null; // 非 unmanaged/IComponent（MakeGenericType 约束拒绝）
+            }
+        }
+        public static T ReadStruct(ulong e)
+        {
+            if (s_reader == null) throw new System.InvalidOperationException(
+                $"GetComponent<{typeof(T).Name}>: 既非 IComponent 组件也非 LemonBehaviour");
+            return s_reader.Read(e);
+        }
+    }
+
+    private interface IStructReader<T> where T : notnull { T Read(ulong e); }
+
+    private sealed class StructReader<U> : IStructReader<U> where U : unmanaged, IComponent
+    {
+        public U Read(ulong e)
+        {
+            if (!Native.Read(e, out U c)) throw new System.InvalidOperationException(
+                $"component {typeof(U).Name} missing on entity");
+            return c;
+        }
     }
 
     /// <summary>写回组件（整 struct 覆盖；语法糖）。</summary>

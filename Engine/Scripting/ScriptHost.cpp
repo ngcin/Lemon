@@ -258,6 +258,8 @@ bool ScriptHost::Initialize(const char* dotnetRoot, const char* runtimeConfigPat
     playResetFn_ = (void (*)())host_.GetExport(kType, "lemon_play_reset"); // M5 批④后修（可缺席）
     scriptsAttachFn_ = (void (*)(int, uint64_t))host_.GetExport(kType, "lemon_scripts_attach");
     scriptsDestroyFn_ = (void (*)(uint64_t))host_.GetExport(kType, "lemon_scripts_destroy");
+    scriptsDetachFn_ =
+        (void (*)(int, uint64_t))host_.GetExport(kType, "lemon_scripts_detach"); // M6a 批⓪ T3（可缺席）
     opsPullFn_ = (int (*)(SceneOpC*, int))host_.GetExport(kType, "lemon_ops_pull");
     if (auto reg = (void (*)(const NativeApiVtable*))host_.GetExport(kType, "lemon_api_register"))
         reg(&kNativeApi);
@@ -435,6 +437,29 @@ void ScriptHost::ResolveSlotBehaviour(ecs::World& world, ecs::Scene& scene, ecs:
     }
 }
 
+void ScriptHost::DetachBehaviour(ecs::World& world, ecs::Scene& scene, ecs::Entity e,
+                                 int typeId) {
+    // M6a 批⓪ T3：op5/C# RemoveComponent 脚本分路。先通知托管（OnDestroy +
+    // 实例级订阅退订——PostBatch 内同步执行，native 窗口就位 M11），再卸槽
+    //（保序 RemoveSlot；空盒随卸与 EditorContext::RemoveScriptSlot 同口径）。
+    // 幂等：槽不在（未挂/已卸/typeId 未解析 -1）= no-op。
+    ScriptBox* sb = scene.TryGet<ScriptBox>(e);
+    if (!sb) return;
+    int idx = -1;
+    for (uint32_t i = 0; i < sb->count; ++i)
+        if (sb->slots[i].typeId == typeId) {
+            idx = (int)i;
+            break;
+        }
+    if (idx < 0) return;
+    if (scriptsDetachFn_) { // 旧 Entry 无导出 = 只卸槽不通知托管（挂空安全）
+        NativeApiWindow win(&world, &scene);
+        scriptsDetachFn_(typeId, e.id);
+    }
+    RemoveSlot(*sb, (uint32_t)idx);
+    if (sb->count == 0) scene.Remove<ScriptBox>(e);
+}
+
 const std::vector<std::string>& ScriptHost::BehaviourTypeNames() {
     if (!behaviourNames_.empty() || !userLoaded_) return behaviourNames_;
     if (!behavioursListFn_) {
@@ -548,6 +573,12 @@ void ScriptHost::ApplyStructural(ecs::World& world, ecs::Scene& scene) {
                 // entt 池损坏的旧坑已由 TryGet 分支消除）
                 ecs::Entity e = Resolve(op.entity);
                 if (!e.IsNull()) AttachBehaviour(world, scene, e, (int)op.compId);
+                break;
+            }
+            case 5: { // DetachScript（M6a 批⓪ T3：卸单槽——OnDestroy+退订+槽移除）
+                // 防御：typeId 查无槽/ScriptBox 不在 = 幂等 no-op（DetachBehaviour 内）
+                ecs::Entity e = Resolve(op.entity);
+                if (!e.IsNull()) DetachBehaviour(world, scene, e, (int)op.compId);
                 break;
             }
             default: break;

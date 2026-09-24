@@ -119,6 +119,12 @@ public:
     /// Awake/OnEnable 在此同步执行，native 窗口（g_world/g_scene）由内部就位（M11）。
     void AttachBehaviour(ecs::World& world, ecs::Scene& scene, ecs::Entity e, int typeId);
 
+    /// 运行时卸单槽脚本（op5/C# RemoveComponent 脚本分路，M6a 批⓪ T3）：
+    /// 托管侧单实例 OnDestroy + 实例级订阅退订 → ScriptBox 槽移除（保序；
+    /// 空盒随卸）。未挂/已卸 = 幂等 no-op。旧 Entry 无 lemon_scripts_detach
+    /// 导出 = 只卸槽不通知托管（挂空安全）。
+    void DetachBehaviour(ecs::World& world, ecs::Scene& scene, ecs::Entity e, int typeId);
+
     /// 既有槽解析（编辑器 EnterPlay/热重载路径）：场景档槽 typeId=-1 待解析时按名
     /// 映射并原位落 typeId（不追加槽），再挂托管实例（M6a 批⓪ 与 AttachBehaviour
     /// 拆分——原 get-or-create 覆写语义在多槽下会错删兄弟槽）。
@@ -180,6 +186,7 @@ private:
     void (*playResetFn_)() = nullptr; // M5 批④后修：lemon_play_reset（旧 Entry = null）
     void (*scriptsAttachFn_)(int, uint64_t) = nullptr;
     void (*scriptsDestroyFn_)(uint64_t) = nullptr;
+    void (*scriptsDetachFn_)(int, uint64_t) = nullptr; // M6a 批⓪ T3（旧 Entry = null 挂空安全）
     int (*opsPullFn_)(SceneOpC*, int) = nullptr;
     int (*behavioursListFn_)(char*, int) = nullptr; // 惰性解析一次（BehaviourTypeNames 用）
     mutable unsigned long long (*gcAllocFn_)() = nullptr; // 惰性解析一次（GetExport 每调

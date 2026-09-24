@@ -32,6 +32,8 @@ public static class GameMain
         Lemon.Behaviours.Register<SubProbeBehaviour>();
         // F-08.2（2026-09-24）：C++ 路径销毁的 OnDestroy（typeId 9，表尾注册同上约定）
         Lemon.Behaviours.Register<CppDestroyProbeBehaviour>();
+        // M6a 批⓪ T3：GameObject 统一门面双路由（typeId 10，表尾注册同上约定）
+        Lemon.Behaviours.Register<DualRouteProbeBehaviour>();
     }
 }
 
@@ -285,4 +287,47 @@ public sealed class SubProbeBehaviour : Lemon.LemonBehaviour
             if (m.User != 900) return;
             Lemon.Events.Push(Lemon.Interop.GameEvent.Custom, 901, default, default);
         });
+}
+
+/// <summary>M6a 批⓪ T3 验收（typeId 10）：GameObject 统一门面双路由——
+/// AddComponent/GetComponent/RemoveComponent&lt;T&gt; 值组件（IComponent → op2/3 +
+/// 原生读）∪ 脚本组件（LemonBehaviour → op4/5 + 实例表）。订阅 Custom 相位驱动
+///（C++ 注入 user 码），结果经事件回报（15xx = ok，25xx = 反例；帧边界断言：
+/// AddComponent 同帧 GetComponent = null）。InputMover 无自毁副作用（Counting
+/// 第 2 帧自毁会带走宿主实体，不选）。</summary>
+public sealed class DualRouteProbeBehaviour : Lemon.LemonBehaviour
+{
+    protected override void Awake()
+        => Subscribe(Lemon.Interop.GameEvent.Custom, OnPhase);
+
+    private void OnPhase(Lemon.GameEventMsg m)
+    {
+        switch ((int)m.User) {
+        case 1500: // 值组件 op2 + 脚本 op4 ×2（幂等 get-or-add：待决命令去重）
+            gameObject.AddComponent<Lemon.Interop.Health>();
+            gameObject.AddComponent<InputMoverBehaviour>();
+            gameObject.AddComponent<InputMoverBehaviour>();
+            Lemon.Events.Push(Lemon.Interop.GameEvent.Custom,
+                gameObject.GetComponent<InputMoverBehaviour>() == null
+                    ? (ushort)1541 : (ushort)2541, default, default);
+            break;
+        case 1501: // 脚本实例命中 + 值组件读回 → 卸双份（op5 + op3）
+            Lemon.Events.Push(Lemon.Interop.GameEvent.Custom,
+                gameObject.GetComponent<InputMoverBehaviour>() != null
+                    ? (ushort)1542 : (ushort)2542, default, default);
+            var h = gameObject.GetComponent<Lemon.Interop.Health>();
+            // op2 默认构造 = C++ Health{max=100,cur=100}：值分路读回真字节（非零非垃圾）
+            Lemon.Events.Push(Lemon.Interop.GameEvent.Custom,
+                h.Max == 100f && h.Cur == 100f ? (ushort)1543 : (ushort)2543, default, default);
+            gameObject.RemoveComponent<InputMoverBehaviour>();
+            gameObject.RemoveComponent<Lemon.Interop.Health>();
+            break;
+        case 1502: // 自卸（合法：Unity Destroy(this) 同语义；帧首应用后本实例退场）
+            gameObject.RemoveComponent<DualRouteProbeBehaviour>();
+            break;
+        }
+    }
+
+    protected override void OnDestroy()
+        => Lemon.Events.Push(Lemon.Interop.GameEvent.Custom, 1544, default, default);
 }

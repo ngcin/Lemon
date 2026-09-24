@@ -179,6 +179,39 @@ public static class Behaviours
             }
     }
 
+    /// <summary>单类型卸载（M6a 批⓪ T3：op5 DetachScript → lemon_scripts_detach 路径；
+    /// GameObject.RemoveComponent 脚本分路）。只卸 (typeId, 实体) 一槽实例：OnDestroy
+    /// + 实例级订阅退订；未挂/已卸 = 幂等 no-op。</summary>
+    internal static void DetachOne(int typeId, EntityHandle e)
+    {
+        if ((uint)typeId >= (uint)Slots.Count) return;
+        var slot = Slots[typeId];
+        for (int i = slot.Instances.Count - 1; i >= 0; i--) {
+            if (slot.Instances[i].gameObject.Entity.Id != e.Id) continue;
+            if (!slot.Disabled[i]) SafeCall(slot, i, slot.Instances[i], LifecycleBits.OnDestroy);
+            slot.Instances[i].ClearSubscriptions();
+            slot.Instances.RemoveAt(i);
+            slot.StartPending.RemoveAt(i);
+            slot.BadStreak.RemoveAt(i);
+            slot.Disabled.RemoveAt(i);
+            --s_attached;
+        }
+    }
+
+    /// <summary>实例查询（M6a 批⓪ T3：GameObject.GetComponent 脚本分路）。
+    /// 未注册/未挂 = null；含 Disabled 实例（Unity GetComponent 同口径）。
+    /// 注意帧边界：AddComponent 命令帧首才应用，同帧 GetComponent = null。</summary>
+    internal static LemonBehaviour? GetInstance(string className, EntityHandle e)
+    {
+        int id = TypeIdOf(className);
+        if (id < 0) return null;
+        var slot = Slots[id];
+        for (int i = 0; i < slot.Instances.Count; i++)
+            if (slot.Instances[i].gameObject.Entity.Id == e.Id)
+                return slot.Instances[i];
+        return null;
+    }
+
     /// <summary>诊断：活动实例数。</summary>
     public static int AttachedCount => s_attached;
 

@@ -9,6 +9,11 @@ using System.Runtime.InteropServices;
 
 namespace Lemon.Interop;
 
+/// <summary>组件标记接口（M6a 批⓪ T3）：镜像 struct 实现之，供 GameObject 统一
+/// 门面（AddComponent/GetComponent/RemoveComponent&lt;T&gt;）与 LemonBehaviour 分路。
+/// 纯标记（零成员）——不参与布局/桥协议，LayoutTables 探针口径不变。</summary>
+public interface IComponent { }
+
 /// <summary>实体句柄（镜像 lemon::ecs::Entity：u64，0 = null，低 32 位=entt+1）。</summary>
 [StructLayout(LayoutKind.Sequential)]
 public struct EntityHandle
@@ -20,7 +25,7 @@ public struct EntityHandle
 
 // ---- Core（注册 id 0..4）----
 [StructLayout(LayoutKind.Sequential)]
-public struct Transform2D   // 20B
+public struct Transform2D : IComponent   // 20B
 {
     public Vec2 Pos;
     public float Rot;       // 弧度
@@ -28,19 +33,19 @@ public struct Transform2D   // 20B
 }
 
 [StructLayout(LayoutKind.Sequential)]
-public struct Velocity      // 8B
+public struct Velocity : IComponent      // 8B
 {
     public Vec2 V;
 }
 
 [StructLayout(LayoutKind.Sequential)]
-public struct Hierarchy     // 32B
+public struct Hierarchy : IComponent     // 32B
 {
     public EntityHandle Parent, FirstChild, Next, Prev;
 }
 
 [StructLayout(LayoutKind.Sequential)]
-public unsafe struct Meta   // 48B（M4.1 增 Guid，C++ CoreComponents.h 同步）
+public unsafe struct Meta : IComponent   // 48B（M4.1 增 Guid，C++ CoreComponents.h 同步）
 {
     public ulong PrefabId;
     public uint Team;
@@ -50,13 +55,13 @@ public unsafe struct Meta   // 48B（M4.1 增 Guid，C++ CoreComponents.h 同步
 }
 
 [StructLayout(LayoutKind.Sequential)]
-public struct DestroyQueueTag // 1B（空 tag 组件）
+public struct DestroyQueueTag : IComponent // 1B（空 tag 组件）
 {
 }
 
 // ---- Render（注册 id 5..8）----
 [StructLayout(LayoutKind.Sequential)]
-public struct SpriteRenderer // 24B（M6a 批⓪：尾加 SpriteGuid，12→24 与 C++ 同步）
+public struct SpriteRenderer : IComponent // 24B（M6a 批⓪：尾加 SpriteGuid，12→24 与 C++ 同步）
 {
     public uint SpriteId;     // 进程内派生缓存；真源 = SpriteGuid（装载期归一）
     public uint ColorRGBA;
@@ -70,7 +75,7 @@ public struct SpriteRenderer // 24B（M6a 批⓪：尾加 SpriteGuid，12→24 �
 }
 
 [StructLayout(LayoutKind.Sequential)]
-public struct Animator2D     // 16B
+public struct Animator2D : IComponent     // 16B
 {
     public uint ClipId;
     public float Time;
@@ -81,33 +86,33 @@ public struct Animator2D     // 16B
 }
 
 [StructLayout(LayoutKind.Sequential)]
-public struct ParticleEmitterRef // 8B
+public struct ParticleEmitterRef : IComponent // 8B
 {
     public uint EmitterId;
     public byte Playing;
 }
 
 [StructLayout(LayoutKind.Sequential)]
-public struct SortingOverride // 2B
+public struct SortingOverride : IComponent // 2B
 {
     public short Order;
 }
 
 // ---- Behavior（注册 id 9..20）----
 [StructLayout(LayoutKind.Sequential)]
-public struct Health         // 16B（M5 批⓪ 增 IFrameWindow）
+public struct Health : IComponent         // 16B（M5 批⓪ 增 IFrameWindow）
 {
     public float Max, Cur, IFrames, IFrameWindow; // iFrames 运行时
 }
 
 [StructLayout(LayoutKind.Sequential)]
-public struct Mover          // 4B
+public struct Mover : IComponent          // 4B
 {
     public float Speed;
 }
 
 [StructLayout(LayoutKind.Sequential)]
-public struct Patrol         // 24B
+public struct Patrol : IComponent         // 24B
 {
     public Vec2 A, B;
     public float PauseTime;
@@ -115,7 +120,7 @@ public struct Patrol         // 24B
 }
 
 [StructLayout(LayoutKind.Sequential)]
-public struct Chase          // 24B
+public struct Chase : IComponent          // 24B
 {
     public float Speed, AggroRange, KeepRange;
     public uint TargetTeam;
@@ -123,13 +128,13 @@ public struct Chase          // 24B
 }
 
 [StructLayout(LayoutKind.Sequential)]
-public struct Flee           // 8B
+public struct Flee : IComponent           // 8B
 {
     public float Speed, Range;
 }
 
 [StructLayout(LayoutKind.Sequential)]
-public struct Shooter        // 32B
+public struct Shooter : IComponent        // 32B
 {
     public uint ProjectileId;
     public float Interval, Range;
@@ -139,7 +144,7 @@ public struct Shooter        // 32B
 }
 
 [StructLayout(LayoutKind.Sequential)]
-public struct Projectile     // 48B（M5 批⓪：hitRadius/knockback + 命中记忆）
+public struct Projectile : IComponent     // 48B（M5 批⓪：hitRadius/knockback + 命中记忆）
 {
     public float Speed, Lifetime, Damage, Age; // age 运行时
     public byte Pierce, Homing;
@@ -151,7 +156,7 @@ public struct Projectile     // 48B（M5 批⓪：hitRadius/knockback + 命中�
 }
 
 [StructLayout(LayoutKind.Sequential)]
-public struct Spawner        // 28B
+public struct Spawner : IComponent        // 28B
 {
     public uint PrefabId;
     public float Interval;
@@ -163,13 +168,13 @@ public struct Spawner        // 28B
 }
 
 [StructLayout(LayoutKind.Sequential)]
-public struct Hazard         // 16B（M5 批⓪ 增 Radius）
+public struct Hazard : IComponent         // 16B（M5 批⓪ 增 Radius）
 {
     public float Dps, TickInterval, TickPhase, Radius; // tickPhase 运行时
 }
 
 [StructLayout(LayoutKind.Sequential)]
-public struct Collectible    // 24B（M5 批①：value/magnetSpeed/state/target）
+public struct Collectible : IComponent    // 24B（M5 批①：value/magnetSpeed/state/target）
 {
     public byte Kind;          // 0 gem / 1 coin / 2 heart
     public byte State;         // 运行时：0 地面 / 1 磁吸中
@@ -181,7 +186,7 @@ public struct Collectible    // 24B（M5 批①：value/magnetSpeed/state/target
 }
 
 [StructLayout(LayoutKind.Sequential)]
-public struct Trigger2D      // 12B
+public struct Trigger2D : IComponent      // 12B
 {
     public uint TriggerId;
     public byte Once;
@@ -191,7 +196,7 @@ public struct Trigger2D      // 12B
 }
 
 [StructLayout(LayoutKind.Sequential)]
-public struct Knockback      // 12B
+public struct Knockback : IComponent      // 12B
 {
     public Vec2 Impulse;
     public float Decay;
@@ -199,7 +204,7 @@ public struct Knockback      // 12B
 
 // ---- Gameplay（注册 id 21..26）----
 [StructLayout(LayoutKind.Sequential)]
-public struct Stats          // 28B
+public struct Stats : IComponent          // 28B
 {
     public float MoveSpeed, Attack, Defense, CritRate, CritDmg, PickupRadius, Luck;
 }
@@ -214,7 +219,7 @@ public struct StatusInst     // 12B
 }
 
 [StructLayout(LayoutKind.Sequential)]
-public unsafe struct StatusEffects // 52B
+public unsafe struct StatusEffects : IComponent // 52B
 {
     public const int Capacity = 4;
     internal fixed byte _active[Capacity * 12]; // C++ StatusInst active[4]（48B，不透明镜像）
@@ -238,7 +243,7 @@ public struct ItemStack      // 8B
 }
 
 [StructLayout(LayoutKind.Sequential)]
-public unsafe struct Inventory // 136B
+public unsafe struct Inventory : IComponent // 136B
 {
     public const int Capacity = 16;
     internal fixed byte _items[Capacity * 8]; // C++ ItemStack items[16]（128B，不透明镜像）
@@ -253,14 +258,14 @@ public unsafe struct Inventory // 136B
 }
 
 [StructLayout(LayoutKind.Sequential)]
-public unsafe struct Equipment // 20B
+public unsafe struct Equipment : IComponent // 20B
 {
     public uint WeaponId, ArmorId;
     public fixed uint RelicIds[3]; // 定长标量数组段
 }
 
 [StructLayout(LayoutKind.Sequential)]
-public struct XpProgress     // 16B
+public struct XpProgress : IComponent     // 16B
 {
     public float Xp, XpToNext;
     public uint Level;
@@ -268,7 +273,7 @@ public struct XpProgress     // 16B
 }
 
 [StructLayout(LayoutKind.Sequential)]
-public struct IncrementalState // 24B（M6+ 占位）
+public struct IncrementalState : IComponent // 24B（M6+ 占位）
 {
     public double Rate, Multiplier, Cached;
 }
@@ -293,7 +298,7 @@ public unsafe struct WaveDef // 76B
 }
 
 [StructLayout(LayoutKind.Sequential)]
-public unsafe struct WaveDirector // 1260B
+public unsafe struct WaveDirector : IComponent // 1260B
 {
     public uint SpawnTeam;
     public int CapAlive;

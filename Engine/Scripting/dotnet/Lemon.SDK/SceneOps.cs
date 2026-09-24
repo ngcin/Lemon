@@ -16,6 +16,7 @@ public enum SceneOpType : byte
     AddComponent = 2,
     RemoveComponent = 3,
     AttachScript = 4, // compId = 脚本类型 id（Behaviours 注册序）
+    DetachScript = 5, // M6a 批⓪ T3：compId = 脚本类型 id（卸单槽：OnDestroy+退订+槽移除）
 }
 
 [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
@@ -71,6 +72,28 @@ public static unsafe class SceneOps
         lock (s_lock)
             s_pending.Add(new SceneOp { Type = SceneOpType.AttachScript,
                                         CompId = (byte)typeId, Entity = e });
+    }
+
+    /// <summary>卸单槽脚本（M6a 批⓪ T3：GameObject.RemoveComponent 脚本分路）；
+    /// typeId = Behaviours 注册序。未挂 = 引擎侧幂等 no-op。</summary>
+    public static void DetachScript(EntityHandle e, int typeId)
+    {
+        lock (s_lock)
+            s_pending.Add(new SceneOp { Type = SceneOpType.DetachScript,
+                                        CompId = (byte)typeId, Entity = e });
+    }
+
+    /// <summary>同帧待决查询（GameObject.AddComponent 脚本分路幂等 get-or-add：
+    /// 命令帧首才应用，实例未挂但命令在队 = 已在加，勿重复入队）。</summary>
+    internal static bool HasPendingAttach(EntityHandle e, int typeId)
+    {
+        lock (s_lock)
+            for (int i = 0; i < s_pending.Count; i++)
+                if (s_pending[i].Type == SceneOpType.AttachScript &&
+                    s_pending[i].CompId == (byte)typeId &&
+                    s_pending[i].Entity.Id == e.Id)
+                    return true;
+        return false;
     }
 
     // ---- Lemon.Entry / 宿主侧 ----

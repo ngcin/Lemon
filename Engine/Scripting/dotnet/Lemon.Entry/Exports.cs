@@ -176,6 +176,12 @@ internal static unsafe class Exports
     public static void lemon_scripts_destroy(Lemon.Interop.EntityHandle e)
         => DomainManager.PostBatch(() => Lemon.Behaviours.Detach(e));
 
+    /// <summary>单类型卸载（M6a 批⓪ T3：op5 DetachScript 应用时调用）。
+    /// 只卸 (typeId, 实体) 一槽实例：OnDestroy + 实例级订阅退订；未挂 = 幂等 no-op。</summary>
+    [UnmanagedCallersOnly]
+    public static void lemon_scripts_detach(int typeId, Lemon.Interop.EntityHandle e)
+        => DomainManager.PostBatch(() => Lemon.Behaviours.DetachOne(typeId, e));
+
     [UnmanagedCallersOnly]
     public static int lemon_behaviours_types() => Lemon.Behaviours.TypeCount;
 

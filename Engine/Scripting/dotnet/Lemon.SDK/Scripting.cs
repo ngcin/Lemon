@@ -15,6 +15,10 @@ public static class ComponentTable
     internal static void Bind<T>(byte id) where T : unmanaged => s_ids[typeof(T)] = id;
 
     public static byte Id<T>() where T : unmanaged => s_ids[typeof(T)];
+
+    /// <summary>Type 键反查（M6a 批⓪ T3：GameObject 统一门面的值组件分路——
+    /// 泛型约束 unmanaged 不能上提到 notnull 门面，运行时按 typeof(T) 取 id）。</summary>
+    public static bool TryId(System.Type t, out byte id) => s_ids.TryGetValue(t, out id);
 }
 
 /// <summary>查询声明（With = 参与遍历的组件集；M3 全部视为可读写）。</summary>
