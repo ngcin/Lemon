@@ -29,6 +29,8 @@ class AtlasRegistry {
 public:
     /// 注册纹理页（返回 atlasIndex = bindless 槽位由调用方指定）
     void RegisterAtlas(uint32_t atlasIndex, rhi::Texture tex, uint32_t width, uint32_t height);
+    /// 注销纹理页（导入回滚路径）：页上仍有登记 sprite 时断言拒绝——须先回滚登记
+    void UnregisterAtlas(uint32_t atlasIndex);
     /// 热重导入：同槽位换纹理/改尺寸（M4.4 编辑器导入器）。全幅 sprite（uv 0..1，
     /// M4 最小集一页一 sprite）像素尺寸随之刷新；切片页 M5 图集打包器接管时重切。
     void UpdateAtlasPage(uint32_t atlasIndex, rhi::Texture tex, uint32_t width, uint32_t height);

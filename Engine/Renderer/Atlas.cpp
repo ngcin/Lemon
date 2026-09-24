@@ -38,6 +38,19 @@ void AtlasRegistry::RegisterAtlas(uint32_t atlasIndex, rhi::Texture tex, uint32_
     atlases_.push_back({atlasIndex, tex, width, height});
 }
 
+void AtlasRegistry::UnregisterAtlas(uint32_t atlasIndex) {
+    for (auto it = atlases_.begin(); it != atlases_.end(); ++it) {
+        if (it->atlasIndex != atlasIndex) continue;
+        // 页上还有活 sprite = 登记未回滚（调用方顺序错）；此刻移除页会让这些
+        // sprite 采样悬空 bindless 槽
+        for (const auto& s : sprites_)
+            LEMON_ASSERT(s.atlasIndex != atlasIndex, "unregister atlas with live sprites");
+        atlases_.erase(it);
+        return;
+    }
+    LEMON_ASSERT(false, "unknown atlasIndex");
+}
+
 void AtlasRegistry::UpdateAtlasPage(uint32_t atlasIndex, rhi::Texture tex, uint32_t width,
                                     uint32_t height) {
     for (auto& a : atlases_) {

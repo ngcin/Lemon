@@ -28,6 +28,25 @@ const char* AssetTypeName(AssetType t) {
     }
 }
 
+bool WriteFileAtomic(const std::string& path, const void* data, size_t n) {
+    const std::string tmp = path + ".tmp";
+    {
+        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+        if (!f) return false;
+        f.write((const char*)data, (std::streamsize)n);
+        f.flush();
+        if (!f.good()) { // 写失败在 flush 捕获（析构阶段的错误不再静默）
+            f.close();
+            std::error_code rm;
+            fs::remove(tmp, rm);
+            return false;
+        }
+    } // 析构 close
+    std::error_code ec;
+    fs::rename(tmp, path, ec); // POSIX rename 覆盖既有目标 = 原子替换；Windows 归 M7 抽象
+    return !ec;
+}
+
 std::string AssetEntry::FileName() const {
     size_t s = relPath.find_last_of('/');
     return s == std::string::npos ? relPath : relPath.substr(s + 1);
@@ -270,29 +289,67 @@ bool AssetDatabase::OpenProject(const std::string& projectRoot, uint32_t spriteI
 
     // manifest 先载（spriteId 记账 + guid/path 对齐）；损坏 = 弃档重建（红字）。
     // 只在启动这一次携带：后续 Rescan 的稳定性由 entries_ 自身维持。
+    // 类型安全读取（2026-09-24 审查 P-13）：语法合法但字段类型不符（"guid": "abc"）
+    // 会抛 json::type_error 且调用链无兜底 = std::terminate——逐字段验型，坏条目
+    // 跳过（该资产按新号重排，红字可见）而非整进程崩溃。
     const std::string manifestPath = root_ + "/.lemon/manifest.json";
     if (std::ifstream mf(manifestPath, std::ios::binary); mf) {
         std::string text((std::istreambuf_iterator<char>(mf)), std::istreambuf_iterator<char>());
         Json doc = Json::parse(text, nullptr, false);
         if (!doc.is_discarded() && doc.contains("assets") && doc.at("assets").is_array()) {
+            uint32_t badEntries = 0;
+            uint64_t v = 0;
+            // 读无符号整数字段；键缺失 = 0 通过，类型不符 = false（条目跳过）
+            auto readU64 = [&v](const Json& a, const char* key) {
+                if (!a.contains(key)) {
+                    v = 0;
+                    return true;
+                }
+                const Json& jv = a.at(key);
+                if (!jv.is_number_unsigned()) return false;
+                v = jv.get<uint64_t>();
+                return true;
+            };
             for (const Json& a : doc.at("assets")) {
-                if (!a.contains("path")) continue;
+                if (!a.is_object() || !a.contains("path") || !a.at("path").is_string()) {
+                    ++badEntries;
+                    continue;
+                }
                 CarryInfo info;
-                info.guid = a.contains("guid") ? a.at("guid").get<uint64_t>() : 0;
-                info.spriteId = a.contains("spriteId") ? a.at("spriteId").get<uint32_t>() : 0;
-                if (a.contains("slice") && a.at("slice").is_object()) {
-                    const Json& sl = a.at("slice");
-                    info.sliceBase = sl.contains("base") ? sl.at("base").get<uint32_t>() : 0;
-                    info.sliceCount = sl.contains("count") ? sl.at("count").get<uint32_t>() : 0;
+                const Json emptySlice = Json::object();
+                const Json& sl = a.contains("slice") && a.at("slice").is_object()
+                                     ? a.at("slice")
+                                     : emptySlice;
+                bool ok = readU64(a, "guid");
+                info.guid = v;
+                ok = ok && readU64(a, "spriteId");
+                info.spriteId = (uint32_t)v;
+                v = 0; // 守卫读取（键可缺）前清零：短路跳过 readU64 时不得残留上次的值
+                ok = ok && (!sl.contains("base") || readU64(sl, "base"));
+                info.sliceBase = (uint32_t)v;
+                v = 0;
+                ok = ok && (!sl.contains("count") || readU64(sl, "count"));
+                info.sliceCount = (uint32_t)v;
+                if (!ok) {
+                    ++badEntries;
+                    continue;
                 }
                 manifestCarry_[a.at("path").get<std::string>()] = info;
             }
-            if (doc.contains("nextSpriteId")) {
+            if (badEntries)
+                LEMON_ERROR("manifest.json 有 %u 条字段类型异常（跳过，相关资产号将重排）",
+                            badEntries);
+            if (doc.contains("nextSpriteId") && doc.at("nextSpriteId").is_number_unsigned()) {
                 uint32_t n = doc.at("nextSpriteId").get<uint32_t>();
                 if (n > nextSpriteId_) nextSpriteId_ = n;
+            } else if (doc.contains("nextSpriteId")) {
+                LEMON_ERROR("manifest.json nextSpriteId 类型异常（按新号继续）");
             }
         } else if (!text.empty()) {
             LEMON_ERROR("manifest.json 损坏——资产记账重建（spriteId 将重排，已存场景引用可能失效）");
+        } else {
+            LEMON_ERROR("manifest.json 为空文件——资产记账重建（spriteId 将重排；"
+                        "原子写后不应出现，请检查磁盘/外部改动）");
         }
     }
 
@@ -395,6 +452,10 @@ void AssetDatabase::Rescan() {
             if (e.type == AssetType::Sprite && e.spriteId == 0) e.spriteId = nextSpriteId_++;
             lastChange_.added.push_back(e.guid);
         }
+        // 路径命中但类型变成 Sprite 而旧条目无号（如 .txt → .png 改扩展名）：
+        // 补新号——spriteId=0 直达导入侧 AddSpriteAt(0) 必失败并走回滚
+        //（2026-09-24 审查：旧代码只在新资产分支补号，此分支漏配）
+        if (e.type == AssetType::Sprite && e.spriteId == 0) e.spriteId = nextSpriteId_++;
         // 网格切片块记账（M5 批③ D3）：声明了网格但无块 → 分配连号块；
         // frames 增大 → 新块（旧块烧号，"只增不减"）；缩小 → 基不变、余号留空洞。
         if (e.type == AssetType::Sprite && e.gridCols > 0) {
@@ -559,8 +620,12 @@ void AssetDatabase::SaveManifest() const {
         arr.push_back(std::move(item));
     }
     doc["assets"] = std::move(arr);
-    std::ofstream of(root_ + "/.lemon/manifest.json", std::ios::binary | std::ios::trunc);
-    of << doc.dump(2);
+    // 原子写（2026-09-24 审查 P-13）：manifest 是高频落盘点（每次 Rescan 后必写），
+    // 旧实现 trunc 直写——写中崩溃/磁盘满 = 半截 JSON，下次启动走"弃档重建"
+    // （spriteId 重排、已存场景引用悬空），空文件还会静默跳过损坏告警
+    if (!WriteFileAtomic(root_ + "/.lemon/manifest.json", doc.dump(2) + "\n"))
+        LEMON_ERROR("manifest.json 写入失败（磁盘满/权限？）——记账未落盘，"
+                    "下次启动 spriteId 可能重排");
 }
 
 } // namespace lemon::editor

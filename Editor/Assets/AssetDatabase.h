@@ -15,6 +15,14 @@
 
 namespace lemon::editor {
 
+/// 原子落盘（共享工具，2026-09-24 审查 F-04/P-13）：同目录 .tmp 全量写入 + flush
+/// 显式校验 + rename 替换——磁盘满/进程中断只丢 .tmp，不把原文件截成半档。
+/// 场景/Prefab/存档/manifest 四条保存链统一走此口。
+bool WriteFileAtomic(const std::string& path, const void* data, size_t n);
+inline bool WriteFileAtomic(const std::string& path, const std::string& s) {
+    return WriteFileAtomic(path, s.data(), s.size());
+}
+
 enum class AssetType : uint8_t { Sprite, Prefab, Script, Clip, Generic };
 
 const char* AssetTypeName(AssetType t);

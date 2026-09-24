@@ -142,6 +142,9 @@ void AssetGpuCache::ImportSprite(const AssetEntry& e) {
                     e.spriteId, e.relPath.c_str());
         device_->WaitIdle(); // 刚上传的纹理无登记号：回滚整页
         device_->DestroyTexture(p.tex);
+        // 同步注销图集页：pages_ 未收编 → 下一导入复用同槽，残留注册条目会让
+        // RegisterAtlas 撞 "atlas slot reused" 断言（2026-09-24 审查：下次导入必崩）
+        atlas_->UnregisterAtlas(p.slot);
         stbi_image_free(px);
         return;
     }
