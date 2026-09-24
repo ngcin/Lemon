@@ -26,35 +26,6 @@ using ecs::RegisterAllComponents;
 using ecs::SceneArchive;
 
 namespace {
-/// 原子落盘（2026-09-24 审查 F-04）：同目录 .tmp 全量写入 + flush 显式校验 +
-/// rename 替换——磁盘满/进程中断只丢 .tmp，不把原文件截成半档。场景/Prefab/
-/// 存档三条保存链统一走此口（旧实现直接 trunc 原路径 = 破坏性截断写）。
-/// rename 覆盖既有目标在 POSIX 是原子替换；Windows MoveFileEx 语义归 M7 跨平台抽象。
-bool WriteFileAtomic(const std::string& path, const void* data, size_t n) {
-    namespace fs = std::filesystem;
-    const std::string tmp = path + ".tmp";
-    {
-        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
-        if (!f) return false;
-        f.write((const char*)data, (std::streamsize)n);
-        f.flush();
-        if (!f.good()) { // 写失败在 flush 捕获（析构阶段的错误不再静默）
-            f.close();
-            std::error_code rm;
-            fs::remove(tmp, rm);
-            return false;
-        }
-    } // 析构 close
-    std::error_code ec;
-    fs::rename(tmp, path, ec);
-    if (ec) {
-        std::error_code rm;
-        fs::remove(tmp, rm);
-        return false;
-    }
-    return true;
-}
-
 /// 路径规范化（2026-09-24 用户报告：最近场景同名重复——相对/绝对、冗余 ./ 段、
 /// 符号链接等不同拼写在字符串精确去重下各成条目）。weakly_canonical 折叠上述
 /// 形态；指向不存在文件的路径（最近档悬空）按最长存在前缀 + 词法归一，不失败。
@@ -86,6 +57,9 @@ void EditorContext::NewScene() {
     scenePath_.clear();
     selection_.clear();
     dirty = false;
+    // 场景已换：结构轨快照都是旧场景的 JSON，Ctrl+Z 会把旧场景整体灌进新场景
+    // （与 EnterPlay 的清栈同款；2026-09-24 审查发现 OpenScene/NewScene 漏配）
+    undo_.Clear();
 }
 
 bool EditorContext::OpenScene(const std::string& path) {
@@ -103,6 +77,8 @@ bool EditorContext::OpenScene(const std::string& path) {
     }
     scenePath_ = CanonicalPath(path);
     selection_.clear();
+    // 场景已换：旧场景的结构轨快照不得残留（Ctrl+Z 会把旧场景灌进当前场景）
+    undo_.Clear();
     BackfillGuids();
     // M6a 批⓪ T2：guid → spriteId 归一（改名/移位/重开 id 重排不断链）+ 存量回填
     const SpriteRefStats st = ResolveSpriteRefs();
@@ -631,12 +607,15 @@ bool EditorContext::RevertPrefabInstance(ecs::Entity e) {
 
     const ecs::Hierarchy* h = scene_->TryGet<ecs::Hierarchy>(e);
     const ecs::Entity parent = h ? h->parent : ecs::Entity::Null();
+    // guid/prefabId 都按值保存：下方销毁 + LoadEntityTree 都可能使 Meta 池扩容搬移，
+    // 旧指针 m 在 rm->prefabId = m->prefabId 处即悬空（keepGuid 同理，2026-09-24 审查）
     const uint64_t keepGuid = m ? m->guid : 0; // Revert 保持实例自身 guid（选中集/引用找回）
+    const uint64_t keepPrefabId = m ? m->prefabId : 0;
     SceneDestroyEntityTree(*scene_, e);
     ecs::Entity root = SceneArchive::LoadEntityTree(*scene_, json);
     if (root.IsNull()) return false;
     if (ecs::Meta* rm = scene_->TryGet<ecs::Meta>(root)) {
-        rm->prefabId = m->prefabId;
+        rm->prefabId = keepPrefabId;
         if (keepGuid) rm->guid = keepGuid;
     }
     if (!parent.IsNull()) SceneSetParent(*scene_, root, parent);

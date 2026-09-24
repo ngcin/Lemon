@@ -1622,8 +1622,12 @@ void EditorApp::BuildShortcuts() {
             // 结构轨：删除前快照（此前漏推——Del 键删完 Ctrl+Z 无效，与右键
             // "删除 (Del)" 菜单不对称；smoke-ui 真人链路抓到）
             const std::string before = ctx_.SnapshotSceneJson();
+            // 先拷贝再迭代：DestroyEntityTree 内部 PruneSelection 会换掉
+            // selection_ 底层缓冲（局部 keep 交换后析构），range-for 缓存的
+            // begin/end 即悬空——多选删除偶发漏删（与 Ctrl+D 路径同型的漏修）
+            const std::vector<ecs::Entity> sel = ctx_.Selection();
             bool any = false;
-            for (ecs::Entity e : ctx_.Selection()) {
+            for (ecs::Entity e : sel) {
                 ctx_.DestroyEntityTree(e);
                 any = true;
             }
