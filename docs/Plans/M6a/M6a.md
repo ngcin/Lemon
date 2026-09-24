@@ -12,7 +12,7 @@ Status: planned
 
 | 批 | 文件 | 主题 | 状态 |
 |---|---|---|---|
-| ⓪ | （开批新建） | 架构地基：`scripts[]` 多脚本 + sprite 引用 GUID 化 | planned |
+| ⓪ | [2026-09-24-b0-multiscript-guid](./2026-09-24-b0-multiscript-guid.md) | 架构地基：`scripts[]` 多脚本 + sprite 引用 GUID 化 | planned |
 | ① | （开批新建） | 表现打击感：Animator `Play`/`CrossFade` + 位图数字/飘字/世界血条 | planned |
 | ② | （开批新建） | 内容生产：配置表外置 ADR + AnimationEditor 最小版 + 技能路径数据化 + 存档分档 | planned |
 | ③ | （开批新建） | 产品壳：通用模态面板通道 + 流程状态机（档1 单场景零引擎改动）+ LoadScene 评估（档2 ADR） | planned |
