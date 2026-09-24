@@ -54,6 +54,17 @@ bool WriteFileAtomic(const std::string& path, const void* data, size_t n) {
     }
     return true;
 }
+
+/// 路径规范化（2026-09-24 用户报告：最近场景同名重复——相对/绝对、冗余 ./ 段、
+/// 符号链接等不同拼写在字符串精确去重下各成条目）。weakly_canonical 折叠上述
+/// 形态；指向不存在文件的路径（最近档悬空）按最长存在前缀 + 词法归一，不失败。
+/// 失败/空串兜底原串（调用方语义不变）。场景路径与最近记录统一走此口。
+std::string CanonicalPath(const std::string& path) {
+    if (path.empty()) return path;
+    std::error_code ec;
+    auto c = std::filesystem::weakly_canonical(path, ec);
+    return ec ? path : c.string();
+}
 } // namespace
 
 EditorContext::EditorContext() {
@@ -90,7 +101,7 @@ bool EditorContext::OpenScene(const std::string& path) {
         LEMON_WARN("打开场景失败：解析失败 %s", path.c_str());
         return false;
     }
-    scenePath_ = path;
+    scenePath_ = CanonicalPath(path);
     selection_.clear();
     BackfillGuids();
     // 悬空 spriteId 聚合告警（2026-09-22 测试报告观察 6）：AtlasRegistry 无此 id =
@@ -112,8 +123,8 @@ bool EditorContext::OpenScene(const std::string& path) {
                        "Inspector sprite 槽重指可修）", dangling);
     }
     dirty = false;
-    RecordRecentScene(path);
-    LEMON_LOG("场景已打开：%s（%u 实体）", path.c_str(), scene_->AliveCount());
+    RecordRecentScene(scenePath_);
+    LEMON_LOG("场景已打开：%s（%u 实体）", scenePath_.c_str(), scene_->AliveCount());
     return true;
 }
 
@@ -128,8 +139,9 @@ void EditorContext::LoadRecentScenes() {
         nlohmann::json j = nlohmann::json::parse(f);
         for (const auto& e : j.at("scenes")) {
             if (!e.is_string()) continue;
-            const std::string p = e.get<std::string>();
-            if (p.empty()) continue; // 脏档清洗：自别名 UAF 曾写入空串
+            const std::string raw = e.get<std::string>();
+            if (raw.empty()) continue; // 脏档清洗：自别名 UAF 曾写入空串
+            const std::string p = CanonicalPath(raw); // 存量异形拼写折叠（相对/./.. 段）
             if (std::find(recentScenes_.begin(), recentScenes_.end(), p) != recentScenes_.end())
                 continue; // 脏档清洗：重复条目保序留首见
             recentScenes_.push_back(p);
