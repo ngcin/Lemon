@@ -3217,6 +3217,7 @@ void TestEditorMetaSanity() {
 #include <unistd.h>
 
 #include "Assets/AssetDatabase.h"
+#include "Assets/FileWatcher.h"
 #include "Assets/ProjectWizard.h"
 #include "EditorContext.h"
 #include "Serialization/SceneArchive.h"
@@ -3390,6 +3391,31 @@ void TestAssetPathContainment() {
 
     fs::remove_all(root, ec);
     fs::remove(outside, ec);
+}
+
+// ---- F-15（2026-09-24）：防抖门——窗口内取走的脏事件转 pending，不再吞 ----
+void TestDebounceGatePending() {
+    using lemon::editor::DebounceGate;
+    DebounceGate g(0.4);
+
+    // 窗外首脏：同帧即触发（与原"立即编译"节奏一致），触发点锚定新窗口
+    g.OnDirty(5.0);
+    Expect(g.Due(5.0), "first dirty fires immediately");
+    Expect(!g.Due(5.01), "no refire without new dirty");
+
+    // 窗内第二次保存（F-15 原吞点）：等窗，窗过后照常触发
+    g.OnDirty(5.2);
+    Expect(!g.Due(5.39), "in-window change waits");
+    Expect(g.Due(5.45), "in-window change fires after window (F-15 no-swallow)");
+
+    // 连续脏合并：窗内多次只触发一次
+    g.OnDirty(7.0);
+    Expect(g.Due(7.0), "window-anchored fire");
+    g.OnDirty(7.1);
+    g.OnDirty(7.2);
+    g.OnDirty(7.3);
+    Expect(g.Due(7.41), "coalesced in-window changes fire once");
+    Expect(!g.Due(7.42), "and only once");
 }
 
 // ---- M4.4-d：实体子树 IO（Prefab 最小集的档案层）----
@@ -3941,6 +3967,7 @@ int main() {
     TestAtlasPageHotUpdate();
     TestAssetDatabaseLifecycle();
     TestAssetPathContainment();
+    TestDebounceGatePending();
     TestProjectWizard();
     TestEditorUsability();
     TestAutosaveRecovery();

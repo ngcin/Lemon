@@ -13,6 +13,30 @@
 
 namespace lemon::editor {
 
+/// 防抖门（F-15，2026-09-24）：配 FileWatcher::ConsumeDirty 使用——窗口锚定在
+/// 触发点，防抖窗内取到的脏事件转 pending（原实现直接清标志丢弃 = 窗口内的
+/// 第二次保存不再触发编译），窗过后照常触发；连续变更合并为一次。
+class DebounceGate {
+public:
+    explicit DebounceGate(double windowSec = 0.4) : window_(windowSec) {}
+    /// ConsumeDirty() 为 true 时喂入（任意时刻可喂）。
+    void OnDirty(double) { pending_ = true; }
+    /// 每帧查询：pending 且窗口已过 → 消费并返回 true（调用方触发重编译）；
+    /// 窗外首脏同帧即触发（与原"立即编译"节奏一致）。
+    bool Due(double now) {
+        if (!pending_ || now < until_) return false;
+        pending_ = false;
+        until_ = now + window_;
+        return true;
+    }
+    bool Pending() const { return pending_; }
+
+private:
+    double window_;
+    bool pending_ = false;
+    double until_ = 0.0;
+};
+
 class FileWatcher {
 public:
     FileWatcher() = default;

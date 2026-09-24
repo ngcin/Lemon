@@ -2598,11 +2598,12 @@ int EditorApp::Run(const EditorLaunch& launch) {
         if (watcher_.Running() && watcher_.ConsumeDirty()) RescanAssets();
         // C# 热重载（M4.5 §3.7）：Game/ 源写 → 防抖 0.4s（编辑器连续保存不打断）→ 编译+换装
         // （M4.6 §5-5：改走编译队列——先画一帧"编译中…"再阻塞）
-        if (scriptWatcher_.Running() && scriptWatcher_.ConsumeDirty() && !launch.finalTest) {
-            if (ImGui::GetTime() >= reloadDebounceUntil_) {
-                reloadDebounceUntil_ = ImGui::GetTime() + 0.4;
-                if (ScriptSourceChanged()) QueueScriptRebuild("源码变更");
-            }
+        // F-15（2026-09-24）：防抖窗内取走的脏事件转 pending（DebounceGate）——原实现
+        // 直接清标志，窗内第二次保存不再触发编译（吞事件）
+        if (scriptWatcher_.Running() && scriptWatcher_.ConsumeDirty() && !launch.finalTest)
+            reloadGate_.OnDirty(ImGui::GetTime());
+        if (reloadGate_.Due(ImGui::GetTime())) {
+            if (ScriptSourceChanged()) QueueScriptRebuild("源码变更");
         }
         // 自动备份（§3.8）：5 分钟节拍，dirty 且非 Play 才写
         ctx_.TickAutosave(ImGui::GetTime() - autosaveClock0);

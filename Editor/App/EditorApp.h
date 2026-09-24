@@ -196,7 +196,7 @@ private:
     // 热重载状态（§3.7）
     double hotReloadMs_ = 0.0;       // 最近一次 编译+换装+重装配 总耗时（≤2s 判定）
     int64_t lastHandledCsWrite_ = 0; // 上次已处理的 .cs 新写时间戳（去重/防抖）
-    double reloadDebounceUntil_ = 0.0;
+    DebounceGate reloadGate_;        // 防抖门（F-15：窗内脏事件转 pending 不再吞）
     bool imguiIdConflictSeen_ = false; // 悬停扫掠命中过 ID 冲突（一次性计数）
 
     // 编译状态（M4.6 §5-5）：排队 → 先画一帧"编译中…" → 下帧真构建（阻塞现状不动）
