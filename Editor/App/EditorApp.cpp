@@ -642,7 +642,147 @@ public sealed class PlayerHud : LemonBehaviour
 }
 )CS";
     }
+}
 
+// --smoke-guid（M6a 批⓪ T5）：sprite 引用 GUID 稳定性链。三难并发——导入新图
+//（字典序插队 = 全体 spriteId 重排）+ 资产改名（.meta 随行）+ 删 manifest
+//（跨进程重开 = 无记账 fresh 分配）→ 重开后逐实体断言 guid 不断链、spriteId
+// 归一到新号、零悬空、改名资产引用存活。T2 单测（TestSpriteGuidResolve）的
+// 编辑器全链复证；纯资产/场景链（不编译脚本，独立 EditorContext 模拟重开进程）。
+bool RunGuidSmokeChain(uint32_t spriteIdBase) {
+    namespace fs = std::filesystem;
+    using ecs::Entity;
+    std::error_code ec;
+    const fs::path tmp = fs::temp_directory_path() /
+                         ("lemon-smoke-guid-" + std::to_string(::getpid()));
+    fs::remove_all(tmp, ec);
+    ProjectDesc d;
+    d.parentDir = tmp.string();
+    d.name = "GuidSmoke";
+    d.engineVersion = "0.5.0-m5";
+    d.templateName = "vs-survivor";
+    d.templateDir = std::string(LEMON_TEMPLATE_DIR) + "/vs-survivor";
+    const std::string root = ProjectWizard::Create(d);
+    if (root.empty()) {
+        LEMON_ERROR("smoke-guid：向导复制失败（模板缺失/不可写）");
+        return false;
+    }
+
+    // 局1：开项目 + 场景，编辑态实例化六 prefab（T2 的 Instantiate 解析路径）
+    // → 存档 → 记基线（tag → guid/id）
+    EditorContext ctx;
+    if (!ctx.Assets().OpenProject(root, spriteIdBase)) {
+        LEMON_ERROR("smoke-guid：open project 失败");
+        return false;
+    }
+    if (!ctx.OpenScene(root + "/Scenes/Main.scene")) {
+        LEMON_ERROR("smoke-guid：open scene 失败");
+        return false;
+    }
+    struct Row {
+        std::string tag;
+        uint64_t guid;
+        uint32_t id;
+    };
+    auto collect = [](EditorContext& c, std::vector<Row>& out) {
+        out.clear();
+        c.EditScene().Each([&](Entity e) {
+            if (const ecs::SpriteRenderer* sr = c.EditScene().TryGet<ecs::SpriteRenderer>(e))
+                out.push_back(
+                    {std::string(c.EditScene().Get<ecs::Meta>(e).tag), sr->spriteGuid,
+                     sr->spriteId});
+        });
+    };
+    const Vec2 spawnAt[6] = {{-300, 0}, {300, 0}, {0, -300}, {0, 300}, {-300, -300}, {300, 300}};
+    const uint64_t prefabGuids[6] = {kMobPf,   kBossPf, kBulletPf,
+                                     kPiercePf, kGemPf, kBladePf};
+    for (int i = 0; i < 6; ++i)
+        if (ctx.InstantiatePrefabAsset(prefabGuids[i], spawnAt[i]).IsNull()) {
+            LEMON_ERROR("smoke-guid：prefab %d 实例化失败", i);
+            return false;
+        }
+    if (!ctx.SaveScene()) {
+        LEMON_ERROR("smoke-guid：基线存档失败");
+        return false;
+    }
+    std::vector<Row> base;
+    collect(ctx, base);
+    if (base.size() != 7) { // Player + 六 prefab 根
+        LEMON_ERROR("smoke-guid：基线实体数 %zu ≠ 7", base.size());
+        return false;
+    }
+    for (const Row& r : base)
+        if (r.guid == 0) {
+            LEMON_ERROR("smoke-guid：基线实体 '%s' 无 spriteGuid（生成器未双写？）",
+                        r.tag.c_str());
+            return false;
+        }
+
+    // 三难并发：插队导入（字典序最前 → 全体 spriteId 后移）+ hero 表改名
+    //（.meta 随行 = guid 存活）+ 删 manifest（重开 = 无记账 fresh 分配）
+    {
+        std::ofstream f(root + "/Assets/aaa_insert.png", std::ios::binary);
+        f << "png-insert"; // DB 只哈希不解码，内容任意
+    }
+    fs::rename(root + "/Assets/dungeon_hero_1.png", root + "/Assets/hero_renamed.png", ec);
+    fs::rename(root + "/Assets/dungeon_hero_1.png.meta", root + "/Assets/hero_renamed.png.meta",
+               ec);
+    fs::remove(root + "/.lemon/manifest.json", ec);
+
+    // 局2：新 EditorContext = 模拟重开进程（DB 空表 + 无 manifest = 全体重排）
+    EditorContext ctx2;
+    if (!ctx2.Assets().OpenProject(root, spriteIdBase)) {
+        LEMON_ERROR("smoke-guid：reopen project 失败");
+        return false;
+    }
+    if (!ctx2.OpenScene(root + "/Scenes/Main.scene")) {
+        LEMON_ERROR("smoke-guid：reopen scene 失败");
+        return false;
+    }
+    std::vector<Row> after;
+    collect(ctx2, after);
+    if (after.size() != base.size()) {
+        LEMON_ERROR("smoke-guid：重开实体数 %zu ≠ %zu", after.size(), base.size());
+        return false;
+    }
+    int drifted = 0, guidBroken = 0, idWrong = 0, dangling = 0;
+    for (const Row& b : base) {
+        const Row* a = nullptr;
+        for (const Row& r : after)
+            if (r.tag == b.tag) a = &r;
+        if (!a) {
+            ++guidBroken;
+            continue;
+        }
+        if (a->guid != b.guid) ++guidBroken;
+        const AssetEntry* en = ctx2.Assets().FindByGuid(b.guid);
+        if (!en || en->missing) {
+            ++dangling;
+            continue;
+        }
+        const uint32_t expect = en->sliceCount > 0 ? en->sliceBase : en->spriteId;
+        if (a->id != expect) {
+            ++idWrong;
+            LEMON_WARN("smoke-guid row '%s': id %u → %u (expect %u, %s slices=%u base=%u)",
+                       b.tag.c_str(), b.id, a->id, expect, en->relPath.c_str(),
+                       en->sliceCount, en->sliceBase);
+        }
+        if (a->id != b.id) ++drifted; // 漂移确证（链非空转）
+    }
+    // 改名资产存活：guid → 新路径（引用不断链的直接证据）
+    const AssetEntry* hero = ctx2.Assets().FindByGuid(kHeroSheet);
+    const bool renamedOk =
+        hero && hero->relPath == "Assets/hero_renamed.png" && !hero->missing;
+    if (guidBroken || idWrong || dangling || !renamedOk || drifted < 3) {
+        LEMON_ERROR("smoke-guid：guidBroken=%d idWrong=%d dangling=%d renamed=%d "
+                    "drifted=%d（重排未生效 = 链空转）",
+                    guidBroken, idWrong, dangling, renamedOk ? 1 : 0, drifted);
+        return false;
+    }
+    std::printf("[lemon] smoke-guid: entities=%zu drift=%d/7 renamed=OK dangling=0 => OK\n",
+                after.size(), drifted);
+    fs::remove_all(tmp, ec);
+    return true;
 }
 } // namespace vs_template
 
@@ -2329,6 +2469,14 @@ int EditorApp::Run(const EditorLaunch& launch) {
         const bool ok = GenerateVsTemplate(ctx_, genBase, launch.genVsTemplate);
         std::printf("[gen-vs-template] %s → %s（base %u）\n", ok ? "OK" : "FAILED",
                     launch.genVsTemplate.c_str(), genBase);
+        return ok ? 0 : 1;
+    }
+
+    // M6a 批⓪ T5：--smoke-guid（sprite 引用稳定性链——无头跑完即退，不进主循环）
+    if (launch.smokeGuid) {
+        const uint32_t base = viewport_->Assets().Registry().SpriteCount() + 1;
+        const bool ok = vs_template::RunGuidSmokeChain(base);
+        std::printf("[smoke-guid] %s\n", ok ? "OK" : "FAILED");
         return ok ? 0 : 1;
     }
 

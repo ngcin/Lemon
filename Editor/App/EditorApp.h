@@ -57,6 +57,8 @@ struct EditorLaunch {
                                 // vs-survivor 模板项目文件后退出（不开窗；跑一次入库）
     bool smokeTemplate = false; // --smoke-template：M5 批④ 模板链冒烟（向导复制 →
                                 // build → Play → HUD/波次/击杀/升级/卡片断言）
+    bool smokeGuid = false;     // --smoke-guid：M6a 批⓪ T5 sprite 引用稳定性链冒烟
+                                //（导入插队 + 资产改名 + 删 manifest → 重开逐实体归一断言）
 };
 
 /// 工具标识（Q 选择 / W 移动 / E 旋转 / R 缩放；Godot 式 Select 模式 = 8 向手柄）

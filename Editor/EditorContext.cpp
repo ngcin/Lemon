@@ -949,12 +949,15 @@ SpriteRefStats EditorContext::ResolveSpriteRefs() {
         if (sr->spriteGuid != 0) {
             const AssetEntry* en = assets_.FindByGuid(sr->spriteGuid);
             if (en && !en->missing && en->spriteId != 0) {
-                // id 落在本体/切片区间内 = 已是当前进程真值（切片 cell 引用保号不
-                // 覆写——guid 只锚资产，cell 是层内偏移）；区间外（跨进程漂移）=
-                // 切片表回 cell 0、整图回本体号（逐 cell guid 化超出本批范围）
+                // id 落在合法域内 = 已是当前进程真值，保号不覆写（guid 只锚资产，
+                // cell 是层内偏移）：切片表 = cell 区间 [sliceBase, +count)，整图 =
+                // 本体号。切片表的本体号与 cell 号相邻——跨进程漂移后旧 cell-0 可
+                // 能恰好撞新本体号（smoke-guid BossMob 实证），无法甄别 → 切片表
+                // 一律按 cell 口径归一：区间外回 cell 0（本体引用降级 cell 0，
+                // 逐 cell guid 化超出本批范围）；整图区间外回本体号
                 const uint32_t cur = sr->spriteId;
                 const bool inRange =
-                    cur == en->spriteId ||
+                    (en->sliceCount == 0 && cur == en->spriteId) ||
                     (en->sliceCount > 0 && cur >= en->sliceBase &&
                      cur < en->sliceBase + en->sliceCount);
                 if (!inRange)

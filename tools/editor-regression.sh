@@ -72,6 +72,9 @@ if [ "${MODE}" = "full" ]; then
     grep_step "template-chain smoke (wizard copy + build + play hud/cards/save/death-revive; M5-b4)" \
         "smoke-template: .* => OK" \
         "${EDITOR}" --smoke-template --frames 3000 --no-reopen
+    grep_step "guid-chain smoke (insert+rename+manifest-wipe -> reopen per-entity resolve; M6a-b0)" \
+        "smoke-guid: .* => OK" \
+        "${EDITOR}" --smoke-guid --no-reopen
     if [ -f "${SDK}" ]; then
         grep_step "script-chain smoke (CoreCLR/spawn/play byte-exact/--validate)" "editor-smoke PASS" \
             "${EDITOR}" --project "${TMP}/script" --script "${SDK}" --smoke --play --frames 240 --validate
