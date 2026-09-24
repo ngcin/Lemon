@@ -134,6 +134,13 @@ struct Chase { LEMON_FIELD(speed, Range{0,500}); LEMON_FIELD(aggroRange); LEMON_
   AssetType::Clip 全列 / AssetBrowser 拖入（drag kind 4）/ 右键清空；值 = `.clip`
   资产 GUID 低 32 位（prefabId 同款约定），反查 entry 显示 relPath。sprite 资产槽
   （AssetRef）同模式先例。
+- **sprite 资产槽 guid 双写（M6a 批⓪）**：combo/拖入/清空三口同时写
+  `spriteGuid`（真源，06 §2.1）与解析 `spriteId`（即时可视）；guid 字段 ED_HIDE
+  不另绘（`Meta.guid` 同手法）；清空双清防残留 guid 下轮装载复活旧引用。
+- **Script 段列表化（M6a 批⓪ 多脚本）**：ScriptBox 内嵌 8 槽——Inspector 逐槽
+  行（类型 combo 换绑 / × 移除保序），Add Script 满槽禁用 + **同类型已挂置灰**
+  （同实体同类型唯一的作者面闸，04 §3.2）；槽序 = 序列化键序（跨类型执行序走
+  注册序，04 §3）。
 - **C# 脚本组件的 Inspector**：SDK 侧 `[ShowInInspector]` + 字段特性经元数据通道导出，编辑器绘制同样走注册表路径（C# 组件与 C++ 组件在 Inspector 里体验一致）。
 - **Prefab 覆盖与头栏（ADR-009，PrefabLink 驱动，03 §2）**：改过字段蓝标 + 逐字段 Revert；组件头 Prefab 栏 Apply / Revert / Break / Select（Prowl2D PrefabUtility 模式）——v1 核心（M4）。
   > M4 范围修订（2026-09-19）：M4 做最小集（实例化/Apply/Break/整体 Revert）；**逐字段 override 蓝标列 M4 砍单候补首位**（富余则做，否则移 M5 记 ADR）。见 M4.md §3.9。

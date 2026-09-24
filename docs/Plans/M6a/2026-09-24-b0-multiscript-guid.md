@@ -1,6 +1,19 @@
 # M6a 批⓪：架构地基 —— scripts[] 多脚本 + sprite 引用 GUID 化
 
-Status: planned
+Status: done（2026-09-24；commit `6832981`/`8806be8`/`88c184b`/`225d4f4` +
+文档收尾批；[DevLog](../../DevLog/2026-09-24-m6a-b0-multiscript-guid.md)）
+
+> **验收落账（§3 判据逐条）**：① ctest 3/3 ✅；② m5b2 三档金回放 mismatches=0
+> ✅（零重录先例三落 09 §6.8）；③ editor-regression full 13/14——唯一 FAIL =
+> 09 §8 记档 smoke-ui 像素注入偶发（复跑绿），新增 guid 链（第 14 步）与升级
+> template 链全绿 ✅；④ 重生成 + smoke-template PASS（行为面与拆分前逐项一致；
+> 重生成 diff 复核 = 实体 guid/时间戳逐运行随机面外逐字节一致）✅；⑤
+> TestScriptBoxArchive（三槽 roundtrip 不动点 + v1 迁移 + prefab 双读 + 同名清洗）
+> ✅；⑥ `--smoke-guid` PASS（drift 7/7、renamed OK、dangling 0）✅；⑦
+> bench-survivor **fps=82**（≥55）✅。
+> 实施偏差两处：ED_ASSET 注记实际取 ED_HIDE（AssetRef+UInt32 才路由 sprite 槽，
+> UInt64 裸 guid 不另绘——Meta.guid 同手法）；切片表解析口径升为"区间内保号、
+> 区间外回 cell 0"（smoke-guid 实证本体/cell 相邻歧义，见 DevLog 实测坑）。
 
 > 拆分自 [M6a 总览](./M6a.md)（08 §2 M6a WBS 第 1 条）。先行理由：多脚本与 GUID 晚做返工面
 > 最大——模板拆脚本、用户项目实体组织、prefab/场景档格式都压在它们上面。动工前必读：
@@ -126,9 +139,9 @@ Status: planned
 - 编辑器 Stop 后逐字节一致断言（`EditorContext.cpp:762`）两侧同格式对称，不受
   schema v2 影响（快照是同进程同版本读写）。
 
-## 5. 任务分解（T1→T6 依序；T2 起可与 T1 并行review）
+## 5. 任务分解（T1→T6 依序；T2 起可与 T1 并行review）——全部完成 ✅
 
-### T1 ScriptBox 多实例 + scripts[] schema v2 —— 约 1.5 天
+### T1 ScriptBox 多实例 + scripts[] schema v2 —— 约 1.5 天 ✅ `6832981`
 
 - `ScriptBox.h`：`ScriptSlot`（同构旧槽）+ `ScriptBox{uint32 notified; uint8 count;
   ScriptSlot slots[8];}`；`kScriptFlagDestroyNotified` 语义注记改挂实体级字段；
@@ -148,7 +161,7 @@ Status: planned
   `Tests/engine_tests.cpp:1585-1616`）、v1→v2 迁移（.scene）、旧 prefab 双读
   （LoadEntityTree）、槽满拒绝、加载同名重复项清洗（保序留首见 + 告警）。
 
-### T2 SpriteRenderer.spriteGuid + 解析链 —— 约 1 天
+### T2 SpriteRenderer.spriteGuid + 解析链 —— 约 1 天 ✅ `8806be8`
 
 - `RenderComponents.h`：尾加 `uint64_t spriteGuid = 0;`（static_assert 12→24）；
   `ComponentCatalog.cpp:56-61` 加 FIELD + ED_ASSET 槽注记同步；C# 镜像
@@ -164,7 +177,7 @@ Status: planned
   旧档（无 guid 字段）加载回退 spriteId 路径；**存量回填**（guid=0 + 已登记 id →
   补 guid 标 dirty；未登记 id 不动）。
 
-### T3 SDK 双路由门面 —— 约 0.75 天
+### T3 SDK 双路由门面 —— 约 0.75 天 ✅ `88c184b`
 
 - `Lemon.SDK`：`IComponent` 标记接口（数据组件 struct 逐个标记，behaviour 侧
   LemonBehaviour 实现之）；`GameObject.AddComponent<T>/GetComponent<T>/
@@ -181,7 +194,7 @@ Status: planned
   幂等（二次调用返回既有实例、不双实例）；`Behaviours.Attach` 同实体同类型断言
   （真双挂 = 红字 + 跳过，不崩）。
 
-### T4 模板三拆 + 生成器重生成 —— 约 0.75 天
+### T4 模板三拆 + 生成器重生成 —— 约 0.75 天 ✅ `225d4f4`
 
 - `PlayerBehaviour.cs`（239 行）拆 `PlayerMovement` / `PlayerCombat` / `PlayerHud`
   三 LemonBehaviour；共享态（武器表/成长数值）按现码切面归组件或 GameMain 静态——
@@ -193,7 +206,7 @@ Status: planned
   scripts[3] + 6 prefab v2 格式入库）；
 - `--smoke-template` 全链回归（3000 帧断言集含死亡-复活链）。
 
-### T5 GUID 稳定性 smoke（验收⑤）—— 约 0.5 天
+### T5 GUID 稳定性 smoke（验收⑤）—— 约 0.5 天 ✅（随 T5 commit）
 
 - 新 `--smoke-guid`：模板拷贝项目 → 开场景记基线（逐实体 guid→解析 id）→
   追加导入一张新图（记账号移位）+ `mv` 改名既有资产 + 删 `.lemon/manifest.json` →
@@ -201,7 +214,7 @@ Status: planned
   则必然错位——这正是本批消除的类别）；
 - `tools/editor-regression.sh` full 档加 `grep_step "guid-chain smoke"`（第 14 步）。
 
-### T6 文档回写 + 勾销 —— 约 0.5 天
+### T6 文档回写 + 勾销 —— 约 0.5 天 ✅（文档收尾批）
 
 - 03：§2 ScriptBox 多实例语义 + schema v2 迁移链首例；04：§2.1 ScriptBox 段与 §3
   多脚本注记改「已落地」措辞 + §3.2 对齐清单（同类型多脚本/GetComponent 首见/移除

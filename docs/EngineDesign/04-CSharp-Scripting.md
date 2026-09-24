@@ -75,6 +75,15 @@ public abstract class LemonBehaviour        // ≈ Unity / Prowl2D 的 MonoBehav
   > 不持久**（代码增删即漂移），className 是持久键，装载后由宿主按名解析（编辑器
   > `lemon_behaviours_list` 导出类型名表；`--script` 装配，EnterPlay 统一 Attach）。
   > scriptGuid 供资产侧追踪/热重载目标（0 = 未关联 .cs 资产，仅类名装配）。
+  >
+  > **M6a 批⓪ 落地（多脚本）**：ScriptBox 扩为内嵌定长槽数组 `ScriptBox{uint32 notified
+  > （实体级销毁通知位）; uint8 count; ScriptSlot slots[8];}`，槽 = 旧单槽同构
+  > `{typeId, flags, scriptGuid, className[24]}`（40B/槽，disabled 位槽级、销毁通知
+  > 位实体级——恰好一次语义 F-08.2 不变）。`.scene` schemaVersion 1→2：实体附加复数
+  > `"scripts": [{"guid", "class"}, ...]`；读侧双读（复数优先/旧单数兼容，旧 prefab
+  > 不走迁移链靠双读隐式升级）；`.scene` Load 走迁移链 v1→v2（03 §13 首例）。
+  > **同实体同类型唯一**（批⓪ 决策 4：入口禁止、格式宽容——加载遇同名重复保序留
+  > 首见 + 告警；每实例参数落地时再评估放开）。
 - **调度（SceneDispatcher 位掩码方案，Prowl2D 已验证，ADR-009）**：
   - 注册期反射**一次**算出每类型 override 集 → 位掩码（Awake/Update/… 各占一位）；**未 override 的生命周期零成本**（整类实例直接跳过）；
   - dense 数组：活动 ScriptBox 按 typeId 分桶连续存放（挂载即池），同类型委托连续调用（icache 友好）；增删只入队，**每帧至多一次重排**；
@@ -144,12 +153,15 @@ public readonly struct GameObject : IEquatable<GameObject>   // 门面正名（A
     public void SetParent(GameObject parent, bool worldPositionStays = true);
     public int childCount { get; }   public GameObject GetChild(int i);
 
-    // 双路由（ADR-009）：数据组件与脚本组件同一个 API 面。C# 不允许仅按泛型约束重载，
-    // 统一走 IComponent 标记、调用点按 typeof(T) 是否 LemonBehaviour 分路——低频 API，运行时分路成本可忽略
-    public T AddComponent<T>() where T : IComponent;    // T:struct → EnTT 组件（档③）；T:LemonBehaviour → ScriptBox（档①）
-    public bool TryGetComponent<T>(out T c) where T : IComponent;
-    public T GetComponent<T>() where T : IComponent;    // T:LemonBehaviour 时在该实体 ScriptBox 中按类型查找（Unity 同义）
-    public T GetComponentInChildren<T>() where T : IComponent;
+    // 双路由（ADR-009；M6a 批⓪ 已落地）：数据组件与脚本组件同一个 API 面。C# 不允许
+    // 仅按泛型约束重载 → 门面统一 where T : notnull，运行时按 typeof(T) 是否
+    // LemonBehaviour 分路（值组件经 ComponentTable.Type→id 反查 + 开放泛型策略类
+    // 反射绑定一次的强类型读——零装箱；低频 API，热路径仍推 TryGetComponent/Chunk）
+    public void AddComponent<T>() where T : notnull;    // T:IComponent struct → op2 命令；T:LemonBehaviour → op4（幂等 get-or-add）
+    public bool TryGetComponent<T>(out T c) where T : unmanaged;   // 值组件快路径（无装箱）
+    public T? GetComponent<T>() where T : notnull;      // T:LemonBehaviour → 实例引用（未挂 = null）；值组件 → 拷贝（缺 = throw）
+    public bool RemoveComponent<T>() where T : notnull; // T:IComponent → op3；T:LemonBehaviour → op5（单实例 OnDestroy + 退订）
+    // public T GetComponentInChildren<T>() —— 仍缓：无消费者，不扩面（批⓪ 决策）
     // 警告文化：文档标注"GetComponent 系列是语法糖，逐帧调用违反性能文化（与 Unity 官方'缓存 GetComponent'建议同理），
     // 热路径请用 Chunk span（§2.2）"
 }
@@ -164,13 +176,13 @@ public readonly struct Transform               // 视图结构：逐属性访问
 }
 ```
 
-> **多脚本/实体（M5 条目，2026-09-22 登记——用户实测确认需要）**：上面 API 的
-> "T:LemonBehaviour 按类型查找（Unity 同义）"隐含每实体多脚本，但 M4 落地 = 每实体
-> 单个 `ScriptBox`（entt 同类型组件单实例 + `.scene` 单数 `script` 成员 + Inspector
-> 单段）。M5 随 SDK 门面扩展（`AddComponent<LemonBehaviour>` 路由）同期落地：存储
-> 改多实例（内嵌小数组或旁路池）、`.scene` `scripts: []`（读旧单数兼容）、Inspector
-> ScriptBox 段列表化；调度侧无需改（dense 数组按 typeId 分桶本按活动实例遍历）。
-> Unity 心智下是刚需（一个对象挂 Move + Health 常见）。
+> **多脚本/实体（M6a 批⓪ 已落地，2026-09-24；原 M5 条目 2026-09-22 登记）**：每实体
+> `ScriptBox` 内嵌 8 槽 `ScriptSlot` 数组（同类型唯一——见 §3.2 不对齐清单）；`.scene`
+> schema v2 `scripts: []`（旧单数读侧兼容）；Inspector Script 段列表化（逐槽 combo/
+> 移除）；SDK 门面 `AddComponent<LemonBehaviour>` 双路由已通（op4 幂等 get-or-add）。
+> 调度侧零改动（dense 按 typeId 分桶本按活动实例遍历）。跨类型 Update 执行序 =
+> **注册序**（`GameMain.Configure` 内 `Register<T>` 顺序；`[ExecutionOrder]` 桶间
+> 排序，同 Order 按注册序），槽序只影响 Inspector 展示与序列化键序。
 
 ### 3.1 协程替代：async/await + C++ 定时器（ADR-009 基调——表面像 Unity，机器走 C++）
 
@@ -197,7 +209,9 @@ public readonly struct Transform               // 视图结构：逐属性访问
 - **无 ScriptableObject** → 资产即 JSON + `AssetRef<T>`（06）；
 - **无刚体/关节物理回调** → 触发器与命中走查询层事件（03 §5/§6）；
 - `GetComponent` 系列是语法糖（热路径用 Chunk span，§2.2）；
-- **脚本结构变更当帧读旧、帧首生效**（M3 落地语义）：Create/Destroy/AddComponent/RemoveComponent 全走命令缓冲，在下一帧 Essential（DestroyCommit 同拍）应用——脚本当帧新建的实体下一帧可见，与两阶段销毁同语义（03 §2）；占位 id（高位标记）仅在本批命令内可解析；
+- **脚本结构变更当帧读旧、帧首生效**（M3 落地语义）：Create/Destroy/AddComponent/RemoveComponent 全走命令缓冲，在下一帧 Essential（DestroyCommit 同拍）应用——脚本当帧新建的实体下一帧可见，与两阶段销毁同语义（03 §2）；占位 id（高位标记）仅在本批命令内可解析。**帧边界推论（M6a 批⓪ 门面）**：`AddComponent<LemonBehaviour>` 同帧 `GetComponent` = null（命令未应用）；门面侧幂等 get-or-add 已含待决命令去重（重复调用不双挂）；
+- **同实体同类型脚本唯一**（M6a 批⓪ 决策，与 Unity 相反）：同类型重复挂载在三个入口被拦——Inspector 同名置灰、`AddComponent<LemonBehaviour>` 幂等 get-or-add、`Behaviours.Attach` 红字断言（真泄漏响亮）；格式宽容（scripts[] 可存重复项，加载保序留首见 + 告警）。无每实例参数下重复表达力为零、StateBag 键 `(class, entity)` 会冲突——每实例字段（05 §5）落地时再评估放开；
+- **`RemoveComponent<LemonBehaviour>` = 卸单槽单实例**（op5，M6a 批⓪）：OnDestroy + 实例级订阅退订 + 槽保序移除（区别于实体销毁时按实体清全量）；自卸（`RemoveComponent<自己的类型>`）合法，帧首生效（≈ Unity `Destroy(this)`）；
 - 脚本异常自动隔离禁用（§7），引擎永不崩。
 
 ### 3.3 Unity → Lemon 移植指南（一页）

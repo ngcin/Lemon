@@ -27,7 +27,7 @@ World（进程级唯一，持资产库/JobSystem/桥等全局服务）
      └─ 导演（Director，可多个）
 ```
 
-- **实体销毁两阶段**：`Destroy()` 只入销毁队列，`Essential` 阶段统一提交（系统遍历中安全销毁；与触发器/事件队列一致性）。**脚本实体死亡豁免**（批④后修④，2026-09-24）：#10 命中系统 HP 归零时，带 `ScriptBox` 的实体**不自动销毁**——生死处置归脚本（VS 模板玩家死亡→对话框复活即此路径）；此前无条件销毁导致复活后读已毁实体连续报错、行为被异常隔离禁用。无脚本数据实体照旧清场。
+- **实体销毁两阶段**：`Destroy()` 只入销毁队列，`Essential` 阶段统一提交（系统遍历中安全销毁；与触发器/事件队列一致性）。**脚本实体死亡豁免**（批④后修④，2026-09-24）：#10 命中系统 HP 归零时，带 `ScriptBox` 的实体**不自动销毁**——生死处置归脚本（VS 模板玩家死亡→对话框复活即此路径）；此前无条件销毁导致复活后读已毁实体连续报错、行为被异常隔离禁用。无脚本数据实体照旧清场。**销毁通知恰好一次（F-08.2）**：`ScriptBox` 头部实体级 `notified` 位去重（M6a 批⓪ 多槽化后从槽级 flags 升格——多槽实体按实体一次通知全部实例，不逐槽各发）。
 - **Prefab（PrefabLink + PropertyOverride 模型，Prowl2D 已验证方案，ADR-009）**：资产化的实体模板。实例**只存一个链接 + 覆盖列表**（非全量拷贝）：
   - 链接数据挂实例根：`PrefabLink { uint64_t prefabId; SmallVector<PropertyOverride, 8> overrides; }`（非实例实体零开销）；支持嵌套 prefab（模板本身可以是另一实例）；编辑期 Apply / Revert / Break + Inspector 逐字段 override 高亮（见 05 §5）。
   - **运行时物化零开销**：`Instantiate(prefabId)`（走池，§10）时一次性合成"模板基础值 + 覆盖值"为平坦组件数据，物化后热路径与普通实体无差别；`Meta.prefabId` 保留回链供编辑器往返与重新 Apply。
@@ -249,7 +249,7 @@ RingQueue<EventPacket> gEvents;          // 系统只入队，帧末 ScriptEvent
 ## 13. 存档与场景快照
 
 - **场景文件**与**存档**同构（ECS 全量序列化器，组件注册表驱动），存档 = 场景快照 + 用户数据段（双通道接口见 06 §10）。
-- 版本迁移：schema 带 `version`，逐版本迁移函数链（老档自动升级，借鉴 duality gzip 版本化思想，压缩用 gzip）。
+- 版本迁移：schema 带 `version`，逐版本迁移函数链（老档自动升级，借鉴 duality gzip 版本化思想，压缩用 gzip）。**M6a 批⓪ 首例（v1→v2）**：`scripts[]` 多脚本格式——迁移 = 单数 `script` 对象包成单元素数组 + 版本号回写；`.prefab` 不走迁移链（高频 spawn 工厂零额外 pass），靠 ReadEntity 双读（复数优先/单数兼容）隐式升级、下次保存自然改写复数。
 - **M5 批④ 落地注**：用户数据段已落地为 **World 级 `SaveChannel`**（`ECS/SaveChannel.h`，内存 KV key→bytes；C# `Lemon.Save` 写读，IO 归宿主钩子——编辑器 = `.lemon/saves/game.sav` 定长头二进制 + 原子写 + .bak；06 §10 口径修订见彼处）。**不入 StateHash**（用户数据非模拟态）。场景快照入档（整场景存档）M6+；Game RT UI 通道（`World::RtUi` 槽 + `World::Cards` 三选一卡片）同为 World 级非 ECS 通道（呈现层，不入哈希）——**本通道族新增机制一律走"World 持有 + vtable 尾追"，不动组件注册表**（批②勘误的哈希漂移教训）。
 
 ## 14. 性能预算分解（压测 A 模拟侧 ≤ 10 ms）

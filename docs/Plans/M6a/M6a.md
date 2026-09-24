@@ -12,7 +12,7 @@ Status: planned
 
 | 批 | 文件 | 主题 | 状态 |
 |---|---|---|---|
-| ⓪ | [2026-09-24-b0-multiscript-guid](./2026-09-24-b0-multiscript-guid.md) | 架构地基：`scripts[]` 多脚本 + sprite 引用 GUID 化 | planned |
+| ⓪ | [2026-09-24-b0-multiscript-guid](./2026-09-24-b0-multiscript-guid.md) | 架构地基：`scripts[]` 多脚本 + sprite 引用 GUID 化 | **done**（2026-09-24；出口判据 5/6/7 本批落账 ✅） |
 | ① | （开批新建） | 表现打击感：Animator `Play`/`CrossFade` + 位图数字/飘字/世界血条 | planned |
 | ② | （开批新建） | 内容生产：配置表外置 ADR + AnimationEditor 最小版 + 技能路径数据化 + 存档分档 | planned |
 | ③ | （开批新建） | 产品壳：通用模态面板通道 + 流程状态机（档1 单场景零引擎改动）+ LoadScene 评估（档2 ADR） | planned |
@@ -25,9 +25,9 @@ Status: planned
 2. 新增 1 武器 + 1 敌人变体纯 prefab/C#/配置表落地（引擎零改动演示）；
 3. 动画状态（受击/攻击/死亡）Play 中可切换；
 4. 飘字/世界血条开启下 bench-survivor ≥ 45fps（或逐项开销入 09 §6.10）；
-5. GUID 稳定性 smoke 断言（资产改名/移动 + 删 manifest 重开，引用不错位）；
-6. 模板 PlayerBehaviour 拆移动/战斗/HUD 三脚本 + `scripts[]` roundtrip；
-7. 回放零重录（尾加字段口径）或按 09 §7 推论显式声明重录。
+5. GUID 稳定性 smoke 断言（资产改名/移动 + 删 manifest 重开，引用不错位）——**✅ 批⓪**（`--smoke-guid` 入回归第 14 步）；
+6. 模板 PlayerBehaviour 拆移动/战斗/HUD 三脚本 + `scripts[]` roundtrip——**✅ 批⓪**（模板重生成入库 + TestScriptBoxArchive）；
+7. 回放零重录（尾加字段口径）或按 09 §7 推论显式声明重录——**✅ 批⓪**（m5b2 三档 mismatches=0，零重录先例三落 09 §6.8）。
 
 ## 登记项（观察，不扩 scope）
 

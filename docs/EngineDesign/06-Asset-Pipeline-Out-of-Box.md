@@ -43,6 +43,17 @@ MyGame/                                   # 用户项目（升级永不触碰）
 ```
 
 - **重命名/移动文件不破坏引用**：场景/Prefab 只存 GUID；`.meta` 随文件移动。
+  **M6a 批⓪ 落地（sprite 引用 GUID 化，最后一处数字资产引用收口）**：
+  `SpriteRenderer` 尾加 `uint64_t spriteGuid`（12→24B，C# 镜像同步），`.scene`/
+  `.prefab` 双写 `{spriteGuid（真源）, spriteId（进程内派生号）}`。装载/恢复/
+  Undo/编辑态 Prefab 落地时 `EditorContext::ResolveSpriteRefs` 按 guid 归一：
+  命中 → 覆写 spriteId（改名/移位/manifest 重建 id 漂移后引用不断链）；查无 →
+  保留旧号渲染 + 悬空告警；**存量回填**——guid=0 且 spriteId 恰为登记资产本体号 →
+  补写 guid 标 dirty（旧档开一次存一次即升级 GUID 口径；切片 cell 号/程序化页号
+  无 guid 语义不回填）。切片表解析口径：id 在 cell 区间内 = 保号（cell 是层内
+  偏移）；区间外漂移回 cell 0（本体号与 cell 号相邻无法甄别，逐 cell guid 化
+  留 M6c (guid, cell) 二元组）。作者面三口（combo/拖入/清空）双写；回归防线 =
+  `--smoke-guid`（插入+改名+删 manifest 三难并发 → 重开逐实体归一断言）。
 - `.lemon/manifest.json`（项目级索引，**导入器生成物**，随状态目录 gitignore——Godot `.godot/uid_cache.bin` 同位思路；2026-09-19 定落位）：`guid → {path, type, dependencies[], hash}`；编辑器启动按 manifest 做一致性体检（孤儿 meta / 缺失依赖红字报告）。
 
 ### 2.2 导入器（编辑器侧，后台线程池）
@@ -90,6 +101,10 @@ MyGame/                                   # 用户项目（升级永不触碰）
 > 无 manifest 的 fresh 项目在任意会话位置逐位可复现；**既有项目漂移自愈 = 删
 > `.lemon/manifest.json` 重开**（场景引用按确定性扫描重记账）。回归防线：
 > smoke-template 末尾同进程再开第二个模板拷贝，spriteId 记账逐项全等断言。
+> **M6a 批⓪ 残余风险勾销（2026-09-24）**：上段自愈的隐含前提"资产集未变"已解除
+> ——spriteGuid 真源化后（§2.1），删 manifest 且**同时**导入新资产/改名移位（id
+> 全体重排）的场景引用仍逐实体归一（`--smoke-guid` 三难并发断言）。残余面收窄到
+> "切片表跨漂移回 cell 0"（§2.1 口径，M6c (guid, cell) 收口）。
 > **M4.5 补记（2026-09-20）**：资产扫描根由 `Assets/` 扩为**项目根**（本册 §1 布局
 > 对齐）——根级 `Prefabs/` 入索引（prefab 导出/实例化读写改走项目根落位，M4.4 的
 > `Assets/Prefabs/` 落位偏差消除），`Game/Scenes/Data/Builds/obj/bin` 与点目录排除
@@ -102,13 +117,16 @@ MyGame/                                   # 用户项目（升级永不触碰）
 
 ## 3. 场景与数据格式（JSON + 行程编码，可 diff 的紧凑格式）
 
-- 场景 `.scene` = JSON（schema 版本化）：
+- 场景 `.scene` = JSON（schema 版本化；**M6a 批⓪ 起实现为 v2**——实体附加复数
+  `scripts[]`（旧单数 `script` 读侧兼容/迁移链升级，03 §13）；SpriteRenderer 携
+  `spriteGuid` 真源双写，§2.1）：
 
 ```json
-{ "schemaVersion": 3, "name": "Arena01", "viewport": [1920, 1080], "tileSize": 32,
+{ "schemaVersion": 2, "name": "Arena01", "viewport": [1920, 1080], "tileSize": 32,
   "entities": [
     { "guid": "...prefabRef...", "pos": [128, 64], "overrides": { "Chase.speed": 88 } },
-    { "components": { "Transform2D": {...}, "SpriteRenderer": {...}, "Spawner": {...} } } ],
+    { "components": { "Transform2D": {...}, "SpriteRenderer": { "spriteId": 104, "spriteGuid": 9103745171752747009, ... }, "Spawner": {...} },
+      "scripts": [ { "guid": 0, "class": "PlayerMovement" }, { "guid": 0, "class": "PlayerCombat" } ] } ],
   "tilemap": { "terrain": "~MC#Ae...", "collision": "~Qj0..." } }
 ```
 
