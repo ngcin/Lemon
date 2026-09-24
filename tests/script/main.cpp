@@ -211,6 +211,12 @@ void TestRngGolden() {
            "pcg32 Range(x,x) single point no-hang, both ends");
     Expect(lemonRngRange(7, 3) == 7 && lemon::Rng(1, 1).Range(7u, 3u) == 7u,
            "pcg32 Range inverted contract returns lo, both ends");
+    // 二次幂 span（整除 2^32、无拒绝区间）：zone 计算截 0，老实现永久死循环
+    // （Range(0,1) 抛硬币即中招——C++/C# 双端同修后此处可达）
+    Expect(lemonRngRange(0, 1) == lemon::Rng(1, 1).Range(0u, 1u),
+           "pcg32 Range pow2 span (0,1) bit-exact, both ends (no hang)");
+    Expect(lemonRngRange(0, 3) == lemon::Rng(1, 1).Range(0u, 3u),
+           "pcg32 Range pow2 span (0,3) bit-exact, both ends (no hang)");
 }
 
 void TestEventPacketLayout() {

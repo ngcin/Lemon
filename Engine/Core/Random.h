@@ -40,11 +40,13 @@ public:
 
     /// [lo, hi] 闭区间均匀整数（无除法偏差：拒绝采样，被拒数与流状态相关但序列确定）。
     /// 契约 lo <= hi：单点/逆序直接返回 lo——span==1 时 zone 截 0、r>=zone 恒真，
-    /// 老实现会永久死循环（2026-09-24 审查 F-10，与 Pcg32.cs 双端同语义修复）
+    /// 老实现会永久死循环（2026-09-24 审查 F-10，与 Pcg32.cs 双端同语义修复）。
+    /// span 为二次幂时整除 2^32、无拒绝区间：zone 计算同样截 0，直接取模（本就无偏）。
     uint32_t Range(uint32_t lo, uint32_t hi) {
         if (lo >= hi) return lo;
         uint32_t span = hi - lo + 1;
         if (span == 0) return lo; // 全区间（溢出回绕），退化处理
+        if ((span & (span - 1u)) == 0) return lo + Next() % span;
         uint32_t zone = (0x100000000ull / span) * span;
         uint32_t r;
         do { r = Next(); } while (r >= zone);

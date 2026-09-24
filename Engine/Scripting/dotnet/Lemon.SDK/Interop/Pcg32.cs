@@ -30,12 +30,14 @@ public sealed class Pcg32
 
     /// <summary>[lo, hi] 闭区间整数（拒绝采样，与 C++ Range 同序列）。
     /// 契约 lo &lt;= hi：单点/逆序直接返回 lo——span==1 时 zone 截 0、r&gt;=zone 恒真，
-    /// 老实现会永久死循环（2026-09-24 审查 F-10，与 lemon::Rng 双端同语义修复）。</summary>
+    /// 老实现会永久死循环（2026-09-24 审查 F-10，与 lemon::Rng 双端同语义修复）。
+    /// span 为二次幂时整除 2^32、无拒绝区间：zone 计算同样截 0，直接取模（本就无偏）。</summary>
     public uint Range(uint lo, uint hi)
     {
         if (lo >= hi) return lo;
         uint span = hi - lo + 1;
         if (span == 0) return lo;
+        if ((span & (span - 1u)) == 0u) return lo + Next() % span;
         uint zone = (uint)((0x100000000ul / span) * span);
         uint r;
         do { r = Next(); } while (r >= zone);
