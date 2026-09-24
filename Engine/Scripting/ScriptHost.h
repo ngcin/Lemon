@@ -142,6 +142,9 @@ public:
     void TickBatch(ecs::World& world, ecs::Scene& scene, float dt) override;
     void DispatchEvents(ecs::World& world, ecs::Scene& scene) override;
     void ApplyStructural(ecs::World& world, ecs::Scene& scene) override; // 帧首 Essential
+    /// CommitDestroys 前遍历待销毁队列：带 ScriptBox 且未通知过的实体补发
+    /// OnDestroy（F-08.2——C++ 系统销毁与脚本命令销毁统一在此汇合，恰好一次）
+    void NotifyPendingDestroys(ecs::World& world, ecs::Scene& scene) override;
 
 private:
     struct BatchSys {

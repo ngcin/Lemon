@@ -839,7 +839,12 @@ void DestroyCommitSystem::Tick(World& world, Scene& scene, float dt) {
     (void)dt;
     // M3-6：脚本结构命令帧首应用（建/删实体、增删组件、挂脚本；先于销毁提交——
     // Destroy 命令本批内随后的 CommitDestroys 直接生效）
-    if (auto* backend = world.ScriptBackend()) backend->ApplyStructural(world, scene);
+    if (auto* backend = world.ScriptBackend()) {
+        backend->ApplyStructural(world, scene);
+        // F-08.2（2026-09-24）：C++ 系统路径入队的销毁在此补 OnDestroy 通知——
+        // 与脚本命令路径在 NotifyPendingDestroys 内汇合（flag 去重，恰好一次）
+        backend->NotifyPendingDestroys(world, scene);
+    }
     scene.CommitDestroys(); // 两阶段销毁 + EnTT 实体回收（池语义）
 }
 

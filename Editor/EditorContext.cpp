@@ -25,6 +25,37 @@ namespace lemon::editor {
 using ecs::RegisterAllComponents;
 using ecs::SceneArchive;
 
+namespace {
+/// 原子落盘（2026-09-24 审查 F-04）：同目录 .tmp 全量写入 + flush 显式校验 +
+/// rename 替换——磁盘满/进程中断只丢 .tmp，不把原文件截成半档。场景/Prefab/
+/// 存档三条保存链统一走此口（旧实现直接 trunc 原路径 = 破坏性截断写）。
+/// rename 覆盖既有目标在 POSIX 是原子替换；Windows MoveFileEx 语义归 M7 跨平台抽象。
+bool WriteFileAtomic(const std::string& path, const void* data, size_t n) {
+    namespace fs = std::filesystem;
+    const std::string tmp = path + ".tmp";
+    {
+        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+        if (!f) return false;
+        f.write((const char*)data, (std::streamsize)n);
+        f.flush();
+        if (!f.good()) { // 写失败在 flush 捕获（析构阶段的错误不再静默）
+            f.close();
+            std::error_code rm;
+            fs::remove(tmp, rm);
+            return false;
+        }
+    } // 析构 close
+    std::error_code ec;
+    fs::rename(tmp, path, ec);
+    if (ec) {
+        std::error_code rm;
+        fs::remove(tmp, rm);
+        return false;
+    }
+    return true;
+}
+} // namespace
+
 EditorContext::EditorContext() {
     RegisterAllComponents(); // 编辑器宿主进程内的注册表初始化（幂等）
     world_ = std::make_unique<ecs::World>(ecs::WorldDesc{.seed = 20260919ull});
@@ -135,13 +166,7 @@ bool EditorContext::SaveScene(std::string path) {
     }
     PruneSelection(); // 序列化前清死引用选中项
     std::string json = SceneArchive::Save(*scene_);
-    std::ofstream f(path, std::ios::binary | std::ios::trunc);
-    if (!f) {
-        LEMON_WARN("保存场景失败：无法写入 %s", path.c_str());
-        return false;
-    }
-    f.write(json.data(), (std::streamsize)json.size());
-    if (!f.good()) {
+    if (!WriteFileAtomic(path, json.data(), json.size())) {
         LEMON_WARN("保存场景失败：写入中断 %s", path.c_str());
         return false;
     }
@@ -491,9 +516,8 @@ bool EditorContext::ApplyPrefabInstance(ecs::Entity e) {
         return false;
     }
     std::string json = SceneArchive::SaveEntityTree(*scene_, e);
-    std::ofstream f(assets_.AbsolutePath(*entry), std::ios::binary | std::ios::trunc);
-    if (!f) return false;
-    f << json;
+    if (!WriteFileAtomic(assets_.AbsolutePath(*entry), json.data(), json.size()))
+        return false; // F-04：原子写——Apply 中断不再截断源 Prefab 资产
     LEMON_LOG("Prefab Apply：实例写回 %s", entry->relPath.c_str());
     return true;
 }
@@ -506,6 +530,15 @@ bool EditorContext::RevertPrefabInstance(ecs::Entity e) {
     std::ifstream f(assets_.AbsolutePath(*entry), std::ios::binary);
     if (!f) return false;
     std::string json((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    // F-04：销毁旧树前先整档预验——坏 JSON/结构错直接拒绝，不再出现"旧树已毁、
+    // 新树解析失败"的不可回滚中间态（LoadEntityTree 内部再解析一次，双验代价可忽略）
+    {
+        const nlohmann::json pre = nlohmann::json::parse(json, nullptr, false);
+        if (pre.is_discarded() || !pre.contains("entities") || !pre.at("entities").is_array()) {
+            LEMON_WARN("Prefab Revert 失败：源资产损坏 %s", entry->relPath.c_str());
+            return false;
+        }
+    }
 
     const ecs::Hierarchy* h = scene_->TryGet<ecs::Hierarchy>(e);
     const ecs::Entity parent = h ? h->parent : ecs::Entity::Null();
@@ -611,18 +644,8 @@ bool EditorContext::WriteSaveFile(const ecs::SaveChannel& ch) {
     if (fs::exists(p, ec))
         fs::copy_file(p, fs::path(path + ".bak"), fs::copy_options::overwrite_existing, ec);
     const std::vector<uint8_t> bytes = ch.Encode();
-    const fs::path tmp(path + ".tmp");
-    {
-        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
-        if (!f) {
-            LEMON_WARN("存档写入失败（无法创建 %s）", tmp.string().c_str());
-            return false;
-        }
-        f.write((const char*)bytes.data(), (std::streamsize)bytes.size());
-    }
-    fs::rename(tmp, p, ec);
-    if (ec) {
-        LEMON_WARN("存档原子改名失败：%s", ec.message().c_str());
+    if (!WriteFileAtomic(path, bytes.data(), bytes.size())) { // F-04：统一原子写（含 flush 检查）
+        LEMON_WARN("存档写入失败（临时写入/改名）：%s", path.c_str());
         return false;
     }
     return true;
@@ -630,11 +653,18 @@ bool EditorContext::WriteSaveFile(const ecs::SaveChannel& ch) {
 
 void EditorContext::LoadSaveFile(ecs::SaveChannel& dst) {
     namespace fs = std::filesystem;
+    // 坏档防线（2026-09-24 审查 F-03）：整档上限 16 MiB，超限不 slurp——
+    // 现用途 KB 级；超大文件多为损坏/误指，Decode 侧另有条目/单值上限。
+    constexpr uint64_t kMaxSaveFileBytes = 16ull << 20;
     const std::string path = SaveFilePath();
     if (path.empty()) return; // 无项目（bench/smoke tempdir 外的裸会话）= 空通道开局
     auto tryDecode = [&](const std::string& p) {
         std::error_code ec;
         if (!fs::exists(p, ec)) return false;
+        if (const uint64_t sz = fs::file_size(p, ec); ec || sz > kMaxSaveFileBytes) {
+            LEMON_WARN("存档异常（大小超 16 MiB 上限），已跳过：%s", p.c_str());
+            return false;
+        }
         std::ifstream f(p, std::ios::binary);
         if (!f) return false;
         std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(f)),

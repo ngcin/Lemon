@@ -9,9 +9,13 @@
 
 namespace lemon::scripting {
 
+/// ScriptBox.flags bit1：OnDestroy 通知已发（脚本命令路径与销毁提交路径共用
+/// lemon_scripts_destroy——置位防双通知；2026-09-24 审查 F-08.2）
+constexpr uint32_t kScriptFlagDestroyNotified = 1u << 1;
+
 struct ScriptBox {
     int32_t typeId = -1;     // Behaviours 注册序（C# 侧；-1 = 未解析（按 className 找宿主映射））
-    uint32_t flags = 0;      // bit0 disabled（异常禁用）
+    uint32_t flags = 0;      // bit0 disabled（异常禁用）；bit1 destroyNotified（见上）
     uint64_t scriptGuid = 0; // 脚本资产 GUID（M4.4：.meta 持久引用；0 = 未关联资产）
     char className[24] = {}; // C# 类名（.scene 持久；宿主按名解析 typeId）
 };

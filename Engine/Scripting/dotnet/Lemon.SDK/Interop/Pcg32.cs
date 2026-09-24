@@ -28,9 +28,12 @@ public sealed class Pcg32
         return (xorshifted >> (int)rot) | (xorshifted << (int)((0u - rot) & 31u));
     }
 
-    /// <summary>[lo, hi] 闭区间整数（拒绝采样，与 C++ Range 同序列）。</summary>
+    /// <summary>[lo, hi] 闭区间整数（拒绝采样，与 C++ Range 同序列）。
+    /// 契约 lo &lt;= hi：单点/逆序直接返回 lo——span==1 时 zone 截 0、r&gt;=zone 恒真，
+    /// 老实现会永久死循环（2026-09-24 审查 F-10，与 lemon::Rng 双端同语义修复）。</summary>
     public uint Range(uint lo, uint hi)
     {
+        if (lo >= hi) return lo;
         uint span = hi - lo + 1;
         if (span == 0) return lo;
         uint zone = (uint)((0x100000000ul / span) * span);

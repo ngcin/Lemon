@@ -602,7 +602,20 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
     using namespace vs_template;
     std::error_code ec;
     const fs::path root = fs::absolute(outRoot, ec);
-    fs::remove_all(root, ec);
+    // 2026-09-24 审查 F-02：remove_all 前先验目标"是本生成器产物"——仅认领含
+    // project.lemon + Game/ 的 lemon 工程；任意已有目录一律拒绝删除。重新生成
+    // （Templates/vs-survivor 入库目录满足标记）不受影响。
+    if (fs::exists(root, ec)) {
+        const bool lemonProject = fs::is_regular_file(root / "project.lemon", ec) &&
+                                  fs::is_directory(root / "Game", ec);
+        if (!lemonProject) {
+            LEMON_ERROR("gen-vs-template：目标已存在且不是 lemon 工程（缺 project.lemon/"
+                        "Game/ 标记），拒绝删除：%s",
+                        root.string().c_str());
+            return false;
+        }
+        fs::remove_all(root, ec);
+    }
     for (const char* dir : {"Assets", "Prefabs", "Scenes", "Game", "Data", ".lemon/editor"})
         fs::create_directories(root / dir, ec);
 

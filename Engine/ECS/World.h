@@ -73,6 +73,9 @@ struct IScriptBackend {
     virtual void TickBatch(World& world, Scene& scene, float dt) = 0;       // #15 调用
     virtual void DispatchEvents(World& world, Scene& scene) = 0;            // #16 调用
     virtual void ApplyStructural(World& world, Scene& scene) = 0;           // DestroyCommit 前调用
+    /// 销毁提交前补通知（2026-09-24 审查 F-08.2）：C++ 系统路径入队的销毁在此
+    /// 触发脚本 OnDestroy——此前只有脚本命令路径通知，托管实例/订阅残留到换域。
+    virtual void NotifyPendingDestroys(World& world, Scene& scene) = 0;     // CommitDestroys 前调用
 };
 
 struct WorldDesc {

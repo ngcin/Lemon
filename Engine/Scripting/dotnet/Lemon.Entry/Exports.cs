@@ -311,6 +311,15 @@ internal static unsafe class Exports
         for (int i = 0; i < n; i++) dst[i] = r.Float01();
     }
 
+    /// <summary>RNG 回归（F-10）：Range 单点/逆序区间——老实现 span==1 时 zone 截 0
+    /// 会永久死循环；挂钟上限内返回即双端同语义的证据。</summary>
+    [UnmanagedCallersOnly]
+    public static uint lemon_rng_range(uint lo, uint hi)
+    {
+        var r = new Pcg32(1, 1);
+        return r.Range(lo, hi);
+    }
+
     /// <summary>EventPacket 布局自报（返回 sizeof；各字段偏移写入 out 指针）。</summary>
     [UnmanagedCallersOnly]
     public static int lemon_eventpacket_layout(ushort* offType, ushort* offUser, ushort* offSrc,

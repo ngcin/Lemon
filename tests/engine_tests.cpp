@@ -504,6 +504,11 @@ void TestRng() {
     for (int i = 0; i < 10000; ++i) seen[r.Range(5u, 10u) - 5] = true;
     for (int i = 0; i < 6; ++i) Expect(seen[i], "range covers all values");
 
+    // F-10（2026-09-24）：单点/逆序区间契约——老实现 span==1 时 zone 截 0、
+    // r>=zone 恒真，Range(x,x) 永久死循环（与 Pcg32.cs 双端同修，script-tests 对拍）
+    Expect(r.Range(7u, 7u) == 7u, "range single point returns lo (no hang)");
+    Expect(r.Range(9u, 3u) == 9u, "range inverted contract returns lo (no hang)");
+
     // UnitVec2 长度 ≈ 1（FastSinCos LUT 误差界内）
     for (int i = 0; i < 100; ++i) {
         Vec2 v = r.UnitVec2();
@@ -631,9 +636,11 @@ void TestRingQueue() {
 #include "Components/GameplayComponents.h"
 #include "Components/RenderComponents.h"
 #include "ECS/ComponentRegistry.h"
+#include "ECS/SaveChannel.h"
 #include "ECS/Scene.h"
 #include "ECS/StateHash.h"
 #include "ECS/World.h"
+#include "Scripting/ScriptBox.h"
 
 using namespace lemon::ecs;
 
@@ -1484,6 +1491,141 @@ void TestDestroyQueueTagLifecycle() {
     Expect(s.Alive(e), "still alive until commit");
     s.CommitDestroys();
     Expect(!s.Alive(e), "committed destroy");
+}
+
+// ---- F-03（2026-09-24）：SaveChannel 坏档防线——长度字段先验上限再分配 ----
+void TestSaveChannelHardening() {
+    using ecs::SaveChannel;
+
+    // 正常 roundtrip（含空值条目）
+    SaveChannel ch;
+    const uint8_t payload[] = {1, 2, 3, 4, 5};
+    Expect(ch.Set("score", payload, sizeof(payload)), "set entry");
+    Expect(ch.Set("empty", nullptr, 0), "set empty value");
+    const std::vector<uint8_t> bytes = ch.Encode();
+    SaveChannel back;
+    Expect(back.Decode(bytes.data(), bytes.size()), "roundtrip decode");
+    Expect(back.Count() == 2 && back.GetLen("score") == 5, "roundtrip entries");
+
+    auto u16 = [](std::vector<uint8_t>& v, uint16_t x) {
+        v.push_back((uint8_t)x);
+        v.push_back((uint8_t)(x >> 8));
+    };
+    auto u32 = [](std::vector<uint8_t>& v, uint32_t x) {
+        v.push_back((uint8_t)x);
+        v.push_back((uint8_t)(x >> 8));
+        v.push_back((uint8_t)(x >> 16));
+        v.push_back((uint8_t)(x >> 24));
+    };
+    auto header = [&](std::vector<uint8_t>& v, uint32_t count) {
+        v.insert(v.end(), {'L', 'E', 'M', 'O', 'N', 'S', 'A', 'V'});
+        u32(v, 1);
+        u32(v, count);
+    };
+
+    // 巨额条目数：4 B 头声明 ~4e9 条 → 拒绝（老实现 reserve(count) 直接 bad_alloc）
+    {
+        std::vector<uint8_t> bad;
+        header(bad, 0xFFFFFFFEu);
+        SaveChannel s;
+        Expect(!s.Decode(bad.data(), bad.size()), "huge entry count rejected");
+    }
+    // 巨额单值：valLen 声明近 4 GiB 而剩余 0 字节 → 拒绝（老实现 vector(valLen) 先炸）
+    {
+        std::vector<uint8_t> bad;
+        header(bad, 1);
+        u16(bad, 1);
+        bad.push_back('k');
+        u32(bad, 0xFFFFFFF0u);
+        SaveChannel s;
+        Expect(!s.Decode(bad.data(), bad.size()), "huge valLen rejected");
+    }
+    // 截断半档拒绝（宁可不载不载错）
+    {
+        std::vector<uint8_t> bad = bytes;
+        bad.resize(bad.size() - 2);
+        SaveChannel s;
+        Expect(!s.Decode(bad.data(), bad.size()), "truncated archive rejected");
+    }
+    // 尾随垃圾拒绝（写侧精确落盘，多字节 = 损坏信号）
+    {
+        std::vector<uint8_t> bad = bytes;
+        bad.push_back(0xAA);
+        SaveChannel s;
+        Expect(!s.Decode(bad.data(), bad.size()), "trailing garbage rejected");
+    }
+    // 重复 key 拒绝（写侧 map 语义不产生）
+    {
+        std::vector<uint8_t> bad;
+        header(bad, 2);
+        u16(bad, 1);
+        bad.push_back('k');
+        u32(bad, 1);
+        bad.push_back('v');
+        u16(bad, 1);
+        bad.push_back('k');
+        u32(bad, 1);
+        bad.push_back('w');
+        SaveChannel s;
+        Expect(!s.Decode(bad.data(), bad.size()), "duplicate key rejected");
+    }
+    // key 超长拒绝（>255 与 Set 契约一致）
+    {
+        std::vector<uint8_t> bad;
+        header(bad, 1);
+        u16(bad, 300);
+        bad.insert(bad.end(), 300, 'k');
+        u32(bad, 0);
+        SaveChannel s;
+        Expect(!s.Decode(bad.data(), bad.size()), "oversized key rejected");
+    }
+}
+
+// ---- F-08.2（2026-09-24）：销毁提交点通知接线——C++ 路径入队的销毁也走
+// IScriptBackend::NotifyPendingDestroys（真链路 C# OnDestroy 在 script-tests 对拍）----
+void TestDestroyNotifyWiring() {
+    struct RecordingBackend final : ecs::IScriptBackend {
+        std::vector<uint64_t> notified;
+        int structuralCalls = 0;
+        void TickBatch(ecs::World&, ecs::Scene&, float) override {}
+        void DispatchEvents(ecs::World&, ecs::Scene&) override {}
+        void ApplyStructural(ecs::World&, ecs::Scene&) override { ++structuralCalls; }
+        void NotifyPendingDestroys(ecs::World&, ecs::Scene& s) override {
+            // 与 ScriptHost 实现同形状：待销毁 ∩ ScriptBox，flag 去重恰好一次
+            //（空 tag 不进 each() 载荷——entt 3.15 语义，tag 只作过滤器）
+            for (auto&& [ent, sb] :
+                 s.View<ecs::DestroyQueueTag, scripting::ScriptBox>().each()) {
+                if (sb.flags & scripting::kScriptFlagDestroyNotified) continue;
+                sb.flags |= scripting::kScriptFlagDestroyNotified;
+                notified.push_back(ecs::Scene::FromEntt(ent).id);
+            }
+        }
+    };
+
+    WorldDesc d;
+    d.threadCount = 1;
+    World w(d);
+    Scene& s = w.CreateScene("notify");
+    w.SetActiveScene(&s);
+    w.Pipeline().AddSystem(std::make_unique<DestroyCommitSystem>());
+    w.Pipeline().ResolveOrder();
+    RecordingBackend backend;
+    w.SetScriptBackend(&backend);
+
+    Entity scripted = s.Create();
+    s.Emplace<scripting::ScriptBox>(scripted);
+    Entity plain = s.Create();
+
+    s.Destroy(scripted); // C++ 系统路径（战斗击杀/投射物到期同形状）
+    s.Destroy(plain);
+    w.Step(1.0f / 60.0f);
+    Expect(backend.structuralCalls == 1, "structural applied each step");
+    Expect(backend.notified.size() == 1 && backend.notified[0] == scripted.id,
+           "queued scripted entity notified once (plain entity skipped)");
+    Expect(!s.Alive(scripted) && !s.Alive(plain), "destroys committed after notify");
+
+    w.Step(1.0f / 60.0f);
+    Expect(backend.notified.size() == 1, "no duplicate notify on later steps");
 }
 
 // World::Step 无活动场景 = 空步不崩
@@ -3206,6 +3348,50 @@ void TestAssetDatabaseLifecycle() {
     fs::remove_all(root, ec);
 }
 
+// ---- F-02（2026-09-24）：路径 containment——重命名/导入/项目名不得越出项目根 ----
+void TestAssetPathContainment() {
+    namespace fs = std::filesystem;
+    using lemon::editor::AssetDatabase;
+    using lemon::editor::AssetEntry;
+
+    const fs::path root = fs::temp_directory_path() /
+                          ("lemon-test-paths-" + std::to_string(::getpid()));
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root / "Assets", ec);
+    { std::ofstream f(root / "Assets" / "hero.png", std::ios::binary); f << "png"; }
+
+    AssetDatabase db;
+    Expect(db.OpenProject(root.string(), 100), "open project");
+    db.Rescan();
+    AssetEntry* hero = db.FindByPath("Assets/hero.png");
+    Expect(hero != nullptr, "hero located");
+    const fs::path outside = root.parent_path() / "lemon-escape-probe.png";
+
+    // 越界重命名拒绝：文件不动、条目不变
+    Expect(!db.Rename(*hero, "../escape.png"), "rename with .. rejected");
+    Expect(hero->relPath == "Assets/hero.png" && fs::exists(root / "Assets" / "hero.png", ec),
+           "hero unmoved after rejected rename");
+    // 绝对路径落点拒绝
+    Expect(!db.Rename(*hero, outside.string()), "absolute rename target rejected");
+    // 越界导入拒绝
+    { std::ofstream f(root / "src.png", std::ios::binary); f << "x"; }
+    Expect(db.ImportFile((root / "src.png").string(), "../stolen.png") == nullptr,
+           "import with .. rejected");
+    Expect(!fs::exists(outside, ec), "nothing escaped project root");
+
+    // 项目名消毒：向导拒绝 ".." 形逃逸名（不创建任何目录）
+    lemon::editor::ProjectDesc evil;
+    evil.parentDir = root.string();
+    evil.name = "../escaped-project";
+    evil.engineVersion = "0";
+    Expect(lemon::editor::ProjectWizard::Create(evil).empty(), "wizard rejects escaping name");
+    Expect(!fs::exists(root.parent_path() / "escaped-project", ec), "no dir escaped parent");
+
+    fs::remove_all(root, ec);
+    fs::remove(outside, ec);
+}
+
 // ---- M4.4-d：实体子树 IO（Prefab 最小集的档案层）----
 void TestEntityTreeArchive() {
     using namespace lemon::ecs;
@@ -3710,6 +3896,8 @@ int main() {
     TestSpatialHashRangeClamp();
     TestConcurrentDestroy();
     TestDestroyQueueTagLifecycle();
+    TestSaveChannelHardening();
+    TestDestroyNotifyWiring();
     TestWorldStepWithoutScene();
     TestVerifyEntityRecycleAndVersion();
     TestVerifySaveExcludesDestroyed();
@@ -3752,6 +3940,7 @@ int main() {
 #ifdef LEMON_EDITOR_CORE
     TestAtlasPageHotUpdate();
     TestAssetDatabaseLifecycle();
+    TestAssetPathContainment();
     TestProjectWizard();
     TestEditorUsability();
     TestAutosaveRecovery();

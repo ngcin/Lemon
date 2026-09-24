@@ -59,8 +59,24 @@ void ReanchorSdkHintPath(const fs::path& gameDir, const std::string& sdkDir) {
 
 } // namespace
 
+/// 项目名 = 单段目录名（2026-09-24 审查 F-02）：拒绝绝对路径、路径分隔符与
+/// "."/".." 逃逸段——名字直接拼进父目录，"../x" 会使创建根越出父目录。
+/// 其余字符（含中文/空格）交给文件系统，保持向导可用性。
+bool IsValidProjectName(const std::string& n) {
+    if (n.empty() || n.size() > 63) return false;
+    if (n == "." || n == "..") return false;
+    for (char c : n)
+        if (c == '/' || c == '\\' || c == ':' || (unsigned char)c < 0x20) return false;
+    return fs::path(n).parent_path().empty();
+}
+
 std::string ProjectWizard::Create(const ProjectDesc& d, uint64_t* outSpawnGuid) {
     if (d.name.empty() || d.parentDir.empty()) return {};
+    if (!IsValidProjectName(d.name)) {
+        LEMON_WARN("新建项目失败：项目名不是合法目录名（禁止路径分隔符/: 与 ..）：%s",
+                   d.name.c_str());
+        return {};
+    }
     std::error_code ec;
     // 父目录绝对化（手敲 ./x 等相对路径）：返回 root 与全链路径保持绝对——
     // LoadFromAssemblyPath 只收绝对路径（M4.6 实测闪退根因之一）

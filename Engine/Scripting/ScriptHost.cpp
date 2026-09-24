@@ -493,6 +493,10 @@ void ScriptHost::ApplyStructural(ecs::World& world, ecs::Scene& scene) {
                     // OnDestroy 在 PostBatch 内同步执行——native 窗口必须就位（M11）
                     if (scriptsDestroyFn_) {
                         NativeApiWindow win(&world, &scene);
+                        // 置"已通知"位：同帧稍后的 NotifyPendingDestroys 不再对同实体
+                        // 双发（F-08.2 汇合点恰好一次语义）
+                        if (ScriptBox* sb = scene.TryGet<ScriptBox>(e))
+                            sb->flags |= kScriptFlagDestroyNotified;
                         scriptsDestroyFn_(e.id);
                     }
                     scene.Destroy(e);
@@ -525,6 +529,23 @@ void ScriptHost::ApplyStructural(ecs::World& world, ecs::Scene& scene) {
             }
         }
         if (n < (int)opBuf_.size()) break; // 拉空
+    }
+}
+
+void ScriptHost::NotifyPendingDestroys(ecs::World& world, ecs::Scene& scene) {
+    // F-08.2（2026-09-24）：C++ 系统路径（战斗击杀/投射物到期/越界回收等）直接
+    // scene.Destroy 入队，此前从不通知脚本域——托管实例与实例级订阅（M15 自动退订
+    // 挂 OnDestroy）残留到下次换域/ClearInstances，事件回调长期持有失效句柄。
+    // 在统一提交点前补发：DestroyQueueTag ∩ ScriptBox 且未通知过的实体。
+    // 恰好一次由 kScriptFlagDestroyNotified 保证（脚本命令路径 ApplyStructural 已
+    // 通知并置位）。池内部序遍历 = 确定序（回放两侧同源）。
+    if (!scriptsDestroyFn_) return;
+    NativeApiWindow win(&world, &scene);
+    // 空 tag 不进 each() 载荷（entt 3.15 语义）——DestroyQueueTag 只作过滤器
+    for (auto&& [ent, sb] : scene.View<ecs::DestroyQueueTag, ScriptBox>().each()) {
+        if (sb.flags & kScriptFlagDestroyNotified) continue;
+        sb.flags |= kScriptFlagDestroyNotified;
+        scriptsDestroyFn_(ecs::Scene::FromEntt(ent).id);
     }
 }
 

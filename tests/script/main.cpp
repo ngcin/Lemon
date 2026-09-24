@@ -72,6 +72,7 @@ void (*lemonBlitCopy)(void*, const void*, int, int) = nullptr;
 void (*lemonRoundtripTyped)(void*, void*) = nullptr;
 void (*lemonRngFill)(uint64_t, uint64_t, void*, int) = nullptr;
 void (*lemonRngFloat01)(uint64_t, uint64_t, void*, int) = nullptr;
+uint32_t (*lemonRngRange)(uint32_t, uint32_t) = nullptr;
 int (*lemonEventPacketLayout)(uint16_t*, uint16_t*, uint16_t*, uint16_t*, uint16_t*,
                               uint16_t*) = nullptr;
 
@@ -204,6 +205,11 @@ void TestRngGolden() {
             Expect(sameF, "pcg32 Float01 sequence bit-exact");
         }
     }
+    // F-10（2026-09-24）：单点/逆序区间双端同语义——C# 老实现此处永久死循环
+    Expect(lemonRngRange(5, 5) == 5 && lemon::Rng(1, 1).Range(5u, 5u) == 5u,
+           "pcg32 Range(x,x) single point no-hang, both ends");
+    Expect(lemonRngRange(7, 3) == 7 && lemon::Rng(1, 1).Range(7u, 3u) == 7u,
+           "pcg32 Range inverted contract returns lo, both ends");
 }
 
 void TestEventPacketLayout() {
@@ -304,7 +310,7 @@ void TestDomainManager() {
         auto listFn = (int (*)(char*, int))GetExport("lemon_behaviours_list");
         char buf[4096];
         int n = listFn ? listFn(buf, (int)sizeof buf) : -1;
-        Expect(n == 9, "behaviours list after hot reload (+M11/M15 probes)");
+        Expect(n == 10, "behaviours list after hot reload (+M11/M15/F-08.2 probes)");
         // M4.6 回归（用户实测闪退根因）：相对路径进 dm_reload 曾抛 ArgumentException
         // 逃逸 UnmanagedCallersOnly → coreclr abort。拦截层必须转 0 返回且进程存活
         // （本断言能跑到 = 进程没死）。换装失败后旧域已弃——再换一次真路径恢复。
@@ -851,6 +857,62 @@ void TestSubscribeAutoUnsubscribe() {
     g_sh.ResetPlayDomain(); // 收尾自清（同上）
 }
 
+// ---- F-08.2（2026-09-24）：C++ 路径销毁的 OnDestroy 通知 ----
+// 旧链：脚本命令路径 Destroy 在 ApplyStructural 通知；C++ 系统直接 scene.Destroy
+// 入队后无人通知——托管实例/实例级订阅（M15 自动退订挂 OnDestroy）残留到换域。
+// 新链：DestroyCommitSystem 提交前对待销毁队列 ∩ ScriptBox 补发（flag 去重恰好一次）。
+void TestCppDestroyNotify() {
+    using namespace lemon::ecs;
+    auto behAttached = (int (*)())GetExport("lemon_behaviours_attached");
+    auto listFn = (int (*)(char*, int))GetExport("lemon_behaviours_list");
+    Expect(behAttached && listFn, "behaviour exports resolved");
+
+    // typeId 按名解析（表尾注册 = 9；按名找免硬编码漂移）
+    char names[2048];
+    int nNames = listFn(names, sizeof(names));
+    int probeId = -1;
+    {
+        char* ctx = nullptr;
+        int idx = 0;
+        for (char* tok = strtok_r(names, "\n", &ctx); tok;
+             tok = strtok_r(nullptr, "\n", &ctx), ++idx)
+            if (std::strcmp(tok, "CppDestroyProbeBehaviour") == 0) probeId = idx;
+    }
+    Expect(nNames > 0 && probeId >= 0, "CppDestroyProbeBehaviour registered");
+
+    WorldDesc d;
+    d.threadCount = 1;
+    World w(d);
+    Scene& s = w.CreateScene("CppDestruct");
+    w.SetActiveScene(&s);
+    w.SetScriptBackend(&g_sh);
+    w.Pipeline().AddSystem(std::make_unique<DestroyCommitSystem>());
+    w.Pipeline().AddSystem(std::make_unique<CSharpBatchSystem>());
+    w.Pipeline().AddSystem(std::make_unique<ScriptEventDispatchSystem>());
+    w.Pipeline().ResolveOrder();
+
+    int onDestroyCpp = 0;
+    w.SetEventSink([&](World&, const EventPacket& p) {
+        if (p.type == GameEvent::Custom && p.user == 177) ++onDestroyCpp;
+    });
+
+    // C++ 侧建实体 + 挂脚本（不经命令流——正是 C++ 路径的形状）
+    Entity e = s.Create();
+    g_sh.AttachBehaviour(w, s, e, probeId);
+    w.Step(0.25f); // Update 帧1
+    Expect(behAttached() >= 1, "probe attached");
+
+    s.Destroy(e);  // C++ 系统路径入队（战斗击杀/投射物到期同形状）
+    w.Step(0.25f); // Essential 通知 → Detach → OnDestroy push（#15 同帧/下帧派发）
+    w.Step(0.25f); // 送达余量（派发期回推 = 下帧送达，#15 语义）
+    Expect(onDestroyCpp == 1, "C++-path destroy fires OnDestroy exactly once");
+    Expect(!s.Alive(e), "entity committed");
+    w.Step(0.25f);
+    Expect(onDestroyCpp == 1, "no duplicate OnDestroy on later steps");
+
+    g_sh.ResetPlayDomain(); // 收尾自清（同上）
+}
+
 } // namespace
 
 int main() {
@@ -867,6 +929,7 @@ int main() {
     lemonRngFill = (void (*)(uint64_t, uint64_t, void*, int))GetExport("lemon_rng_fill");
     lemonRngFloat01 =
         (void (*)(uint64_t, uint64_t, void*, int))GetExport("lemon_rng_float01");
+    lemonRngRange = (uint32_t (*)(uint32_t, uint32_t))GetExport("lemon_rng_range");
     lemonEventPacketLayout = (int (*)(uint16_t*, uint16_t*, uint16_t*, uint16_t*, uint16_t*,
                                       uint16_t*))GetExport("lemon_eventpacket_layout");
     Expect(lemonSdkLayout && lemonBlitCopy && lemonRoundtripTyped && lemonRngFill &&
@@ -899,6 +962,7 @@ int main() {
     TestPlayDomainReset();
     TestAwakeWindowAndDoubleAdd();
     TestSubscribeAutoUnsubscribe();
+    TestCppDestroyNotify();
 
     // M4.6 探针（编辑器切项目场景）：同进程二次 ScriptHost 生命周期。CoreCLR 运行时
     // 进程单例——第二次 Initialize 的真实行为必须钉板（成功/失败都合法，崩 = 缺陷）。

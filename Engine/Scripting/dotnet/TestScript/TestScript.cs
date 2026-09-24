@@ -30,6 +30,8 @@ public static class GameMain
         Lemon.Behaviours.Register<AwakeUiProbeBehaviour>();
         // M15：Subscribe 助手 + Detach 自动退订（typeId 8，表尾注册同上约定）
         Lemon.Behaviours.Register<SubProbeBehaviour>();
+        // F-08.2（2026-09-24）：C++ 路径销毁的 OnDestroy（typeId 9，表尾注册同上约定）
+        Lemon.Behaviours.Register<CppDestroyProbeBehaviour>();
     }
 }
 
@@ -127,6 +129,15 @@ public sealed class CountingBehaviour : Lemon.LemonBehaviour
 
     protected override void OnDestroy()
         => Lemon.Events.Push(Lemon.Interop.GameEvent.Custom, 102, default, default);
+}
+
+/// <summary>F-08.2（2026-09-24）验收：C++ 路径销毁（系统直接 scene.Destroy）也必须
+/// 触发 OnDestroy——旧链只有脚本命令路径通知，托管实例/实例级订阅残留到换域。
+/// 回报 Custom 177；由 script-tests 从 C++ 侧 Destroy 后对拍恰好一次。</summary>
+public sealed class CppDestroyProbeBehaviour : Lemon.LemonBehaviour
+{
+    protected override void OnDestroy()
+        => Lemon.Events.Push(Lemon.Interop.GameEvent.Custom, 177, default, default);
 }
 
 /// <summary>M5 清障①：Time API 验收。固定步长 dt=0.25 下三帧回报

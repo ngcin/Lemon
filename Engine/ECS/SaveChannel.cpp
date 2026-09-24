@@ -9,6 +9,13 @@ namespace {
 constexpr char kMagic[8] = {'L', 'E', 'M', 'O', 'N', 'S', 'A', 'V'};
 constexpr uint32_t kSaveVersion = 1;
 
+// 坏档防线（2026-09-24 审查 F-03）：Decode 消费不可信字节流，所有长度字段
+// 先验上限再分配——十余字节坏档即可声明近 4 GiB 的 valLen/count，老实现
+// reserve/vector 直接 bad_alloc/length_error 打死进程。
+constexpr uint32_t kMaxEntries = 4096;         // 条目数上限（现用途几十条，余量充足）
+constexpr uint32_t kMaxKeyLen = 255;           // 与 Set 的 key 契约一致
+constexpr uint32_t kMaxValueBytes = 4u << 20;  // 单值 4 MiB（现用途 KB 级，百倍余量）
+
 void PutU16(std::vector<uint8_t>& out, uint16_t v) {
     out.push_back((uint8_t)(v & 0xFF));
     out.push_back((uint8_t)(v >> 8));
@@ -94,18 +101,24 @@ bool SaveChannel::Decode(const uint8_t* data, size_t len) {
     if (!r.Bytes(magic, 8) || memcmp(magic, kMagic, 8) != 0) return false;
     if (r.U32() != kSaveVersion) return false; // 版本头：不识别整档拒绝（M7 迁移链）
     const uint32_t count = r.U32();
+    if (count > kMaxEntries) return false; // 条目数先验：拒按不可信 count 巨额 reserve
     std::unordered_map<std::string, std::vector<uint8_t>> rebuilt;
     rebuilt.reserve(count);
     for (uint32_t i = 0; i < count && r.ok; ++i) {
         const uint16_t keyLen = r.U16();
+        if (r.ok && keyLen > kMaxKeyLen) return false; // key 超长 = 损坏（写侧不可能）
         std::string key(keyLen, '\0');
         if (!r.Bytes(key.data(), keyLen)) break;
         const uint32_t valLen = r.U32();
+        // 分配前先验：单值上限 + 剩余字节足够（杜绝按 4 B 头声明 4 GiB 的 vector）
+        if (r.ok && (valLen > kMaxValueBytes || r.left < valLen)) return false;
         std::vector<uint8_t> val(valLen);
         if (!r.Bytes(val.data(), valLen)) break;
-        rebuilt[key] = std::move(val);
+        if (!rebuilt.emplace(std::move(key), std::move(val)).second)
+            return false; // 重复 key = 损坏信号（写侧 map 语义不产生重复）
     }
     if (!r.ok) return false; // 半档拒绝（宁可不载不载错）
+    if (r.left != 0) return false; // 尾随垃圾拒绝（写侧精确落盘）
     map_ = std::move(rebuilt);
     return true;
 }

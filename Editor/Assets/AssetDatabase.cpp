@@ -466,8 +466,23 @@ void AssetDatabase::Rescan() {
 }
 
 // ---------------------------------------------------------------- 操作 ----
+/// 相对路径 containment（2026-09-24 审查 F-02）：拒绝绝对路径与 ".." 段——
+/// 重命名/导入落点必须留在项目根内，杜绝 "../" 越出资产目录写/覆盖。
+static bool IsContainedRelPath(const std::string& rel) {
+    if (rel.empty()) return false;
+    const fs::path p(rel);
+    if (p.is_absolute()) return false;
+    for (const auto& seg : p)
+        if (seg == ".." || seg == ".") return false;
+    return true;
+}
+
 bool AssetDatabase::Rename(AssetEntry& e, const std::string& newRelPath) {
     if (newRelPath.empty() || newRelPath == e.relPath) return true;
+    if (!IsContainedRelPath(newRelPath)) {
+        LEMON_WARN("重命名失败：目标路径越出项目根（拒绝）：%s", newRelPath.c_str());
+        return false;
+    }
     if (FindByPath(newRelPath)) {
         LEMON_WARN("重命名失败：目标已存在 %s", newRelPath.c_str());
         return false;
@@ -506,6 +521,10 @@ bool AssetDatabase::Remove(AssetEntry& e) {
 const AssetEntry* AssetDatabase::ImportFile(const std::string& absSrc, const std::string& relDest) {
     if (!opened_) { // 无项目时 AssetsRoot()="/Assets"（根_)——拷贝必失败且报错误导
         LEMON_ERROR("导入失败：未打开项目（AssetDatabase 未 OpenProject）");
+        return nullptr;
+    }
+    if (!IsContainedRelPath(relDest)) { // F-02：落点越出资产目录 = 拒绝
+        LEMON_WARN("导入失败：目标路径越出资产目录（拒绝）：%s", relDest.c_str());
         return nullptr;
     }
     // relDest 语义 = Assets/ 下的相对路径（导入落点恒在资产目录）
