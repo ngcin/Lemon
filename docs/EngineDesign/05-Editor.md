@@ -56,7 +56,10 @@ v1 面板清单：
 > M5 批④（2026-09-23）：HUD 完整版——槽**着色**（`Ui.Set(key,text,frac,color)` ABGR，
 > 文本与进度条同色；`Ui.Clear(key)` 删行）+ **三选一卡片**（`World.Cards`：C#
 > `Ui.ShowCards` → GameView 居中面板 3 按钮 + 聚焦时数字键 1/2/3 → 回写 pick → C#
-> `Ui.CardPick()` 消费式读）。交互属用户 IO 不入输入快照（09 §7 分类）。同批：
+> `Ui.CardPick()` 消费式读）。交互属用户 IO 不入输入快照（09 §7 分类）。
+> 批④后修④（2026-09-24）：卡片**空标签槽不渲染按钮**（1~3 按钮自适应——
+> `Ui.ShowDialog` 单按钮对话框即 B/C 留空；数字键空槽无效不写越界 pick），
+> 死亡复活/确认型交互走对话框点击，不再依赖键盘焦点路由。同批：
 > **新建项目向导模板下拉**（blank / vs-survivor 目录拷贝 + project.lemon 重写 +
 > csproj HintPath 重锚，06 §7）；**Inspector Play 横幅**（"改动随 Stop 丢弃"，
 > ADR-011）；**存档 IO**（EnterPlay 载入 / ExitPlay 兜底落盘 `.lemon/saves/`，
@@ -126,7 +129,7 @@ struct Chase { LEMON_FIELD(speed, Range{0,500}); LEMON_FIELD(aggroRange); LEMON_
 ```
 
 - 注册表展开出：字段名/类型/范围/控件（DragFloat/Color/枚举下拉/Team 选择器/sprite 选择器）→ Inspector 绘制、JSON 序列化、C# Source Generator 的 struct 镜像，三处共用一份元数据。
-- **可编辑数组段（M5 批②，2026-09-23）**：定长数组段（StatusEffects.active / Inventory.items / WaveDirector.waves）的元素表从只读 Text 升级为按 FieldType 裸派发的编辑控件（DragFloat/InputScalar/Checkbox），active/deactivated 汇入 M4.7d 属性轨（Undo 组件级字节快照天然覆盖）；元素级无 FieldEditorMeta——Range/枚举/prefab 反查等精细化归 M6 波次表编辑器。**WaveDirector 作者路径**：字段行改 `waveCount` 出槽位 → 表格逐格填 startTime/条目（或手改 `.scene` JSON，03 §8 形态示例）。定长标量数组（Equipment.relicIds）维持只读。
+- **可编辑数组段（M5 批②，2026-09-23）**：定长数组段（StatusEffects.active / Inventory.items / WaveDirector.waves）的元素表从只读 Text 升级为按 FieldType 裸派发的编辑控件（DragFloat/InputScalar/Checkbox），active/deactivated 汇入 M4.7d 属性轨（Undo 组件级字节快照天然覆盖）；元素级无 FieldEditorMeta——Range/枚举/prefab 反查等精细化归 M6a 批② 配置表/波次表编辑 ADR（2026-09-24 重排）。**WaveDirector 作者路径**：字段行改 `waveCount` 出槽位 → 表格逐格填 startTime/条目（或手改 `.scene` JSON，03 §8 形态示例）。定长标量数组（Equipment.relicIds）维持只读。
 - **clip 资产槽（M5 批③）**：`FieldHint::ClipRef`（`Animator2D.clipId`）——下拉
   AssetType::Clip 全列 / AssetBrowser 拖入（drag kind 4）/ 右键清空；值 = `.clip`
   资产 GUID 低 32 位（prefabId 同款约定），反查 entry 显示 relPath。sprite 资产槽

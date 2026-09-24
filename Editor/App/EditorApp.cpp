@@ -363,7 +363,7 @@ using Lemon;
 using Lemon.Interop;
 
 /// <summary>vs-survivor 模板玩家（M5 批④）：8 向移动 + HUD 四要素 + 升级三选一
-/// （固定序轮换，零 RNG）+ 环绕刃自愈 + 击杀掉宝石 + 死亡结算/复活（R 键）。
+/// （固定序轮换，零 RNG）+ 环绕刃自愈 + 击杀掉宝石 + 死亡结算/复活（死亡对话框点击；批④后修④）。
 /// 单类挂玩家实体（多脚本 scripts[] 属 M5 余项，见 M5.md §21.2 D4 注）。</summary>
 public sealed class PlayerBehaviour : LemonBehaviour
 {
@@ -396,11 +396,13 @@ public sealed class PlayerBehaviour : LemonBehaviour
 
     public PlayerBehaviour()
     {
-        Events.Subscribe(GameEvent.LevelUp, m => {
+        // Subscribe 助手（M15）：实例销毁自动退订（裸 Events.Subscribe 只增不删，
+        // 死亡→复活重挂会逐局累积订阅）
+        Subscribe(GameEvent.LevelUp, m => {
             if (m.Src.Id == gameObject.Entity.Id) ++_pendingLevels;
         });
-        Events.Subscribe(GameEvent.Death, OnDeath);
-        Events.Subscribe(GameEvent.WaveStart, m =>
+        Subscribe(GameEvent.Death, OnDeath);
+        Subscribe(GameEvent.WaveStart, m =>
             Ui.Set("wave", $"—— 第 {(int)m.P0 + 1} 波 ——", -1f, kColorWave));
     }
 
@@ -425,8 +427,10 @@ public sealed class PlayerBehaviour : LemonBehaviour
     protected override void Update()
     {
         if (_dead) {
-            if (Input.Confirm) Revive(); // R 键复活（继续厮杀，纪录不清）
-            else return;
+            // 死亡对话框：点击/数字键 1 → CardPick()==0 复活（消费式回读，与升级
+            // 卡片同通道；批④后修④——R 键路径废弃，交互不依赖键盘焦点路由）
+            if (Ui.CardPick() == 0) Revive();
+            return;
         }
         _runTime += Time.DeltaTime;
 
@@ -541,7 +545,9 @@ public sealed class PlayerBehaviour : LemonBehaviour
 
     private void Die()
     {
+        if (_dead) return; // 多源 Death（弹道/区域）只结算一次
         _dead = true;
+        _cardsShown = false; // 弃置在途升级卡（_pendingLevels 保留，复活后重弹）
         Time.Scale = 0f;
         int score = _kills * 10 + (int)_runTime;
         bool newBest = score > _best;
@@ -550,9 +556,10 @@ public sealed class PlayerBehaviour : LemonBehaviour
             Save.SetString("vs.best", score.ToString());
             Save.Flush(); // 立即落盘（ExitPlay 兜底之外的显式路径）
         }
-        Ui.Set("over", newBest ? $"★ 新纪录 {score} 分！按 R 复活"
-                               : $"本局 {score} 分（最高 {_best}）  按 R 复活",
-               -1f, 0xFF5080FFu);
+        string title = newBest ? $"★ 新纪录 {score} 分！"
+                               : $"本局 {score} 分（最高 {_best}）";
+        Ui.Set("over", title, -1f, 0xFF5080FFu);
+        Ui.ShowDialog(title, "复活");
     }
 
     private void Revive()
@@ -563,6 +570,7 @@ public sealed class PlayerBehaviour : LemonBehaviour
         hp.IFrames = 2f; // 复活无敌 2s（StatSystem 递减）
         gameObject.SetComponent(hp);
         Time.Scale = 1f;
+        Ui.HideCards();
         Ui.Clear("over");
     }
 
@@ -662,7 +670,7 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
         f << "# vs-survivor 模板（M5 批④）\n\n"
              "吸血鬼幸存者式开局模板：8 向移动 + 直射弹（可升级穿透）+ 环绕刃 +\n"
              "经验宝石磁吸 + 升级三选一（数字键 1/2/3 或点击卡片）+ 16 波导演\n"
-             "（t=565s Boss 波）+ HUD 四要素 + 死亡结算/最高分存档（R 复活）。\n\n"
+             "（t=565s Boss 波）+ HUD 四要素 + 死亡结算/最高分存档（死亡对话框点击复活）。\n\n"
              "由 `lemon-editor --gen-vs-template <dir>` 生成（改玩法请改 Game/\n"
              "PlayerBehaviour.cs 或场景后重新生成，勿手改 .prefab 内 guid）。\n\n"
              "## 素材来源与许可\n\n"
@@ -825,6 +833,8 @@ int g_tplGems = 0, g_tplMobs = 0; // 峰值快照（帧内采样）
 char g_tplHudRows[64] = "";
 bool g_tplHudOk = false, g_tplBestLoaded = false, g_tplWaveRow = false;
 bool g_tplCardsSeen = false, g_tplPicked = false, g_tplCardsHidden = false;
+bool g_tplDeathSeen = false, g_tplRevived = false, g_tplScriptOk = true; // 批④后修④死亡链
+bool g_tplDeathArmed = false; // 压血一shot（站桩下自动炮火清怪快于刷怪，磨不死）
 void ImGuiErrorSink(ImGuiContext*, void* user_data, const char* msg) {
     ++*static_cast<int*>(user_data);
     LEMON_WARN("ImGui 错误：%s", msg);
@@ -2484,9 +2494,9 @@ int EditorApp::Run(const EditorLaunch& launch) {
                     "测量窗 ≥360）");
         return 2;
     }
-    if (launch.smokeTemplate && launch.frames < 1800) {
-        LEMON_ERROR("--smoke-template 需要 --frames N（N>=1800：波1 t=5s + 30 击杀攒满"
-                    "首升 XP + 卡片链 + 余量）");
+    if (launch.smokeTemplate && launch.frames < 3000) {
+        LEMON_ERROR("--smoke-template 需要 --frames N（N>=3000：波1 t=5s + 击杀攒满"
+                    "首升 XP + 卡片链 + 2100 帧起站桩死亡→对话框→复活链 + 余量）");
         return 2;
     }
     // ---- 主循环（anim-smoke 基线骨架；编辑 Step = Essential）----
@@ -2689,12 +2699,18 @@ int EditorApp::Run(const EditorLaunch& launch) {
             if (playDiag_ && frame >= 60 && frame < 120)
                 in.ax = 1.0f; // 诊断注入：D 键右走（自动化无真人点击，不经聚焦门）
             if (launch.smokeTemplate && !gameViewFocused_) {
-                // 模板冒烟注入：切向轴绕原点环绕（角速 1.2rad/s × 速 240 → 半径
-                // ~200）——站桩会被近身 Hazard 磨死（Time.Scale=0 冻结断升级链），
-                // 风筝是 VS 类冒烟的"真人行为"最小替代
-                const float a = 0.02f * (float)frame;
-                in.ax = -std::sin(a);
-                in.ay = std::cos(a);
+                // 模板冒烟注入（批④后修④ 两段）：kDeathArm 前切向环绕风筝（角速
+                // 1.2rad/s × 速 240 → 半径 ~200）攒击杀/升级链；此后站桩送死——
+                // 近身 Hazard 磨死 → 死亡对话框 → 自动 pick 复活（断言见 tplDeath 段）
+                constexpr uint64_t kDeathArm = 2100;
+                if (frame < kDeathArm) {
+                    const float a = 0.02f * (float)frame;
+                    in.ax = -std::sin(a);
+                    in.ay = std::cos(a);
+                } else {
+                    in.ax = 0.0f; // 站桩 + 证据段压血（清怪快于刷怪，磨不死）
+                    in.ay = 0.0f;
+                }
             }
             ctx_.ActiveWorld().ApplyInput(in);
             const float dt = paused_ && !singleStep_ ? 0.0f : 1.0f / 60.0f;
@@ -3505,12 +3521,44 @@ int EditorApp::Run(const EditorLaunch& launch) {
             lemon::ecs::RtUiCards& cards = ctx_.ActiveWorld().Cards();
             if (cards.active) {
                 g_tplCardsSeen = true;
-                if (!g_tplPicked && frame > 120) {
-                    cards.pick = 0; // 模拟玩家选择（数字键 1 / 卡片点击同通道）
+                if (frame > 120) {
+                    cards.pick = 0; // 自动选择（数字键 1/点击同通道；升级卡与死亡
+                                    // 对话框通用——消费式回读归 C#，逐帧置 0 幂等）
                     g_tplPicked = true;
                 }
             } else if (g_tplPicked) {
                 g_tplCardsHidden = true; // C# 消费 → HideCards
+            }
+            // 批④后修④死亡链回归：kDeathArm 帧起压血到 0.1 + 掐射击（站桩下
+            // 自动炮火半路清怪、玩家碰不到怪——停火让怪群近身，Hazard 真路径击杀）
+            // → 玩家脚本实体仍在场（View 命中 = 未被销毁）、flags bit0 未置（未被
+            // 异常禁用）→ pick 复活 → 血回满 + 解冻 + 对话框隐藏 = 复活成功
+            if (frame >= 2100 && !g_tplDeathArmed) {
+                g_tplDeathArmed = true;
+                ctx_.ActiveScene().View<scripting::ScriptBox>().each(
+                    [&](auto ent, scripting::ScriptBox&) {
+                        ecs::Entity e = ecs::Scene::FromEntt(ent);
+                        if (ecs::Health* hp = ctx_.ActiveScene().TryGet<ecs::Health>(e))
+                            hp->cur = 0.1f;
+                        if (ecs::Shooter* sh = ctx_.ActiveScene().TryGet<ecs::Shooter>(e))
+                            sh->interval = 3600.0f;
+                    });
+            }
+            if (frame >= 2100 && !g_tplRevived) {
+                bool anyScript = false;
+                ctx_.ActiveScene().View<scripting::ScriptBox>().each(
+                    [&](auto ent, scripting::ScriptBox& sb) {
+                        anyScript = true;
+                        if (sb.flags & 1u) g_tplScriptOk = false;
+                        const ecs::Health* hp = ctx_.ActiveScene().TryGet<ecs::Health>(
+                            ecs::Scene::FromEntt(ent));
+                        if (!hp) return;
+                        if (hp->cur <= 0.0f) g_tplDeathSeen = true;
+                        else if (g_tplDeathSeen && hp->cur >= hp->max &&
+                                 ctx_.ActiveWorld().TimeScale() > 0.0f && !cards.active)
+                            g_tplRevived = true;
+                    });
+                if (!anyScript) g_tplScriptOk = false; // 脚本实体消失（销毁回归锚点）
             }
             if (frame % 60 == 0) { // 诊断快照（低频）：RtUi 行 + 场内分布
                 std::snprintf(g_tplHudRows, sizeof g_tplHudRows, "hp/xp/time/kills=%d%d%d%d",
@@ -3831,14 +3879,17 @@ int EditorApp::Run(const EditorLaunch& launch) {
         if (launch.smokeTemplate) {
             const bool tplOk = g_tplHudOk && g_tplBestLoaded && g_tplWaveRow &&
                                g_tplDeaths > 0 && g_tplLevelUps > 0 && g_tplCardsSeen &&
-                               g_tplPicked && g_tplCardsHidden;
+                               g_tplPicked && g_tplCardsHidden && g_tplDeathSeen &&
+                               g_tplRevived && g_tplScriptOk;
             std::printf("[lemon] smoke-template: hud=%s saveLoad=%s wave(row=%s n=%d) "
-                        "kills=%d levelUps=%d cards(seen=%s pick=%s hidden=%s) => %s\n",
+                        "kills=%d levelUps=%d cards(seen=%s pick=%s hidden=%s) "
+                        "death(seen=%s revive=%s scriptOk=%s) => %s\n",
                         g_tplHudOk ? "YES" : "NO", g_tplBestLoaded ? "YES" : "NO",
                         g_tplWaveRow ? "YES" : "NO", g_tplWaveStarts, g_tplDeaths,
                         g_tplLevelUps, g_tplCardsSeen ? "YES" : "NO",
                         g_tplPicked ? "YES" : "NO", g_tplCardsHidden ? "YES" : "NO",
-                        tplOk ? "OK" : "FAIL");
+                        g_tplDeathSeen ? "YES" : "NO", g_tplRevived ? "YES" : "NO",
+                        g_tplScriptOk ? "YES" : "NO", tplOk ? "OK" : "FAIL");
             std::printf("[lemon] smoke-template: diag %s gems(peak)=%d mobs(peak)=%d\n",
                         g_tplHudRows, g_tplGems, g_tplMobs);
             if (!tplOk) exitCode = 1;

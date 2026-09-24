@@ -2,7 +2,7 @@
 
 吸血鬼幸存者式开局模板：8 向移动 + 直射弹（可升级穿透）+ 环绕刃 +
 经验宝石磁吸 + 升级三选一（数字键 1/2/3 或点击卡片）+ 16 波导演
-（t=565s Boss 波）+ HUD 四要素 + 死亡结算/最高分存档（R 复活）。
+（t=565s Boss 波）+ HUD 四要素 + 死亡结算/最高分存档（死亡对话框点击复活）。
 
 由 `lemon-editor --gen-vs-template <dir>` 生成（改玩法请改 Game/
 PlayerBehaviour.cs 或场景后重新生成，勿手改 .prefab 内 guid）。

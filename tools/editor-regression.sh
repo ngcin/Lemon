@@ -69,9 +69,9 @@ if [ "${MODE}" = "full" ]; then
     grep_step "anim-chain smoke (grid slice + clip + animator frame mapping; M5-b3)" \
         "smoke-anim: .* => OK" \
         "${EDITOR}" --project "${TMP}/anim" --smoke-anim --frames 120 --no-reopen
-    grep_step "template-chain smoke (wizard copy + build + play hud/cards/save; M5-b4)" \
+    grep_step "template-chain smoke (wizard copy + build + play hud/cards/save/death-revive; M5-b4)" \
         "smoke-template: .* => OK" \
-        "${EDITOR}" --smoke-template --frames 1800 --no-reopen
+        "${EDITOR}" --smoke-template --frames 3000 --no-reopen
     if [ -f "${SDK}" ]; then
         grep_step "script-chain smoke (CoreCLR/spawn/play byte-exact/--validate)" "editor-smoke PASS" \
             "${EDITOR}" --project "${TMP}/script" --script "${SDK}" --smoke --play --frames 240 --validate

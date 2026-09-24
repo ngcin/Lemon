@@ -27,7 +27,7 @@ World（进程级唯一，持资产库/JobSystem/桥等全局服务）
      └─ 导演（Director，可多个）
 ```
 
-- **实体销毁两阶段**：`Destroy()` 只入销毁队列，`Essential` 阶段统一提交（系统遍历中安全销毁；与触发器/事件队列一致性）。
+- **实体销毁两阶段**：`Destroy()` 只入销毁队列，`Essential` 阶段统一提交（系统遍历中安全销毁；与触发器/事件队列一致性）。**脚本实体死亡豁免**（批④后修④，2026-09-24）：#10 命中系统 HP 归零时，带 `ScriptBox` 的实体**不自动销毁**——生死处置归脚本（VS 模板玩家死亡→对话框复活即此路径）；此前无条件销毁导致复活后读已毁实体连续报错、行为被异常隔离禁用。无脚本数据实体照旧清场。
 - **Prefab（PrefabLink + PropertyOverride 模型，Prowl2D 已验证方案，ADR-009）**：资产化的实体模板。实例**只存一个链接 + 覆盖列表**（非全量拷贝）：
   - 链接数据挂实例根：`PrefabLink { uint64_t prefabId; SmallVector<PropertyOverride, 8> overrides; }`（非实例实体零开销）；支持嵌套 prefab（模板本身可以是另一实例）；编辑期 Apply / Revert / Break + Inspector 逐字段 override 高亮（见 05 §5）。
   - **运行时物化零开销**：`Instantiate(prefabId)`（走池，§10）时一次性合成"模板基础值 + 覆盖值"为平坦组件数据，物化后热路径与普通实体无差别；`Meta.prefabId` 保留回链供编辑器往返与重新 Apply。
@@ -159,10 +159,11 @@ Neighbors(pos, radius, cb)                  // 分离力专用（迭代器形式
 > 组件（§3.3；场景/prefab 档即数据源，Inspector 可编辑数组段即编辑面），导演直接
 > 经 `World::GetSpawnFn()` 出生（与 SpawnSystem 平行的第二条刷怪通道；Spawner 保留
 > 常驻环境刷怪语义，互不派发）。理由：数组段机制零新基建；配额派发需按 prefabId
-> 跨实体匹配、语义绕；两通道各司其职，M6 TD 模板波次同消费导演。原 `budgetCurve`
+> 跨实体匹配、语义绕；两通道各司其职，M6c TD 模板波次同消费导演。原 `budgetCurve`
 > 由波表自身表达（波表 startTime/rampMult/count 即强度曲线）；独立 `.asset` 数据
-> 通道随批③ clip 一并定，`onRagePhase`（狂暴相位）留后续波。M6 波次表编辑器在
-> 组件数据上盖专业 UI（增删波/条目、prefab 拖拽）。
+> 通道随批③ clip 一并定，`onRagePhase`（狂暴相位）留后续波。波次表编辑器（并入
+> M6a 批② 配置表 ADR，2026-09-24 重排）在组件数据上盖专业 UI（增删波/条目、
+> prefab 拖拽）。
 
 **状态机（顺序相位语义；决策见 M5.md §11.2 D3–D6）**：
 - 每导演实体 `time += dt`（缩放 dt——timeScale=0 冻结波次）；`time ≥ waves[i].startTime`
@@ -180,7 +181,7 @@ Neighbors(pos, radius, cb)                  // 分离力专用（迭代器形式
 （Σcount=0）照发 WaveStart——纯宣告波是合法用法。C# `Events.Subscribe(GameEvent.
 WaveStart)` 开箱即用（样例：TestScript.WaveBannerBehaviour → `Ui.Set` 波次横幅）。
 
-`.scene` JSON 形态（数组段序列化；手改档即可作者，M6 前的过渡路径）：
+`.scene` JSON 形态（数组段序列化；手改档即可作者，M6a 配置表落地前的过渡路径）：
 
 ```json
 "WaveDirector": { "spawnTeam": 1, "capAlive": 10000, "waveCount": 3,
@@ -203,7 +204,7 @@ clipId = `.clip` 资产 GUID 低 32 位（prefabId 同款映射约定）；编�
   （time 有界）；loop=0 **钳末帧**（time 钳 total——M2"非 loop 无界增长"随 clip 收口）；
   负 time 钳 0（负 speed 防御）。
 - `playOnStart=0` = **暂停开关**（time/curFrame/spriteId 三态全冻结；M5 无 Play()
-  API，Play/CrossFade 归 M6 模板）。`Animator2D.loop` 为权威（实体上热调参）；
+  API，Play/CrossFade 归 M6a 批①（2026-09-24 重排））。`Animator2D.loop` 为权威（实体上热调参）；
   clip.loop 仅档面默认。
 - `SpriteRenderer` 可缺 = 纯计时推进；在场则 `sr.spriteId = frames[curFrame]`。
 - **无 clip（clipId=0/表未命中）= M2 旧算术逐位保留**（time 推进 + 占位周期 1.0

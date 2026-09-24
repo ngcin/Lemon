@@ -399,7 +399,9 @@ Hierarchy 面板）。回归口径 = 本命令三跑稳定。
 - 编辑器交互覆盖边界（M4.md §6 提案已落地）：无头冒烟 `--smoke`（含 overlay
   可见性像素断言）/ `--smoke-close`（关闭状态机）/ `--smoke-drag`（视口注入五段）/
   `--smoke-anim`（切片 + clip + Animator 帧映射链，M5 批③起）/ `--smoke-template`
-  （向导复制模板 → build → Play → HUD/存档/波次/击杀/升级卡片断言，M5 批④起）/
+  （向导复制模板 → build → Play → HUD/存档/波次/击杀/升级卡片断言，M5 批④起；
+  批④后修④加**死亡链**：2100 帧起压血停火站桩致死 → 断言脚本实体未销毁/未被
+  异常禁用 → 对话框复活，帧下限 3000）/
   `--final`（终验链）经 `tools/editor-regression.sh` 一键 13 步；**未脚本化**的纯观感路径
   （Inspector 控件手感、面板排版）仍靠 [Editor-Manual-Test-Guide.md](./Editor-Manual-Test-Guide.md) 真人清单。
 - M2：bench-sim 早期怪群聚拢阶段存在 max ~145ms 单步尖峰（avg 判据不受影响；哈希重建

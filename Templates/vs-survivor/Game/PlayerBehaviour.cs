@@ -3,7 +3,7 @@ using Lemon;
 using Lemon.Interop;
 
 /// <summary>vs-survivor 模板玩家（M5 批④）：8 向移动 + HUD 四要素 + 升级三选一
-/// （固定序轮换，零 RNG）+ 环绕刃自愈 + 击杀掉宝石 + 死亡结算/复活（R 键）。
+/// （固定序轮换，零 RNG）+ 环绕刃自愈 + 击杀掉宝石 + 死亡结算/复活（死亡对话框点击；批④后修④）。
 /// 单类挂玩家实体（多脚本 scripts[] 属 M5 余项，见 M5.md §21.2 D4 注）。</summary>
 public sealed class PlayerBehaviour : LemonBehaviour
 {
@@ -67,8 +67,10 @@ public sealed class PlayerBehaviour : LemonBehaviour
     protected override void Update()
     {
         if (_dead) {
-            if (Input.Confirm) Revive(); // R 键复活（继续厮杀，纪录不清）
-            else return;
+            // 死亡对话框：点击/数字键 1 → CardPick()==0 复活（消费式回读，与升级
+            // 卡片同通道；批④后修④——R 键路径废弃，交互不依赖键盘焦点路由）
+            if (Ui.CardPick() == 0) Revive();
+            return;
         }
         _runTime += Time.DeltaTime;
 
@@ -183,7 +185,9 @@ public sealed class PlayerBehaviour : LemonBehaviour
 
     private void Die()
     {
+        if (_dead) return; // 多源 Death（弹道/区域）只结算一次
         _dead = true;
+        _cardsShown = false; // 弃置在途升级卡（_pendingLevels 保留，复活后重弹）
         Time.Scale = 0f;
         int score = _kills * 10 + (int)_runTime;
         bool newBest = score > _best;
@@ -192,9 +196,10 @@ public sealed class PlayerBehaviour : LemonBehaviour
             Save.SetString("vs.best", score.ToString());
             Save.Flush(); // 立即落盘（ExitPlay 兜底之外的显式路径）
         }
-        Ui.Set("over", newBest ? $"★ 新纪录 {score} 分！按 R 复活"
-                               : $"本局 {score} 分（最高 {_best}）  按 R 复活",
-               -1f, 0xFF5080FFu);
+        string title = newBest ? $"★ 新纪录 {score} 分！"
+                               : $"本局 {score} 分（最高 {_best}）";
+        Ui.Set("over", title, -1f, 0xFF5080FFu);
+        Ui.ShowDialog(title, "复活");
     }
 
     private void Revive()
@@ -205,6 +210,7 @@ public sealed class PlayerBehaviour : LemonBehaviour
         hp.IFrames = 2f; // 复活无敌 2s（StatSystem 递减）
         gameObject.SetComponent(hp);
         Time.Scale = 1f;
+        Ui.HideCards();
         Ui.Clear("over");
     }
 

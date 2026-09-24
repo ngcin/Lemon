@@ -219,6 +219,11 @@ public readonly struct Transform               // 视图结构：逐属性访问
   SetString/GetString/HasKey/Flush，06 §10 形状裁剪）、`Lemon.Ui` 扩
   （着色 Set/Clear/ShowCards/HideCards/CardPick）、`GameObject.From(EntityHandle)`
   （事件回读 src/dst 组件）、`InputButton.Confirm`（bit5 = R 键）。
+  **批④后修④（2026-09-24）**：`Ui.ShowDialog(title, okLabel)`——单按钮对话框
+  （卡片通道复用，B/C 留空即不渲染按钮；死亡复活/结算重开等确认型交互首选，
+  点击或数字键 1 → `CardPick() == 0`）；同批修复 `CopyUtf8` 无条件回退吃 CJK
+  结尾串末字的潜伏 bug（改为仅真截断时回退，孤立前导字节一并去）；**脚本实体
+  死亡不被引擎自动销毁**（03 销毁两阶段注记）——复活类逻辑在脚本侧自理。
   **字符串跨界一律 UTF-8**（SDK `CopyUtf8`：ASCII 快路径零分配 + 多字节不切断——
   批④ 前逐 char 截字节只对 ASCII 正确，中文 HUD 会乱码）。
 
