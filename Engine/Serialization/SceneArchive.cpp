@@ -173,9 +173,13 @@ Json WriteEntity(Scene& scene, Entity e,
     }
     Json ent{{"components", std::move(comps)}};
     if (const scripting::ScriptBox* sb = scene.TryGet<scripting::ScriptBox>(e)) {
-        // M4.4 装配通路（#7）：typeId 注册序不持久（代码增删即漂移），
-        // className 是持久键；guid 供资产侧追踪/热重载目标。
-        ent["script"] = Json{{"guid", sb->scriptGuid}, {"class", std::string(sb->className)}};
+        // M6a 批⓪ schema v2：scripts[] 多脚本（typeId 注册序不持久——代码增删即
+        // 漂移，className 是持久键；guid 供资产侧追踪/热重载目标）
+        Json arr = Json::array();
+        for (uint32_t i = 0; i < sb->count; ++i)
+            arr.push_back(Json{{"guid", sb->slots[i].scriptGuid},
+                               {"class", std::string(sb->slots[i].className)}});
+        ent["scripts"] = std::move(arr);
     }
     return ent;
 }
@@ -225,20 +229,41 @@ void ReadEntity(Scene& scene, const Json& ent, Entity e, const Entity* remap,
             }
         }
     }
-    if (ent.contains("script") && ent.at("script").is_object()) {
-        const Json& sj = ent.at("script");
+    // M6a 批⓪ schema v2：scripts[]（多脚本）。双读：旧单数 "script"（v1 .scene 经
+    // 迁移链已升 v2；.prefab 的 LoadEntityTree 不走迁移——此处兼容旧资产隐式升级）。
+    // 同名重复项保序留首见 + 告警（同类型唯一不变量的加载侧清洗，Plans/M6a 批⓪
+    // 决策 4）；全部无效时不留空 ScriptBox 组件。
+    const Json* scriptSlots = nullptr;
+    Json legacyWrapped;
+    if (ent.contains("scripts") && ent.at("scripts").is_array()) {
+        scriptSlots = &ent.at("scripts");
+    } else if (ent.contains("script") && ent.at("script").is_object()) {
+        legacyWrapped = Json::array({ent.at("script")});
+        scriptSlots = &legacyWrapped;
+    }
+    if (scriptSlots) {
         scripting::ScriptBox& sb = scene.Emplace<scripting::ScriptBox>(e);
-        sb.typeId = -1; // 待宿主按 className 解析（编辑器装载后统一映射）
-        try {
-            if (sj.contains("guid")) sb.scriptGuid = sj.at("guid").get<uint64_t>();
-            if (sj.contains("class")) {
-                std::string cls = sj.at("class").get<std::string>();
-                size_t n = cls.size() < 23 ? cls.size() : 23; // 末字节保 \0
-                std::memcpy(sb.className, cls.data(), n);
+        for (const Json& sj : *scriptSlots) {
+            if (!sj.is_object()) continue;
+            uint64_t guid = 0;
+            std::string cls;
+            try {
+                if (sj.contains("guid")) guid = sj.at("guid").get<uint64_t>();
+                if (sj.contains("class")) cls = sj.at("class").get<std::string>();
+            } catch (const Json::exception& ex) {
+                LEMON_WARN("script member malformed skipped: %s", ex.what());
+                continue;
             }
-        } catch (const Json::exception& ex) {
-            LEMON_WARN("script member malformed skipped: %s", ex.what());
+            if (cls.empty()) continue;
+            if (scripting::FindSlot(sb, cls.c_str()) >= 0) {
+                LEMON_WARN("scripts[] 同名重复项清洗（保序留首见）'%s'", cls.c_str());
+                continue;
+            }
+            if (!scripting::AppendSlot(sb, guid, cls.c_str()))
+                LEMON_WARN("scripts[] 槽数超限（%u），多余项忽略",
+                           scripting::kMaxScriptsPerEntity);
         }
+        if (sb.count == 0) scene.Remove<scripting::ScriptBox>(e);
     }
 }
 
@@ -374,13 +399,33 @@ bool SceneArchive::Load(Scene& scene, const std::string& jsonText) {
 }
 
 bool SceneArchive::Migrate(std::string& jsonText, uint32_t fromVersion) {
-    // 迁移链骨架：每级一个 case，纯 json→json 变换后回写 schemaVersion。
-    // v1 是首版无历史；后续版本在此追加（老档自动升级，风险台账 #7 的 CI 保障）。
+    // 迁移链：每级一个 case，纯 json→json 变换后回写 schemaVersion（03 §13；
+    // 老档自动升级，风险台账 #7 的 CI 保障）。
     Json doc = Json::parse(jsonText, nullptr, false);
     if (doc.is_discarded()) return false;
-    (void)doc;
-    LEMON_WARN("no migration registered from schema v%u", fromVersion);
-    return false;
+    switch (fromVersion) {
+    case 1: {
+        // v1→v2（M6a 批⓪）：实体脚本单数 "script":{guid,class} → 复数
+        // "scripts":[{…}]。.prefab 的 LoadEntityTree 不经迁移（ReadEntity 双读
+        // 兼容旧单数），本链只服务 .scene Load。
+        if (doc.contains("entities") && doc.at("entities").is_array())
+            for (auto& ent : doc.at("entities")) {
+                if (!ent.is_object() || !ent.contains("script")) continue;
+                if (!ent.at("script").is_object()) {
+                    ent.erase("script");
+                    continue;
+                }
+                ent["scripts"] = Json::array({ent["script"]});
+                ent.erase("script");
+            }
+        doc["schemaVersion"] = kSchemaVersion;
+        jsonText = doc.dump();
+        return true;
+    }
+    default:
+        LEMON_WARN("no migration registered from schema v%u", fromVersion);
+        return false;
+    }
 }
 
 } // namespace lemon::ecs

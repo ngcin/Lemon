@@ -39,8 +39,14 @@ public:
     /// 已注册脚本类型名（无 host/未加载 = 空）
     const std::vector<std::string>& ScriptTypeNames() const;
     int ResolveScriptTypeId(const char* className) const;
-    /// 挂脚本（编辑侧 ScriptBox：className 持久键；typeId 即时解析（无 host = -1））
+    /// 挂脚本（M6a 批⓪ 多槽：追加槽；同类型唯一入口闸——已有同类拒绝 + 告警；
+    /// className 持久键，typeId 即时解析（无 host = -1））
     void AttachScript(ecs::Entity e, uint64_t assetGuid, const char* className);
+    /// 换槽类型（Inspector 逐槽 combo）：与其他槽撞类型 = 拒绝返回 false
+    bool SetSlotScript(ecs::Entity e, uint32_t slotIdx, uint64_t assetGuid,
+                       const char* className);
+    /// 移除槽（保序；count 归零 = 移除整个 ScriptBox 组件）
+    void RemoveScriptSlot(ecs::Entity e, uint32_t slotIdx);
     /// 热重载换装后重装配（M4.5）：Edit 世界刷新 ScriptBox.typeId；Play 世界原位
     /// 换实例（AttachBehaviour → 新域 Awake/OnEnable + StateBag OnHotReloadIn）。
     /// 返回 Play 世界重装配实例数（未在 Play = 0）。

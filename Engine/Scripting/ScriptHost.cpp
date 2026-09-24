@@ -397,15 +397,38 @@ void ScriptHost::TickBatch(ecs::World& world, ecs::Scene& scene, float dt) {
 
 void ScriptHost::AttachBehaviour(ecs::World& world, ecs::Scene& scene, ecs::Entity e,
                                  int typeId) {
-    // get-or-create：场景档（.scene script 段）已带 ScriptBox（typeId=-1 待解析）时
-    // 原位覆写，不二次 Emplace（entt 对已有组件再 emplace = 池损坏）
-    if (ScriptBox* sb = scene.TryGet<ScriptBox>(e)) {
-        sb->typeId = typeId;
-        sb->flags &= ~1u;
-    } else {
-        scene.Emplace<ScriptBox>(e, ScriptBox{(int32_t)typeId, 0, 0, {}});
+    // M6a 批⓪：追加新槽（运行时挂载路径——op4/C# AddComponent；className 空 =
+    // Play 期内槽，ExitPlay 随快照丢弃不入档）。同类型唯一双层分权：C++ 槽层
+    // **幂等**——同 typeId 槽已存在 = 不追加、重挂实例（盖 ResetPlayDomain 后的
+    // 合法重挂：槽在、C# 实例已清）；真双挂（C# 实例仍在）由 Behaviours.Attach
+    // 断言拒绝（桥层可见实例态）。槽满拒绝。
+    ScriptBox* sb = scene.TryGet<ScriptBox>(e);
+    if (!sb) sb = &scene.Emplace<ScriptBox>(e);
+    bool slotExists = false;
+    for (uint32_t i = 0; i < sb->count; ++i)
+        if (sb->slots[i].typeId == typeId) slotExists = true;
+    if (!slotExists) {
+        if (!AppendSlot(*sb, 0, nullptr)) {
+            LEMON_WARN("脚本槽满（%u）：实体 %llu 挂载 '%d' 拒绝", kMaxScriptsPerEntity,
+                       (unsigned long long)e.id, typeId);
+            return;
+        }
+        sb->slots[sb->count - 1].typeId = typeId;
     }
     // Awake/OnEnable 在 PostBatch 内同步执行——native 窗口必须就位（M11）
+    if (scriptsAttachFn_) {
+        NativeApiWindow win(&world, &scene);
+        scriptsAttachFn_(typeId, e.id);
+    }
+}
+
+void ScriptHost::ResolveSlotBehaviour(ecs::World& world, ecs::Scene& scene, ecs::Entity e,
+                                      uint32_t slotIdx, int typeId) {
+    ScriptBox* sb = scene.TryGet<ScriptBox>(e);
+    if (!sb || slotIdx >= sb->count) return;
+    ScriptSlot& s = sb->slots[slotIdx];
+    s.typeId = typeId;
+    s.flags &= ~kScriptFlagDisabled;
     if (scriptsAttachFn_) {
         NativeApiWindow win(&world, &scene);
         scriptsAttachFn_(typeId, e.id);
@@ -494,9 +517,10 @@ void ScriptHost::ApplyStructural(ecs::World& world, ecs::Scene& scene) {
                     if (scriptsDestroyFn_) {
                         NativeApiWindow win(&world, &scene);
                         // 置"已通知"位：同帧稍后的 NotifyPendingDestroys 不再对同实体
-                        // 双发（F-08.2 汇合点恰好一次语义）
+                        // 双发（F-08.2 汇合点恰好一次语义；实体级非槽级——多槽实体
+                        // 按实体一次通知全量实例）
                         if (ScriptBox* sb = scene.TryGet<ScriptBox>(e))
-                            sb->flags |= kScriptFlagDestroyNotified;
+                            sb->notified |= kScriptFlagDestroyNotified;
                         scriptsDestroyFn_(e.id);
                     }
                     scene.Destroy(e);
@@ -518,9 +542,10 @@ void ScriptHost::ApplyStructural(ecs::World& world, ecs::Scene& scene) {
                     reg.At(op.compId).removeFn(scene, e);
                 break;
             }
-            case 4: { // AttachScript（挂 ScriptBox + 托管实例/Awake/OnEnable）
-                // 复用 AttachBehaviour：get-or-create + native 窗口（M11/M12——原
-                // 无条件 Emplace<ScriptBox>，对快照已带 ScriptBox 的实体 = 池损坏）
+            case 4: { // AttachScript（挂 ScriptBox 新槽 + 托管实例/Awake/OnEnable）
+                // AttachBehaviour = 追加路径（M6a 批⓪ 与解析路径拆分）；native 窗口
+                // 内部就位（M11/M12——对快照已带 ScriptBox 的实体二次 Emplace =
+                // entt 池损坏的旧坑已由 TryGet 分支消除）
                 ecs::Entity e = Resolve(op.entity);
                 if (!e.IsNull()) AttachBehaviour(world, scene, e, (int)op.compId);
                 break;
@@ -543,8 +568,8 @@ void ScriptHost::NotifyPendingDestroys(ecs::World& world, ecs::Scene& scene) {
     NativeApiWindow win(&world, &scene);
     // 空 tag 不进 each() 载荷（entt 3.15 语义）——DestroyQueueTag 只作过滤器
     for (auto&& [ent, sb] : scene.View<ecs::DestroyQueueTag, ScriptBox>().each()) {
-        if (sb.flags & kScriptFlagDestroyNotified) continue;
-        sb.flags |= kScriptFlagDestroyNotified;
+        if (sb.notified & kScriptFlagDestroyNotified) continue;
+        sb.notified |= kScriptFlagDestroyNotified;
         scriptsDestroyFn_(ecs::Scene::FromEntt(ent).id);
     }
 }

@@ -721,17 +721,20 @@ void TestPlayDomainReset() {
         else if (p.user == 801) ++saw801;
     });
 
-    // 局1：装配探针（ResolvePlayScripts 同款入口；快照已带 ScriptBox → get-or-create）
+    // 局1：装配探针（M6a 批⓪ 起 AttachBehaviour = 追加路径，同实体同类型唯一）
     Entity e = s.Create();
     g_sh.AttachBehaviour(w, s, e, 6);
     w.Step(0.25f); // 帧1
     Expect(attachedFn() == 1 && saw700 == 1, "session1: single instance reports once");
 
-    // 泄漏复现（修复前实测路径）：残留实例 + 同实体 id 再 Attach = 双实例
+    // 同实体同类型重复挂载 = 双层拒绝（M6a 批⓪ 决策 4）：C++ AttachBehaviour 按
+    // typeId 查重不追加槽，C# Behaviours.Attach 断言跳过。原泄漏复现（残留实例 +
+    // 同实体 id 再 Attach = 双实例双 tick）在新不变量下不可达——检测面从
+    // "双实例可观测"升级为"重复挂载被拒"，本段断言其确被拒绝。
     g_sh.AttachBehaviour(w, s, e, 6);
-    Expect(attachedFn() == 2, "leak signature: residual + re-attach = 2 instances");
-    w.Step(0.25f); // 帧2：双实例都 tick（读回报告 ×2）
-    Expect(saw801 == 2, "double instance ticks twice (Custom 801 x2)");
+    Expect(attachedFn() == 1, "duplicate attach rejected: instance count stays 1");
+    w.Step(0.25f); // 帧2：单实例照常 tick（读回报告 ×1）
+    Expect(saw801 == 1, "single instance ticks once (Custom 801 x1)");
 
     // 修复：EnterPlay 序（Time 归零 → 域复位 → 重挂）
     g_sh.ResetPlayDomain();
@@ -783,14 +786,15 @@ void TestAwakeWindowAndDoubleAdd() {
     Expect(aliveOk, "Awake Ui.Set visible right after AttachBehaviour (M11 window)");
     const int attached0 = attachedFn();
 
-    // M12 case4：AttachScript 结构命令对已带 ScriptBox 的实体（快照路径常态）=
-    // 原位覆写（修复前无条件 Emplace<ScriptBox> = entt 池损坏；C# 侧再挂一实例
-    // 属 ResetPlayDomain 管的跨局残留语义，与本断言无关）
+    // M12 case4 → M6a 批⓪ 语义升级：AttachScript 结构命令对已带同类型 ScriptBox 的
+    // 实体 = 幂等（槽层查重不追加 + C# Attach 断言拒双挂）。修复前的两个坑分别
+    // 消解：无条件 Emplace = entt 池损坏（M12，TryGet 分支）；再挂一实例 = 双实例
+    // 双 tick（决策 4，Attach 断言——实例数不增即证）
     opsSubmit(4, 7, e.id);
     w.Step(0.25f); // ApplyStructural 帧首应用
     Expect(s.TryGet<lemon::scripting::ScriptBox>(e) != nullptr &&
-               attachedFn() == attached0 + 1,
-           "AttachScript op on scripted entity: overwrite not double-emplace (M12)");
+               attachedFn() == attached0,
+           "AttachScript op idempotent on scripted entity: no double instance");
 
     // M12 case2：AddComponent 对已有组件重复提交 = no-op（修复前二次 emplace）
     const ComponentMeta* vel = ComponentRegistry::Instance().Find("Velocity");

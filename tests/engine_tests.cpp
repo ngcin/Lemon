@@ -1591,12 +1591,12 @@ void TestDestroyNotifyWiring() {
         void DispatchEvents(ecs::World&, ecs::Scene&) override {}
         void ApplyStructural(ecs::World&, ecs::Scene&) override { ++structuralCalls; }
         void NotifyPendingDestroys(ecs::World&, ecs::Scene& s) override {
-            // 与 ScriptHost 实现同形状：待销毁 ∩ ScriptBox，flag 去重恰好一次
-            //（空 tag 不进 each() 载荷——entt 3.15 语义，tag 只作过滤器）
+            // 与 ScriptHost 实现同形状：待销毁 ∩ ScriptBox，实体级 notified 去重
+            // 恰好一次（空 tag 不进 each() 载荷——entt 3.15 语义，tag 只作过滤器）
             for (auto&& [ent, sb] :
                  s.View<ecs::DestroyQueueTag, scripting::ScriptBox>().each()) {
-                if (sb.flags & scripting::kScriptFlagDestroyNotified) continue;
-                sb.flags |= scripting::kScriptFlagDestroyNotified;
+                if (sb.notified & scripting::kScriptFlagDestroyNotified) continue;
+                sb.notified |= scripting::kScriptFlagDestroyNotified;
                 notified.push_back(ecs::Scene::FromEntt(ent).id);
             }
         }
@@ -3471,7 +3471,7 @@ void TestEntityTreeArchive() {
            "double roundtrip keeps data");
 }
 
-// ---- M4.4-e：ScriptBox 档案段（装配通路 #7）----
+// ---- M4.4-e：ScriptBox 档案段（装配通路 #7）；M6a 批⓪：scripts[] 多槽 + v1 迁移 ----
 void TestScriptBoxArchive() {
     using namespace lemon::ecs;
     RegisterAllComponents();
@@ -3480,34 +3480,87 @@ void TestScriptBoxArchive() {
     Entity e = s.Create();
     s.Emplace<Transform2D>(e);
     auto& sb = s.Emplace<scripting::ScriptBox>(e);
-    sb.scriptGuid = 0x1234ABCDEF012345ull;
-    std::strcpy(sb.className, "SpawnerBehaviour");
+    scripting::AppendSlot(sb, 0x1234ABCDEF012345ull, "SpawnerBehaviour");
+    scripting::AppendSlot(sb, 0x89ABCDEFFEDCBA98ull, "PlayerMovement");
+    scripting::AppendSlot(sb, 0, "PlayerHud");
+    sb.slots[0].typeId = 7; // 运行时解析号不持久：装载后应回 -1
 
     const std::string text = SceneArchive::Save(s);
-    Expect(text.find("\"script\"") != std::string::npos, "script member serialized");
+    Expect(text.find("\"scripts\"") != std::string::npos, "scripts member serialized");
     Expect(text.find("SpawnerBehaviour") != std::string::npos, "className persisted");
+    Expect(text.find("PlayerHud") != std::string::npos, "multi-script persisted");
 
     World w2;
     Scene& d = w2.CreateScene("b");
-    Expect(SceneArchive::Load(d, text), "load with script member");
+    Expect(SceneArchive::Load(d, text), "load with scripts member");
     bool found = false;
     d.Each([&](Entity en) {
         if (auto* b = d.TryGet<scripting::ScriptBox>(en); b) {
             found = true;
-            Expect(b->scriptGuid == 0x1234ABCDEF012345ull, "script guid roundtrip");
-            Expect(std::string_view(b->className) == "SpawnerBehaviour",
-                   "className roundtrip");
-            Expect(b->typeId == -1, "typeId stays unresolved after load");
+            Expect(b->count == 3, "three slots roundtrip");
+            Expect(b->slots[0].scriptGuid == 0x1234ABCDEF012345ull, "slot0 guid roundtrip");
+            Expect(std::string_view(b->slots[0].className) == "SpawnerBehaviour",
+                   "slot0 className roundtrip");
+            Expect(std::string_view(b->slots[1].className) == "PlayerMovement",
+                   "slot1 className roundtrip（保序）");
+            Expect(std::string_view(b->slots[2].className) == "PlayerHud",
+                   "slot2 className roundtrip（guid=0 合法）");
+            Expect(b->slots[0].typeId == -1, "typeId stays unresolved after load");
         }
     });
     Expect(found, "ScriptBox re-emplaced on load");
-    // 无脚本实体的场景不受影响 + 二次往返不动点（script 段键序稳定；
+    // 无脚本实体的场景不受影响 + 二次往返不动点（scripts 段键序稳定；
     // 场景名是宿主属性——两次用同名场景排除干扰）
     const std::string text2 = SceneArchive::Save(d);
     World w3;
     Scene& d3 = w3.CreateScene("b"); // 与 d 同名
     SceneArchive::Load(d3, text2);
-    Expect(SceneArchive::Save(d3) == text2, "script member roundtrip fixed point");
+    Expect(SceneArchive::Save(d3) == text2, "scripts member roundtrip fixed point");
+
+    // ---- v1→v2 迁移：单数 script 包成单元素 scripts[]（老档升级链首例）----
+    const std::string v1 =
+        "{\"schemaVersion\":1,\"name\":\"legacy\",\"entities\":["
+        "{\"components\":{},\"script\":{\"guid\":4242,\"class\":\"OldBehaviour\"}}]}";
+    World w4;
+    Scene& d4 = w4.CreateScene("c");
+    Expect(SceneArchive::Load(d4, v1), "v1 scene migrates");
+    bool legacyOk = false;
+    d4.Each([&](Entity en) {
+        if (auto* b = d4.TryGet<scripting::ScriptBox>(en); b && b->count == 1 &&
+            b->slots[0].scriptGuid == 4242 &&
+            std::string_view(b->slots[0].className) == "OldBehaviour")
+            legacyOk = true;
+    });
+    Expect(legacyOk, "legacy singular script migrated to one slot");
+
+    // ---- 旧单数 .prefab 双读（LoadEntityTree 不走迁移链，靠 ReadEntity 兼容）----
+    const std::string prefab =
+        "{\"schemaVersion\":1,\"name\":\"prefab\",\"entities\":["
+        "{\"components\":{},\"script\":{\"guid\":7,\"class\":\"PBehaviour\"}}]}";
+    Scene& d5 = w.CreateScene("d5");
+    Entity root = SceneArchive::LoadEntityTree(d5, prefab);
+    const scripting::ScriptBox* pb = d5.TryGet<scripting::ScriptBox>(root);
+    Expect(pb && pb->count == 1 && std::string_view(pb->slots[0].className) == "PBehaviour",
+           "legacy singular prefab dual-read");
+
+    // ---- 同名重复项清洗（保序留首见）——同类型唯一不变量的加载侧防线 ----
+    const std::string dup =
+        "{\"schemaVersion\":2,\"name\":\"dup\",\"entities\":["
+        "{\"components\":{},\"scripts\":[{\"guid\":1,\"class\":\"A\"},"
+        "{\"guid\":2,\"class\":\"B\"},{\"guid\":3,\"class\":\"A\"}]}]}";
+    World w6;
+    Scene& d6 = w6.CreateScene("d6");
+    Expect(SceneArchive::Load(d6, dup), "dup scene loads");
+    bool dedupOk = false;
+    d6.Each([&](Entity en) {
+        if (auto* b = d6.TryGet<scripting::ScriptBox>(en); b) {
+            dedupOk = b->count == 2 &&
+                      std::string_view(b->slots[0].className) == "A" &&
+                      b->slots[0].scriptGuid == 1 && // 首见保留（第二条 A 被清洗）
+                      std::string_view(b->slots[1].className) == "B";
+        }
+    });
+    Expect(dedupOk, "duplicate className deduped (first wins)");
 }
 // ---- M4.4-d：EditorContext Prefab 操作端到端（导出/实例化/Break/Apply/Revert）----
 void TestEditorContextPrefabOps() {
@@ -3680,9 +3733,13 @@ void TestRecentScenesAliasSafety() {
         f << "{\"scenes\":[\"" << a << "\", \"\", \"Scenes/b.scene\", \"" << a << "\"]}\n";
     }
     ctx.LoadRecentScenes();
+    // CanonicalPath 落地后（2026-09-24）条目一律为规范形：期望值两侧同归一化
+    std::error_code cec;
+    const std::string aCanon = fs::weakly_canonical(fs::path(a), cec).string();
+    const std::string bCanon = fs::weakly_canonical(fs::path("Scenes/b.scene"), cec).string();
     Expect(ctx.RecentScenes().size() == 2, "dirty file cleaned: empty + dup dropped");
-    Expect(ctx.RecentScenes()[0] == a && ctx.RecentScenes()[1] == "Scenes/b.scene",
-           "order preserved, first occurrence wins");
+    Expect(ctx.RecentScenes()[0] == aCanon && ctx.RecentScenes()[1] == bCanon,
+           "order preserved, first occurrence wins (canonical forms)");
 
     fs::remove_all(root, ec);
 }
@@ -3858,7 +3915,12 @@ void TestAutosaveRecovery() {
         Expect(!rec2.empty(), "fresh context still detects recovery");
         Expect(ctx2.OpenSceneRecovery(rec2), "recovery loads autosave content");
         Expect(ctx2.dirty, "recovery keeps dirty (user decides)");
-        Expect(ctx2.ScenePath() == scenePath, "recovery keeps original scene path");
+        // 符号链接鲁棒口径（2026-09-24 CanonicalPath 落地后 ScenePath 为规范形：
+        // macOS /var → /private/var）——两侧都归一化再比，恢复"不改路径"语义不变
+        std::error_code cec1, cec2;
+        Expect(fs::weakly_canonical(fs::path(ctx2.ScenePath()), cec1) ==
+                   fs::weakly_canonical(fs::path(scenePath), cec2),
+               "recovery keeps original scene path");
         bool sawMob = false;
         ctx2.EditScene().Each([&](lemon::ecs::Entity e) {
             const auto* m = ctx2.EditScene().TryGet<lemon::ecs::Meta>(e);

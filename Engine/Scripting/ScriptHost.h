@@ -114,9 +114,16 @@ public:
                             : (uint32_t)(batchCountFn_ ? batchCountFn_() : 0);
     }
 
-    /// 挂载脚本组件（宿主装配期用；bench/编辑器入口）——ScriptBox + 托管实例/Awake。
+    /// 运行时挂新脚本（op4/C# AddComponent 路径）：ScriptBox 追加槽 + 托管实例/
+    /// Awake。同类型唯一由 Behaviours.Attach 断言兜底（真双挂 = 红字跳过）。
     /// Awake/OnEnable 在此同步执行，native 窗口（g_world/g_scene）由内部就位（M11）。
     void AttachBehaviour(ecs::World& world, ecs::Scene& scene, ecs::Entity e, int typeId);
+
+    /// 既有槽解析（编辑器 EnterPlay/热重载路径）：场景档槽 typeId=-1 待解析时按名
+    /// 映射并原位落 typeId（不追加槽），再挂托管实例（M6a 批⓪ 与 AttachBehaviour
+    /// 拆分——原 get-or-create 覆写语义在多槽下会错删兄弟槽）。
+    void ResolveSlotBehaviour(ecs::World& world, ecs::Scene& scene, ecs::Entity e,
+                              uint32_t slotIdx, int typeId);
 
     /// 已注册脚本类型名表（M4.4 编辑器装配通路：Inspector 列表/className→typeId 解析；
     /// 未加载用户程序集返回空）。惰性拉取缓存。

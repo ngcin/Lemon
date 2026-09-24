@@ -81,7 +81,7 @@ EditorContext::~EditorContext() = default;
 
 void EditorContext::NewScene() {
     // 清空重建经 SceneArchive 空档（Load 语义 = 清空目标 Scene 后重建；World 不动）
-    static const char* kEmpty = R"({"schemaVersion":1,"name":"untitled","entities":[]})";
+    static const char* kEmpty = R"({"schemaVersion":2,"name":"untitled","entities":[]})";
     SceneArchive::Load(*scene_, kEmpty);
     scenePath_.clear();
     selection_.clear();
@@ -300,14 +300,57 @@ int EditorContext::ResolveScriptTypeId(const char* className) const {
 
 void EditorContext::AttachScript(ecs::Entity e, uint64_t assetGuid, const char* className) {
     if (e.IsNull() || !scene_->Alive(e)) return;
-    scripting::ScriptBox& sb = scene_->Has<scripting::ScriptBox>(e)
-                                   ? scene_->Get<scripting::ScriptBox>(e)
-                                   : scene_->Emplace<scripting::ScriptBox>(e);
-    sb.scriptGuid = assetGuid;
-    std::memset(sb.className, 0, sizeof(sb.className));
-    std::snprintf(sb.className, sizeof(sb.className), "%s", className ? className : "");
-    sb.typeId = ResolveScriptTypeId(sb.className);
-    sb.flags &= ~1u;
+    const char* cls = className ? className : "";
+    // M6a 批⓪ 决策 4：同类型唯一入口闸（Inspector 菜单已置灰，此处兜底 combo/
+    // 程序化调用）；槽满拒绝。先查后建——不留空 count=0 组件。
+    if (scripting::ScriptBox* box = scene_->TryGet<scripting::ScriptBox>(e)) {
+        if (scripting::FindSlot(*box, cls) >= 0) {
+            LEMON_WARN("同实体同类型脚本唯一：'%s' 已挂载，拒绝重复追加", cls);
+            return;
+        }
+        if (!scripting::AppendSlot(*box, assetGuid, cls)) {
+            LEMON_WARN("脚本槽满（%u）：拒绝追加 '%s'", scripting::kMaxScriptsPerEntity,
+                       cls);
+            return;
+        }
+    } else {
+        scripting::ScriptBox& fresh = scene_->Emplace<scripting::ScriptBox>(e);
+        scripting::AppendSlot(fresh, assetGuid, cls);
+    }
+    scripting::ScriptBox& sb = scene_->Get<scripting::ScriptBox>(e);
+    sb.slots[sb.count - 1].typeId = ResolveScriptTypeId(cls);
+    dirty = true;
+}
+
+bool EditorContext::SetSlotScript(ecs::Entity e, uint32_t slotIdx, uint64_t assetGuid,
+                                  const char* className) {
+    scripting::ScriptBox* sb =
+        (e.IsNull() || !scene_->Alive(e)) ? nullptr : scene_->TryGet<scripting::ScriptBox>(e);
+    if (!sb || slotIdx >= sb->count) return false;
+    const char* cls = className ? className : "";
+    for (uint32_t i = 0; i < sb->count; ++i) {
+        if (i == slotIdx) continue;
+        if (std::strcmp(sb->slots[i].className, cls) == 0) {
+            LEMON_WARN("同实体同类型脚本唯一：'%s' 已在槽 %u，换类型拒绝", cls, i);
+            return false;
+        }
+    }
+    scripting::ScriptSlot& s = sb->slots[slotIdx];
+    s.scriptGuid = assetGuid;
+    std::memset(s.className, 0, sizeof(s.className));
+    std::snprintf(s.className, sizeof(s.className), "%s", cls);
+    s.typeId = ResolveScriptTypeId(cls);
+    s.flags &= ~scripting::kScriptFlagDisabled;
+    dirty = true;
+    return true;
+}
+
+void EditorContext::RemoveScriptSlot(ecs::Entity e, uint32_t slotIdx) {
+    if (e.IsNull() || !scene_->Alive(e)) return;
+    scripting::ScriptBox* sb = scene_->TryGet<scripting::ScriptBox>(e);
+    if (!sb || slotIdx >= sb->count) return;
+    scripting::RemoveSlot(*sb, slotIdx);
+    if (sb->count == 0) scene_->Remove<scripting::ScriptBox>(e);
     dirty = true;
 }
 
@@ -318,15 +361,20 @@ uint32_t EditorContext::SpriteIdOfGuidHex(const char* hex) const {
 
 void EditorContext::ResolvePlayScripts() {
     if (!scripts_ || !playScene_) return;
+    // M6a 批⓪：逐槽解析（typeId=-1 待解析 → className 映射 → 原位落号挂实例）
     playScene_->Each([this](ecs::Entity e) {
         scripting::ScriptBox* sb = playScene_->TryGet<scripting::ScriptBox>(e);
-        if (!sb || sb->typeId >= 0) return;
-        int id = ResolveScriptTypeId(sb->className);
-        if (id < 0) {
-            LEMON_WARN("Play 装配：脚本类型未注册（跳过）'%s'", sb->className);
-            return;
+        if (!sb) return;
+        for (uint32_t i = 0; i < sb->count; ++i) {
+            scripting::ScriptSlot& s = sb->slots[i];
+            if (s.typeId >= 0) continue;
+            int id = ResolveScriptTypeId(s.className);
+            if (id < 0) {
+                LEMON_WARN("Play 装配：脚本类型未注册（跳过）'%s'", s.className);
+                continue;
+            }
+            scripts_->ResolveSlotBehaviour(*playWorld_, *playScene_, e, i, id);
         }
-        scripts_->AttachBehaviour(*playWorld_, *playScene_, e, id);
     });
 }
 
@@ -335,24 +383,27 @@ int EditorContext::RefreshScriptsAfterReload() {
     // Edit 世界：只刷 typeId（编辑器不 tick；EnterPlay 时本就按 className 解析）
     scene_->Each([this](ecs::Entity e) {
         if (scripting::ScriptBox* sb = scene_->TryGet<scripting::ScriptBox>(e))
-            sb->typeId = ResolveScriptTypeId(sb->className);
+            for (uint32_t i = 0; i < sb->count; ++i)
+                sb->slots[i].typeId = ResolveScriptTypeId(sb->slots[i].className);
     });
     if (!playScene_) return 0;
-    // Play 世界：原位换实例——AttachBehaviour 走新域 scripts_attach（Behaviours.Attach
-    // → Awake/OnEnable → 同 (类名,实体) StateBag → OnHotReloadIn）
+    // Play 世界：原位换实例——ResolveSlotBehaviour 走新域 scripts_attach
+    //（Behaviours.Attach → Awake/OnEnable → 同 (类名,实体) StateBag → OnHotReloadIn）
     int n = 0;
     playScene_->Each([this, &n](ecs::Entity e) {
         scripting::ScriptBox* sb = playScene_->TryGet<scripting::ScriptBox>(e);
-        if (!sb || !sb->className[0]) return;
-        int id = ResolveScriptTypeId(sb->className);
-        if (id < 0) {
-            LEMON_WARN("热重载：脚本类型未注册（保持挂起）'%s'", sb->className);
-            return;
+        if (!sb) return;
+        for (uint32_t i = 0; i < sb->count; ++i) {
+            scripting::ScriptSlot& s = sb->slots[i];
+            if (!s.className[0]) continue;
+            int id = ResolveScriptTypeId(s.className);
+            if (id < 0) {
+                LEMON_WARN("热重载：脚本类型未注册（保持挂起）'%s'", s.className);
+                continue;
+            }
+            scripts_->ResolveSlotBehaviour(*playWorld_, *playScene_, e, i, id);
+            ++n;
         }
-        sb->typeId = id;
-        sb->flags &= ~1u;
-        scripts_->AttachBehaviour(*playWorld_, *playScene_, e, id);
-        ++n;
     });
     return n;
 }

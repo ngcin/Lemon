@@ -3549,7 +3549,9 @@ int EditorApp::Run(const EditorLaunch& launch) {
                 ctx_.ActiveScene().View<scripting::ScriptBox>().each(
                     [&](auto ent, scripting::ScriptBox& sb) {
                         anyScript = true;
-                        if (sb.flags & 1u) g_tplScriptOk = false;
+                        for (uint32_t i = 0; i < sb.count; ++i) // 逐槽查禁用位（M6a 批⓪）
+                            if (sb.slots[i].flags & scripting::kScriptFlagDisabled)
+                                g_tplScriptOk = false;
                         const ecs::Health* hp = ctx_.ActiveScene().TryGet<ecs::Health>(
                             ecs::Scene::FromEntt(ent));
                         if (!hp) return;

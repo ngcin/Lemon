@@ -128,11 +128,21 @@ public static class Behaviours
     /// <summary>类型 → typeId（泛型版；未注册 = -1）。</summary>
     public static int TypeIdOf<T>() where T : LemonBehaviour, new() => TypeIdOf(typeof(T).Name);
 
-    /// <summary>挂载（结构命令 AttachScript 应用时由 Entry 调用；域线程）。</summary>
+    /// <summary>挂载（结构命令 AttachScript 应用时由 Entry 调用；域线程）。
+    /// 同实体同类型唯一（M6a 批⓪ 决策 4）：已挂 = 红字跳过——正常路径不会走到
+    /// （EnterPlay 前 ClearInstances、热重载前换域清表、AddComponent 门面幂等），
+    /// 命中即生命周期泄漏，当场响亮优于静默双实例双 tick（VS 模板 +2 刃事故类）。</summary>
     internal static void Attach(int typeId, EntityHandle e)
     {
         if ((uint)typeId >= (uint)Slots.Count) return;
         var slot = Slots[typeId];
+        for (int i = 0; i < slot.Instances.Count; i++)
+            if (slot.Instances[i].gameObject.Entity.Id == e.Id) {
+                Console.Error.WriteLine(
+                    $"[lemon][error] behaviour '{slot.Name}' already attached to entity " +
+                    $"{e.Id} — duplicate attach skipped (lifecycle leak?)");
+                return;
+            }
         var b = slot.Factory();
         b.gameObject = new GameObject(e);
         int idx = slot.Instances.Count;

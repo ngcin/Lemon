@@ -672,45 +672,85 @@ void InspectorPanel::OnGui(EditorApp& app) {
         DrawComponent(app, meta, e);
     }
 
-    // ---- ScriptBox 段（M4.4 装配通路 #7：不入注册表 → 这里手绘）----
-    if (scripting::ScriptBox* sb = ctx.ActiveScene().TryGet<scripting::ScriptBox>(e)) {
+    // ---- ScriptBox 段（M4.4 装配通路 #7：不入注册表 → 手绘；M6a 批⓪ 列表化，
+    // 每槽一 combo + 移除；同类型唯一——已挂类型菜单置灰）----
+    scripting::ScriptBox* sb = ctx.ActiveScene().TryGet<scripting::ScriptBox>(e);
+    if (sb) {
         if (ImGui::CollapsingHeader("Script", ImGuiTreeNodeFlags_DefaultOpen)) {
             const auto& names = ctx.ScriptTypeNames();
-            char cur[40];
-            std::snprintf(cur, sizeof(cur), "%s%s", sb->className[0] ? "" : "(未选) ",
-                          sb->className);
-            ImGui::SetNextItemWidth(-1);
-            if (ImGui::BeginCombo("##script", cur)) {
-                for (const std::string& n : names)
-                    if (ImGui::Selectable(n.c_str(), n == sb->className))
-                        ctx.AttachScript(e, sb->scriptGuid, n.c_str());
-                ImGui::EndCombo();
-            }
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("脚本类型（C# Behaviours 注册表；热重载 M4.5）\n"
-                                  "资产 guid %s",
-                                  sb->scriptGuid
-                                      ? AssetDatabase::GuidToHex(sb->scriptGuid).c_str()
-                                      : "(无 .cs 资产关联)");
-            ImGui::TextDisabled("typeId %d  %s", sb->typeId,
-                                sb->typeId >= 0 ? "已解析" : "未解析（Play 时按名装配）");
-            if (ImGui::Button("移除脚本")) {
-                const std::string before = ctx.SnapshotSceneJson();
-                ctx.ActiveScene().Remove<scripting::ScriptBox>(e);
-                ctx.dirty = true;
-                if (!ctx.Playing()) ctx.PushStructuralUndo("移除脚本", before);
+            for (uint32_t i = 0; i < sb->count; ++i) {
+                scripting::ScriptSlot& s = sb->slots[i];
+                ImGui::PushID((int)i);
+                char cur[40];
+                std::snprintf(cur, sizeof(cur), "%s%s", s.className[0] ? "" : "(未选) ",
+                              s.className);
+                ImGui::SetNextItemWidth(-52);
+                if (ImGui::BeginCombo("##script", cur)) {
+                    for (const std::string& n : names) {
+                        const bool taken = scripting::FindSlot(*sb, n.c_str()) >= 0 &&
+                                           n != s.className;
+                        char item[72];
+                        std::snprintf(item, sizeof(item), "%s%s", taken ? "已挂 " : "",
+                                      n.c_str());
+                        if (!ImGui::Selectable(item, n == s.className,
+                                               taken ? ImGuiSelectableFlags_Disabled : 0))
+                            continue;
+                        // 关联同名 .cs 资产（stem == 类名；找不到 = guid 0 仅类名装配）
+                        uint64_t guid = 0;
+                        for (const auto& a : ctx.Assets().Entries()) {
+                            if (a.type != AssetType::Script || a.missing) continue;
+                            std::string stem = a.FileName();
+                            if (size_t dot = stem.find_last_of('.'); dot != std::string::npos)
+                                stem.resize(dot);
+                            if (stem == n) {
+                                guid = a.guid;
+                                break;
+                            }
+                        }
+                        ctx.SetSlotScript(e, i, guid, n.c_str());
+                    }
+                    ImGui::EndCombo();
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("脚本类型（C# Behaviours 注册表；热重载 M4.5）\n"
+                                      "资产 guid %s\ntypeId %d  %s",
+                                      s.scriptGuid
+                                          ? AssetDatabase::GuidToHex(s.scriptGuid).c_str()
+                                          : "(无 .cs 资产关联)",
+                                      s.typeId,
+                                      s.typeId >= 0 ? "已解析" : "未解析（Play 时按名装配）");
+                ImGui::SameLine();
+                if (ImGui::SmallButton("×")) {
+                    const std::string before = ctx.SnapshotSceneJson();
+                    ctx.RemoveScriptSlot(e, i);
+                    if (!ctx.Playing()) ctx.PushStructuralUndo("移除脚本", before);
+                }
+                ImGui::PopID();
             }
         }
     }
 
     ImGui::Spacing();
-    if (!ctx.ActiveScene().Has<scripting::ScriptBox>(e) && ImGui::Button("Add Script"))
-        ImGui::OpenPopup("add_script");
+    const bool canAdd = !ctx.ActiveScene().Has<scripting::ScriptBox>(e) ||
+                        ctx.ActiveScene().Get<scripting::ScriptBox>(e).count <
+                            scripting::kMaxScriptsPerEntity;
+    if (!canAdd) ImGui::BeginDisabled();
+    if (ImGui::Button("Add Script")) ImGui::OpenPopup("add_script");
+    if (!canAdd) ImGui::EndDisabled();
+    if (canAdd && ImGui::IsItemHovered())
+        ImGui::SetTooltip("挂 LemonBehaviour（每实体 ≤ %u，同类型唯一）",
+                          scripting::kMaxScriptsPerEntity);
     if (ImGui::BeginPopup("add_script")) {
         const auto& names = ctx.ScriptTypeNames();
         if (names.empty()) ImGui::TextDisabled("（无脚本宿主：--script <dll> 或项目 Game/）");
         for (const std::string& n : names) {
-            if (!ImGui::MenuItem(n.c_str())) continue;
+            // 同类型唯一：已挂类型置灰（入口闸的 UI 面；AttachScript 内再兜底）
+            const scripting::ScriptBox* box =
+                ctx.ActiveScene().TryGet<scripting::ScriptBox>(e);
+            const bool taken = box && scripting::FindSlot(*box, n.c_str()) >= 0;
+            char item[72];
+            std::snprintf(item, sizeof(item), "%s%s", taken ? "已挂 " : "", n.c_str());
+            if (!ImGui::MenuItem(item, nullptr, false, !taken)) continue;
             // 关联同名 .cs 资产（文件 stem == 类名；找不到 = guid 0，仅类名装配）
             uint64_t guid = 0;
             for (const auto& a : ctx.Assets().Entries()) {
