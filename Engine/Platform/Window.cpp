@@ -58,6 +58,12 @@ bool Window::PollEvents() {
             case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
                 m->resized = true;
                 break;
+            case SDL_EVENT_WINDOW_FOCUS_LOST:
+            case SDL_EVENT_WINDOW_MINIMIZED:
+                // 失焦/最小化瞬间按住的键不会再收到 KEY_UP（去了新焦点应用），
+                // 不清 = 卡键（Play 态角色持续单向移动）
+                std::memset(m->keys, 0, sizeof(m->keys));
+                break;
             case SDL_EVENT_KEY_DOWN: {
                 int sc = (int)ev.key.scancode;
                 if (sc >= 0 && sc < 512) m->keys[sc] = true;

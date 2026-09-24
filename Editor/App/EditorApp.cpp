@@ -2902,12 +2902,17 @@ int EditorApp::Run(const EditorLaunch& launch) {
         // 退出裁决：干净场景立即退出；脏场景弹一次确认（M4.6 修复——原先干净场景下
         // exitRequested_ 无任何消费路径，点关闭按钮毫无反应，直到场景变脏那帧才弹框）
         if (exitRequested_) {
-            if (ctx_.dirty && !quitConfirmArmed_) {
+            if (!ctx_.dirty) {
+                running = false;
+            } else if (!quitConfirmArmed_) {
                 quitConfirmOpen_ = true; // 退出前确认（一次）
                 confirmContext_ = ConfirmContext::Exit; // 上一次 SceneOp 不残留
                 exitRequested_ = false;
-            } else if (!ctx_.dirty) {
-                running = false;
+            } else {
+                // 确认框已开（本条或 SceneOp 的）：吸收重复退出请求。原样残留会越过
+                // 非退出分支（SceneOp 保存/丢弃后 dirty 即清）——下一帧走到"干净直接
+                // 退"，用户只是开了个场景，编辑器却无提示退出
+                exitRequested_ = false;
             }
         }
         if (!running) break;

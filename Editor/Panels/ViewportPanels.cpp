@@ -44,6 +44,31 @@ inline uint32_t AxisColor(bool xAxis, bool hovered) {
 
 float SnapTo(float v, float step) { return std::round(v / step) * step; }
 
+// ---- Gizmo 世界↔本地换算（父子实体；2026-09-25 P3 批）----
+// Transform2D 存本地值，Gizmo 拖拽算的是世界增量/目标——原 Move/Rotate/Scale 直接
+// 把世界量写进本地字段（Rotate/Scale 还拿本地 pos 与世界 pivot_ 混算），父链带
+// 旋转/缩放时子实体拖拽方向、步长全错。Resize 路径早已有同款逆换算（selPw_）。
+/// 父世界变换（无 Hierarchy/死父/链断 = false 且 pw 保持单位变换）
+bool ParentWorldOf(ecs::Scene& s, ecs::Entity e, ecs::WorldTransform2D& pw) {
+    const ecs::Hierarchy* h = s.TryGet<ecs::Hierarchy>(e);
+    return h && !h->parent.IsNull() && s.Alive(h->parent) &&
+           ecs::ComputeWorldTransform(s, h->parent, pw);
+}
+/// 本地 → 世界（pw 为默认单位变换时恒等——根实体路径与旧代码逐位一致）
+Vec2 WorldOfLocal(const ecs::WorldTransform2D& pw, Vec2 local) {
+    const float cs = std::cos(pw.rot), sn = std::sin(pw.rot);
+    return pw.pos + Vec2{cs * local.x * pw.scale.x - sn * local.y * pw.scale.y,
+                         sn * local.x * pw.scale.x + cs * local.y * pw.scale.y};
+}
+/// 世界 → 本地（父 TRS 之逆；|scale| 钳 1e-3 防除零，Resize 路径同款）
+Vec2 LocalOfWorld(const ecs::WorldTransform2D& pw, Vec2 world) {
+    const float cs = std::cos(pw.rot), sn = std::sin(pw.rot);
+    const float sx = std::max(1e-3f, std::fabs(pw.scale.x));
+    const float sy = std::max(1e-3f, std::fabs(pw.scale.y));
+    const Vec2 off{world.x - pw.pos.x, world.y - pw.pos.y};
+    return Vec2{(cs * off.x + sn * off.y) / sx, (-sn * off.x + cs * off.y) / sy};
+}
+
 // 轴对齐选框：四条边吸附到 RT 像素中心、线宽恒 1 物理像素——无 AA、颜色恒定
 // （亚像素位置的 1.8px 线会被 AA 摊薄到任何像素都取不到纯色 → 冒烟 sel 断言抖动；
 // 旋转框不吸附，仍走 AA 路径）。网格 v4 同一套吸附逻辑。
@@ -404,22 +429,35 @@ void SceneViewPanel::UpdateGizmoDrag(EditorApp& app, Vec2 world) {
         else if (dragAxis_ == AxisHint::Y) delta.x = 0.0f;
         for (auto& [e, start] : dragTfs_) {
             if (!ctx.ActiveScene().Alive(e)) continue;
-            ecs::Transform2D& tf = ctx.ActiveScene().Get<ecs::Transform2D>(e);
-            tf.pos = start.pos + delta;
+            ecs::Scene& s = ctx.ActiveScene();
+            ecs::Transform2D& tf = s.Get<ecs::Transform2D>(e);
+            ecs::WorldTransform2D pw{}; // 默认单位（根：本地即世界）
+            ParentWorldOf(s, e, pw);
+            // 世界意图 = 起点世界位 + 世界增量；吸附在世界空间做（父子步长一致）；
+            // 落本地经父 TRS 之逆（原直加本地 = 父带旋转/缩放时方向步长全错）
+            Vec2 target = WorldOfLocal(pw, start.pos) + delta;
             if (snap) {
-                tf.pos.x = SnapTo(tf.pos.x, kSnapPos);
-                tf.pos.y = SnapTo(tf.pos.y, kSnapPos);
+                target.x = SnapTo(target.x, kSnapPos);
+                target.y = SnapTo(target.y, kSnapPos);
             }
+            tf.pos = LocalOfWorld(pw, target);
         }
     } else if (drag_ == DragMode::Rotate) {
         float ang = std::atan2(world.y - pivot_.y, world.x - pivot_.x) - startAngle_;
         if (snap) ang = math::kTau * SnapTo(ang / math::kTau * 360.0f, kSnapRotDeg) / 360.0f;
+        const float c = std::cos(ang), sn = std::sin(ang);
         for (auto& [e, start] : dragTfs_) {
             if (!ctx.ActiveScene().Alive(e)) continue;
-            ecs::Transform2D& tf = ctx.ActiveScene().Get<ecs::Transform2D>(e);
-            Vec2 d = start.pos - pivot_;
-            float c = std::cos(ang), s = std::sin(ang);
-            tf.pos = pivot_ + Vec2{c * d.x - s * d.y, s * d.x + c * d.y}; // 绕质心公转
+            ecs::Scene& s = ctx.ActiveScene();
+            ecs::Transform2D& tf = s.Get<ecs::Transform2D>(e);
+            ecs::WorldTransform2D pw{};
+            ParentWorldOf(s, e, pw);
+            // 绕质心公转在世界系算（原拿本地 start.pos 与世界 pivot_ 混算）；
+            // Δrot 在 2D TRS 下世界=本地（父旋转只是常量偏移），本地直接加
+            const Vec2 wp = WorldOfLocal(pw, start.pos);
+            const Vec2 rel{wp.x - pivot_.x, wp.y - pivot_.y};
+            tf.pos = LocalOfWorld(pw, pivot_ + Vec2{c * rel.x - sn * rel.y,
+                                                    sn * rel.x + c * rel.y});
             tf.rot = start.rot + ang;
         }
     } else if (drag_ == DragMode::Resize) {
@@ -471,9 +509,14 @@ void SceneViewPanel::UpdateGizmoDrag(EditorApp& app, Vec2 world) {
         if (snap) f = std::max(0.25f, SnapTo(f, 0.25f)); // 0.25 步进档
         for (auto& [e, start] : dragTfs_) {
             if (!ctx.ActiveScene().Alive(e)) continue;
-            ecs::Transform2D& tf = ctx.ActiveScene().Get<ecs::Transform2D>(e);
-            Vec2 d = start.pos - pivot_;
-            tf.pos = pivot_ + d * f;
+            ecs::Scene& s = ctx.ActiveScene();
+            ecs::Transform2D& tf = s.Get<ecs::Transform2D>(e);
+            ecs::WorldTransform2D pw{};
+            ParentWorldOf(s, e, pw);
+            // 缩放跟随在世界系算后回本地（原本地 pos × 世界 pivot_ 混算）；
+            // 世界缩放因子 f 经父链乘性传递 → 本地 scale 直接乘 f 即正确
+            const Vec2 wp = WorldOfLocal(pw, start.pos);
+            tf.pos = LocalOfWorld(pw, pivot_ + (wp - pivot_) * f);
             tf.scale = Vec2{start.scale.x * f, start.scale.y * f};
         }
     }
@@ -548,7 +591,12 @@ void SceneViewPanel::FocusSelection(EditorApp& app, uint32_t rtW, uint32_t rtH) 
     const float h = std::max(bounds.max.y - bounds.min.y, 32.0f);
     Camera2D& cam = vr.SceneCam();
     cam.center = (bounds.min + bounds.max) * 0.5f;
-    float zoom = std::min((float)rtH * 0.6f / h, (float)rtW * 0.6f / w);
+    // zoom 量纲 = 相对 kRefHalfHeight 的缩小率（halfHeight=360/zoom，视口高恒映射
+    // 720 世界单位），非真实 RT"像素/世界单位"——原公式用 rtH 像素算出后直接存
+    // zoom = 偏大 rtH/720 倍（视口越高聚焦过度放大越狠；rtH=720 才碰巧正确）
+    const float aspect = (float)rtW / (float)std::max(1u, rtH);
+    float zoom = 0.6f * std::min(2.0f * kRefHalfHeight / h,
+                                 2.0f * kRefHalfHeight * aspect / w);
     cam.zoom = math::Clamp(zoom, 0.05f, 64.0f);
     cam.halfHeight = kRefHalfHeight / cam.zoom;
 }
