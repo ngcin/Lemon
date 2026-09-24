@@ -8,6 +8,7 @@
 //   * overlay 通道：SceneView 面板每帧 Render 前注入世界空间四边形（细线/框 = 细条）
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <unordered_map>
 #include <vector>
@@ -175,6 +176,8 @@ private:
     };
     RT rts_[2];
     uint32_t lastSceneVisible_ = 0;
+    std::chrono::steady_clock::time_point lastFxTime_{}; // Fx Simulate 自计时（GameView；
+                                                          // epoch 0 = 首帧/出 Play 复位）
     void* paletteIconTex_ = nullptr; // 调色板页 ImTextureID（图标源；设备丢失重注册）
     void* iconTex_ = nullptr;        // 形状页 ImTextureID（M4.7b；设备丢失重注册）
 };

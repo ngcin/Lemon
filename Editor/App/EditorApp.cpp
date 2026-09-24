@@ -91,6 +91,8 @@ void HookSaveFlush(ecs::World& w) {
 // ---- M5 批③：--smoke-anim 固定 guid（程序化 4 帧表 + clip；yami 包同段命名）----
 constexpr uint64_t kAnimSheetGuid = 0x5bd31a7c30000001ull; // anim-sheet.png（128×32，4×32×32 格）
 constexpr uint64_t kAnimClipGuid = 0x5bd31a7c30000002ull;  // anim.clip（fps10 × cells 0..3）
+constexpr uint64_t kAnimHitClipGuid = 0x5bd31a7c30000003ull; // anim-hit.clip（M6a 批①：
+// fps12 × cells [3,2] loop=0——切段断言的受击段）
 constexpr uint64_t kYamiHeroSheetGuid = 0x5bd31a7c10000001ull; // Samples yami-dungeon hero_1（在场即验）
 constexpr uint64_t kYamiHeroClipGuid = 0x5bd31a7c20000001ull;  // hero-walk.clip（9 帧 @8fps）
 
@@ -136,6 +138,21 @@ void WriteAnimSheetAssets(const std::filesystem::path& assetsDir) {
     if (!fs::exists(clipMeta, ec)) {
         std::ofstream f(clipMeta, std::ios::trunc);
         f << "{\n  \"guid\": \"5bd31a7c30000002\",\n  \"type\": \"clip\",\n  \"hash\": 0,\n"
+             "  \"importedAt\": 0\n}\n";
+    }
+    // M6a 批①：受击段（fps12 × 尾两帧 loop=0——Play(hit)+Queue(walk) 切段断言用）
+    std::filesystem::path hitClip = assetsDir / "anim-hit.clip";
+    if (!fs::exists(hitClip, ec)) {
+        std::ofstream f(hitClip, std::ios::trunc);
+        f << "{\n  \"schemaVersion\": 1,\n  \"name\": \"smoke-anim-hit\",\n  \"fps\": 12,\n"
+             "  \"loop\": false,\n  \"frames\": [\n"
+             "    { \"sheet\": \"5bd31a7c30000001\", \"cell\": 3 },\n"
+             "    { \"sheet\": \"5bd31a7c30000001\", \"cell\": 2 }\n  ]\n}\n";
+    }
+    std::filesystem::path hitClipMeta = hitClip.string() + ".meta";
+    if (!fs::exists(hitClipMeta, ec)) {
+        std::ofstream f(hitClipMeta, std::ios::trunc);
+        f << "{\n  \"guid\": \"5bd31a7c30000003\",\n  \"type\": \"clip\",\n  \"hash\": 0,\n"
              "  \"importedAt\": 0\n}\n";
     }
 }
@@ -282,6 +299,38 @@ constexpr uint64_t kMonsterSheet = 0x5bd31a7c10000003ull;
 constexpr uint64_t kBossSheet = 0x5bd31a7c10000005ull;
 constexpr uint64_t kHeroClip = 0x5bd31a7c20000001ull;
 constexpr uint64_t kMonsterClip = 0x5bd31a7c20000002ull;
+// M6a 批①：受击段（yami 表尾两帧 @12fps loop=0——自研 authored clip 引用 yami
+// 切片，不入 yami 包目录防污染；生成器直写模板 Assets）
+constexpr uint64_t kHeroHitClip = 0x5bd31a7c20000003ull;
+constexpr uint64_t kMonsterHitClip = 0x5bd31a7c20000004ull;
+
+/// 批①受击段两件套（clip + meta 落 assetsDir；引用 hero/monster 切片表尾帧）
+void WriteHitClips(const std::filesystem::path& assetsDir) {
+    struct Spec {
+        const char* file;
+        uint64_t guid;
+        const char* name;
+        const char* sheet;
+        int c0, c1;
+    };
+    const Spec specs[] = {
+        {"hero-hit.clip", kHeroHitClip, "hero-hit", "5bd31a7c10000001", 8, 7},
+        {"monster-hit.clip", kMonsterHitClip, "monster-hit", "5bd31a7c10000003", 7, 6},
+    };
+    for (const Spec& sp : specs) {
+        {
+            std::ofstream f(assetsDir / sp.file, std::ios::trunc);
+            f << "{\n  \"schemaVersion\": 1,\n  \"name\": \"" << sp.name
+              << "\",\n  \"fps\": 12,\n  \"loop\": false,\n  \"frames\": [\n"
+              << "    { \"sheet\": \"" << sp.sheet << "\", \"cell\": " << sp.c0 << " },\n"
+              << "    { \"sheet\": \"" << sp.sheet << "\", \"cell\": " << sp.c1 << " }\n"
+              << "  ]\n}\n";
+        }
+        std::ofstream m(assetsDir / (std::string(sp.file) + ".meta"), std::ios::trunc);
+        m << "{\n  \"guid\": \"" << AssetDatabase::GuidToHex(sp.guid)
+          << "\",\n  \"type\": \"clip\",\n  \"hash\": 0,\n  \"importedAt\": 0\n}\n";
+    }
+}
 
 /// 程序化小图（16×16：宝石/直射弹/穿透弹/环绕刃）+ 固定 guid meta
 void WriteProceduralAssets(const std::filesystem::path& assets) {
@@ -404,7 +453,8 @@ using Lemon;
 using Lemon.Interop;
 
 /// <summary>战斗（M6a 批⓪ T4 拆分）：击杀/宝石掉落 + 环绕刃自愈 + 升级三选一
-///（固定序轮换，零 RNG）+ 死亡结算/复活（死亡对话框点击）。一局共享态写
+///（固定序轮换，零 RNG）+ 死亡结算/复活（死亡对话框点击）+ 受击表现（批①：
+/// Anim 受击段 Play+Queue 回行走 + Fx 飘字/世界血条）。一局共享态写
 /// GameMain.Run（HUD 读）。</summary>
 public sealed class PlayerCombat : LemonBehaviour
 {
@@ -412,6 +462,10 @@ public sealed class PlayerCombat : LemonBehaviour
     private const string kGemPrefab = "7e57100000000005";
     private const string kBladePrefab = "7e57100000000006";
     private const uint kPiercePrefabLow = 0x00000004; // PierceBullet.prefab 低 32 位
+
+    // 批①受击段 clip（Anim.ClipId = GUID 低 32 位自算；Assets/monster-hit.clip）
+    private static readonly uint kMobWalk = Anim.ClipId("5bd31a7c20000002");
+    private static readonly uint kMobHit = Anim.ClipId("5bd31a7c20000004");
 
     private static readonly string[] kOptions = {
         "移速 +10%", "磁力 +25%", "射速 +15%", "穿透弹", "生命上限 +25", "环绕之刃 +1",
@@ -432,6 +486,26 @@ public sealed class PlayerCombat : LemonBehaviour
             if (m.Src.Id == gameObject.Entity.Id) ++_pendingLevels;
         });
         Subscribe(GameEvent.Death, OnDeath);
+        // 批①受击表现：怪受击 = 受击段（Play+Queue 播完回行走）+ 伤害飘字 + 世界
+        // 血条；玩家受击 = 世界血条刷新（常显——每击续命，HUD 文字条仍是权威）
+        Subscribe(GameEvent.Hit, OnHit);
+    }
+
+    private void OnHit(GameEventMsg m)
+    {
+        var victim = GameObject.From(m.Dst);
+        if (!victim.Alive || !victim.TryGetComponent<Meta>(out var meta)) return;
+        if (meta.Team == 1) { // 怪受击
+            Anim.Play(victim, kMobHit, false); // 受击段立即打断
+            Anim.Queue(victim, kMobWalk);      // 播完（0.1667s）自动回行走
+            if (victim.TryGetComponent<Transform2D>(out var tf))
+                Fx.Text(m.P0, new Vec2(tf.Pos.X - 4f, tf.Pos.Y - 10f), 0xFF5060F0u); // 暖红（RGBA）
+            if (victim.TryGetComponent<Health>(out var hp))
+                Fx.Bar(victim, hp.Cur / hp.Max, 0xFF30B0F0u, 24f);
+        } else if (m.Dst.Id == gameObject.Entity.Id) { // 玩家受击
+            if (gameObject.TryGetComponent<Health>(out var hp))
+                Fx.Bar(gameObject, hp.Cur / hp.Max, 0xFF60D060u, 32f);
+        }
     }
 
     private void OnDeath(GameEventMsg m)
@@ -825,6 +899,7 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
                           "hero-walk.clip", "hero-walk.clip.meta",
                           "monster-walk.clip", "monster-walk.clip.meta"})
         fs::copy(yamiSrc / f, root / "Assets" / f, fs::copy_options::overwrite_existing, ec);
+    WriteHitClips(root / "Assets"); // 批①受击段（模板自带，PlayerCombat 受击切段用）
 
     // 2) 程序化小图 + Game/ 脚本工程 + prefab 占位（固定 guid meta 先行——
     //    OpenProject 扫描按 meta 记账，之后覆写 .prefab 内容 guid 不动）
@@ -1019,6 +1094,8 @@ int g_tplWaveStarts = 0, g_tplLevelUps = 0, g_tplDeaths = 0;
 int g_tplGems = 0, g_tplMobs = 0; // 峰值快照（帧内采样）
 char g_tplHudRows[64] = "";
 bool g_tplHudOk = false, g_tplBestLoaded = false, g_tplWaveRow = false;
+// M6a 批①：受击切段链（怪 clipId 曾 = monster-hit 段）+ fx 通道（飘字/血条在场）
+bool g_tplMobHitClip = false, g_tplFxText = false, g_tplFxBar = false;
 bool g_tplCardsSeen = false, g_tplPicked = false, g_tplCardsHidden = false;
 bool g_tplDeathSeen = false, g_tplRevived = false, g_tplScriptOk = true; // 批④后修④死亡链
 bool g_tplDeathArmed = false; // 压血一shot（站桩下自动炮火清怪快于刷怪，磨不死）
@@ -2680,8 +2757,9 @@ int EditorApp::Run(const EditorLaunch& launch) {
         LEMON_ERROR("--smoke-ui 需要 --frames N（N>=160 看门狗）");
         return 2;
     }
-    if (launch.smokeAnim && launch.frames < 60) {
-        LEMON_ERROR("--smoke-anim 需要 --frames N（N>=60：fps10×4 帧周期 24 tick + 预热余量）");
+    if (launch.smokeAnim && launch.frames < 120) {
+        LEMON_ERROR("--smoke-anim 需要 --frames N（N>=120：帧映射 24 tick + 批① 切段链"
+                    "（frame 60 起 + hit 段 10 tick 回切）+ fx 余量）");
         return 2;
     }
     if (launch.benchSurvivor && launch.frames < 600) {
@@ -2763,6 +2841,9 @@ int EditorApp::Run(const EditorLaunch& launch) {
     // M5 批③ smoke-anim 证据（帧循环内累积：单帧采样会踩回绕 0）
     uint16_t smokeAnimMax[2] = {0, 0};    // [0] 程序表 / [1] yami 表：见过的最大 curFrame
     bool smokeAnimSlice[2] = {false, false}; // sr.spriteId 曾落入对应切片连号区间
+    // M6a 批①：切段链（frame 60 直写 Play(hit)+Queue(walk) → hit 段在场 → 收尾回 walk）
+    // + fx 通道（frame 30 写飘字/血条 → 通道计数）；GameView 渲染不属断言依赖
+    bool smokeQueueHit = false, smokeQueueBack = false, smokeFxSeen = false;
     while (running) {
         const auto benchT0 = std::chrono::steady_clock::now();
         using BenchClock = std::chrono::steady_clock;
@@ -3683,10 +3764,36 @@ int EditorApp::Run(const EditorLaunch& launch) {
             const AssetEntry* sh[2] = {ctx_.Assets().FindByGuid(kAnimSheetGuid),
                                        ctx_.Assets().FindByGuid(kYamiHeroSheetGuid)};
             ecs::Scene& ps = ctx_.ActiveScene();
+            // M6a 批① fx 通道注入（frame 30 一次）：飘字 + 血条（渲染链不属断言依赖，
+            // 断言 = 通道计数与内容——Simulate/产包数学在 engine-tests 覆盖）
+            if (frame == 30) {
+                ecs::FxChannel& fx = ctx_.ActiveWorld().Fx();
+                fx.PopupText("12", 640.0f, 540.0f, 0xFF5060F0u);
+                ps.View<ecs::Animator2D>().each([&](auto ent, ecs::Animator2D& a) {
+                    if (a.clipId == (uint32_t)kAnimClipGuid)
+                        fx.Bar(ecs::Scene::FromEntt(ent).id, 0.5f);
+                });
+            }
+            // M6a 批①切段链（frame 60 一次）：受击组合拳字段等价写（= Anim.Play(hit,
+            // loop:false) + Anim.Queue(walk)；冒烟侧无脚本——编辑器域直写 play 场景）
+            if (frame == 60) {
+                ps.View<ecs::Animator2D>().each([&](auto ent, ecs::Animator2D& a) {
+                    if (a.clipId != (uint32_t)kAnimClipGuid) return;
+                    a.clipId = (uint32_t)kAnimHitClipGuid;
+                    a.loop = 0;
+                    a.time = 0.0f;
+                    a.playOnStart = 1;
+                    a.nextClipId = (uint32_t)kAnimClipGuid;
+                    a.nextLoop = 1;
+                    a.fadeRemain = -1.0f;
+                });
+            }
             ps.View<ecs::Animator2D>().each([&](auto ent, ecs::Animator2D& a) {
                 const int slot = a.clipId == (uint32_t)kAnimClipGuid      ? 0
                                  : a.clipId == (uint32_t)kYamiHeroClipGuid ? 1
                                                                            : -1;
+                if (slot == 0 && smokeQueueHit) smokeQueueBack = true; // hit 后回 walk
+                if (a.clipId == (uint32_t)kAnimHitClipGuid) smokeQueueHit = true;
                 if (slot < 0) return;
                 if (a.curFrame > smokeAnimMax[slot]) smokeAnimMax[slot] = a.curFrame;
                 if (const ecs::SpriteRenderer* sr =
@@ -3697,6 +3804,11 @@ int EditorApp::Run(const EditorLaunch& launch) {
                         smokeAnimSlice[slot] = true;
                 }
             });
+            if (!smokeFxSeen && frame > 30) {
+                const ecs::FxChannel& fx = ctx_.ActiveWorld().Fx();
+                smokeFxSeen = fx.TextCount() == 1 && fx.BarCount() >= 1 &&
+                              std::strcmp(fx.TextAt(0).text, "12") == 0;
+            }
         }
         // M5 批④ smoke-template 证据采样：HUD 四要素行齐 / 存档载入（best=123 回显）/
         // 波次行 / 三选一卡片链（出现 → 注入选择（模拟数字键 1）→ 消费后隐藏）
@@ -3713,6 +3825,18 @@ int EditorApp::Run(const EditorLaunch& launch) {
                     }
             if (has[0] && has[1] && has[2] && has[3]) g_tplHudOk = true;
             if (has[5]) g_tplWaveRow = true;
+            // M6a 批①：受击切段 + fx 通道采样（PlayerCombat.OnHit 写——脚本面端到端）
+            if (!g_tplMobHitClip) {
+                ctx_.ActiveScene().View<ecs::Animator2D>().each([&](auto, ecs::Animator2D& a) {
+                    if (a.clipId == (uint32_t)vs_template::kMonsterHitClip)
+                        g_tplMobHitClip = true;
+                });
+            }
+            if (!g_tplFxText || !g_tplFxBar) {
+                const lemon::ecs::FxChannel& fx = ctx_.ActiveWorld().Fx();
+                if (fx.TextCount() > 0) g_tplFxText = true;
+                if (fx.BarCount() > 0) g_tplFxBar = true;
+            }
             lemon::ecs::RtUiCards& cards = ctx_.ActiveWorld().Cards();
             if (cards.active) {
                 g_tplCardsSeen = true;
@@ -3771,6 +3895,23 @@ int EditorApp::Run(const EditorLaunch& launch) {
                                std::chrono::steady_clock::now() - tColdStart)
                                .count();
         if (launch.benchSurvivor && ctx_.Playing() && frame >= kBenchWarmup) {
+            // M6a 批①：fx 饱和灌入（验收④口径 = 池满最坏情形：256 飘字 + 128 血条
+            // 每帧全量在场）。飘字确定性网格撒玩家周边（渲染视口内）；血条挂前 128
+            // 只动画怪（each 早退收集；怪被击杀 = 渲染侧 resolve 跳过、槽位 sticky
+            // 到期次帧收集补位——计数恒 128）
+            {
+                ecs::FxChannel& fx = ctx_.ActiveWorld().Fx();
+                for (uint32_t i = 0; i < ecs::FxChannel::kMaxTexts; ++i)
+                    fx.PopupText("12", -300.0f + (float)(i % 16) * 40.0f,
+                                 -300.0f + (float)(i / 16) * 40.0f, 0xFF5060F0u);
+                uint32_t bars = 0;
+                ctx_.ActiveScene().View<ecs::Animator2D>().each(
+                    [&](auto ent, ecs::Animator2D&) {
+                        if (bars >= ecs::FxChannel::kMaxBars) return;
+                        fx.Bar(ecs::Scene::FromEntt(ent).id, 0.5f, 0xFF30B0F0u, 32.0f);
+                        ++bars;
+                    });
+            }
             const auto segMs = [](BenchClock::time_point a, BenchClock::time_point b) {
                 return std::chrono::duration<double, std::milli>(b - a).count();
             };
@@ -3818,6 +3959,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
     uint32_t playAliveAtStop = 0;
     uint32_t benchTeam1Alive = 0, benchWavesStarted = 0;
     uint32_t benchAnimHit = 0, benchAnimTotal = 0;
+    uint32_t benchFxTexts = 0, benchFxBars = 0; // 批① fx 饱和证据（停跑时通道计数）
     float benchPlayerHp = -1.0f; // Hazard 化证据（方案 A 批）：玩家（收集者）掉血 =
                                  // 万怪 Hazard tick 真实发生（<1e6 即证）
     if (launch.benchSurvivor && ctx_.Playing()) {
@@ -3834,6 +3976,9 @@ int EditorApp::Run(const EditorLaunch& launch) {
         });
         ctx_.ActiveScene().View<ecs::WaveDirector>().each(
             [&](auto, ecs::WaveDirector& w) { benchWavesStarted += w.waveIndex; });
+        // 批① fx 饱和证据：停跑时通道计数（帧循环每帧灌满 → 期望 = 池容量）
+        benchFxTexts = ctx_.ActiveWorld().Fx().TextCount();
+        benchFxBars = ctx_.ActiveWorld().Fx().BarCount();
         // 动画化证据（M5 批③）：Animator2D 实体总数 + spriteId 落切片连号区间数
         // （帧映射每 tick 无条件写 → 命中 = 表达 + 切片解析全通；全数应命中）
         const AssetEntry* sh = ctx_.Assets().FindByGuid(kAnimSheetGuid);
@@ -3886,8 +4031,12 @@ int EditorApp::Run(const EditorLaunch& launch) {
         const bool animOk = benchAnimTotal >= 10000 && benchAnimHit == benchAnimTotal;
         // Hazard 化批（2026-09-24 方案 A）：玩家掉血 = Hazard tick 进压测口径
         const bool hazardOk = benchPlayerHp >= 0.0f && benchPlayerHp < 1'000'000.0f;
-        const bool pass =
-            aliveOk && avg > 0.0 && avg <= 1000.0 / 45.0 && directorOk && animOk && hazardOk;
+        // fx 批（M6a 批① 验收④）：飘字/血条开启（池满饱和渲染）——≥45fps 门槛不动的
+        // 前提下通道饱和在场 = 表现层成本进压测口径
+        const bool fxOk = benchFxTexts == ecs::FxChannel::kMaxTexts &&
+                          benchFxBars == ecs::FxChannel::kMaxBars;
+        const bool pass = aliveOk && avg > 0.0 && avg <= 1000.0 / 45.0 && directorOk &&
+                          animOk && hazardOk && fxOk;
         const double segN = benchFrameN ? (double)benchFrameN : 1.0;
         std::printf("[bench-survivor] 分段avg ms: pump=%.2f sim=%.2f glue=%.2f ui=%.2f "
                     "acquire=%.2f scene=%.2f uidraw=%.2f present=%.2f | segSum=%.2f\n",
@@ -3901,11 +4050,13 @@ int EditorApp::Run(const EditorLaunch& launch) {
                     "frameAvg=%.2fms frameMax=%.2fms fps=%.0f present=IMMEDIATE(请求)"
                     " director(waves=%u teamAlive=%u/闸8000) anim(%u/%u 切片命中)"
                     " hazard(playerHp=%.0f<1e6 掉血实证)"
+                    " fx(texts=%u bars=%u 饱和)"
                     " => %s\n",
                     (unsigned)frame, (unsigned)kBenchWarmup, playAliveAtStop,
                     benchSimSum / segN, avg,
                     benchFrameMax, fps, benchWavesStarted, benchTeam1Alive,
                     benchAnimHit, benchAnimTotal, benchPlayerHp,
+                    benchFxTexts, benchFxBars,
                     pass ? "PASS" : "FAIL");
         // 性能批②①：sim 系统级分解（测量窗口 = 预热后 ZeroProfiles 起；avg=totalMs/runs）
         {
@@ -4053,10 +4204,13 @@ int EditorApp::Run(const EditorLaunch& launch) {
         }
         // M5 批③动画链验收：切片记账 + clip 建表 + 帧映射推进 + spriteId 落切片区间。
         // 程序化 4 帧表必验；yami hero-walk 素材在场（Samples 拷入项目）即连带验真链。
+        // M6a 批①扩：切段链（Play(hit)+Queue(walk) → hit 在场 → 收尾回 walk）+ fx 通道。
         if (launch.smokeAnim) {
             const AssetEntry* sh = ctx_.Assets().FindByGuid(kAnimSheetGuid);
             const AssetEntry* ysh = ctx_.Assets().FindByGuid(kYamiHeroSheetGuid);
+            const AssetEntry* hcl = ctx_.Assets().FindByGuid(kAnimHitClipGuid);
             const bool booked = sh && sh->Sliced() && sh->sliceCount == 4;
+            const bool hitBooked = hcl && !hcl->missing;
             bool animOk = booked && smokeAnimMax[0] > 0 && smokeAnimSlice[0];
             char yami[96] = "";
             if (ysh && !ysh->missing && ysh->Sliced()) {
@@ -4066,9 +4220,14 @@ int EditorApp::Run(const EditorLaunch& launch) {
                               (unsigned)smokeAnimMax[1], smokeAnimSlice[1] ? "YES" : "NO",
                               ysh->sliceCount);
             }
-            std::printf("[lemon] smoke-anim: prog(maxFrame=%u slice=%s booked=%u)%s => %s\n",
+            const bool queueOk = hitBooked && smokeQueueHit && smokeQueueBack;
+            animOk = animOk && queueOk && smokeFxSeen;
+            std::printf("[lemon] smoke-anim: prog(maxFrame=%u slice=%s booked=%u)%s "
+                        "queue(hitClip=%s hit=%s back=%s) fx(text/bar=%s) => %s\n",
                         (unsigned)smokeAnimMax[0], smokeAnimSlice[0] ? "YES" : "NO",
-                        sh ? sh->sliceCount : 0, yami, animOk ? "OK" : "FAIL");
+                        sh ? sh->sliceCount : 0, yami, hitBooked ? "booked" : "MISSING",
+                        smokeQueueHit ? "YES" : "NO", smokeQueueBack ? "YES" : "NO",
+                        smokeFxSeen ? "YES" : "NO", animOk ? "OK" : "FAIL");
             if (!animOk) exitCode = 1;
         }
         // M5 批④模板链验收：向导复制 → build → Play 全链在跑（能到这 = 前两环已过）；
@@ -4077,16 +4236,20 @@ int EditorApp::Run(const EditorLaunch& launch) {
             const bool tplOk = g_tplHudOk && g_tplBestLoaded && g_tplWaveRow &&
                                g_tplDeaths > 0 && g_tplLevelUps > 0 && g_tplCardsSeen &&
                                g_tplPicked && g_tplCardsHidden && g_tplDeathSeen &&
-                               g_tplRevived && g_tplScriptOk;
+                               g_tplRevived && g_tplScriptOk &&
+                               g_tplMobHitClip && g_tplFxText && g_tplFxBar; // 批①
             std::printf("[lemon] smoke-template: hud=%s saveLoad=%s wave(row=%s n=%d) "
                         "kills=%d levelUps=%d cards(seen=%s pick=%s hidden=%s) "
-                        "death(seen=%s revive=%s scriptOk=%s) => %s\n",
+                        "death(seen=%s revive=%s scriptOk=%s) "
+                        "hitClip=%s fx(text=%s bar=%s) => %s\n",
                         g_tplHudOk ? "YES" : "NO", g_tplBestLoaded ? "YES" : "NO",
                         g_tplWaveRow ? "YES" : "NO", g_tplWaveStarts, g_tplDeaths,
                         g_tplLevelUps, g_tplCardsSeen ? "YES" : "NO",
                         g_tplPicked ? "YES" : "NO", g_tplCardsHidden ? "YES" : "NO",
                         g_tplDeathSeen ? "YES" : "NO", g_tplRevived ? "YES" : "NO",
-                        g_tplScriptOk ? "YES" : "NO", tplOk ? "OK" : "FAIL");
+                        g_tplScriptOk ? "YES" : "NO", g_tplMobHitClip ? "YES" : "NO",
+                        g_tplFxText ? "YES" : "NO", g_tplFxBar ? "YES" : "NO",
+                        tplOk ? "OK" : "FAIL");
             std::printf("[lemon] smoke-template: diag %s gems(peak)=%d mobs(peak)=%d\n",
                         g_tplHudRows, g_tplGems, g_tplMobs);
             if (!tplOk) exitCode = 1;

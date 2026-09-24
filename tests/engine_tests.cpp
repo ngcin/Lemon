@@ -2706,6 +2706,265 @@ void TestVerifyAnimatorFrameMapping() {
     Expect(ha == hb, "clip anim twin worlds: identical state hash");
 }
 
+// ---- 批①：Animator 换段队列（Queue 收尾/回绕点、CrossFade 倒计/提前收尾、
+// 暂停冻结、Play 清队列、目标未命中丢弃、M2 旁路、孪生哈希）----
+void TestVerifyAnimatorQueue() {
+    const float dt = 1.0f / 60.0f;
+    World w;
+    w.InstallDefaultSystems();
+    Scene& s = w.CreateScene("queue");
+    w.SetActiveScene(&s);
+    // 0x77：fps8×3 帧（10/11/12），周期 22.5 tick；0x88：fps8×2 帧（20/21）；
+    // 0x99：fps4×2 帧（30/31）
+    w.Clips().Add(0x77u, {10u, 11u, 12u}, 8.0f, true);
+    w.Clips().Add(0x88u, {20u, 21u}, 8.0f, true);
+    w.Clips().Add(0x99u, {30u, 31u}, 4.0f, true);
+
+    // ① Queue：非 loop 段收尾即切（tick 23 time 钳 total → 切，新段首帧当帧生效）
+    Entity q1 = s.Create();
+    SpriteRenderer& sr1 = s.Emplace<SpriteRenderer>(q1);
+    Animator2D& a1 = s.Emplace<Animator2D>(q1);
+    a1.clipId = 0x77u;
+    a1.loop = 0;
+    a1.nextClipId = 0x88u;
+    a1.nextLoop = 1;
+    a1.fadeRemain = -1.0f;
+    for (int i = 0; i < 23; ++i) w.Step(dt);
+    Expect(a1.clipId == 0x88u && a1.time == 0.0f && a1.loop == 1 &&
+               a1.curFrame == 0 && sr1.spriteId == 20u && a1.nextClipId == 0 &&
+               a1.fadeRemain == 0.0f,
+           "queue: non-loop end switches to next clip frame 0");
+
+    // ② Queue：loop 段回绕点切（tick 23 回绕瞬间切段 + nextLoop=0 生效）
+    Entity q2 = s.Create();
+    Animator2D& a2 = s.Emplace<Animator2D>(q2);
+    a2.clipId = 0x77u;
+    a2.nextClipId = 0x88u;
+    a2.nextLoop = 0;
+    a2.fadeRemain = -1.0f;
+    for (int i = 0; i < 23; ++i) w.Step(dt);
+    Expect(a2.clipId == 0x88u && a2.time == 0.0f && a2.loop == 0,
+           "queue: loop wrap point switches");
+
+    // ③ CrossFade：倒计时到零切（fade=5.5 tick：第 5 tick 未切、第 6 tick 切——
+    //    半 tick 余量避开浮点累积误差踩线）
+    Entity q3 = s.Create();
+    SpriteRenderer& sr3 = s.Emplace<SpriteRenderer>(q3);
+    Animator2D& a3 = s.Emplace<Animator2D>(q3);
+    a3.clipId = 0x77u;
+    a3.nextClipId = 0x88u;
+    a3.fadeRemain = 5.5f * dt;
+    for (int i = 0; i < 5; ++i) w.Step(dt);
+    const bool stillOld = a3.clipId == 0x77u && a3.curFrame == 0; // 未到 7.5 tick 帧界
+    for (int i = 0; i < 1; ++i) w.Step(dt);
+    Expect(stillOld && a3.clipId == 0x88u && sr3.spriteId == 20u,
+           "crossfade: countdown expiry switches (5 no, 6 yes)");
+
+    // ④ CrossFade：非 loop 当前段提前收尾即切（fade 再长也不等）
+    Entity q4 = s.Create();
+    Animator2D& a4 = s.Emplace<Animator2D>(q4);
+    a4.clipId = 0x77u;
+    a4.loop = 0;
+    for (int i = 0; i < 22; ++i) w.Step(dt); // time 0.3667（一 tick 后收尾）
+    a4.nextClipId = 0x88u;
+    a4.fadeRemain = 60.0f * dt; // 1 秒长淡入——收尾必须抢先
+    w.Step(dt);
+    Expect(a4.clipId == 0x88u && a4.time == 0.0f,
+           "crossfade: non-loop early end overrides long fade");
+
+    // ⑤ 暂停冻结整个队列（time/倒计/切点三冻；恢复后倒计继续；半 tick 余量同③）
+    Entity q5 = s.Create();
+    Animator2D& a5 = s.Emplace<Animator2D>(q5);
+    a5.clipId = 0x77u;
+    a5.playOnStart = 0;
+    a5.nextClipId = 0x88u;
+    a5.fadeRemain = 3.5f * dt;
+    for (int i = 0; i < 10; ++i) w.Step(dt);
+    const bool frozen = a5.time == 0.0f && a5.nextClipId == 0x88u &&
+                        a5.fadeRemain == 3.5f * dt && a5.clipId == 0x77u;
+    a5.playOnStart = 1;
+    for (int i = 0; i < 3; ++i) w.Step(dt); // 倒计 0.5dt 余量未到
+    const bool stillQueued = a5.clipId == 0x77u && a5.nextClipId == 0x88u;
+    w.Step(dt);
+    Expect(frozen && stillQueued && a5.clipId == 0x88u,
+           "pause freezes queue; resume continues countdown");
+
+    // ⑥ Play 清在途队列（SDK Play 等价字段写：打断一切在途切换）
+    Entity q6 = s.Create();
+    Animator2D& a6 = s.Emplace<Animator2D>(q6);
+    a6.clipId = 0x77u;
+    a6.nextClipId = 0x88u;
+    a6.fadeRemain = -1.0f;
+    // Play(0x99, loop=true)：切段 + 清队列 + 归零
+    a6.clipId = 0x99u;
+    a6.time = 0.0f;
+    a6.playOnStart = 1;
+    a6.nextClipId = 0;
+    a6.fadeRemain = 0.0f;
+    for (int i = 0; i < 5; ++i) w.Step(dt);
+    Expect(a6.clipId == 0x99u && a6.time > 0.0f && a6.nextClipId == 0,
+           "play clears pending queue and restarts");
+
+    // ⑦ 队列目标未命中 clip 表 = 丢队列（当前段帧映射不受扰）
+    Entity q7 = s.Create();
+    SpriteRenderer& sr7 = s.Emplace<SpriteRenderer>(q7);
+    Animator2D& a7 = s.Emplace<Animator2D>(q7);
+    a7.clipId = 0x77u;
+    a7.nextClipId = 0x999u; // 未登记
+    a7.fadeRemain = 1.0f * dt;
+    for (int i = 0; i < 10; ++i) w.Step(dt);
+    Expect(a7.nextClipId == 0 && a7.clipId == 0x77u && a7.curFrame == 1 &&
+               sr7.spriteId == 11u,
+           "queue: unknown target dropped, current clip unaffected");
+
+    // ⑧ 无 clip 表：队列整体旁路——M2 逐位不变 + 队列字段原样保留
+    {
+        World w2;
+        w2.InstallDefaultSystems();
+        Scene& s2 = w2.CreateScene("m2queue");
+        w2.SetActiveScene(&s2);
+        Entity e1 = s2.Create();
+        Animator2D& b1 = s2.Emplace<Animator2D>(e1);
+        b1.clipId = 0x77u; // 表空 → M2 路径
+        b1.nextClipId = 0x88u;
+        b1.fadeRemain = -1.0f;
+        Entity e2 = s2.Create();
+        Animator2D& b2 = s2.Emplace<Animator2D>(e2);
+        b2.clipId = 0x77u;
+        for (int i = 0; i < 120; ++i) w2.Step(dt);
+        Expect(b1.time >= 0.0f && b1.time < 1.0f && b2.time == b1.time &&
+                   b1.nextClipId == 0x88u && b1.fadeRemain == -1.0f,
+               "queue: empty clip table bypasses queue (M2 bit-identical)");
+    }
+
+    // ⑨ 孪生世界：队列演化确定性（含运行中段切换指令——两侧同码执行）
+    auto run = [](uint64_t& hashOut) {
+        World world;
+        world.InstallDefaultSystems();
+        Scene& sc = world.CreateScene("detq");
+        world.SetActiveScene(&sc);
+        world.Clips().Add(0x77u, {10u, 11u, 12u}, 8.0f, true);
+        world.Clips().Add(0x88u, {20u, 21u}, 8.0f, true);
+        Entity victim = sc.Create();
+        sc.Emplace<SpriteRenderer>(victim);
+        Animator2D& v = sc.Emplace<Animator2D>(victim);
+        v.clipId = 0x77u;
+        Entity fader = sc.Create();
+        Animator2D& f = sc.Emplace<Animator2D>(fader);
+        f.clipId = 0x88u;
+        f.loop = 0;
+        for (int i = 0; i < 300; ++i) {
+            if (i == 30) { // 受击组合拳：Play(hit) + Queue(walk)
+                v.loop = 0;
+                v.time = 0.0f;
+                v.nextClipId = 0x88u;
+                v.nextLoop = 1;
+                v.fadeRemain = -1.0f;
+            }
+            if (i == 100) f.nextClipId = 0x77u, f.nextLoop = 1, f.fadeRemain = 0.05f;
+            world.Step(1.0f / 60.0f);
+        }
+        hashOut = ComputeStateHash(sc);
+    };
+    uint64_t qa = 0, qb = 0;
+    run(qa);
+    run(qb);
+    Expect(qa == qb, "anim queue twin worlds: identical state hash");
+}
+
+// ---- 批①：FxChannel（飘字池淘汰/上浮淡出、血条覆写/sticky、产包数学）----
+void TestVerifyFxChannel() {
+    // ① 飘字环形池：满 256 后最老者淘汰（第 257 条覆写第 1 条槽位）
+    {
+        FxChannel fx;
+        char buf[8];
+        for (int i = 0; i < 257; ++i) {
+            std::snprintf(buf, sizeof(buf), "%d", i);
+            fx.PopupText(buf, (float)i, 0.0f);
+        }
+        Expect(fx.TextCount() == 256, "fx: text pool capped at 256");
+        Expect(std::string(fx.TextAt(0).text) == "1" && std::string(fx.TextAt(255).text) == "256",
+               "fx: oldest text evicted, order preserved");
+        // 长文本 16 字符截断
+        fx.PopupText("01234567890123456789", 0, 0);
+        Expect(std::string(fx.TextAt(255).text) == "012345678901234",
+               "fx: text truncated to 15 chars");
+    }
+    // ② Simulate：上浮（前 70% 匀升）/淡出（末 30%）/到期回收
+    {
+        FxChannel fx;
+        fx.PopupText("12", 100.0f, 50.0f);
+        fx.Simulate(0.4f);
+        const FxText& t = fx.TextAt(0);
+        const float riseMid = fx.TextRise(t), alphaMid = fx.TextAlpha(t);
+        fx.Simulate(0.36f); // age 0.76（末 30% 窗内）
+        const float riseLate = fx.TextRise(t), alphaLate = fx.TextAlpha(t);
+        Expect(riseMid > 0.0f && riseMid < FxChannel::kTextRise && alphaMid == 1.0f &&
+                   riseLate == FxChannel::kTextRise && alphaLate < 1.0f && alphaLate > 0.0f,
+               "fx: rise ramps then holds; alpha fades in last 30%");
+        fx.Simulate(0.05f); // age 0.81 ≥ life 0.8 → 回收
+        Expect(fx.TextCount() == 0, "fx: expired text recycled");
+    }
+    // ③ 血条键控覆写刷新（age 归零续命）；④ sticky 过期释放
+    {
+        FxChannel fx;
+        fx.Bar(0xAAu, 0.5f);
+        fx.Simulate(1.0f);
+        fx.Bar(0xAAu, 0.8f, 0xFF00FF00u, 48.0f);
+        const FxBar* b = nullptr;
+        for (const FxBar& s : fx.Bars())
+            if (s.entity == 0xAAu) b = &s;
+        Expect(fx.BarCount() == 1 && b && b->age == 0.0f && b->frac == 0.8f &&
+                   b->width == 48.0f && b->color == 0xFF00FF00u,
+               "fx: bar refresh resets age and updates fields");
+        fx.Simulate(FxChannel::kBarSticky + 0.01f);
+        Expect(fx.BarCount() == 0, "fx: bar expires after sticky window");
+    }
+    // ⑤ 血条槽满淘汰最旧（129 实体 → age 最大者让位）
+    {
+        FxChannel fx;
+        for (uint64_t e = 1; e <= 128; ++e) fx.Bar(e, 0.5f);
+        fx.Simulate(1.0f);
+        fx.Bar(0xE1u, 0.1f); // 全满 → 淘汰 age 最大（= entity 1，最先入）
+        bool hasNew = false, evictedOld = true;
+        for (const FxBar& s : fx.Bars()) {
+            if (s.entity == 0xE1u) hasNew = true;
+            if (s.entity == 1u) evictedOld = false;
+        }
+        Expect(fx.BarCount() == 128 && hasNew && evictedOld,
+               "fx: full bar pool evicts least-recently-refreshed");
+    }
+    // ⑥ ExtractBarQuads 数学：bg 整宽居中 + fg 比例宽左锚 + 悬空跳过 + 视口剔除
+    {
+        FxChannel fx;
+        fx.Bar(0x100u, 0.5f, 0xFF30B0F0u, 32.0f); // 在视野内
+        fx.Bar(0x101u, 1.0f, 0xFF30B0F0u, 32.0f); // 视野外（右侧远处）
+        fx.Bar(0x102u, 1.0f, 0xFF30B0F0u, 32.0f); // 悬空实体（resolve false）
+        auto resolve = [](uint64_t e, Vec2& out) {
+            if (e == 0x100u) {
+                out = {0.0f, 0.0f};
+                return true;
+            }
+            if (e == 0x101u) {
+                out = {5000.0f, 0.0f};
+                return true;
+            }
+            return false; // 0x102 悬空
+        };
+        FxQuad q[8];
+        const uint32_t n = fx.ExtractBarQuads(q, 8, resolve,
+                                              Rect{Vec2{-320, -180}, Vec2{320, 180}});
+        Expect(n == 2, "fx: quads = 2 (viewport + dangling filtered)");
+        const FxQuad& bg = q[0];
+        const FxQuad& fg = q[1];
+        Expect(bg.size.x == 32.0f && bg.size.y == FxChannel::kBarHeight &&
+                   bg.color == FxChannel::kBarBgColor && bg.center.x == 0.0f,
+               "fx: bg quad full width centered");
+        Expect(fg.size.x == 16.0f && fg.center.x == -8.0f && fg.color == 0xFF30B0F0u,
+               "fx: fg quad proportional width left-anchored");
+    }
+}
+
 // ---- Stat：到期压缩保序 + xpToNext=0 终止性 ----
 void TestVerifyStatEffectsAndXp() {
     World w;
@@ -4102,6 +4361,8 @@ int main() {
     TestVerifyFleeAndPatrol();
     TestVerifyAnimatorAdvance();
     TestVerifyAnimatorFrameMapping();
+    TestVerifyAnimatorQueue();
+    TestVerifyFxChannel();
     TestVerifyStatEffectsAndXp();
     TestVerifyMovementKnockbackAndClamp();
     TestVerifyProjectileLifetime();

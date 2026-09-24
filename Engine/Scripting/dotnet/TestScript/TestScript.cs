@@ -34,6 +34,8 @@ public static class GameMain
         Lemon.Behaviours.Register<CppDestroyProbeBehaviour>();
         // M6a 批⓪ T3：GameObject 统一门面双路由（typeId 10，表尾注册同上约定）
         Lemon.Behaviours.Register<DualRouteProbeBehaviour>();
+        // M6a 批①：Anim 状态控制 + Fx 通道（typeId 11，表尾注册同上约定）
+        Lemon.Behaviours.Register<AnimFxProbeBehaviour>();
     }
 }
 
@@ -330,4 +332,43 @@ public sealed class DualRouteProbeBehaviour : Lemon.LemonBehaviour
 
     protected override void OnDestroy()
         => Lemon.Events.Push(Lemon.Interop.GameEvent.Custom, 1544, default, default);
+}
+
+/// <summary>M6a 批①：Lemon.Anim 状态控制 + Lemon.Fx 通道验收（typeId 11 表尾）。
+/// C++ 侧（TestAnimFxSdk）：管线不含 AnimatorSystem——本测断言 SDK 字段契约
+/// （写什么落什么，帧间无引擎消费扰动）；队列消费语义由 engine-tests
+/// TestVerifyAnimatorQueue（全管线）覆盖。帧序（Custom user 编码）：
+/// 帧1 Play(hit,loop:false)+Queue(walk) → 1100；帧2 Pause → 1200；
+/// 帧3 Resume + Fx.Text/Fx.Bar → 1300；帧4 CrossFade(walk,0.5) → 1400；
+/// 帧5 IsPlaying/Queued 轮询 → 1511 后自毁。</summary>
+public sealed class AnimFxProbeBehaviour : Lemon.LemonBehaviour
+{
+    private const uint kWalk = 0x77, kHit = 0x88;
+
+    protected override void Update()
+    {
+        var fc = Lemon.Time.FrameCount;
+        if (fc == 1) {
+            Lemon.Anim.Play(gameObject, kHit, false);
+            Lemon.Anim.Queue(gameObject, kWalk, true);
+            Lemon.Events.Push(Lemon.Interop.GameEvent.Custom, 1100, default, default);
+        } else if (fc == 2) {
+            Lemon.Anim.Pause(gameObject);
+            Lemon.Events.Push(Lemon.Interop.GameEvent.Custom, 1200, default, default);
+        } else if (fc == 3) {
+            Lemon.Anim.Resume(gameObject);
+            Lemon.Fx.Text("12", new Lemon.Vec2(10f, 20f), 0xFF5060F0u);
+            Lemon.Fx.Bar(gameObject, 0.5f, 0xFF30B0F0u, 40f);
+            Lemon.Events.Push(Lemon.Interop.GameEvent.Custom, 1300, default, default);
+        } else if (fc == 4) {
+            Lemon.Anim.CrossFade(gameObject, kWalk, 0.5f, true);
+            Lemon.Events.Push(Lemon.Interop.GameEvent.Custom, 1400, default, default);
+        } else if (fc == 5) {
+            int code = (Lemon.Anim.IsPlaying(gameObject) ? 1 : 0) * 10
+                     + (Lemon.Anim.Queued(gameObject) ? 1 : 0);
+            Lemon.Events.Push(Lemon.Interop.GameEvent.Custom, (ushort)(1500 + code),
+                              default, default);
+            gameObject.Destroy();
+        }
+    }
 }

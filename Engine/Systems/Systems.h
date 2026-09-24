@@ -161,11 +161,15 @@ public:
 };
 
 /// #13 动画推进（M5 批③：ClipTable 帧映射 → curFrame/spriteId；clipId=0 或
-/// 未命中 = M2 旧路径逐位不变——金档零漂移前提，M5.md §18）
+/// 未命中 = M2 旧路径逐位不变——金档零漂移前提，M5.md §18。M6a 批①：换段队列
+/// Play/Queue/CrossFade——先推进后判定，语义见实现头注）
 class AnimatorSystem final : public ISystem {
 public:
     const char* Name() const override { return "Animator"; }
     void Tick(World& world, Scene& scene, float dt) override;
+
+private:
+    bool warnedQueueMiss_ = false; // 换段目标未命中告警一次（World 级 = 每局一次）
 };
 
 /// #14 投射物回收：寿命/越界 → 销毁队列（并行）

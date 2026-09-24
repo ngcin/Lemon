@@ -212,6 +212,7 @@ public readonly struct Transform               // 视图结构：逐属性访问
 - **脚本结构变更当帧读旧、帧首生效**（M3 落地语义）：Create/Destroy/AddComponent/RemoveComponent 全走命令缓冲，在下一帧 Essential（DestroyCommit 同拍）应用——脚本当帧新建的实体下一帧可见，与两阶段销毁同语义（03 §2）；占位 id（高位标记）仅在本批命令内可解析。**帧边界推论（M6a 批⓪ 门面）**：`AddComponent<LemonBehaviour>` 同帧 `GetComponent` = null（命令未应用）；门面侧幂等 get-or-add 已含待决命令去重（重复调用不双挂）；
 - **同实体同类型脚本唯一**（M6a 批⓪ 决策，与 Unity 相反）：同类型重复挂载在三个入口被拦——Inspector 同名置灰、`AddComponent<LemonBehaviour>` 幂等 get-or-add、`Behaviours.Attach` 红字断言（真泄漏响亮）；格式宽容（scripts[] 可存重复项，加载保序留首见 + 告警）。无每实例参数下重复表达力为零、StateBag 键 `(class, entity)` 会冲突——每实例字段（05 §5）落地时再评估放开；
 - **`RemoveComponent<LemonBehaviour>` = 卸单槽单实例**（op5，M6a 批⓪）：OnDestroy + 实例级订阅退订 + 槽保序移除（区别于实体销毁时按实体清全量）；自卸（`RemoveComponent<自己的类型>`）合法，帧首生效（≈ Unity `Destroy(this)`）；
+- **`Anim.CrossFade(fade)` 无姿态混合**（M6a 批①）：帧动画本质是换帧不是姿态——fade 语义 = 倒计时延迟切段（非 loop 当前段提前收尾立即切），不做双精灵 alpha 混合。`Anim.Play/Queue/Pause/Resume/IsPlaying/Queued` 为静态类方法（非 Unity `GetComponent<Animator>()` 实例面——Animator2D 是数据组件，切段 = 纯字段写零 C ABI）；Queue 是 Lemon 特有（受击段播完自动回行走的标准组合拳）；
 - 脚本异常自动隔离禁用（§7），引擎永不崩。
 
 ### 3.3 Unity → Lemon 移植指南（一页）
@@ -238,6 +239,12 @@ public readonly struct Transform               // 视图结构：逐属性访问
   点击或数字键 1 → `CardPick() == 0`）；同批修复 `CopyUtf8` 无条件回退吃 CJK
   结尾串末字的潜伏 bug（改为仅真截断时回退，孤立前导字节一并去）；**脚本实体
   死亡不被引擎自动销毁**（03 销毁两阶段注记）——复活类逻辑在脚本侧自理。
+  **M6a 批① 追加 2 项**：`fxPopup`（飘字 → World.Fx 飘字池）+ `fxBar`（世界
+  血条 → World.Fx 键控槽；06 §8 恒定原则——恒走 sprite 管线不进 UI 框架）。
+  SDK 新面：`Lemon.Anim`（Play/Queue/CrossFade/Pause/Resume/IsPlaying/Queued/
+  ClipId——纯 Animator2D 字段读写，clipId = clip 资产 GUID 低 32 位客户端自算，
+  换段语义见 03 §8.1）、`Lemon.Fx`（Text 飘字/数字 + Bar 世界血条——呈现层专用
+  不入 StateHash，池化上限飘字 256/血条 128 最老者淘汰）。
   **字符串跨界一律 UTF-8**（SDK `CopyUtf8`：ASCII 快路径零分配 + 多字节不切断——
   批④ 前逐 char 截字节只对 ASCII 正确，中文 HUD 会乱码）。
 

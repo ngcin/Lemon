@@ -58,6 +58,9 @@ struct NativeApiVtable {
     void (*uiCards)(int32_t show, const char* title, const char* a,
                     const char* b, const char* c);                       // 三选一卡片显隐/内容
     int32_t (*uiCardPick)();                                             // 消费式：返回已选索引后置 -1
+    // ---- M6a 批①（世界空间表现通道：飘字/血条 → World.Fx；表尾追加同上约定）----
+    void (*fxPopup)(const char* text, float x, float y, uint32_t color);
+    void (*fxBar)(uint64_t entity, float frac, uint32_t color, float width);
 };
 
 /// 编辑器资产钩子（M4.4：编辑器宿主装配期经 SetEditorAssetHooks 注入；

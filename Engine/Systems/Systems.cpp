@@ -763,6 +763,11 @@ void AnimatorSystem::Tick(World& world, Scene& scene, float dt) {
     // curFrame/sr.spriteId（逐帧重写幂等，无逐帧累加状态机 → 回放确定）；
     // 无 clip（clipId=0/表未命中/未登记）= M2 旧路径逐位保留——既有场景零漂移
     // （金回放零重录的机制保证，M5.md §18）。
+    // M6a 批①：换段队列（nextClipId/fadeRemain/nextLoop，FIELD_RT）——先推进后
+    // 判定：Queue（fadeRemain<0）当前段收尾/回绕点切、CrossFade（>0）倒计时到零
+    // 切（非 loop 段提前收尾即切）；切换 = 新段首帧当帧生效；暂停冻结整个队列。
+    // 队列目标是显式指令，未命中 clip 表 = warn-once 丢队列（区别于 clipId 未命中
+    // 走 M2 的宽容——那是档面数据，这是作者代码错误）。
     const ClipTable& clips = world.Clips();
     bool anyClip = clips.Count() > 0; // 空表 = 全体走 M2（省每实体 Find）
     auto view = scene.View<Animator2D>();
@@ -777,16 +782,46 @@ void AnimatorSystem::Tick(World& world, Scene& scene, float dt) {
             }
             continue;
         }
-        // playOnStart=0 = 暂停开关（M5 无 Play() API；Play/CrossFade 归 M6 模板）
+        // playOnStart=0 = 暂停开关（time/curFrame/spriteId/换段队列全冻结）
         if (!an.playOnStart) continue;
         an.time += an.speed * dt; // 缩放 dt：timeScale=0 冻结动画（批① D5 同语义）
         const float total = (float)clip->frames.size() / clip->fps;
+        bool wrapped = false; // 本 tick 发生回绕减法（Queue 的 loop 段切点）
         if (an.loop) {
-            while (an.time >= total) an.time -= total;
+            while (an.time >= total) {
+                an.time -= total;
+                wrapped = true;
+            }
             if (an.time < 0.0f) an.time = 0.0f; // 负 speed 防御（回绕后仍负）
         } else {
             if (an.time < 0.0f) an.time = 0.0f;
             if (an.time > total) an.time = total; // 钳末帧：M2"无界增长"随 clip 收口
+        }
+        if (an.nextClipId != 0) { // 换段队列判定（无队列 = 零副作用，既有路径逐位不变）
+            const bool atEnd = !an.loop && an.time >= total; // 非 loop 段收尾
+            bool queueNow = false;
+            if (an.fadeRemain > 0.0f) { // CrossFade：倒计时（过期判定在减之前取模——
+                an.fadeRemain -= dt;    // 减到负值不是 Queue 语义，勿按符号分流）
+                queueNow = an.fadeRemain <= 0.0f || atEnd;
+            } else if (an.fadeRemain == 0.0f) {
+                queueNow = true; // 零时长淡入 = 立即切（SDK CrossFade(0) 已归 Play，防御）
+            } else {
+                queueNow = atEnd || wrapped; // Queue：收尾/回绕点
+            }
+            if (queueNow) {
+                if (const ClipDef* next = clips.Find(an.nextClipId)) {
+                    an.clipId = an.nextClipId;
+                    an.loop = an.nextLoop ? 1 : 0;
+                    an.time = 0.0f;
+                    clip = next; // 本 tick 即按新段帧映射（首帧当帧生效）
+                } else if (!warnedQueueMiss_) {
+                    warnedQueueMiss_ = true;
+                    LEMON_WARN("Animator 换段目标 clipId=%#x 未登记，丢弃队列",
+                               an.nextClipId);
+                }
+                an.nextClipId = 0;
+                an.fadeRemain = 0.0f;
+            }
         }
         uint32_t f = (uint32_t)(an.time * clip->fps);
         if (f >= clip->frames.size()) f = (uint32_t)clip->frames.size() - 1; // total 边界

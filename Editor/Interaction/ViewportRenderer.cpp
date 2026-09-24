@@ -2,6 +2,7 @@
 #include "Interaction/ViewportRenderer.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <memory>
@@ -468,8 +469,70 @@ void ViewportRenderer::RenderViewport(rhi::CommandList& cl, uint32_t idx, Sprite
         }
     }
 
+    // M6a 批①：世界空间表现通道（GameView 专属；06 §8 恒定原则——恒走 sprite
+    // 管线）。飘字 = 内置位图字体页层 252（文本段）；血条 = 白精灵双四边形层
+    // 251（精灵段，压精灵与粒子、让位 UI 文本 254）。Simulate 按渲染帧 dt 自计时
+    // （粒子先例：表现层语义，非确定可接受、不入回放）。
+    std::vector<SpritePacket> fxBarPackets;
+    if (!withOverlay && ctx.Playing()) {
+        ecs::FxChannel& fx = ctx.ActiveWorld().Fx();
+        const auto now = std::chrono::steady_clock::now();
+        const float fxDt = lastFxTime_.time_since_epoch().count() == 0
+                               ? 0.0f
+                               : std::clamp(
+                                     std::chrono::duration<float>(now - lastFxTime_).count(),
+                                     0.0f, 0.1f);
+        lastFxTime_ = now;
+        fx.Simulate(fxDt);
+        // 血条：实体位锚定（悬空/出视口由通道过滤），FxEQuad → 白精灵包
+        constexpr uint32_t kFxBarLayer = 251;
+        auto resolve = [&](uint64_t id, Vec2& out) {
+            const ecs::Entity e{id /* 低 32 位 = entt+1 */};
+            const ecs::Transform2D* tf = ctx.ActiveScene().TryGet<ecs::Transform2D>(e);
+            if (!tf) return false;
+            out = tf->pos;
+            return true;
+        };
+        ecs::FxQuad quads[ecs::FxChannel::kMaxBars * 2];
+        const uint32_t qn = fx.ExtractBarQuads(quads, (uint32_t)std::size(quads), resolve,
+                                               view, 64.0f);
+        fxBarPackets.reserve(qn);
+        for (uint32_t i = 0; i < qn; ++i) {
+            SpritePacket p{};
+            p.spriteId = assets_.WhiteSprite();
+            p.colorBits = quads[i].color;
+            p.posX = quads[i].center.x;
+            p.posY = quads[i].center.y;
+            p.rot = 0.0f;
+            p.scaleX = quads[i].size.x; // scale = 世界像素边长（overlay 同约定）
+            p.scaleY = quads[i].size.y;
+            p.key = renderer::MakeBatchKey(0, renderer::BlendKind::Alpha,
+                                           renderer::FilterKind::Linear, kFxBarLayer);
+            p.sortKey = ((uint64_t)kFxBarLayer << 56) | ((uint64_t)(i & 0xFFFF) << 40);
+            fxBarPackets.push_back(p);
+        }
+        // 飘字：位图字体页层 252（左下锚 + 寿命上浮；末 30% 线性淡出乘进 alpha）
+        constexpr uint32_t kFxTextLayer = 252;
+        const float margin = 64.0f;
+        for (uint32_t i = 0; i < fx.TextCount(); ++i) {
+            const ecs::FxText& t = fx.TextAt(i);
+            if (t.x < view.min.x - margin || t.x > view.max.x + margin ||
+                t.y < view.min.y - margin || t.y > view.max.y + margin)
+                continue;
+            const float alpha = fx.TextAlpha(t);
+            const uint32_t color = (t.color & 0x00FFFFFFu) |
+                                   ((uint32_t)(uint8_t)(alpha * 255.0f) << 24);
+            assets_.Font().DrawText(textPackets, t.text,
+                                    Vec2{t.x, t.y + fx.TextRise(t)}, 1.0f, color,
+                                    (uint8_t)kFxTextLayer);
+        }
+    } else if (!withOverlay) {
+        lastFxTime_ = {}; // 出 Play 复位（重进 Play 首帧 dt=0）
+    }
+
     // 包合成：游戏包 + overlay（SceneView 专属，层 63 顶置）
     std::vector<SpritePacket> all(packets.begin(), packets.end());
+    if (!fxBarPackets.empty()) all.insert(all.end(), fxBarPackets.begin(), fxBarPackets.end());
     if (withOverlay) all.insert(all.end(), overlay_.begin(), overlay_.end());
     batcher.Bake(assets_.Registry(), all, {}, textPackets);
 

@@ -16,6 +16,7 @@
 #include "Components/BehaviorComponents.h"
 #include "Components/CoreComponents.h"
 #include "Components/GameplayComponents.h"
+#include "Components/RenderComponents.h"
 #include "Core/Random.h"
 #include "ECS/ComponentRegistry.h"
 #include "ECS/Events.h"
@@ -306,11 +307,11 @@ void TestDomainManager() {
         Expect(d2 == (double)0.1f, "hot-reload new domain fresh state");
         Expect(leaks >= 0 && leaksFn && leaksFn() == leaks, "leak count visible + consistent");
         Expect(reloadsFn && reloadsFn() >= 1, "reload count visible");
-        // 换装后新域 GameMain.Configure 已跑：behaviours 列表可拉（11 个类型）
+        // 换装后新域 GameMain.Configure 已跑：behaviours 列表可拉（12 个类型）
         auto listFn = (int (*)(char*, int))GetExport("lemon_behaviours_list");
         char buf[4096];
         int n = listFn ? listFn(buf, (int)sizeof buf) : -1;
-        Expect(n == 11, "behaviours list after hot reload (+M11/M15/F-08.2/T3 probes)");
+        Expect(n == 12, "behaviours list after hot reload (+M11/M15/F-08.2/T3/b1 probes)");
         // M4.6 回归（用户实测闪退根因）：相对路径进 dm_reload 曾抛 ArgumentException
         // 逃逸 UnmanagedCallersOnly → coreclr abort。拦截层必须转 0 返回且进程存活
         // （本断言能跑到 = 进程没死）。换装失败后旧域已弃——再换一次真路径恢复。
@@ -1016,6 +1017,88 @@ void TestSdkDualRoute() {
     Expect(attachedFn() == attached0 - 1 && bad == 0, "final state consistent");
 }
 
+// M6a 批①：Lemon.Anim SDK 字段契约 + Lemon.Fx 通道（AnimFxProbeBehaviour
+// typeId 11 表尾注册）。管线不含 AnimatorSystem——帧间无引擎消费扰动，
+// 断言"SDK 写什么落什么"；队列消费语义在 engine-tests 全管线覆盖。
+void TestAnimFxSdk() {
+    using namespace lemon::ecs;
+    auto timeResetFn = (void (*)())GetExport("lemon_time_reset");
+    Expect(timeResetFn, "animfx: time reset export resolved");
+    timeResetFn(); // 探针按 FrameCount 分段（新一局）
+
+    WorldDesc d;
+    d.threadCount = 1;
+    World w(d);
+    Scene& s = w.CreateScene("AnimFx");
+    w.SetActiveScene(&s);
+    w.SetScriptBackend(&g_sh);
+    w.Pipeline().AddSystem(std::make_unique<DestroyCommitSystem>());
+    w.Pipeline().AddSystem(std::make_unique<CSharpBatchSystem>());
+    w.Pipeline().AddSystem(std::make_unique<ScriptEventDispatchSystem>());
+    w.Pipeline().ResolveOrder();
+
+    int saw[5] = {0, 0, 0, 0, 0};
+    w.SetEventSink([&](World&, const EventPacket& p) {
+        if (p.type != GameEvent::Custom) return;
+        if (p.user == 1100) ++saw[0];
+        else if (p.user == 1200) ++saw[1];
+        else if (p.user == 1300) ++saw[2];
+        else if (p.user == 1400) ++saw[3];
+        else if (p.user == 1511) ++saw[4];
+    });
+
+    Entity e = s.Create();
+    s.Emplace<Transform2D>(e);
+    Animator2D& an = s.Emplace<Animator2D>(e);
+    an.clipId = 0x77u; // 初始 walk 段
+    g_sh.AttachBehaviour(w, s, e, 11); // AnimFxProbe（表尾 typeId 11）
+
+    w.Step(0.25f); // 帧1：Play(hit,loop:false) + Queue(walk)
+    Expect(saw[0] == 1, "animfx: frame1 marker");
+    const Animator2D& a1 = s.Get<Animator2D>(e);
+    Expect(a1.clipId == 0x88u && a1.loop == 0 && a1.time == 0.0f && a1.playOnStart == 1,
+           "animfx: Play writes clip/loop/time/playOnStart");
+    Expect(a1.nextClipId == 0x77u && a1.nextLoop == 1 && a1.fadeRemain == -1.0f,
+           "animfx: Queue writes pending clip with -1 fade");
+
+    w.Step(0.25f); // 帧2：Pause（队列不受扰）
+    Expect(saw[1] == 1, "animfx: frame2 marker");
+    const Animator2D& a2 = s.Get<Animator2D>(e);
+    Expect(a2.playOnStart == 0 && a2.nextClipId == 0x77u && a2.fadeRemain == -1.0f,
+           "animfx: Pause toggles playOnStart only");
+
+    w.Step(0.25f); // 帧3：Resume + Fx.Text/Fx.Bar
+    Expect(saw[2] == 1, "animfx: frame3 marker");
+    Expect(s.Get<Animator2D>(e).playOnStart == 1, "animfx: Resume restores playOnStart");
+    bool fxOk = w.Fx().TextCount() == 1 && w.Fx().BarCount() == 1;
+    if (fxOk) {
+        const FxText& t = w.Fx().TextAt(0);
+        fxOk = std::strcmp(t.text, "12") == 0 && t.x == 10.0f && t.y == 20.0f &&
+               t.color == 0xFF5060F0u;
+    }
+    Expect(fxOk, "animfx: Fx.Text pooled with text/pos/color");
+    bool barOk = false;
+    for (const FxBar& b : w.Fx().Bars())
+        if (b.entity == e.id) barOk = b.frac == 0.5f && b.color == 0xFF30B0F0u && b.width == 40.0f;
+    Expect(barOk, "animfx: Fx.Bar keyed by entity with frac/color/width");
+
+    w.Step(0.25f); // 帧4：CrossFade(walk, 0.5)
+    Expect(saw[3] == 1, "animfx: frame4 marker");
+    const Animator2D& a4 = s.Get<Animator2D>(e);
+    Expect(a4.nextClipId == 0x77u && a4.nextLoop == 1 && a4.fadeRemain == 0.5f,
+           "animfx: CrossFade overwrites queue with positive fade");
+
+    w.Step(0.25f); // 帧5：IsPlaying/Queued → 1511 + 自毁命令
+    w.Step(0.25f); // 应用销毁
+    Expect(saw[4] == 1, "animfx: IsPlaying+Queued poll codes 1/1 (1511)");
+    Expect(!s.Alive(e), "animfx: probe self-destroyed");
+
+    // 新 World 自清零（EnterPlay 同语义）
+    World w2(d);
+    Expect(w2.Fx().TextCount() == 0 && w2.Fx().BarCount() == 0,
+           "animfx: fresh world fx channel clear");
+}
+
 } // namespace
 
 int main() {
@@ -1067,6 +1150,7 @@ int main() {
     TestSubscribeAutoUnsubscribe();
     TestCppDestroyNotify();
     TestSdkDualRoute();
+    TestAnimFxSdk();
 
     // M4.6 探针（编辑器切项目场景）：同进程二次 ScriptHost 生命周期。CoreCLR 运行时
     // 进程单例——第二次 Initialize 的真实行为必须钉板（成功/失败都合法，崩 = 缺陷）。

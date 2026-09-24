@@ -213,6 +213,10 @@ RESULT 行判读：`sim avg ≤ 8ms`（08 §3 判据）；`alive` 稳定在 n �
 > 口径。先例二的推论族补全：**加组件必重录；加字段看实例——基准场零实例即零重录**
 >（给基准场播新字段组件实例 = 全帧漂移，规划红线）。
 
+> **先例三第二次应用（M6a 批①，2026-09-24）**：Animator2D 16→28B 尾加换段队列
+> 三字段（FIELD_RT）——三金档零 Animator2D 实例 → m5b2 三档原样 replay
+> mismatches=0（实测落账，零重录先例首个"同推论两次兑现"复证）。
+
 ### 6.9 bench-script —— M3 脚本验收场（无渲染，CoreCLR 域线程）
 
 ```bash
@@ -281,6 +285,7 @@ Chase 目标；**批⓪（M5.md T4）起兼弹幕源**：Shooter 20 发/s + 弹�
 | 批③ 动画化（09-23，三跑） | sim 12.91~14.25（Animator 0.128）/ scene ~1.3 / ui 0.26 | frameAvg 14.89~17.27ms fps 58~67 **PASS** |
 | Hazard 化播种（09-24，修复前红字） | **sim 49.41（Hitbox 36.43）** / scene ~1.4 / ui 0.68 | frameAvg 52.05ms fps=19 **FAIL** |
 | 方案 A 查询快路径（09-24，三跑） | sim 9.90~10.05（**Hitbox 1.08** / Rebuild 0.57）/ scene ~1.4 / ui 0.26 | frameAvg 12.17~12.59ms fps 79~82 **PASS** |
+| M6a 批① fx 饱和（09-24） | sim 10.30 / scene 1.51 / ui 0.28（fx 渲染并入 scene 段：飘字 256 逐字包 + 血条 128×2 四边形） | frameAvg 12.76ms fps=78 **PASS** |
 
 批② 导演化口径变更：Spawner 闸 10000→8000 让 2000 头寸给 BenchDirector（3 波 ×
 4 条目 180/s/波，t=1/6/11s）——判据在原两条（alive≥10000、frameAvg≤22.2ms）外加

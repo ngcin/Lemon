@@ -115,7 +115,10 @@ public static unsafe class LayoutTables
             F("speed", FieldTypeCode.Float, 0, O(p, &p->Speed)),
             F("loop", FieldTypeCode.UInt8, 0, O(p, &p->Loop)),
             F("playOnStart", FieldTypeCode.UInt8, 0, O(p, &p->PlayOnStart)),
-            F("curFrame", FieldTypeCode.UInt16, 0, O(p, &p->CurFrame)) }); }
+            F("curFrame", FieldTypeCode.UInt16, 0, O(p, &p->CurFrame)),
+            F("nextClipId", FieldTypeCode.UInt32, FieldTypeCode.RuntimeFlag, O(p, &p->NextClipId)),
+            F("fadeRemain", FieldTypeCode.Float, FieldTypeCode.RuntimeFlag, O(p, &p->FadeRemain)),
+            F("nextLoop", FieldTypeCode.UInt16, FieldTypeCode.RuntimeFlag, O(p, &p->NextLoop)) }); }
         { ParticleEmitterRef t = default; ParticleEmitterRef* p = &t;
           Add<ParticleEmitterRef>("ParticleEmitterRef", (uint)sizeof(ParticleEmitterRef), new[] {
             F("emitterId", FieldTypeCode.UInt32, 0, O(p, &p->EmitterId)),

@@ -31,6 +31,13 @@ struct Animator2D {
     uint8_t loop = 1;
     uint8_t playOnStart = 1;
     uint16_t curFrame = 0;
+    // M6a 批①：换段队列（FIELD_RT——入状态哈希不入档）。nextClipId=0 = 无队列；
+    // fadeRemain<0 = Queue（当前段收尾/回绕点切）、>0 = CrossFade 倒计时。
+    // SDK Lemon.Anim 纯字段写；AnimatorSystem 消费（无 clip 表 = 整体旁路）。
+    uint32_t nextClipId = 0;
+    float fadeRemain = 0.0f;
+    uint16_t nextLoop = 1;
+    uint8_t _pad[2] = {};
 };
 
 struct ParticleEmitterRef {
@@ -46,7 +53,7 @@ struct SortingOverride {
 
 // ---- 布局冻结（M3 桥侧 blittable 前提：C# 镜像 struct 与此逐字节对齐，改动=破回放）----
 static_assert(std::is_trivially_copyable_v<SpriteRenderer> && sizeof(SpriteRenderer) == 24, "SpriteRenderer 布局冻结");
-static_assert(std::is_trivially_copyable_v<Animator2D> && sizeof(Animator2D) == 16, "Animator2D 布局冻结");
+static_assert(std::is_trivially_copyable_v<Animator2D> && sizeof(Animator2D) == 28, "Animator2D 布局冻结");
 static_assert(std::is_trivially_copyable_v<ParticleEmitterRef> && sizeof(ParticleEmitterRef) == 8, "ParticleEmitterRef 布局冻结");
 static_assert(std::is_trivially_copyable_v<SortingOverride> && sizeof(SortingOverride) == 2, "SortingOverride 布局冻结");
 

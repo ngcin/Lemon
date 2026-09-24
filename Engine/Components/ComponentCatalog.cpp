@@ -69,11 +69,16 @@ constexpr FieldEditorMeta kEdSpriteRenderer[] = {
 constexpr FieldMeta kAnimator2D[] = {
     FIELD(Animator2D, clipId, UInt32), FIELD(Animator2D, time, Float),
     FIELD(Animator2D, speed, Float), FIELD(Animator2D, loop, UInt8),
-    FIELD(Animator2D, playOnStart, UInt8), FIELD(Animator2D, curFrame, UInt16)};
+    FIELD(Animator2D, playOnStart, UInt8), FIELD(Animator2D, curFrame, UInt16),
+    // M6a 批①：换段队列（运行时指令态，入哈希不入档；作者面经 Lemon.Anim API 写）
+    FIELD_RT(Animator2D, nextClipId, UInt32),
+    FIELD_RT(Animator2D, fadeRemain, Float),
+    FIELD_RT(Animator2D, nextLoop, UInt16)};
 constexpr FieldEditorMeta kEdAnimator2D[] = {
     ED_CLIPREF("clip 资产槽（.clip GUID 低 32 位；下拉/拖入。0 = 无 clip，走 M2 纯计时）"),
     ED_RANGE(0.0f, 100.0f), ED_RANGE(0.0f, 100.0f),
-    ED_BOOL8, ED_BOOL8, ED_TIP("运行时帧号（clip 帧映射自动写；playOnStart=0 = 暂停开关）")};
+    ED_BOOL8, ED_BOOL8, ED_TIP("运行时帧号（clip 帧映射自动写；playOnStart=0 = 暂停开关）"),
+    ED_HIDE, ED_HIDE, ED_HIDE};
 constexpr FieldMeta kParticleEmitterRef[] = {
     FIELD(ParticleEmitterRef, emitterId, UInt32),
     FIELD(ParticleEmitterRef, playing, UInt8)};

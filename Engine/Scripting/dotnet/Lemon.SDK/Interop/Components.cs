@@ -75,7 +75,7 @@ public struct SpriteRenderer : IComponent // 24B（M6a 批⓪：尾加 SpriteGui
 }
 
 [StructLayout(LayoutKind.Sequential)]
-public struct Animator2D : IComponent     // 16B
+public struct Animator2D : IComponent     // 28B（M6a 批①：尾加换段队列 16→28 与 C++ 同步）
 {
     public uint ClipId;
     public float Time;
@@ -83,6 +83,10 @@ public struct Animator2D : IComponent     // 16B
     public byte Loop;
     public byte PlayOnStart;
     public ushort CurFrame;
+    public uint NextClipId;    // 换段队列目标（0 = 无；Lemon.Anim 写）
+    public float FadeRemain;   // <0 = Queue（收尾/回绕点切）；>0 = CrossFade 倒计时
+    public ushort NextLoop;    // 切换时写入 Loop
+    internal byte _pad2a, _pad2b; // C++ _pad[2] 衬齐
 }
 
 [StructLayout(LayoutKind.Sequential)]

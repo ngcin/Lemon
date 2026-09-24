@@ -3,7 +3,8 @@ using Lemon;
 using Lemon.Interop;
 
 /// <summary>战斗（M6a 批⓪ T4 拆分）：击杀/宝石掉落 + 环绕刃自愈 + 升级三选一
-///（固定序轮换，零 RNG）+ 死亡结算/复活（死亡对话框点击）。一局共享态写
+///（固定序轮换，零 RNG）+ 死亡结算/复活（死亡对话框点击）+ 受击表现（批①：
+/// Anim 受击段 Play+Queue 回行走 + Fx 飘字/世界血条）。一局共享态写
 /// GameMain.Run（HUD 读）。</summary>
 public sealed class PlayerCombat : LemonBehaviour
 {
@@ -11,6 +12,10 @@ public sealed class PlayerCombat : LemonBehaviour
     private const string kGemPrefab = "7e57100000000005";
     private const string kBladePrefab = "7e57100000000006";
     private const uint kPiercePrefabLow = 0x00000004; // PierceBullet.prefab 低 32 位
+
+    // 批①受击段 clip（Anim.ClipId = GUID 低 32 位自算；Assets/monster-hit.clip）
+    private static readonly uint kMobWalk = Anim.ClipId("5bd31a7c20000002");
+    private static readonly uint kMobHit = Anim.ClipId("5bd31a7c20000004");
 
     private static readonly string[] kOptions = {
         "移速 +10%", "磁力 +25%", "射速 +15%", "穿透弹", "生命上限 +25", "环绕之刃 +1",
@@ -31,6 +36,26 @@ public sealed class PlayerCombat : LemonBehaviour
             if (m.Src.Id == gameObject.Entity.Id) ++_pendingLevels;
         });
         Subscribe(GameEvent.Death, OnDeath);
+        // 批①受击表现：怪受击 = 受击段（Play+Queue 播完回行走）+ 伤害飘字 + 世界
+        // 血条；玩家受击 = 世界血条刷新（常显——每击续命，HUD 文字条仍是权威）
+        Subscribe(GameEvent.Hit, OnHit);
+    }
+
+    private void OnHit(GameEventMsg m)
+    {
+        var victim = GameObject.From(m.Dst);
+        if (!victim.Alive || !victim.TryGetComponent<Meta>(out var meta)) return;
+        if (meta.Team == 1) { // 怪受击
+            Anim.Play(victim, kMobHit, false); // 受击段立即打断
+            Anim.Queue(victim, kMobWalk);      // 播完（0.1667s）自动回行走
+            if (victim.TryGetComponent<Transform2D>(out var tf))
+                Fx.Text(m.P0, new Vec2(tf.Pos.X - 4f, tf.Pos.Y - 10f), 0xFF5060F0u); // 暖红（RGBA）
+            if (victim.TryGetComponent<Health>(out var hp))
+                Fx.Bar(victim, hp.Cur / hp.Max, 0xFF30B0F0u, 24f);
+        } else if (m.Dst.Id == gameObject.Entity.Id) { // 玩家受击
+            if (gameObject.TryGetComponent<Health>(out var hp))
+                Fx.Bar(gameObject, hp.Cur / hp.Max, 0xFF60D060u, 32f);
+        }
     }
 
     private void OnDeath(GameEventMsg m)

@@ -158,6 +158,14 @@ void NativeUiCards(int32_t show, const char* title, const char* a, const char* b
 }
 int32_t NativeUiCardPick() { return g_world ? g_world->Cards().ConsumePick() : -1; }
 
+// M6a 批①（世界空间表现：Lemon.Fx → World.Fx；呈现层专用不入 StateHash）
+void NativeFxPopup(const char* text, float x, float y, uint32_t color) {
+    if (g_world) g_world->Fx().PopupText(text, x, y, color);
+}
+void NativeFxBar(uint64_t entity, float frac, uint32_t color, float width) {
+    if (g_world) g_world->Fx().Bar(entity, frac, color, width);
+}
+
 const NativeApiVtable kNativeApi{NativeIsAlive,
                                  NativeHas,
                                  NativeRead,
@@ -176,7 +184,9 @@ const NativeApiVtable kNativeApi{NativeIsAlive,
                                  NativeRtUiClear,
                                  NativeRtUiSetEx,
                                  NativeUiCards,
-                                 NativeUiCardPick};
+                                 NativeUiCardPick,
+                                 NativeFxPopup,
+                                 NativeFxBar};
 } // namespace
 
 void SetScriptIoHooks(const ScriptIoHooks& hooks) { g_scriptIo = hooks; }

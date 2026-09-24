@@ -14,6 +14,7 @@
 #include "Core/RingQueue.h"
 #include "ECS/ClipTable.h"
 #include "ECS/Events.h"
+#include "ECS/FxChannel.h"
 #include "ECS/Input.h"
 #include "ECS/SaveChannel.h"
 #include "ECS/Scene.h"
@@ -128,6 +129,11 @@ public:
     RtUiChannel& RtUi() { return rtUi_; }
     const RtUiChannel& RtUi() const { return rtUi_; }
 
+    // ---- 世界空间表现通道（M6a 批①；FxChannel 头说明——飘字/血条恒走 sprite 管线，
+    // 呈现层专用不入 StateHash，EnterPlay 新建 World 自清零）----
+    FxChannel& Fx() { return fx_; }
+    const FxChannel& Fx() const { return fx_; }
+
     // ---- HUD 三选一卡片（上方 RtUiCards 说明）----
     RtUiCards& Cards() { return cards_; }
     const RtUiCards& Cards() const { return cards_; }
@@ -188,6 +194,7 @@ private:
     RtUiChannel rtUi_;
     RtUiCards cards_;
     ClipTable clips_;
+    FxChannel fx_;
     SaveChannel saves_;
     uint64_t tick_ = 0;
     float timeScale_ = 1.0f;

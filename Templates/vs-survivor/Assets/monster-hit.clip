@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "name": "monster-hit",
+  "fps": 12,
+  "loop": false,
+  "frames": [
+    { "sheet": "5bd31a7c10000003", "cell": 7 },
+    { "sheet": "5bd31a7c10000003", "cell": 6 }
+  ]
+}
