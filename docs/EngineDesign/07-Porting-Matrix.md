@@ -147,6 +147,22 @@ Windows 首次移植时需人工复验（M4.6 §7 登记；新 OS 级功能在�
 | 关闭按钮/退出确认 | `Window::PollEvents` 返回 false → 状态机 | ✅ M4.6（--smoke-close） | 无差异预期；跑同款冒烟即可 |
 | 文件选择器手输路径 | FilePicker（编辑器内实现，无 OS 对话框） | ✅ M4.6b | `C:\` 盘符路径回车直达 |
 
+## 3.6 Windows 编译阻断项（首次移植前清零；2026-09-24 全栈审查 F-11 登记）
+
+§3.5 行为验证表默认"能编译"——下列阻断项不清零则到不了行为层。**"补一个 win
+preset 就能编"不成立**；M7 开工前（Gate C 前置，08 §M7）逐项处置：
+
+| # | 阻断点 | 位置 | 处置方向 |
+|---|---|---|---|
+| 1 | `#include <unistd.h>`（getpid） | `Editor/App/EditorApp.cpp` | 平台抽象（`std::filesystem` 无此需求；SDL/条件宏） |
+| 2 | `__attribute__((format(printf,…)))` | `Engine/Core/Log.h` | `PRINTF_FORMAT` 宏按编译器分支（MSVC 用 `[[msvc::format]]`/SAL） |
+| 3 | `__builtin_strcmp`（5 处） | `Engine/ECS/ComponentRegistry.h`、`Engine/ECS/SystemPipeline.cpp` | 直接 `std::strcmp`（编译器自会内联，GCC 专有内建零收益） |
+| 4 | `popen/pclose` 拼 shell 编译命令 | `Editor/Assets/ProjectWizard.cpp` | 进程抽象层（`CreateProcessW`/`_popen` + 宽字符 argv，顺带消 shell 注入面） |
+| 5 | `std::filesystem::rename` 覆盖既有目标 | 存档/管线缓存写路径（原子写已收敛在 `WriteFileAtomic`——一处收口） | 语义层封装（Windows 走先删后改名或 `ReplaceFile`） |
+
+伴生项：宽字符路径（资产绝对路径 `std::string` 全链在 Windows 长路径/中文路径下的
+形态）与 `win` CMake preset——preset 是最后一件事，不是第一件。
+
 ## 4. 登记模板（新增移植项用）
 
 ```markdown

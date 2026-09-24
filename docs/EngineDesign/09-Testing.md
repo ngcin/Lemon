@@ -411,7 +411,30 @@ Hierarchy 面板）。回归口径 = 本命令三跑稳定。
   脚本调试 lldb 原生 attach 被本机 macOS 策略拒绝（托管附加不受影响，§6.9）；
   金档跨 .NET 版本不保证（D3，随引擎分发收紧 rollForward 后消除）。
 
-## 9. 更新约定
+## 9. CI 门禁（排期：M7 开工前 Gate C 前置；2026-09-24 登记）
+
+> 登记背景：08 §3/风险 #2/#7 三处把 CI 当既有前提引用，但 CI 从未建设（无 workflow，
+> 本册此前零提及）——[全栈审查](../Reports/2026-09-24-code-review-546a755.md) F-13
+> 的根源。本节是 CI 的**口径与门禁定义**；落地时 workflow 与 runner 细节随 Plans 条目。
+
+- **Runner**：GitHub Actions macOS runner 先行（GPU 不可用——逻辑面门禁）；Windows
+  runner 随 M7 移植加入（Vulkan 冒烟跑 llvmpipe/lavapipe 软件光栅档）。
+- **每 push / 每 PR**：`cmake --preset mac` 构建 + `ctest` 三项（engine-tests /
+  imgui-isolation / script-tests，dotnet 可用为准）——全绿才可合入。
+- **每日（scheduled）**：`tools/editor-regression.sh full`（GPU 在 macOS
+  self-hosted；无 GPU 则跳过并在报告标注）+ `bench-mow`/`bench-sim` 数字入库，
+  **性能回退 >10% 标红**（08 §3 口径）+ `rhi-smoke --validate`（软光栅或
+  self-hosted GPU）零 VUID。
+- **flake 治理**：smoke-ui 等已知飘忽项按 §8 口径"重跑至全绿"放行，但**同一项
+  连续 20 次出现飘忽即转硬阻断**（修测试基建后方可放行——Gate C"连续 20 次
+  无 flake"的门禁方向）。
+- **门禁分流（既有测试基建缺陷，随 CI 落地一并修）**：① `editor-regression.sh`
+  的 `grep_step` 增查子进程退出码（输出匹配但退出非 0 = FAIL）；②
+  `anim-smoke --frames 120` 的采样数与 `Distinct>=3` 断言矛盾（120 帧仅 2 个采样
+  = 确定性误报，CI 用 180 帧或修采样）；③ `bench-sim` 录制模式 `avg>8ms` 混入
+  退出码——性能阈值与诊断模式分流（`--no-gate` 或仅回放模式作门禁）。
+
+## 10. 更新约定
 
 - 新测试跑完：在 `docs/DevLog/` 新增条目 `YYYY-MM-DD-<slug>.md`；方法若可复用，写入本册对应节。
 - 新里程碑：验收判据在 08；本册 §7 换新表，§2 程序表补新 bench（M2 将加 bench-sim）。

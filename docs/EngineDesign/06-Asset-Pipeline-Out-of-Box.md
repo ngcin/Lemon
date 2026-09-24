@@ -57,6 +57,7 @@ MyGame/                                   # 用户项目（升级永不触碰）
 | particles | json | 发射器资产 | ParticleEditor 产出 |
 | tileset | png + json | 图集 + 碰撞标志 + 自动瓦片变体表 | 05 §7 |
 | curve/data | json | 曲线、Team 表、波次表 | 数据资产 |
+| audio | wav/ogg | 2D 声源（预解码缓存 + 流式 BGM；烘焙入 .baked） | **M6.5**（2026-09-24 登记，08 §M6.5） |
 
 - **热重载**：`FileWatcher`（线程轮询，Luma 同款）触发增量导入 → 按依赖图通知（纹理变更 → 重建图集页 → 受影响场景视口刷新标记）。运行中 Play 的资产热替换（贴图/参数即时生效，音效不中断）。
 
