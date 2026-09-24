@@ -322,8 +322,17 @@ void ScriptHost::PullBatchRegistry() {
             valid = ids[c] < regCount; // 越界 id 防线
         if (valid) {
             for (uint8_t c = 0; c < bs.compCount; c++) bs.comps[c] = ids[c];
-            batch_.push_back(bs);
+        } else {
+            // 无效查询 → 占位不跳过：fr.systemIndex 是 C# 注册序（Batch.Tick 按
+            // Get(idx) 解析），跳过任一前置系统 = 其后全部错位——错系统的 ForEach
+            // 拿对方查询的指针数组按自己类型解释 = 野读写。占位保 1:1 对齐，
+            // TickBatch 跳过零参占位（该系统永不执行，告警响亮）。
+            LEMON_WARN("batch system %d invalid query (compCount=%u, regCount=%u) — "
+                       "held as placeholder, never ticks",
+                       i, bs.compCount, regCount);
+            bs.compCount = 0;
         }
+        batch_.push_back(bs);
     }
 }
 
@@ -345,7 +354,7 @@ void ScriptHost::TickBatch(ecs::World& world, ecs::Scene& scene, float dt) {
     // 余量兜底，script-tests 实测 AV 的根因）。
     uint32_t capEnts = 0, capPtrs = 0, capBlocks = 0;
     for (const BatchSys& bs : batch_) {
-        if (bs.disabled) continue;
+        if (bs.disabled || bs.compCount == 0) continue; // 禁用 / 拉取期占位
         const auto& m = reg.At(bs.comps[0]);
         const uint32_t n = m.countFn ? m.countFn(scene) : 0;
         const uint32_t blocks = n / kBlockStride + 1; // ≥ ceil(n/64)
@@ -359,7 +368,8 @@ void ScriptHost::TickBatch(ecs::World& world, ecs::Scene& scene, float dt) {
 
     for (uint32_t s = 0; s < batch_.size(); s++) {
         const BatchSys& bs = batch_[s];
-        if (bs.disabled) continue; // C# 侧异常禁用：不再构造死块
+        if (bs.disabled || bs.compCount == 0)
+            continue; // C# 侧异常禁用：不构造死块；占位（无效查询）：永不执行
         const auto& driver = reg.At(bs.comps[0]);
         if (!driver.countFn) {
             // 预留钩子缺失（M13）：不预留就 gather = 块缓冲增长期 realloc，先前系统
@@ -480,11 +490,16 @@ const std::vector<std::string>& ScriptHost::BehaviourTypeNames() {
     }
     // M10 契约加固：返回值 = 类型数（非字节数），托管侧 '\n' 分隔 + 自写 '\0' 结尾
     //（cap 不足 = -1）。零初始化 + n<=0 早退兜住失败/短写——原未初始化缓冲在托管侧
-    // 失败时走未初始化栈内存
-    char buf[4096] = {};
-    int n = behavioursListFn_(buf, (int)sizeof(buf));
-    if (n <= 0) return behaviourNames_;
-    for (const char* p = buf; *p;) { // '\n' 分隔、'\0' 结尾
+    // 失败时走未初始化栈内存。-1 = 缓冲不足：固定 4KB 对其无解（每次重试同容量 =
+    // 永远失败，类型表永远空）→ 堆缓冲倍增重试（1MB 上限 ≈ 3 万+ 类型，超限保持空表）
+    std::vector<char> buf(4096);
+    int n = behavioursListFn_(buf.data(), (int)buf.size());
+    while (n == -1 && buf.size() < (1u << 20)) {
+        buf.resize(buf.size() * 2);
+        n = behavioursListFn_(buf.data(), (int)buf.size());
+    }
+    if (n <= 0) return behaviourNames_; // 零类型/超上限失败：保持空表（下次再试）
+    for (const char* p = buf.data(); *p;) { // '\n' 分隔、'\0' 结尾
         const char* nl = std::strchr(p, '\n');
         size_t len = nl ? (size_t)(nl - p) : std::strlen(p);
         behaviourNames_.emplace_back(p, len);

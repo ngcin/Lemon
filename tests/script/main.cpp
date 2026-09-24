@@ -721,11 +721,12 @@ void TestPlayDomainReset() {
     w.Pipeline().AddSystem(std::make_unique<ScriptEventDispatchSystem>());
     w.Pipeline().ResolveOrder();
 
-    int saw700 = 0, saw801 = 0;
+    int saw700 = 0, saw801 = 0, saw42 = 0;
     w.SetEventSink([&](World&, const EventPacket& p) {
         if (p.type != GameEvent::Custom) return;
         if (p.user == 700) ++saw700;
         else if (p.user == 801) ++saw801;
+        else if (p.user == 42) ++saw42;
     });
 
     // 局1：装配探针（M6a 批⓪ 起 AttachBehaviour = 追加路径，同实体同类型唯一）
@@ -751,6 +752,19 @@ void TestPlayDomainReset() {
     Expect(attachedFn() == 1, "re-play: single instance (leak fixed)");
     w.Step(0.25f); // 新局帧1
     Expect(saw700 == 2, "re-play adds exactly one report (2 = 1+1)");
+
+    // 静态订阅跨局存活（P2 批 2026-09-25 修复回归）：Configure 期
+    // Events.Subscribe(Hit→Custom42) 不随 lemon_play_reset 清（原 Events.Reset
+    // 误清 = Stop→Play 后静态链全哑）；实例级订阅由 ClearInstances 逐实例退订
+    //（M15 Subscribe 助手路径另有专测）
+    {
+        EventPacket hit{};
+        hit.type = GameEvent::Hit;
+        w.Events().Push(hit);
+        w.Step(0.25f); // C# 静态 handler 收 Hit → push Custom 42 入 pending
+        w.Step(0.25f); // #15 拉取入队 → sink 收 42
+        Expect(saw42 == 1, "static subscription survives play reset (Custom 42 x1)");
+    }
 
     g_sh.ResetPlayDomain(); // 收尾自清：不让本测试实例泄给后续（进程内域共享）
     Expect(attachedFn() == 0, "post-test domain clean");

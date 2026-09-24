@@ -278,10 +278,12 @@ public static class Behaviours
     /// 实测：每局 +2 环绕刃、击杀宝石翻倍）。语义 = Unity "Enter Play = 新域"
     /// 的实例面：只清实例/热重载包，类型注册表保留（同域未换装，免重 Configure）；
     /// OnDestroy 不调——实体已随旧 World 销毁，句柄悬空，调了只会对死世界读写
-    /// （与 LoadScript 的 Behaviours.Reset 同口径）。配套 Events.Reset 同导出一并做。</summary>
+    /// （与 LoadScript 的 Behaviours.Reset 同口径）。实例级订阅逐实例退订（勿整表
+    /// Events.Reset——那会连带清掉 Configure 期静态订阅，Stop→Play 后全哑）。</summary>
     internal static void ClearInstances()
     {
         foreach (var slot in Slots) {
+            foreach (var b in slot.Instances) b.ClearSubscriptions();
             slot.Instances.Clear();
             slot.StartPending.Clear();
             slot.BadStreak.Clear();

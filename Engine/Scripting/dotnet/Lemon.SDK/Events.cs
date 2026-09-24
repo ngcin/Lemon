@@ -94,11 +94,22 @@ public static unsafe class Events
         }
     }
 
-    /// <summary>换域清空（DomainManager.LoadScript 调用）。</summary>
+    /// <summary>换域清空（DomainManager.LoadScript 调用）：订阅表/待发/计数全清
+    /// ——新域 Configure 重跑，旧域静态订阅必须随域退役。</summary>
     internal static void Reset()
     {
         lock (s_pendingLock) s_pending.Clear();
         for (int i = 0; i < s_handlers.Length; i++) s_handlers[i]?.Clear();
+        for (int i = 0; i < s_received.Length; i++) s_received[i] = 0;
+    }
+
+    /// <summary>进 Play 域复位（lemon_play_reset 调）：只清待发队列与诊断计数，
+    /// 保留订阅表——同域未换装，静态订阅（GameMain.Configure 期注册）须跨局存活
+    /// （原误用 Reset：Stop→Play 后静态订阅全哑）。实例级订阅由
+    /// Behaviours.ClearInstances 逐实例 ClearSubscriptions 退订，不依赖本方法。</summary>
+    internal static void PlayReset()
+    {
+        lock (s_pendingLock) s_pending.Clear();
         for (int i = 0; i < s_received.Length; i++) s_received[i] = 0;
     }
 }
