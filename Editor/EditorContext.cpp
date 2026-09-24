@@ -288,7 +288,8 @@ ecs::Entity EditorContext::CreateSpriteEntityByGuid(const char* tag, uint64_t sp
     ecs::Entity e = CreateEntity(tag);
     ecs::SpriteRenderer& sr = scene_->Emplace<ecs::SpriteRenderer>(e); // 默认启用
     sr.spriteGuid = spriteGuid;
-    sr.spriteId = entry ? entry->spriteId : 0;
+    // 切片表默认 0 号 cell（T4 生成器惯例：首帧 = cell 0）；整图 = 本体号
+    sr.spriteId = entry ? (entry->sliceCount > 0 ? entry->sliceBase : entry->spriteId) : 0;
     return e;
 }
 
@@ -947,10 +948,20 @@ SpriteRefStats EditorContext::ResolveSpriteRefs() {
         if (!sr) return;
         if (sr->spriteGuid != 0) {
             const AssetEntry* en = assets_.FindByGuid(sr->spriteGuid);
-            if (en && !en->missing && en->spriteId != 0)
-                sr->spriteId = en->spriteId;
-            else
+            if (en && !en->missing && en->spriteId != 0) {
+                // id 落在本体/切片区间内 = 已是当前进程真值（切片 cell 引用保号不
+                // 覆写——guid 只锚资产，cell 是层内偏移）；区间外（跨进程漂移）=
+                // 切片表回 cell 0、整图回本体号（逐 cell guid 化超出本批范围）
+                const uint32_t cur = sr->spriteId;
+                const bool inRange =
+                    cur == en->spriteId ||
+                    (en->sliceCount > 0 && cur >= en->sliceBase &&
+                     cur < en->sliceBase + en->sliceCount);
+                if (!inRange)
+                    sr->spriteId = en->sliceCount > 0 ? en->sliceBase : en->spriteId;
+            } else {
                 ++st.danglingGuid;
+            }
         } else if (sr->spriteId >= assets_.SpriteIdBase()) {
             if (const AssetEntry* en = assets_.FindBySpriteId(sr->spriteId);
                 en && en->type == AssetType::Sprite) {

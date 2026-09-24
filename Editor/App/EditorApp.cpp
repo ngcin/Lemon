@@ -350,90 +350,40 @@ void WriteGameSources(const std::filesystem::path& game, const std::string& sdkD
 
 public static class GameMain
 {
+    /// <summary>一局共享态（M6a 批⓪ T4 三拆）：战斗写（计时/击杀/纪录/死亡），
+    /// HUD/移动读。静态随 A 线换域重建、不经 StateBag 通道——迁移由 PlayerCombat
+    /// 的 OnHotReloadOut/In 代收代还。</summary>
+    public static class Run
+    {
+        public static float Time;  // 本局秒（死亡冻结）
+        public static int Kills;   // 本局击杀
+        public static int Best;    // 历史最高（Save "vs.best" 持久）
+        public static bool Dead;   // 死亡结算相位（三脚本共用的闸）
+    }
+
     public static void Configure()
     {
-        Lemon.Behaviours.Register<PlayerBehaviour>();
+        // 注册序 = 跨类型 Update 执行序（04 §3.2）：移动 → 战斗 → HUD
+        Lemon.Behaviours.Register<PlayerMovement>();
+        Lemon.Behaviours.Register<PlayerCombat>();
+        Lemon.Behaviours.Register<PlayerHud>();
     }
 }
 )CS";
     }
-    std::ofstream f(game / "PlayerBehaviour.cs", std::ios::trunc);
-    f << R"CS(using System.Collections.Generic;
-using Lemon;
+    {
+        std::ofstream f(game / "PlayerMovement.cs", std::ios::trunc);
+        f << R"CS(using Lemon;
 using Lemon.Interop;
 
-/// <summary>vs-survivor 模板玩家（M5 批④）：8 向移动 + HUD 四要素 + 升级三选一
-/// （固定序轮换，零 RNG）+ 环绕刃自愈 + 击杀掉宝石 + 死亡结算/复活（死亡对话框点击；批④后修④）。
-/// 单类挂玩家实体（多脚本 scripts[] 属 M5 余项，见 M5.md §21.2 D4 注）。</summary>
-public sealed class PlayerBehaviour : LemonBehaviour
+/// <summary>移动（M6a 批⓪ T4 拆分）：8 向 + 软竞技场钳制；死亡相位停走。</summary>
+public sealed class PlayerMovement : LemonBehaviour
 {
-    // 模板资产 GUID（Templates/vs-survivor 生成期固定——引用锚点，勿改）
-    private const string kGemPrefab = "7e57100000000005";
-    private const string kBladePrefab = "7e57100000000006";
-    private const uint kPiercePrefabLow = 0x00000004; // PierceBullet.prefab 低 32 位
-
     private const float kArenaHalf = 1000f; // 软竞技场边界（脚本层钳制）
-    private const uint kColorHp = 0xFF30B0F0u;   // 血条红（ABGR）
-    private const uint kColorXp = 0xFF30D8F0u;   // 经验金
-    private const uint kColorTime = 0xFFF0F0F0u; // 计时白
-    private const uint kColorKill = 0xFF4098F0u; // 击杀橙
-    private const uint kColorWave = 0xFF60E0A0u; // 波次绿
-
-    private static readonly string[] kOptions = {
-        "移速 +10%", "磁力 +25%", "射速 +15%", "穿透弹", "生命上限 +25", "环绕之刃 +1",
-    };
-
-    private float _runTime;
-    private int _kills;
-    private int _best;
-    private bool _dead;
-    private int _pendingLevels; // LevelUp 事件累计的待选次数
-    private bool _cardsShown;
-    private int _pickRotation;  // 三选一轮换序（确定性）
-    private int _bladeCount = 2;
-    private readonly List<ulong> _blades = new();
-    private float _bladeAngle;
-
-    public PlayerBehaviour()
-    {
-        // Subscribe 助手（M15）：实例销毁自动退订（裸 Events.Subscribe 只增不删，
-        // 死亡→复活重挂会逐局累积订阅）
-        Subscribe(GameEvent.LevelUp, m => {
-            if (m.Src.Id == gameObject.Entity.Id) ++_pendingLevels;
-        });
-        Subscribe(GameEvent.Death, OnDeath);
-        Subscribe(GameEvent.WaveStart, m =>
-            Ui.Set("wave", $"—— 第 {(int)m.P0 + 1} 波 ——", -1f, kColorWave));
-    }
-
-    private void OnDeath(GameEventMsg m)
-    {
-        var src = GameObject.From(m.Src);
-        if (!src.Alive || !src.TryGetComponent<Meta>(out var meta)) return;
-        if (meta.Team == 1) {
-            ++_kills;
-            if (src.TryGetComponent<Transform2D>(out var tf)) // 两阶段销毁：当帧可读
-                Instantiate.Prefab(kGemPrefab, new Vec2(tf.Pos.X, tf.Pos.Y));
-        } else if (m.Src.Id == gameObject.Entity.Id) {
-            Die();
-        }
-    }
-
-    protected override void Start()
-    {
-        _best = int.TryParse(Save.GetString("vs.best"), out var b) ? b : 0; // 上一局纪录
-    }
 
     protected override void Update()
     {
-        if (_dead) {
-            // 死亡对话框：点击/数字键 1 → CardPick()==0 复活（消费式回读，与升级
-            // 卡片同通道；批④后修④——R 键路径废弃，交互不依赖键盘焦点路由）
-            if (Ui.CardPick() == 0) Revive();
-            return;
-        }
-        _runTime += Time.DeltaTime;
-
+        if (GameMain.Run.Dead) return;
         var tf = gameObject.GetComponent<Transform2D>();
         var stats = gameObject.GetComponent<Stats>();
         Vec2 axis = Input.Axis;
@@ -443,24 +393,78 @@ public sealed class PlayerBehaviour : LemonBehaviour
             System.Math.Clamp(tf.Pos.Y + axis.Y * stats.MoveSpeed * Time.DeltaTime,
                               -kArenaHalf, kArenaHalf));
         gameObject.SetComponent(tf);
+    }
+}
+)CS";
+    }
+    {
+        std::ofstream f(game / "PlayerCombat.cs", std::ios::trunc);
+        f << R"CS(using System.Collections.Generic;
+using Lemon;
+using Lemon.Interop;
 
-        UpdateHud();
-        UpdateBlades(tf);
-        UpdateCards();
+/// <summary>战斗（M6a 批⓪ T4 拆分）：击杀/宝石掉落 + 环绕刃自愈 + 升级三选一
+///（固定序轮换，零 RNG）+ 死亡结算/复活（死亡对话框点击）。一局共享态写
+/// GameMain.Run（HUD 读）。</summary>
+public sealed class PlayerCombat : LemonBehaviour
+{
+    // 模板资产 GUID（Templates/vs-survivor 生成期固定——引用锚点，勿改）
+    private const string kGemPrefab = "7e57100000000005";
+    private const string kBladePrefab = "7e57100000000006";
+    private const uint kPiercePrefabLow = 0x00000004; // PierceBullet.prefab 低 32 位
+
+    private static readonly string[] kOptions = {
+        "移速 +10%", "磁力 +25%", "射速 +15%", "穿透弹", "生命上限 +25", "环绕之刃 +1",
+    };
+
+    private int _pendingLevels; // LevelUp 事件累计的待选次数
+    private bool _cardsShown;
+    private int _pickRotation;  // 三选一轮换序（确定性）
+    private int _bladeCount = 2;
+    private readonly List<ulong> _blades = new();
+    private float _bladeAngle;
+
+    public PlayerCombat()
+    {
+        // Subscribe 助手（M15）：实例销毁自动退订（裸 Events.Subscribe 只增不删，
+        // 死亡→复活重挂会逐局累积订阅）
+        Subscribe(GameEvent.LevelUp, m => {
+            if (m.Src.Id == gameObject.Entity.Id) ++_pendingLevels;
+        });
+        Subscribe(GameEvent.Death, OnDeath);
     }
 
-    private void UpdateHud()
+    private void OnDeath(GameEventMsg m)
     {
-        var hp = gameObject.GetComponent<Health>();
-        var xp = gameObject.GetComponent<XpProgress>();
-        Ui.Set("hp", $"HP {(int)hp.Cur}/{(int)hp.Max}",
-               hp.Max > 0f ? hp.Cur / hp.Max : 0f, kColorHp);
-        Ui.Set("xp", $"LV {xp.Level} {(int)xp.Xp}/{(int)xp.XpToNext}",
-               xp.XpToNext > 0f ? xp.Xp / xp.XpToNext : 0f, kColorXp);
-        int t = (int)_runTime;
-        Ui.Set("time", $"{t / 60}:{t % 60:00}", -1f, kColorTime);
-        Ui.Set("kills", $"击杀 {_kills}", -1f, kColorKill);
-        Ui.Set("best", $"最高纪录 {_best}", -1f);
+        var src = GameObject.From(m.Src);
+        if (!src.Alive || !src.TryGetComponent<Meta>(out var meta)) return;
+        if (meta.Team == 1) {
+            ++GameMain.Run.Kills;
+            if (src.TryGetComponent<Transform2D>(out var tf)) // 两阶段销毁：当帧可读
+                Instantiate.Prefab(kGemPrefab, new Vec2(tf.Pos.X, tf.Pos.Y));
+        } else if (m.Src.Id == gameObject.Entity.Id) {
+            Die();
+        }
+    }
+
+    protected override void Start()
+    {
+        GameMain.Run.Best =
+            int.TryParse(Save.GetString("vs.best"), out var b) ? b : 0; // 上一局纪录
+    }
+
+    protected override void Update()
+    {
+        if (GameMain.Run.Dead) {
+            // 死亡对话框：点击/数字键 1 → CardPick()==0 复活（消费式回读，与升级
+            // 卡片同通道；批④后修④——R 键路径废弃，交互不依赖键盘焦点路由）
+            if (Ui.CardPick() == 0) Revive();
+            return;
+        }
+        GameMain.Run.Time += Time.DeltaTime;
+
+        UpdateBlades(gameObject.GetComponent<Transform2D>());
+        UpdateCards();
     }
 
     private void UpdateBlades(Transform2D playerTf)
@@ -545,26 +549,26 @@ public sealed class PlayerBehaviour : LemonBehaviour
 
     private void Die()
     {
-        if (_dead) return; // 多源 Death（弹道/区域）只结算一次
-        _dead = true;
+        if (GameMain.Run.Dead) return; // 多源 Death（弹道/区域）只结算一次
+        GameMain.Run.Dead = true;
         _cardsShown = false; // 弃置在途升级卡（_pendingLevels 保留，复活后重弹）
         Time.Scale = 0f;
-        int score = _kills * 10 + (int)_runTime;
-        bool newBest = score > _best;
+        int score = GameMain.Run.Kills * 10 + (int)GameMain.Run.Time;
+        bool newBest = score > GameMain.Run.Best;
         if (newBest) {
-            _best = score;
+            GameMain.Run.Best = score;
             Save.SetString("vs.best", score.ToString());
             Save.Flush(); // 立即落盘（ExitPlay 兜底之外的显式路径）
         }
         string title = newBest ? $"★ 新纪录 {score} 分！"
-                               : $"本局 {score} 分（最高 {_best}）";
+                               : $"本局 {score} 分（最高 {GameMain.Run.Best}）";
         Ui.Set("over", title, -1f, 0xFF5080FFu);
         Ui.ShowDialog(title, "复活");
     }
 
     private void Revive()
     {
-        _dead = false;
+        GameMain.Run.Dead = false;
         var hp = gameObject.GetComponent<Health>();
         hp.Cur = hp.Max;
         hp.IFrames = 2f; // 复活无敌 2s（StatSystem 递减）
@@ -574,13 +578,14 @@ public sealed class PlayerBehaviour : LemonBehaviour
         Ui.Clear("over");
     }
 
-    // 热重载状态迁移（数值面；刃实体经 UpdateBlades 自愈重建轨道）
+    // 热重载状态迁移（数值面，含 GameMain.Run 共享态——静态随域重建必须经包走；
+    // 刃实体经 UpdateBlades 自愈重建轨道）
     protected override void OnHotReloadOut(StateBag bag)
     {
-        bag.Set("time", _runTime);
-        bag.Set("kills", _kills);
-        bag.Set("best", _best);
-        bag.Set("dead", _dead);
+        bag.Set("time", GameMain.Run.Time);
+        bag.Set("kills", GameMain.Run.Kills);
+        bag.Set("best", GameMain.Run.Best);
+        bag.Set("dead", GameMain.Run.Dead);
         bag.Set("pending", _pendingLevels);
         bag.Set("rotation", _pickRotation);
         bag.Set("blades", _bladeCount);
@@ -588,16 +593,56 @@ public sealed class PlayerBehaviour : LemonBehaviour
 
     protected override void OnHotReloadIn(StateBag bag)
     {
-        if (bag.TryGet("time", out float t)) _runTime = t;
-        if (bag.TryGet("kills", out int k)) _kills = k;
-        if (bag.TryGet("best", out int b)) _best = b;
-        if (bag.TryGet("dead", out bool d)) _dead = d;
+        if (bag.TryGet("time", out float t)) GameMain.Run.Time = t;
+        if (bag.TryGet("kills", out int k)) GameMain.Run.Kills = k;
+        if (bag.TryGet("best", out int b)) GameMain.Run.Best = b;
+        if (bag.TryGet("dead", out bool d)) GameMain.Run.Dead = d;
         if (bag.TryGet("pending", out int p)) _pendingLevels = p;
         if (bag.TryGet("rotation", out int r)) _pickRotation = r;
         if (bag.TryGet("blades", out int n)) _bladeCount = n;
     }
 }
 )CS";
+    }
+    {
+        std::ofstream f(game / "PlayerHud.cs", std::ios::trunc);
+        f << R"CS(using Lemon;
+using Lemon.Interop;
+
+/// <summary>HUD（M6a 批⓪ T4 拆分）：四要素行 + 波次横幅。读 GameMain.Run 共享态；
+/// 死亡相位冻结末帧（"over" 结算行由战斗侧写）。</summary>
+public sealed class PlayerHud : LemonBehaviour
+{
+    private const uint kColorHp = 0xFF30B0F0u;   // 血条红（ABGR）
+    private const uint kColorXp = 0xFF30D8F0u;   // 经验金
+    private const uint kColorTime = 0xFFF0F0F0u; // 计时白
+    private const uint kColorKill = 0xFF4098F0u; // 击杀橙
+    private const uint kColorWave = 0xFF60E0A0u; // 波次绿
+
+    public PlayerHud()
+    {
+        Subscribe(GameEvent.WaveStart, m =>
+            Ui.Set("wave", $"—— 第 {(int)m.P0 + 1} 波 ——", -1f, kColorWave));
+    }
+
+    protected override void Update()
+    {
+        if (GameMain.Run.Dead) return;
+        var hp = gameObject.GetComponent<Health>();
+        var xp = gameObject.GetComponent<XpProgress>();
+        Ui.Set("hp", $"HP {(int)hp.Cur}/{(int)hp.Max}",
+               hp.Max > 0f ? hp.Cur / hp.Max : 0f, kColorHp);
+        Ui.Set("xp", $"LV {xp.Level} {(int)xp.Xp}/{(int)xp.XpToNext}",
+               xp.XpToNext > 0f ? xp.Xp / xp.XpToNext : 0f, kColorXp);
+        int t = (int)GameMain.Run.Time;
+        Ui.Set("time", $"{t / 60}:{t % 60:00}", -1f, kColorTime);
+        Ui.Set("kills", $"击杀 {GameMain.Run.Kills}", -1f, kColorKill);
+        Ui.Set("best", $"最高纪录 {GameMain.Run.Best}", -1f);
+    }
+}
+)CS";
+    }
+
 }
 } // namespace vs_template
 
@@ -671,17 +716,20 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
              "吸血鬼幸存者式开局模板：8 向移动 + 直射弹（可升级穿透）+ 环绕刃 +\n"
              "经验宝石磁吸 + 升级三选一（数字键 1/2/3 或点击卡片）+ 16 波导演\n"
              "（t=565s Boss 波）+ HUD 四要素 + 死亡结算/最高分存档（死亡对话框点击复活）。\n\n"
-             "由 `lemon-editor --gen-vs-template <dir>` 生成（改玩法请改 Game/\n"
-             "PlayerBehaviour.cs 或场景后重新生成，勿手改 .prefab 内 guid）。\n\n"
+             "由 `lemon-editor --gen-vs-template <dir>` 生成（改玩法请改 Game/ 下\n"
+             "脚本或场景后重新生成，勿手改 .prefab 内 guid）。\n\n"
              "## 素材来源与许可\n\n"
              "- `dungeon_*` 精灵表与 `*.clip`：yami-rpg-editor（MIT，Copyright (c) 2025\n"
              "  Yami & Xuran & Contributors）——随模板再分发需在发布物保留版权声明\n"
              "  （仓库根 THIRD_PARTY.md 已登记）。\n"
              "- `gem/bullet/pierce/blade.png`：程序化生成（无版权负担）。\n\n"
              "## 玩法锚点\n\n"
-             "- 玩家：`Player` 实体（PlayerBehaviour 单脚本；多脚本 scripts[] 属 M5 余项）。\n"
+             "- 玩家：`Player` 实体挂三脚本（M6a 批⓪ scripts[]：移动 → 战斗 → HUD，\n"
+             "注册序 = 跨类型 Update 执行序）；一局共享态在 GameMain.Run。\n"
              "- 波次：`Director` 实体 WaveDirector（Inspector 数组段可调参）。\n"
-             "- 三选一池：PlayerBehaviour.kOptions（固定序轮换，零 RNG = 回放友好）。\n";
+             "- 三选一池：PlayerCombat.kOptions（固定序轮换，零 RNG = 回放友好）。\n"
+             "- 素材引用：.scene 双写 spriteGuid（真源）+ spriteId（进程内号）——\n"
+             "改名/移位/manifest 重建后打开场景自动归一（M6a 批⓪ T2）。\n";
     }
 
     // 3) 打开项目（扫描记账）→ 播种场景 + 覆写 prefab 内容。
@@ -689,14 +737,10 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
     if (!ctx.Assets().OpenProject(root.string(), spriteIdBase)) return false;
     ctx.NewScene();
     ecs::Scene& s = ctx.EditScene();
-    const AssetDatabase& db = ctx.Assets();
-    auto spriteOf = [&](uint64_t guid) -> uint32_t {
-        const AssetEntry* e = db.FindByGuid(guid);
-        return e ? (e->sliceCount > 0 ? e->sliceBase : e->spriteId) : 0;
-    };
 
-    // 玩家（hero 表 0 帧 + 走路 clip）
-    ecs::Entity player = ctx.CreateSpriteEntity("Player", spriteOf(kHeroSheet));
+    // 玩家（hero 表 0 帧 + 走路 clip）。M6a 批⓪ T2：guid/id 双写（CreateSpriteEntityByGuid
+    // 携切片表 cell-0 惯例——切片表首帧 = sliceBase，整图 = 本体号）
+    ecs::Entity player = ctx.CreateSpriteEntityByGuid("Player", kHeroSheet);
     s.Get<ecs::Meta>(player).team = 0;
     s.Emplace<ecs::Health>(player, ecs::Health{.max = 100.0f, .cur = 100.0f});
     s.Emplace<ecs::Stats>(player).pickupRadius = 96.0f;
@@ -707,7 +751,11 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
     psh.range = 2000.0f;
     psh.targetTeam = 1;
     s.Emplace<ecs::Animator2D>(player).clipId = (uint32_t)kHeroClip;
-    ctx.AttachScript(player, 0, "PlayerBehaviour");
+    // M6a 批⓪ T4 三拆：槽序镜像注册序（移动 → 战斗 → HUD）；Game/ 不入资产扫描
+    // → scriptGuid 恒 0（className 是持久键）
+    ctx.AttachScript(player, 0, "PlayerMovement");
+    ctx.AttachScript(player, 0, "PlayerCombat");
+    ctx.AttachScript(player, 0, "PlayerHud");
 
     // 导演（16 波：15 波小怪递增 + t=565s Boss；后波接管语义下条目都在波内完成）
     ecs::Entity director = ctx.CreateEntity("Director");
@@ -736,9 +784,9 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
     }
 
     // prefab 内容（scratch 实体 → SaveEntityTree → 覆写 .prefab；导出后销毁）
-    auto exportPrefab = [&](const char* tag, uint32_t team, uint32_t sprite,
+    auto exportPrefab = [&](const char* tag, uint32_t team, uint64_t spriteGuid,
                             auto build) -> bool {
-        ecs::Entity e = ctx.CreateSpriteEntity(tag, sprite);
+        ecs::Entity e = ctx.CreateSpriteEntityByGuid(tag, spriteGuid);
         s.Get<ecs::Meta>(e).team = team;
         build(e);
         const std::string json = ecs::SceneArchive::SaveEntityTree(s, e);
@@ -749,8 +797,7 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
         f << json;
         return true;
     };
-    const uint32_t mobSprite = spriteOf(kMonsterSheet), bossSprite = spriteOf(kBossSheet);
-    if (!exportPrefab("Mob", 1, mobSprite, [&](ecs::Entity e) {
+    if (!exportPrefab("Mob", 1, kMonsterSheet, [&](ecs::Entity e) {
             s.Emplace<ecs::Health>(e, ecs::Health{.max = 20.0f, .cur = 20.0f});
             s.Emplace<ecs::Knockback>(e);
             s.Emplace<ecs::Velocity>(e);
@@ -766,7 +813,7 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
             hz.radius = 24.0f;
         }))
         return false;
-    if (!exportPrefab("BossMob", 1, bossSprite, [&](ecs::Entity e) {
+    if (!exportPrefab("BossMob", 1, kBossSheet, [&](ecs::Entity e) {
             s.Emplace<ecs::Health>(e, ecs::Health{.max = 600.0f, .cur = 600.0f});
             s.Emplace<ecs::Knockback>(e);
             s.Emplace<ecs::Velocity>(e);
@@ -790,20 +837,20 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
         pr.lifetime = life;
         pr.pierce = pierce;
     };
-    if (!exportPrefab("Bullet", 0, db.FindByGuid(kBulletPng)->spriteId, [&](ecs::Entity e) {
+    if (!exportPrefab("Bullet", 0, kBulletPng, [&](ecs::Entity e) {
             bulletBody(e, 8.0f, 0, 2.5f);
         }))
         return false;
-    if (!exportPrefab("PierceBullet", 0, db.FindByGuid(kPiercePng)->spriteId,
+    if (!exportPrefab("PierceBullet", 0, kPiercePng,
                       [&](ecs::Entity e) { bulletBody(e, 6.0f, 3, 3.0f); }))
         return false;
-    if (!exportPrefab("Gem", 2, db.FindByGuid(kGemPng)->spriteId, [&](ecs::Entity e) {
+    if (!exportPrefab("Gem", 2, kGemPng, [&](ecs::Entity e) {
             ecs::Collectible& c = s.Emplace<ecs::Collectible>(e);
             c.kind = 0;
             c.value = 1.0f;
         }))
         return false;
-    if (!exportPrefab("Blade", 0, db.FindByGuid(kBladePng)->spriteId, [&](ecs::Entity e) {
+    if (!exportPrefab("Blade", 0, kBladePng, [&](ecs::Entity e) {
             ecs::Hazard& hz = s.Emplace<ecs::Hazard>(e);
             hz.dps = 6.0f;
             hz.tickInterval = 0.4f;

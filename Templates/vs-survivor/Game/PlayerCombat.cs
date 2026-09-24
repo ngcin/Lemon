@@ -2,31 +2,20 @@ using System.Collections.Generic;
 using Lemon;
 using Lemon.Interop;
 
-/// <summary>vs-survivor 模板玩家（M5 批④）：8 向移动 + HUD 四要素 + 升级三选一
-/// （固定序轮换，零 RNG）+ 环绕刃自愈 + 击杀掉宝石 + 死亡结算/复活（死亡对话框点击；批④后修④）。
-/// 单类挂玩家实体（多脚本 scripts[] 属 M5 余项，见 M5.md §21.2 D4 注）。</summary>
-public sealed class PlayerBehaviour : LemonBehaviour
+/// <summary>战斗（M6a 批⓪ T4 拆分）：击杀/宝石掉落 + 环绕刃自愈 + 升级三选一
+///（固定序轮换，零 RNG）+ 死亡结算/复活（死亡对话框点击）。一局共享态写
+/// GameMain.Run（HUD 读）。</summary>
+public sealed class PlayerCombat : LemonBehaviour
 {
     // 模板资产 GUID（Templates/vs-survivor 生成期固定——引用锚点，勿改）
     private const string kGemPrefab = "7e57100000000005";
     private const string kBladePrefab = "7e57100000000006";
     private const uint kPiercePrefabLow = 0x00000004; // PierceBullet.prefab 低 32 位
 
-    private const float kArenaHalf = 1000f; // 软竞技场边界（脚本层钳制）
-    private const uint kColorHp = 0xFF30B0F0u;   // 血条红（ABGR）
-    private const uint kColorXp = 0xFF30D8F0u;   // 经验金
-    private const uint kColorTime = 0xFFF0F0F0u; // 计时白
-    private const uint kColorKill = 0xFF4098F0u; // 击杀橙
-    private const uint kColorWave = 0xFF60E0A0u; // 波次绿
-
     private static readonly string[] kOptions = {
         "移速 +10%", "磁力 +25%", "射速 +15%", "穿透弹", "生命上限 +25", "环绕之刃 +1",
     };
 
-    private float _runTime;
-    private int _kills;
-    private int _best;
-    private bool _dead;
     private int _pendingLevels; // LevelUp 事件累计的待选次数
     private bool _cardsShown;
     private int _pickRotation;  // 三选一轮换序（确定性）
@@ -34,7 +23,7 @@ public sealed class PlayerBehaviour : LemonBehaviour
     private readonly List<ulong> _blades = new();
     private float _bladeAngle;
 
-    public PlayerBehaviour()
+    public PlayerCombat()
     {
         // Subscribe 助手（M15）：实例销毁自动退订（裸 Events.Subscribe 只增不删，
         // 死亡→复活重挂会逐局累积订阅）
@@ -42,8 +31,6 @@ public sealed class PlayerBehaviour : LemonBehaviour
             if (m.Src.Id == gameObject.Entity.Id) ++_pendingLevels;
         });
         Subscribe(GameEvent.Death, OnDeath);
-        Subscribe(GameEvent.WaveStart, m =>
-            Ui.Set("wave", $"—— 第 {(int)m.P0 + 1} 波 ——", -1f, kColorWave));
     }
 
     private void OnDeath(GameEventMsg m)
@@ -51,7 +38,7 @@ public sealed class PlayerBehaviour : LemonBehaviour
         var src = GameObject.From(m.Src);
         if (!src.Alive || !src.TryGetComponent<Meta>(out var meta)) return;
         if (meta.Team == 1) {
-            ++_kills;
+            ++GameMain.Run.Kills;
             if (src.TryGetComponent<Transform2D>(out var tf)) // 两阶段销毁：当帧可读
                 Instantiate.Prefab(kGemPrefab, new Vec2(tf.Pos.X, tf.Pos.Y));
         } else if (m.Src.Id == gameObject.Entity.Id) {
@@ -61,46 +48,22 @@ public sealed class PlayerBehaviour : LemonBehaviour
 
     protected override void Start()
     {
-        _best = int.TryParse(Save.GetString("vs.best"), out var b) ? b : 0; // 上一局纪录
+        GameMain.Run.Best =
+            int.TryParse(Save.GetString("vs.best"), out var b) ? b : 0; // 上一局纪录
     }
 
     protected override void Update()
     {
-        if (_dead) {
+        if (GameMain.Run.Dead) {
             // 死亡对话框：点击/数字键 1 → CardPick()==0 复活（消费式回读，与升级
             // 卡片同通道；批④后修④——R 键路径废弃，交互不依赖键盘焦点路由）
             if (Ui.CardPick() == 0) Revive();
             return;
         }
-        _runTime += Time.DeltaTime;
+        GameMain.Run.Time += Time.DeltaTime;
 
-        var tf = gameObject.GetComponent<Transform2D>();
-        var stats = gameObject.GetComponent<Stats>();
-        Vec2 axis = Input.Axis;
-        tf.Pos = new Vec2(
-            System.Math.Clamp(tf.Pos.X + axis.X * stats.MoveSpeed * Time.DeltaTime,
-                              -kArenaHalf, kArenaHalf),
-            System.Math.Clamp(tf.Pos.Y + axis.Y * stats.MoveSpeed * Time.DeltaTime,
-                              -kArenaHalf, kArenaHalf));
-        gameObject.SetComponent(tf);
-
-        UpdateHud();
-        UpdateBlades(tf);
+        UpdateBlades(gameObject.GetComponent<Transform2D>());
         UpdateCards();
-    }
-
-    private void UpdateHud()
-    {
-        var hp = gameObject.GetComponent<Health>();
-        var xp = gameObject.GetComponent<XpProgress>();
-        Ui.Set("hp", $"HP {(int)hp.Cur}/{(int)hp.Max}",
-               hp.Max > 0f ? hp.Cur / hp.Max : 0f, kColorHp);
-        Ui.Set("xp", $"LV {xp.Level} {(int)xp.Xp}/{(int)xp.XpToNext}",
-               xp.XpToNext > 0f ? xp.Xp / xp.XpToNext : 0f, kColorXp);
-        int t = (int)_runTime;
-        Ui.Set("time", $"{t / 60}:{t % 60:00}", -1f, kColorTime);
-        Ui.Set("kills", $"击杀 {_kills}", -1f, kColorKill);
-        Ui.Set("best", $"最高纪录 {_best}", -1f);
     }
 
     private void UpdateBlades(Transform2D playerTf)
@@ -185,26 +148,26 @@ public sealed class PlayerBehaviour : LemonBehaviour
 
     private void Die()
     {
-        if (_dead) return; // 多源 Death（弹道/区域）只结算一次
-        _dead = true;
+        if (GameMain.Run.Dead) return; // 多源 Death（弹道/区域）只结算一次
+        GameMain.Run.Dead = true;
         _cardsShown = false; // 弃置在途升级卡（_pendingLevels 保留，复活后重弹）
         Time.Scale = 0f;
-        int score = _kills * 10 + (int)_runTime;
-        bool newBest = score > _best;
+        int score = GameMain.Run.Kills * 10 + (int)GameMain.Run.Time;
+        bool newBest = score > GameMain.Run.Best;
         if (newBest) {
-            _best = score;
+            GameMain.Run.Best = score;
             Save.SetString("vs.best", score.ToString());
             Save.Flush(); // 立即落盘（ExitPlay 兜底之外的显式路径）
         }
         string title = newBest ? $"★ 新纪录 {score} 分！"
-                               : $"本局 {score} 分（最高 {_best}）";
+                               : $"本局 {score} 分（最高 {GameMain.Run.Best}）";
         Ui.Set("over", title, -1f, 0xFF5080FFu);
         Ui.ShowDialog(title, "复活");
     }
 
     private void Revive()
     {
-        _dead = false;
+        GameMain.Run.Dead = false;
         var hp = gameObject.GetComponent<Health>();
         hp.Cur = hp.Max;
         hp.IFrames = 2f; // 复活无敌 2s（StatSystem 递减）
@@ -214,13 +177,14 @@ public sealed class PlayerBehaviour : LemonBehaviour
         Ui.Clear("over");
     }
 
-    // 热重载状态迁移（数值面；刃实体经 UpdateBlades 自愈重建轨道）
+    // 热重载状态迁移（数值面，含 GameMain.Run 共享态——静态随域重建必须经包走；
+    // 刃实体经 UpdateBlades 自愈重建轨道）
     protected override void OnHotReloadOut(StateBag bag)
     {
-        bag.Set("time", _runTime);
-        bag.Set("kills", _kills);
-        bag.Set("best", _best);
-        bag.Set("dead", _dead);
+        bag.Set("time", GameMain.Run.Time);
+        bag.Set("kills", GameMain.Run.Kills);
+        bag.Set("best", GameMain.Run.Best);
+        bag.Set("dead", GameMain.Run.Dead);
         bag.Set("pending", _pendingLevels);
         bag.Set("rotation", _pickRotation);
         bag.Set("blades", _bladeCount);
@@ -228,10 +192,10 @@ public sealed class PlayerBehaviour : LemonBehaviour
 
     protected override void OnHotReloadIn(StateBag bag)
     {
-        if (bag.TryGet("time", out float t)) _runTime = t;
-        if (bag.TryGet("kills", out int k)) _kills = k;
-        if (bag.TryGet("best", out int b)) _best = b;
-        if (bag.TryGet("dead", out bool d)) _dead = d;
+        if (bag.TryGet("time", out float t)) GameMain.Run.Time = t;
+        if (bag.TryGet("kills", out int k)) GameMain.Run.Kills = k;
+        if (bag.TryGet("best", out int b)) GameMain.Run.Best = b;
+        if (bag.TryGet("dead", out bool d)) GameMain.Run.Dead = d;
         if (bag.TryGet("pending", out int p)) _pendingLevels = p;
         if (bag.TryGet("rotation", out int r)) _pickRotation = r;
         if (bag.TryGet("blades", out int n)) _bladeCount = n;
