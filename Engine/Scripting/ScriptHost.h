@@ -61,6 +61,11 @@ struct NativeApiVtable {
     // ---- M6a 批①（世界空间表现通道：飘字/血条 → World.Fx；表尾追加同上约定）----
     void (*fxPopup)(const char* text, float x, float y, uint32_t color);
     void (*fxBar)(uint64_t entity, float frac, uint32_t color, float width);
+    // ---- 2026-09-26 调参下放批（分离力参数场景侧化：Lemon.Physics.Separation →
+    // World::Separation()；表尾追加同上约定。改运行时参数不入 StateHash，基准场
+    // 零调用 = 零漂移）----
+    void (*setSeparation)(float radius, float strength, int32_t maxNeighbors,
+                          int32_t densityCap); // 各参 <0 = 保持现值
 };
 
 /// 编辑器资产钩子（M4.4：编辑器宿主装配期经 SetEditorAssetHooks 注入；

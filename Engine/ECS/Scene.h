@@ -113,6 +113,16 @@ public:
     static entt::entity ToEntt(Entity e) { return static_cast<entt::entity>((uint32_t)e.id - 1u); }
     static Entity FromEntt(entt::entity e) { return Entity{(uint64_t)(uint32_t)e + 1u}; }
 
+    /// index/version 位切割（提取层映射数组用：idx 稠密、回收同槽新实体 version+1
+    /// ——映射槽须校验 version 防串，2026-09-26 渲染提取批）。断言钉住 entt 布局，
+    /// 依赖升级漂移即编译期报。
+    static uint32_t EnttIndex(Entity e) {
+        return ((uint32_t)e.id - 1u) & entt::entt_traits<entt::entity>::entity_mask;
+    }
+    static uint32_t EnttVersion(Entity e) {
+        return (uint32_t)entt::to_version(ToEntt(e));
+    }
+
     /// 底层 registry 直访（引擎系统/查询层实现用；不得越过封装层泄漏）
     entt::registry& Registry() { return registry_; }
     const entt::registry& Registry() const { return registry_; }

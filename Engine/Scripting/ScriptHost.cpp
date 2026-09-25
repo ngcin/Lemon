@@ -10,6 +10,7 @@
 #include "Components/RenderComponents.h"
 #include "Core/Log.h"
 #include "ECS/ComponentRegistry.h"
+#include "Systems/Systems.h" // SeparationSystem 完整定义（调参下放通道）
 
 namespace lemon::scripting {
 
@@ -166,6 +167,19 @@ void NativeFxBar(uint64_t entity, float frac, uint32_t color, float width) {
     if (g_world) g_world->Fx().Bar(entity, frac, color, width);
 }
 
+// 2026-09-26 调参下放批：分离力参数场景侧覆盖（引擎默认不动；呈现/调参通道
+// 不入 StateHash，基准场脚本零调用 = 回放零漂移）
+void NativeSetSeparation(float radius, float strength, int32_t maxNeighbors,
+                         int32_t densityCap) {
+    if (!g_world) return;
+    if (auto* sep = g_world->Separation(); sep) {
+        if (radius >= 0.0f) sep->radius = radius;
+        if (strength >= 0.0f) sep->strength = strength;
+        if (maxNeighbors >= 0) sep->maxNeighbors = (uint32_t)maxNeighbors;
+        if (densityCap >= 0) sep->densityCap = (uint32_t)densityCap;
+    }
+}
+
 const NativeApiVtable kNativeApi{NativeIsAlive,
                                  NativeHas,
                                  NativeRead,
@@ -186,7 +200,8 @@ const NativeApiVtable kNativeApi{NativeIsAlive,
                                  NativeUiCards,
                                  NativeUiCardPick,
                                  NativeFxPopup,
-                                 NativeFxBar};
+                                 NativeFxBar,
+                                 NativeSetSeparation};
 } // namespace
 
 void SetScriptIoHooks(const ScriptIoHooks& hooks) { g_scriptIo = hooks; }

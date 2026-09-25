@@ -26,17 +26,96 @@ void TargetBoard::DeclareTeams(const std::vector<uint32_t>& teamIds) {
     for (uint32_t id : teamIds) teams_.push_back({id, {}});
 }
 
-void TargetBoard::Rebuild(Scene& scene, bool collectAll) {
+void TargetBoard::Rebuild(Scene& scene, bool collectAll, JobSystem* jobs) {
     for (auto& t : teams_) t.list.clear();
     all_.clear();
     auto view = scene.View<Meta, Transform2D>();
-    for (auto [ent, meta, tf] : view.each()) {
-        TargetEntry entry{Scene::FromEntt(ent), tf.pos};
-        if (collectAll) all_.push_back(entry);
-        for (auto& t : teams_)
-            if (t.id == meta.team) t.list.push_back(entry);
+    entt::registry& reg = scene.Registry();
+
+    // 串行路径（存量/单线程档/小场）：view 迭代序收集 + 就地建桶
+    const size_t est = std::min(scene.Pool<Meta>().size(),
+                                scene.Pool<Transform2D>().size());
+    if (!jobs || jobs->ThreadCount() <= 1 || est < kParallelMin) {
+        for (auto [ent, meta, tf] : view.each()) {
+            TargetEntry entry{Scene::FromEntt(ent), tf.pos};
+            if (collectAll) all_.push_back(entry);
+            for (auto& t : teams_)
+                if (t.id == meta.team) t.list.push_back(entry);
+        }
+        for (auto& t : teams_) t.grid.Build(t.list); // many-vs-many 网格桶（小列表空建）
+        return;
     }
-    for (auto& t : teams_) t.grid.Build(t.list); // many-vs-many 网格桶（小列表空建）
+
+    // 并行路径（2026-09-26 五万场：串行收集+双队排序是 AI 段余量大头）。确定性：
+    // view 无随机访问 → 主线程先按 view 序收集实体；ParallelFor 块界 = grain 对齐
+    // （JobSystem.cpp），chunk 缓冲按块索引分桶、按序归并 → list 序 = view 序，
+    // 与串行路径逐位同构（等距平局语义不变）。建桶排序键 (cellKey, 池索引) 唯一
+    // → 每队 Build 结果唯一确定；各队独立，逐队入队并行（任务内不嵌套，纪律见
+    // JobSystem.h 文头），最后一队留给主线程参与执行。
+    collectEnts_.clear();
+    for (auto [ent, meta, tf] : view.each()) {
+        (void)meta; (void)tf;
+        collectEnts_.push_back(Scene::FromEntt(ent));
+    }
+    const uint32_t n = (uint32_t)collectEnts_.size();
+    if (n < kParallelMin) { // view 实际量低于估算（组件缺失）：回串行
+        for (uint32_t i = 0; i < n; ++i) {
+            auto [meta, tf] = reg.get<Meta, Transform2D>(Scene::ToEntt(collectEnts_[i]));
+            TargetEntry entry{collectEnts_[i], tf.pos};
+            if (collectAll) all_.push_back(entry);
+            for (auto& t : teams_)
+                if (t.id == meta.team) t.list.push_back(entry);
+        }
+        for (auto& t : teams_) t.grid.Build(t.list);
+        return;
+    }
+    const uint32_t teamCount = (uint32_t)teams_.size();
+    const uint32_t chunks = (n + kParallelGrain - 1) / kParallelGrain;
+    chunkTeams_.resize((size_t)chunks * teamCount); // 只增不减：稳态保容量
+    for (auto& c : chunkTeams_) c.clear();
+    if (collectAll) {
+        chunkAlls_.resize(chunks);
+        for (auto& c : chunkAlls_) c.clear();
+    }
+    jobs->ParallelFor(n, kParallelGrain, [&](uint32_t b, uint32_t e) {
+        const size_t base = size_t(b / kParallelGrain) * teamCount;
+        for (uint32_t i = b; i < e; ++i) {
+            const entt::entity ent = Scene::ToEntt(collectEnts_[i]);
+            const Meta& meta = reg.get<Meta>(ent);
+            const Transform2D& tf = reg.get<Transform2D>(ent);
+            const TargetEntry entry{collectEnts_[i], tf.pos};
+            for (uint32_t t = 0; t < teamCount; ++t)
+                if (teams_[t].id == meta.team) chunkTeams_[base + t].push_back(entry);
+            if (collectAll) chunkAlls_[b / kParallelGrain].push_back(entry);
+        }
+    });
+    for (uint32_t ci = 0; ci < chunks; ++ci)
+        for (uint32_t t = 0; t < teamCount; ++t) {
+            auto& src = chunkTeams_[size_t(ci) * teamCount + t];
+            teams_[t].list.insert(teams_[t].list.end(), src.begin(), src.end());
+        }
+    if (collectAll)
+        for (uint32_t ci = 0; ci < chunks; ++ci) {
+            auto& src = chunkAlls_[ci];
+            all_.insert(all_.end(), src.begin(), src.end());
+        }
+    if (teamCount > 0) { // 各队独立，逐队入队并行建桶（任务内不嵌套，JobSystem 纪律）
+        std::vector<JobSystem::JobHandle> builds;
+        builds.reserve(teamCount - 1);
+        for (uint32_t t = 0; t + 1 < teamCount; ++t) {
+            TeamList& tl = teams_[t];
+            builds.push_back(jobs->Schedule([&tl] { tl.grid.Build(tl.list); }));
+        }
+        teams_.back().grid.Build(teams_.back().list); // 主线程干最后一队（不空等）
+        for (auto& h : builds) JobSystem::Complete(h);
+    }
+}
+
+const std::vector<TargetEntry>& TargetBoard::TeamEntries(uint32_t team) const {
+    for (const auto& t : teams_)
+        if (t.id == team) return t.list;
+    static const std::vector<TargetEntry> kEmpty;
+    return kEmpty;
 }
 
 // ------------------------------------------------- 目标板网格桶（2026-09-25）--
@@ -401,7 +480,7 @@ void AISystem::Tick(World& world, Scene& scene, float dt) {
             wantedTeams_.end())
             wantedTeams_.push_back(sh.targetTeam);
     board_.DeclareTeams(wantedTeams_);
-    board_.Rebuild(scene, hasFlee);
+    board_.Rebuild(scene, hasFlee, &world.Jobs()); // 大场并行收集/建桶（阈值内串行）
 
     // Chase：目标板最近邻 + 朝目标写 Velocity（并行池切分）
     {
@@ -1093,7 +1172,11 @@ void World::InstallDefaultSystems() {
     p.AddSystem(std::make_unique<SpawnSystem>());
     p.AddSystem(std::make_unique<AISystem>());
     p.AddSystem(std::make_unique<NavigationSystem>());
-    p.AddSystem(std::make_unique<SeparationSystem>());
+    {
+        auto sep = std::make_unique<SeparationSystem>();
+        separation_ = sep.get(); // World::Separation() 调参通道（重装刷新）
+        p.AddSystem(std::move(sep));
+    }
     p.AddSystem(std::make_unique<MovementSystem>());
     p.AddSystem(std::make_unique<SpatialHashRebuildSystem>());
     p.AddSystem(std::make_unique<PickupSystem>());

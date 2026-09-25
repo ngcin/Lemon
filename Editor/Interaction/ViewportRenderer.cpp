@@ -358,13 +358,17 @@ void ViewportRenderer::ExtractScene(EditorContext& ctx) {
     // 内核 #4：场景对象变化（新建/打开/Play 切换 → Scene 指针不同）→ 映射全失效
     const uint64_t stamp = (uint64_t)(uintptr_t)&s;
     if (stamp != lastSceneStamp_) {
-        for (auto& [id, er] : entityToRenderable_) rm_.Destroy(er.rid);
-        entityToRenderable_.clear();
+        for (SlotMap& sl : ridBySlot_)
+            if (sl.rid) rm_.Destroy(sl.rid);
+        std::fill(ridBySlot_.begin(), ridBySlot_.end(), SlotMap{});
         lastSceneStamp_ = stamp;
     }
 
     rm_.BeginSimTick();
     const uint64_t epoch = ++extractEpoch_;
+    // 容量随实体池只增（entt index < 池 capacity；回收槽 tombstone 留池内）
+    const size_t wantSlots = s.Pool<entt::entity>().capacity() + 1;
+    if (ridBySlot_.size() < wantSlots) ridBySlot_.resize(wantSlots);
     for (auto [ent, tf, sr] : s.View<ecs::Transform2D, ecs::SpriteRenderer>().each()) {
         (void)tf;
         Entity e = Scene::FromEntt(ent);
@@ -380,33 +384,34 @@ void ViewportRenderer::ExtractScene(EditorContext& ctx) {
             wt.rot = tf.rot;
             wt.scale = tf.scale;
         }
-        uint32_t rid;
-        auto it = entityToRenderable_.find(e.id);
-        if (it == entityToRenderable_.end()) {
-            rid = rm_.Create({.spriteId = sr.spriteId,
-                              .colorBits = sr.colorRGBA,
-                              .sortingLayer = sr.sortingLayer,
-                              .order = sr.sortOrder,
-                              .blend = (uint8_t)renderer::BlendKind::Alpha,
-                              .filter = (uint8_t)renderer::FilterKind::Linear,
-                              .flags = (uint8_t)(sr.flags & kSrFlipMask)});
-            entityToRenderable_[e.id] = {rid, epoch};
-        } else {
-            rid = it->second.rid;
-            it->second.lastSeen = epoch;
+        // 位索引映射（2026-09-26 渲染提取批）：unordered_map find（五万实体 ~1ms/帧）
+        // → 直下标 + version 校验。同槽 version 不同 = 回收后的新一代实体：上一代
+        // 已死但其 rid 尚未走差集释放，就地回收防泄漏
+        const uint32_t idx = Scene::EnttIndex(e);
+        LEMON_ASSERT(idx < ridBySlot_.size(), "slot array must cover entity pool");
+        const uint32_t ver = Scene::EnttVersion(e);
+        SlotMap& slot = ridBySlot_[idx];
+        if (slot.rid == 0 || slot.version != ver) {
+            if (slot.rid) rm_.Destroy(slot.rid);
+            slot.rid = rm_.Create({.spriteId = sr.spriteId,
+                                   .colorBits = sr.colorRGBA,
+                                   .sortingLayer = sr.sortingLayer,
+                                   .order = sr.sortOrder,
+                                   .blend = (uint8_t)renderer::BlendKind::Alpha,
+                                   .filter = (uint8_t)renderer::FilterKind::Linear,
+                                   .flags = (uint8_t)(sr.flags & kSrFlipMask)});
+            slot.version = ver;
         }
-        rm_.SetSprite(rid, sr.spriteId);
-        rm_.SetColor(rid, sr.colorRGBA);
-        rm_.SetSort(rid, sr.sortingLayer, sr.sortOrder);
-        rm_.SetTransform(rid, wt.pos, wt.rot, wt.scale);
+        slot.lastSeen = epoch;
+        // 整包一次寻址推送：逐 setter ×N 实体是大场 ExtractScene 的纯耗成分
+        rm_.SetAll(slot.rid, sr.spriteId, sr.colorRGBA, sr.sortingLayer, sr.sortOrder,
+                   wt.pos, wt.rot, wt.scale);
     }
-    // 内核 #2：销毁/禁用差集 → renderable 释放（纪元比对 O(N)）
-    for (auto it = entityToRenderable_.begin(); it != entityToRenderable_.end();) {
-        if (it->second.lastSeen != epoch) {
-            rm_.Destroy(it->second.rid);
-            it = entityToRenderable_.erase(it);
-        } else {
-            ++it;
+    // 内核 #2：销毁/禁用差集 → renderable 释放（纪元比对；含空槽全容量顺序扫）
+    for (SlotMap& slot : ridBySlot_) {
+        if (slot.rid && slot.lastSeen != epoch) {
+            rm_.Destroy(slot.rid);
+            slot = SlotMap{};
         }
     }
 }
@@ -430,8 +435,12 @@ void ViewportRenderer::RenderViewport(rhi::CommandList& cl, uint32_t idx, Sprite
     auto packets = rm_.Extract(assets_.Registry(), 1.0f);
     if (idx == 0) lastSceneVisible_ = rm_.LastStats().visible;
 
-    std::vector<SpritePacket> textPackets;
-    textPackets.reserve(64);
+    // 复用缓冲（2026-09-26 渲染提取批：提取段零分配）——两视口串行调用、
+    // Bake 消费完即弃，单缓冲安全
+    auto& textPackets = textBuf_;
+    textPackets.clear();
+    auto& fxBarPackets = fxBarBuf_;
+    fxBarPackets.clear();
     if (withOverlay) {
         // 实体名标签（屏幕恒定字号：字级 × 1/zoom 反缩放；锚点 = 实体底边中点下方）。
         // M5 性能批纪律：视口外不画（世界 AABB + 屏幕边距），预算封顶 kMaxLabels——
@@ -473,7 +482,6 @@ void ViewportRenderer::RenderViewport(rhi::CommandList& cl, uint32_t idx, Sprite
     // 管线）。飘字 = 内置位图字体页层 252（文本段）；血条 = 白精灵双四边形层
     // 251（精灵段，压精灵与粒子、让位 UI 文本 254）。Simulate 按渲染帧 dt 自计时
     // （粒子先例：表现层语义，非确定可接受、不入回放）。
-    std::vector<SpritePacket> fxBarPackets;
     if (!withOverlay && ctx.Playing()) {
         ecs::FxChannel& fx = ctx.ActiveWorld().Fx();
         const auto now = std::chrono::steady_clock::now();
@@ -530,11 +538,12 @@ void ViewportRenderer::RenderViewport(rhi::CommandList& cl, uint32_t idx, Sprite
         lastFxTime_ = {}; // 出 Play 复位（重进 Play 首帧 dt=0）
     }
 
-    // 包合成：游戏包 + overlay（SceneView 专属，层 63 顶置）
-    std::vector<SpritePacket> all(packets.begin(), packets.end());
-    if (!fxBarPackets.empty()) all.insert(all.end(), fxBarPackets.begin(), fxBarPackets.end());
-    if (withOverlay) all.insert(all.end(), overlay_.begin(), overlay_.end());
-    batcher.Bake(assets_.Registry(), all, {}, textPackets);
+    // 包合成 → Bake 尾段（2026-09-26 渲染提取批）：精灵主段直传 Extract span，
+    // fxBar/overlay 走 tailPackets——段拼接序 = 原"合成一个 vector"的序（绘制输出
+    // 同构），免每帧堆分配 + 50k 级包拷贝（双视口 ×56B/包）
+    batcher.Bake(assets_.Registry(), packets, {},
+                 textPackets, withOverlay ? std::span<const SpritePacket>(overlay_)
+                                          : std::span<const SpritePacket>(fxBarPackets));
 
     const float clear[4] = {0.09f, 0.10f, 0.13f, 1.0f};
     cl.BeginOffscreenPass(rt.tex, clear); // RT 显式声明（#11）；EndPass 转 SHADER_READ

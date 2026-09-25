@@ -1591,6 +1591,101 @@ void TestTargetBoardGridEquivalence() {
     Expect(tied == 0, "random floats must not produce exact ties");
 }
 
+// TargetBoard 并行 Rebuild 同构钉板（2026-09-26 并行化批）：大场（≥kParallelMin）
+// 下并行收集/归并/逐队建桶与串行路径逐位一致——list 内容（序+值）强比较 +
+// NearestAny/Nearest 行为对拍。平局布点（同 cell ±8px 等距对）专钉"收集序 = view
+// 序"：等距平局语义 = 序先见者，序乱即翻结果。掺销毁+重建（entt swap_only 池回收
+// → view 序与创建序分叉），避免只测到"新场景顺序退化"。
+void TestTargetBoardParallelRebuildIsomorphic() {
+    World world; // 默认多线程 JobSystem
+    Scene& s = world.CreateScene("board-par");
+
+    auto spawn = [&s](uint32_t team, Vec2 pos) {
+        Entity e = s.Create();
+        s.Emplace<Transform2D>(e, Transform2D{pos});
+        s.Emplace<Meta>(e).team = team;
+        return e;
+    };
+
+    // team1 ×4200 成对平局布点（±8px 同 cell 32px 内）；team3 ×4200 平移域同款；
+    // team0 ×300（未声明队）；无 Meta ×100（不入板）。总 8700 ≥ kParallelMin。
+    for (int i = 0; i < 4200; i += 2) {
+        const int gx = (i / 2) % 70, gy = (i / 2) / 70;
+        const Vec2 c{(float)(gx * 32 + 16), (float)(gy * 32 + 16)};
+        spawn(1u, c + Vec2{-8.0f, 0.0f});
+        spawn(1u, c + Vec2{8.0f, 0.0f});
+        const Vec2 c3{(float)(gx * 32 + 16 + 5000), (float)(gy * 32 + 16)};
+        spawn(3u, c3 + Vec2{-8.0f, 0.0f});
+        spawn(3u, c3 + Vec2{8.0f, 0.0f});
+    }
+    for (int i = 0; i < 300; ++i)
+        spawn(0u, Vec2{(float)(i * 17), (float)(i * 13 - 900)});
+    for (int i = 0; i < 100; ++i) {
+        Entity e = s.Create();
+        s.Emplace<Transform2D>(e, Transform2D{Vec2{(float)(i * 31 - 950), (float)(i * 7)}});
+    }
+    // 销毁散布 + 重建（池 slot 复用 → view 序与创建序分叉）
+    {
+        // team3 每 10 个销毁 1 个（从场景扫描，避免依赖创建序簿记）
+        std::vector<Entity> t3;
+        for (auto [ent, meta, tf] : s.View<Meta, Transform2D>().each())
+            if (meta.team == 3u) t3.push_back(Scene::FromEntt(ent));
+        for (size_t i = 0; i < t3.size(); i += 10) s.Destroy(t3[i]);
+    }
+    s.CommitDestroys();
+    for (int i = 0; i < 50; ++i) // 重建队（复用回收 slot）
+        spawn(1u, Vec2{(float)(i * 41 + 8000), (float)(i * 3)});
+
+    TargetBoard serial, par;
+    serial.DeclareTeams({1u, 3u});
+    par.DeclareTeams({1u, 3u});
+    serial.Rebuild(s, /*collectAll=*/true, /*jobs=*/nullptr);
+    par.Rebuild(s, true, &world.Jobs());
+
+    // 内容级：list 逐位（序 + 值）强比较
+    for (uint32_t team : {1u, 3u}) {
+        const auto& a = serial.TeamEntries(team);
+        const auto& b = par.TeamEntries(team);
+        Expect(a.size() == b.size(), "parallel rebuild list size matches serial");
+        bool same = a.size() == b.size();
+        for (size_t i = 0; same && i < a.size(); ++i)
+            same = a[i].e.id == b[i].e.id && a[i].pos.x == b[i].pos.x &&
+                   a[i].pos.y == b[i].pos.y;
+        Expect(same, "parallel rebuild list bit-identical to serial (view order)");
+    }
+
+    // 行为级：平局查询（同 cell 等距对 → 序先见者）+ 随机查询对拍（双队 + 全表）
+    for (int i = 0; i < 2100; i += 2) { // 平局点 = 对中心（每对一格，抽一半格）
+        const int gx = (i / 2) % 70, gy = (i / 2) / 70;
+        const Vec2 c{(float)(gx * 32 + 16), (float)(gy * 32 + 16)};
+        const Vec2 c3{c.x + 5000.0f, c.y};
+        Expect(serial.Nearest(1u, c, 64.0f, Entity::Null()) ==
+                   par.Nearest(1u, c, 64.0f, Entity::Null()),
+               "team1 tie-break identical (order-sensitive)");
+        Expect(serial.Nearest(3u, c3, 64.0f, Entity::Null()) ==
+                   par.Nearest(3u, c3, 64.0f, Entity::Null()),
+               "team3 tie-break identical (order-sensitive)");
+    }
+    uint64_t seed = 0x853C49E6748FEA9Bull;
+    auto rand01 = [&seed]() {
+        seed = seed * 6364136223846793005ull + 1442695040888963407ull;
+        return ((seed >> 33) & 0xFFFFFF) / (float)0x1000000;
+    };
+    const float ranges[] = {40.0f, 180.0f, 900.0f, 4000.0f};
+    for (int q = 0; q < 200; ++q) {
+        const Vec2 from{(rand01() - 0.5f) * 11000.0f, (rand01() - 0.5f) * 4000.0f};
+        for (float range : ranges) {
+            Expect(serial.Nearest(1u, from, range, Entity::Null()) ==
+                       par.Nearest(1u, from, range, Entity::Null()),
+                   "random nearest team1 identical");
+            Expect(serial.NearestAny(from, range, Entity::Null()) ==
+                       par.NearestAny(from, range, Entity::Null()),
+                   "random nearest-any identical");
+        }
+    }
+}
+
+
 // 并发 Destroy（Scene::Destroy 数据竞争修复回归；ASan/TSan 下有效放大）
 void TestConcurrentDestroy() {
     World world; // 默认多线程 JobSystem
@@ -4471,6 +4566,7 @@ int main() {
     TestSpatialHash();
     TestSpatialHashQueryFastPath();
     TestTargetBoardGridEquivalence();
+    TestTargetBoardParallelRebuildIsomorphic();
     TestSystemPipelineOrder();
     TestSimulationEndToEnd();
     TestSeparationForce();

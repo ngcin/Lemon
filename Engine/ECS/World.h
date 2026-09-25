@@ -122,6 +122,11 @@ public:
 
     SystemPipeline& Pipeline() { return pipeline_; }
 
+    /// 分离力系统访问（2026-09-26 调参下放批：参数场景侧化——引擎默认不动 =
+    /// 基准场零漂移，玩法经 Lemon.Physics.Separation 按场景覆盖）。未装默认
+    /// 系统的自组管线 = nullptr，调用方自判
+    class SeparationSystem* Separation() { return separation_; }
+
     RingQueue<EventPacket>& Events() { return events_; }
     TeamTable& Teams() { return teams_; }
     const TeamTable& Teams() const { return teams_; }
@@ -189,6 +194,7 @@ private:
     std::vector<std::unique_ptr<Scene>> scenes_;
     Scene* active_ = nullptr;
     SystemPipeline pipeline_;
+    class SeparationSystem* separation_ = nullptr; // InstallDefaultSystems 填（生命周期同管线）
     RingQueue<EventPacket> events_;
     TeamTable teams_;
     InputState input_;

@@ -80,9 +80,11 @@ void SpriteBatcher::EnsureCapacity(uint32_t neededInstances) {
 
 void SpriteBatcher::Bake(const AtlasRegistry& atlas, std::span<const SpritePacket> packets,
                          std::span<const SpritePacket> particlePackets,
-                         std::span<const SpritePacket> textPackets) {
+                         std::span<const SpritePacket> textPackets,
+                         std::span<const SpritePacket> tailPackets) {
     auto t0 = std::chrono::steady_clock::now();
-    EnsureCapacity((uint32_t)(packets.size() + particlePackets.size() + textPackets.size()));
+    EnsureCapacity((uint32_t)(packets.size() + particlePackets.size() + textPackets.size() +
+                              tailPackets.size()));
 
     SpriteInstance* seg = ringMapped_ + (uint64_t)ringFrame_ * capacity_;
     batches_.clear();
@@ -120,6 +122,7 @@ void SpriteBatcher::Bake(const AtlasRegistry& atlas, std::span<const SpritePacke
     bakeSpan(packets);
     bakeSpan(particlePackets);
     bakeSpan(textPackets);
+    bakeSpan(tailPackets);
     lastInstanceCount_ = written;
 
     auto t1 = std::chrono::steady_clock::now();

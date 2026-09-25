@@ -286,6 +286,7 @@ Chase 目标；**批⓪（M5.md T4）起兼弹幕源**：Shooter 20 发/s + 弹�
 | Hazard 化播种（09-24，修复前红字） | **sim 49.41（Hitbox 36.43）** / scene ~1.4 / ui 0.68 | frameAvg 52.05ms fps=19 **FAIL** |
 | 方案 A 查询快路径（09-24，三跑） | sim 9.90~10.05（**Hitbox 1.08** / Rebuild 0.57）/ scene ~1.4 / ui 0.26 | frameAvg 12.17~12.59ms fps 79~82 **PASS** |
 | M6a 批① fx 饱和（09-24） | sim 10.30 / scene 1.51 / ui 0.28（fx 渲染并入 scene 段：飘字 256 逐字包 + 血条 128×2 四边形） | frameAvg 12.76ms fps=78 **PASS** |
+| 性能批②后复验（09-26） | sim 10.01 / scene ~1.4 / ui 0.28 | frameAvg 12.26ms fps=82 **PASS**（playerHp=275793 逐位一致，第五次） |
 
 批② 导演化口径变更：Spawner 闸 10000→8000 让 2000 头寸给 BenchDirector（3 波 ×
 4 条目 180/s/波，t=1/6/11s）——判据在原两条（alive≥10000、frameAvg≤22.2ms）外加
@@ -320,6 +321,16 @@ Hitbox 36.43→1.08ms（~34×）、Rebuild 仅 +0.05ms（Meta 快照）；命中
 查询 + ~450 颗地面宝石自程查询，均扫过万怪密团 cell——候选数是主成本）+ Separation
 10.78ms（alive 10467 = 万怪 + ~460 宝石存量，随存量缓涨）。宝石 Spawner capAlive
 2000 封顶存量；判据余量充足（16.3 vs 22.2ms），**Pickup 密核扫描列 M5 观察项**
+
+**五万场 Battle 台账（2026-09-26，--bench-scene 通用口径；svr-test 项目红蓝
+25000/边对穿人海）**：三批性能链——建场 48.5ms/**21fps**（AI 27 首位）→ AISystem
+Patrol/Shooter 段并行化（[DevLog](../DevLog/2026-09-26-ai-parallelize.md)）30.0ms/
+**33fps** → 性能批②（Rebuild 并行 + 渲染提取共享 + 分离调参下放
+[10/26](../DevLog/2026-09-26-perf-batch2-rebuild-extract-separation.md)）**25.2ms/
+40fps**（sim 17.2：AI 8.9 / Separation 4.4；scene 6.0：ExtractScene ~2.0）。
+三批全程零漂移：金回放 m5b2 三档原样 replay mismatches=0、bench-survivor
+playerHp=275793 逐位一致。下轮靶子（认知修正后排序）：AI 段 Shooter 生成段
+串行与索敌环扫（Rebuild 实测仅 1.7ms，非上批所估大头）；渲染侧 Bake 并行化。
 （优化方向备档：宝石侧查询降频/惰性自检属行为变更需单独批；哈希项内嵌 pos 同
 Separation 备档路径）。frameMax 29~60ms 仍为 Census 尖刺口径。
 

@@ -32,6 +32,7 @@ public unsafe struct NativeApi
     public delegate* unmanaged<int> UiCardPick;                                // M5 批④：消费式：返回后置 -1
     public delegate* unmanaged<byte*, float, float, uint, void> FxPopup;       // M6a 批①：飘字 → World.Fx
     public delegate* unmanaged<ulong, float, uint, float, void> FxBar;         // M6a 批①：世界血条 → World.Fx
+    public delegate* unmanaged<float, float, int, int, void> SetSeparation;    // 调参下放批：Lemon.Physics.Separation（<0 = 保持）
 }
 
 internal static unsafe class Native
@@ -165,6 +166,13 @@ internal static unsafe class Native
     internal static void FxBar(ulong entity, float frac, uint color, float width)
     {
         if (Api.FxBar != null) Api.FxBar(entity, frac, color, width);
+    }
+
+    // ---- 调参下放批（分离力参数场景侧覆盖；旧宿主未注册时安全降级丢弃）----
+
+    internal static void SetSeparationParams(float radius, float strength, int maxNeighbors, int densityCap)
+    {
+        if (Api.SetSeparation != null) Api.SetSeparation(radius, strength, maxNeighbors, densityCap);
     }
 
     /// string → UTF-8 NUL 结尾（M5 批④：中文 HUD/卡片文本；此前逐 char 截字节

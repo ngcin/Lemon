@@ -85,6 +85,10 @@ public:
     void SetSprite(uint32_t id, uint32_t spriteId);   // 动画换帧（AnimatorSystem 用）
     void SetColor(uint32_t id, uint32_t colorBits);
     void SetSort(uint32_t id, uint8_t layer, int16_t order);
+    /// 模拟侧整包推送（desc 四字段 + 变换一次寻址写全）——大场提取热路径用
+    /// （逐 setter 独立寻址 ×N 实体是 ExtractScene 的纯耗成分）
+    void SetAll(uint32_t id, uint32_t spriteId, uint32_t colorBits, uint8_t layer,
+                int16_t order, Vec2 pos, float rotRad, Vec2 scale);
 
     // --- 模拟侧 ---
     void BeginSimTick(); // prev ← cur 双缓冲翻转（未写实体的插值结果保持不变）
@@ -94,7 +98,10 @@ public:
     void SetViewport(Vec2 center, float halfW, float halfH, float margin);
     void ClearViewport(); // 编辑器 SceneView：全量渲染（Luma 注释过的坑）
 
-    /// 剔除 + 插值 + 排序；返回本帧可见包（视图在下次 Extract 前有效）
+    /// 剔除 + 插值 + 排序；返回本帧可见包（视图在下次 Extract 前有效）。
+    /// 帧内计算（有效性/插值/键归类）按 sim 版本 + alpha 缓存跨视口共享——
+    /// 同帧第二视口（编辑器双视口）免全量重算，只做各自剔除+分桶（2026-09-26
+    /// 渲染提取批；搬运序与字段值逐位不变，绘制输出同构）。
     std::span<const SpritePacket> Extract(const AtlasRegistry& atlas, float alpha);
 
     // 帧版本：sim 版本变化或视口变化时才可能复用缓存（Luma frameVersion/lastBuiltAlpha 思想）
@@ -130,6 +137,25 @@ private:
     std::vector<SpritePacket> packets_;  // 复用（提取段零分配）
     std::vector<SpritePacket> staging_; // 分桶搬运缓冲
     std::vector<uint8_t> slotOf_;       // 单遍生成时的槽索引缓存
+
+    // 帧内共享预计算（Extract 首次调用时构建；同 (simVersion, alpha) 的后续视口复用）
+    struct Prepared {
+        SpritePacket p; // 剔除无关字段全量填好（剔除后原样搬运）
+        float radX = 0, radY = 0; // 剔除半宽/半高（含 sprite 尺寸；视口判定用）
+        uint8_t slot = 0;         // 键槽索引（分桶用）
+    };
+    struct KeySlot {
+        SpriteBatchKey key;
+        uint32_t atlasIndex;
+        uint32_t count, cursor;
+    };
+    std::vector<Prepared> prepared_;
+    KeySlot slots_[kMaxSpriteKeys];
+    uint32_t slotCount_ = 0;
+    bool anyOrder_ = false;
+    uint64_t preparedSimVersion_ = 0;
+    float preparedAlpha_ = -1.0f;
+
     uint64_t builtSimVersion_ = 0;
     uint64_t builtViewportVersion_ = 0;
     float builtAlpha_ = -1.0f;

@@ -97,9 +97,9 @@ struct IncrementalState { double rate, multiplier; double cached; };     // 增�
 | 1 | InputSnapshot | 输入队列 | — | — | 主线程采样→模拟线程消费 |
 | 2 | DirectorSystem | WaveDirector 波次表 | WaveStart/Spawn 事件 + 出生（经 SpawnFn） | — | 波次调度（§8；M5 批②落地：直接出生通道，非 Spawner 配额） |
 | 3 | SpawnSystem | 销毁队列/池 | Transform2D 等 | — | 池取用 + 事件入队 onSpawn |
-| 4 | AISystem(Behavior) | Chase/Patrol/Flee/Shooter | Velocity | ✅ grain 256 | 纯函数逐实体。目标板 Nearest = 网格桶（cell 64px CSR + 占位位图）环搜（2026-09-25：many-vs-many 线性全扫在红蓝对抗场实测 25.4ms/帧 → 1.7ms，15×；列表 <64 走线性快径 = 存量场景逐位不变，金回放零重录实证；等距平局语义 = 环扫序先见者，见 Systems.h 注释） |
+| 4 | AISystem(Behavior) | Chase/Patrol/Flee/Shooter | Velocity | ✅ grain 256 | 纯函数逐实体。目标板 Nearest = 网格桶（cell 32px CSR + 占位位图）环搜（2026-09-25：many-vs-many 线性全扫在红蓝对抗场实测 25.4ms/帧 → 1.7ms，15×；列表 <64 走线性快径 = 存量场景逐位不变，金回放零重录实证；等距平局语义 = 环扫序先见者，见 Systems.h 注释）。Rebuild 并行化（2026-09-26：view 序 chunk 切分归并 + 逐队建桶，串行 2.51→1.69ms @五万场；同构单测钉板，见 DevLog 当日条） |
 | 5 | NavigationSystem | Chase | Velocity | — | 采样 FlowField/避障（§7） |
-| 6 | SeparationSystem | Transform2D/Meta.team | Velocity | ✅ | 同队分离力（软碰撞，割草不堆叠的关键） |
+| 6 | SeparationSystem | Transform2D/Meta.team | Velocity | ✅ | 同队分离力（软碰撞，割草不堆叠的关键）。参数场景侧可调（2026-09-26：`Lemon.Physics.Separation` → World::Separation()，引擎默认不动 = 基准场零漂移；高密场收紧 maxNeighbors 近乎线性省时，Battle 场 10→6 实测 5.5→4.4ms） |
 | 7 | MovementSystem | Velocity/Mover/Knockback | Transform2D | ✅ | 积分 + 地形碰撞钳制（查询层） |
 | 8 | SpatialHashRebuild | Transform2D | 哈希 cell | ✅ 每 cell | 帧重建（§5）；静态层（地形）常驻 |
 | 9 | PickupSystem | Collectible/XpProgress/Stats + 哈希 | Transform2D/XP/事件 | — | 磁吸（双侧取大触程）→ 直写 pos 飞行 → 触距 8px 入账（gem→XP/coin→gold/heart→治疗）+ Pickup 事件（M5 批①；不用 RNG） |
@@ -287,7 +287,7 @@ RingQueue<EventPacket> gEvents;          // 系统只入队，帧末 ScriptEvent
 |---|---|---|
 | 重建空间哈希（10k 怪） | 1.2 ms | ParallelFor per-cell |
 | AI/Behavior + 流场采样 | 1.5 ms | 纯函数并行 |
-| 分离力（邻居查询 10k×~8 邻） | 2.0 ms | 哈希迭代器零分配；密度上限衰减 |
+| 分离力（邻居查询 10k×~8 邻） | 2.0 ms | 哈希迭代器零分配；密度上限衰减；参数场景侧可调（`Lemon.Physics.Separation`，默认不动——2026-09-26 密度探针实测基准场 ~94% 实体压在 maxNeighbors=10 截断线上，超大规模场收紧近乎线性省时，见 DevLog 当日性能批②） |
 | 移动积分 + 地形钳制 | 0.8 ms | 合批矩形查询 |
 | 命中（50k 弹 × 候选~2） | 2.0 ms | 命中结果写事件队列，零分配 |
 | 动画/回收/杂项 | 1.0 ms | 并行 |

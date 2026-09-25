@@ -10,7 +10,7 @@
 
 #include <chrono>
 #include <cstdint>
-#include <unordered_map>
+#include <span>
 #include <vector>
 
 #include "ECS/Entity.h"
@@ -159,15 +159,18 @@ private:
     uint64_t lastSceneStamp_ = 0;
     uint64_t extractEpoch_ = 0; // ExtractScene 调用计数（差集判定：lastSeen != 当前纪元 → 释放）
 
-    // Entity.id → renderable id + 末次见到纪元（差集 O(N)；曾用 vector+std::find 是 O(N²)，
-    // 1 万实体 ≈ 每帧 5000 万次比较——bench-survivor scene 段 19ms 的头号成分）
-    struct EntityRenderable {
-        uint32_t rid = 0;
+    // Entity → renderable 映射（2026-09-26 渲染提取批：unordered_map → 位索引
+    // 数组。原 map find 是五万场 ExtractScene 的单项大头；数组 = Scene::EnttIndex
+    // 直下标 + EnttVersion 防回收串槽。容量随实体池只增；稳态零分配）
+    struct SlotMap {
+        uint32_t rid = 0;      // 0 = 空
+        uint32_t version = 0;  // 写入时实体 version（校验防串）
         uint64_t lastSeen = 0;
     };
-    std::unordered_map<uint64_t, EntityRenderable> entityToRenderable_;
+    std::vector<SlotMap> ridBySlot_;
     std::vector<SpritePacket> overlay_;                         // SceneView 专属（面板注入）
-    std::vector<SpritePacket> scenePackets_, gamePackets_;      // Extract 快照（合并 overlay）
+    std::vector<SpritePacket> textBuf_, fxBarBuf_; // 视口包复用缓冲（提取段零分配；
+                                                   // Bake 消费完即弃，串行双视口单缓冲）
 
     struct RT {
         uint32_t w = 0, h = 0;

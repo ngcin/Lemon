@@ -12,6 +12,10 @@
 #include "ECS/Events.h"
 #include "ECS/SystemPipeline.h"
 
+namespace lemon {
+class JobSystem;
+}
+
 namespace lemon::ecs {
 
 // ------------------------------------------------- AI 目标板（最近邻）------
@@ -27,10 +31,19 @@ struct TargetEntry {
 class TargetBoard {
 public:
     void DeclareTeams(const std::vector<uint32_t>& teamIds);
-    /// 收集各声明队 + （可选）全部实体的位置（Meta+Transform 池一遍）
-    void Rebuild(Scene& scene, bool collectAll);
+    /// 收集各声明队 + （可选）全部实体的位置（Meta+Transform 池一遍）。
+    /// jobs 非空且实体量 ≥ kParallelMin 时并行收集/建桶（2026-09-26 五万场批）：
+    /// list 序 = view 迭代序逐位不变（chunk 按 view 序切分、按序归并）；
+    /// 桶内池序 = 排序键 (cellKey, 池索引) 唯一 → 并行建桶结果与串行逐位同构。
+    void Rebuild(Scene& scene, bool collectAll, JobSystem* jobs = nullptr);
     Entity Nearest(uint32_t team, Vec2 from, float range, Entity exclude) const;
     Entity NearestAny(Vec2 from, float range, Entity exclude) const; // Flee 威胁
+    /// 声明队的收集表（view 序；串行/并行同构对拍等测试用）
+    const std::vector<TargetEntry>& TeamEntries(uint32_t team) const;
+
+    /// 并行收集门槛：低于此串行（并行派发不回本）；块粒度（chunk 内保序单元）
+    static constexpr uint32_t kParallelMin = 8192;
+    static constexpr uint32_t kParallelGrain = 2048;
 
 private:
     struct TeamList {
@@ -63,6 +76,12 @@ private:
     };
     std::vector<TeamList> teams_;
     std::vector<TargetEntry> all_;
+    // 并行收集复用缓冲（稳态零分配）：主线程先按 view 序收集实体（view 无随机
+    // 访问，list 序的等距平局语义系于此），再按索引切块并行构条目分桶，
+    // 主线程按 chunk 序归并 = 保 view 序。chunkTeams_ 拍平 [chunk][team]。
+    std::vector<Entity> collectEnts_;
+    std::vector<std::vector<TargetEntry>> chunkTeams_;
+    std::vector<std::vector<TargetEntry>> chunkAlls_;
 };
 
 // ---- FixedTick 主序（03 §4 表）-------------------------------------------

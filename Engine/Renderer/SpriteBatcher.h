@@ -29,10 +29,13 @@ public:
               uint32_t ringSlot = 0);
 
     /// Bake：有序包段（精灵 / 粒子 / 文本，各段内有序、段间层序递增）→ 实例 + 批表。
-    /// 跨段同键不合并（批数上限误差 +1，语义无损）
+    /// 跨段同键不合并（批数上限误差 +1，语义无损）。tailPackets = 尾段（视口专属
+    /// overlay/血条等，段序 = 原"合成一个 vector"的拼接序）——大场免每帧堆分配
+    /// 与全量拷贝（2026-09-26 渲染提取批）。
     void Bake(const AtlasRegistry& atlas, std::span<const SpritePacket> packets,
               std::span<const SpritePacket> particlePackets = {},
-              std::span<const SpritePacket> textPackets = {});
+              std::span<const SpritePacket> textPackets = {},
+              std::span<const SpritePacket> tailPackets = {});
 
     /// Record：按批录制命令（每批一次 push constant + 一次 draw）
     void Record(rhi::CommandList& cl, const Mat3x2& viewProj);

@@ -151,6 +151,20 @@ int HierarchyDepth(Scene& s, Entity e) {
 }
 
 bool ComputeWorldTransform(Scene& s, Entity e, WorldTransform2D& out) {
+    // 无父快径（2026-09-26 渲染提取批）：无 Hierarchy/根父 = world 恒等 local
+    // （下方通式的 rot=0/cs=1/sn=0/scale=1 特例），免链构建与 cos/sin。平铺大场
+    // （五万实体）ExtractScene 全量走此径。
+    {
+        const Hierarchy* h = s.TryGet<Hierarchy>(e);
+        const Transform2D* self = s.TryGet<Transform2D>(e);
+        if ((!h || h->parent.IsNull()) && self) {
+            out.pos = self->pos;
+            out.rot = self->rot;
+            out.scale = self->scale;
+            return true;
+        }
+        if (!self) return false;
+    }
     // 自根向下复合。TRS 语义（与 Mat3x2::FromTRS 乘积一致）：
     //   world = T(p) R(r) S(sc)；子局部偏移经父系 = R(rot)(scale ⊙ localPos)
     Entity chain[kMaxHierarchyDepth + 1];
