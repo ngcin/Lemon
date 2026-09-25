@@ -1476,6 +1476,121 @@ void TestSpatialHashQueryFastPath() {
     }
 }
 
+// TargetBoard 网格最近邻等价性钉板（2026-09-26）：随机布点下网格路径（≥kMinList
+// 走 CSR 桶 + 位图环搜）与线性参考（旧实现语义）逐查询一致——网格化/后续并行化
+// 改动的正确性由"金回放实证"升级为单测钉板。等距平局是文档化语义差异（网格 =
+// 环扫序先见者 vs 线性 = 池序靠前者，Systems.h 注释）；随机浮点布点下精确等距
+// 概率为零，若出现（布点退化）按失败报而非静默跳过。边界一并钉格：未声明队恒
+// Null、空程无候选 Null、排除自身、无 Meta 实体不入板。
+void TestTargetBoardGridEquivalence() {
+    World world;
+    Scene& s = world.CreateScene("board");
+
+    // 确定性布点（本地 LCG，零依赖；续战同源可复现）
+    uint64_t seed = 0x9E3779B97F4A7C15ull;
+    auto rand01 = [&seed]() {
+        seed = seed * 6364136223846793005ull + 1442695040888963407ull;
+        return ((seed >> 33) & 0xFFFFFF) / (float)0x1000000;
+    };
+    auto randPos = [&rand01]() {
+        return Vec2{(rand01() - 0.5f) * 2000.0f, (rand01() - 0.5f) * 2000.0f};
+    };
+
+    // 布置：team1 ×200（≥ kMinList=64 → 网格路径）/ team3 ×150 / team0 ×30（未
+    // 声明队）/ 无 Meta ×20（不进板）。创建序 = Rebuild 收集序（新场景无销毁）。
+    struct Ref {
+        Entity e;
+        Vec2 pos;
+    };
+    std::vector<Ref> team1, team3;
+    auto spawnTeam = [&](uint32_t team, std::vector<Ref>& into, int n) {
+        for (int i = 0; i < n; ++i) {
+            Entity e = s.Create();
+            Vec2 p = randPos();
+            s.Emplace<Transform2D>(e, Transform2D{p});
+            s.Emplace<Meta>(e).team = team;
+            into.push_back({e, p});
+        }
+    };
+    spawnTeam(1, team1, 200);
+    spawnTeam(3, team3, 150);
+    for (int i = 0; i < 30; ++i) {
+        Entity e = s.Create();
+        s.Emplace<Transform2D>(e, Transform2D{randPos()});
+        s.Emplace<Meta>(e).team = 0;
+    }
+    for (int i = 0; i < 20; ++i) {
+        Entity e = s.Create();
+        s.Emplace<Transform2D>(e, Transform2D{randPos()}); // 无 Meta：不入板
+    }
+
+    TargetBoard board;
+    board.DeclareTeams({1u, 3u});
+    board.Rebuild(s, false);
+
+    // 线性参考（旧实现语义：严格小于 = 等距保池序靠前者；tie 位 = 存在等距并列）
+    struct LinResult {
+        Entity e;
+        float d2;
+        bool tied;
+    };
+    auto linearNearest = [](const std::vector<Ref>& list, Vec2 from, float range,
+                            Entity exclude) {
+        LinResult r{Entity::Null(), range * range, false};
+        float best = r.d2;
+        Entity bestE = Entity::Null();
+        for (const Ref& ref : list) {
+            if (ref.e == exclude) continue;
+            float d2 = LengthSq(ref.pos - from);
+            if (d2 < best) {
+                best = d2;
+                bestE = ref.e;
+                r.tied = false;
+            } else if (d2 == best && bestE != Entity::Null()) {
+                r.tied = true; // 精确等距并列（随机浮点下不应发生）
+            }
+        }
+        r.e = bestE;
+        r.d2 = best;
+        return r;
+    };
+
+    // 查询矩阵：400 随机点 × 4 档半径 × 排除自身/无排除，双队对拍
+    int checked = 0, tied = 0;
+    const float ranges[] = {40.0f, 180.0f, 600.0f, 2500.0f};
+    for (int q = 0; q < 400; ++q) {
+        Vec2 from = randPos() * 1.2f; // 含板外查询点
+        for (float range : ranges) {
+            for (int excl = 0; excl < 2; ++excl) {
+                Entity exclude =
+                    excl ? team1[(q * 7) % team1.size()].e : Entity::Null();
+                LinResult want = linearNearest(team1, from, range, exclude);
+                Entity got = board.Nearest(1u, from, range, exclude);
+                if (want.tied) {
+                    ++tied;
+                    continue; // 语义差异域：见函数头注释
+                }
+                Expect(got == want.e, "team1 grid nearest == linear reference");
+                ++checked;
+
+                LinResult want3 = linearNearest(team3, from, range, Entity::Null());
+                Entity got3 = board.Nearest(3u, from, range, Entity::Null());
+                if (!want3.tied) {
+                    Expect(got3 == want3.e, "team3 grid nearest == linear reference");
+                    ++checked;
+                }
+            }
+        }
+    }
+    // 边界：未声明队恒 Null；远离布点域的短程 = Null
+    Expect(board.Nearest(0u, {0.0f, 0.0f}, 5000.0f, Entity::Null()).IsNull(),
+           "undeclared team always null");
+    Expect(board.Nearest(1u, {9000.0f, 9000.0f}, 100.0f, Entity::Null()).IsNull(),
+           "empty range null");
+    Expect(checked >= 3000, "query matrix coverage");
+    Expect(tied == 0, "random floats must not produce exact ties");
+}
+
 // 并发 Destroy（Scene::Destroy 数据竞争修复回归；ASan/TSan 下有效放大）
 void TestConcurrentDestroy() {
     World world; // 默认多线程 JobSystem
@@ -4355,6 +4470,7 @@ int main() {
     TestTeamTable();
     TestSpatialHash();
     TestSpatialHashQueryFastPath();
+    TestTargetBoardGridEquivalence();
     TestSystemPipelineOrder();
     TestSimulationEndToEnd();
     TestSeparationForce();

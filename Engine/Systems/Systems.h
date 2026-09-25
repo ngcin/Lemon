@@ -36,6 +36,30 @@ private:
     struct TeamList {
         uint32_t id;
         std::vector<TargetEntry> list;
+        /// 网格桶最近邻（2026-09-25）：many-vs-many 场（红蓝对抗：13500 查询者 ×
+        /// 6500 候选 ≈ 25ms）暴露线性全扫的墙。Rebuild 建 CSR 桶（cell 64px），
+        /// Nearest 环搜（ring min 距离平方 ≥ bestD2 即停）——密场 O(邻域桶)。
+        /// 列表 < kMinList 保留线性快径 = 存量场景（survivor 查单玩家）行为
+        /// 逐位不变。等距平局语义：线性保池序靠前者；网格保环扫序先见者——
+        /// 严格小于判定不变，m5b2 三档金回放零重录实证（2026-09-25，见 DevLog）。
+        struct Grid {
+            static constexpr float kCell = 32.0f; // 2026-09-26 五万场：对穿乱斗密场
+                                             // 环扫候选减半（64→32 AI 28.5→~15ms）
+            static constexpr size_t kMinList = 64;
+            std::vector<uint64_t> keys;  // 排序唯一 cell 键（(cx<<32)|cy）
+            std::vector<uint32_t> offs;  // CSR 偏移（keys.size()+1）
+            std::vector<uint32_t> items; // 指向 list 的索引（同 cell 保池序）
+            // 占位位图（bbox 内 1bit/cell）：空环扫 = 一次界限比较 + 一次位读，
+            // 不做键二分——空场远距查询（后排索敌无果）从 O(rings×log) 降为
+            // O(rings)。bbox 外恒空，直接跳过。
+            int minX = 0, minY = 0, maxX = -1, maxY = -1;
+            std::vector<uint64_t> occ;
+            std::vector<std::pair<uint64_t, uint32_t>> scratch_; // Build 暂存（复用免逐帧分配）
+            void Build(const std::vector<TargetEntry>& list);
+            Entity Nearest(const std::vector<TargetEntry>& list, Vec2 from, float range,
+                           Entity exclude) const;
+        };
+        Grid grid;
     };
     std::vector<TeamList> teams_;
     std::vector<TargetEntry> all_;

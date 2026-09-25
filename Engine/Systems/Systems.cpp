@@ -36,28 +36,125 @@ void TargetBoard::Rebuild(Scene& scene, bool collectAll) {
         for (auto& t : teams_)
             if (t.id == meta.team) t.list.push_back(entry);
     }
+    for (auto& t : teams_) t.grid.Build(t.list); // many-vs-many 网格桶（小列表空建）
+}
+
+// ------------------------------------------------- 目标板网格桶（2026-09-25）--
+namespace {
+inline uint64_t TargetCellKey(int cx, int cy) {
+    return (uint64_t(uint32_t(cx)) << 32) | uint32_t(cy);
+}
+} // namespace
+
+void TargetBoard::TeamList::Grid::Build(const std::vector<TargetEntry>& list) {
+    keys.clear();
+    offs.clear();
+    items.clear();
+    minX = minY = 0;
+    maxX = maxY = -1;
+    occ.clear();
+    if (list.size() < kMinList) return; // 线性快径（存量场景行为逐位不变）
+    scratch_.resize(list.size());
+    for (uint32_t i = 0; i < list.size(); ++i) {
+        const int cx = (int)std::floor(list[i].pos.x / kCell);
+        const int cy = (int)std::floor(list[i].pos.y / kCell);
+        scratch_[i] = {TargetCellKey(cx, cy), i};
+        minX = std::min(minX, cx); maxX = std::max(maxX, cx);
+        minY = std::min(minY, cy); maxY = std::max(maxY, cy);
+    }
+    const int w = maxX - minX + 1, h = maxY - minY + 1;
+    occ.assign((size_t(w) * h + 63) / 64, 0);
+    const auto bitOf = [&](int cx, int cy) {
+        const size_t i = size_t(cy - minY) * w + (cx - minX);
+        return std::pair<size_t, uint64_t>(i / 64, 1ull << (i % 64));
+    };
+    // 键序排序（次键 = 池序 → 同 cell 内保池序 = 确定性扫描序）
+    std::sort(scratch_.begin(), scratch_.end());
+    items.resize(list.size());
+    size_t k = 0;
+    while (k < scratch_.size()) {
+        const uint64_t key = scratch_[k].first;
+        const uint32_t begin = (uint32_t)k;
+        const int cx = int(int32_t(key >> 32)), cy = int(int32_t(key & 0xFFFFFFFFu));
+        const auto [bi, bm] = bitOf(cx, cy);
+        occ[bi] |= bm;
+        while (k < scratch_.size() && scratch_[k].first == key) {
+            items[k] = scratch_[k].second;
+            ++k;
+        }
+        keys.push_back(key);
+        offs.push_back(begin);
+    }
+    offs.push_back((uint32_t)scratch_.size());
+}
+
+Entity TargetBoard::TeamList::Grid::Nearest(const std::vector<TargetEntry>& list,
+                                            Vec2 from, float range,
+                                            Entity exclude) const {
+    Entity best = Entity::Null();
+    float bestD2 = range * range;
+    const int cx0 = (int)std::floor(from.x / kCell);
+    const int cy0 = (int)std::floor(from.y / kCell);
+    auto scanCell = [&](int cx, int cy) {
+        if (cx < minX || cx > maxX || cy < minY || cy > maxY) return; // bbox 外恒空
+        const size_t i = size_t(cy - minY) * (maxX - minX + 1) + (cx - minX);
+        if (!(occ[i / 64] & (1ull << (i % 64)))) return;              // 空 cell 免键查找
+        const uint64_t key = TargetCellKey(cx, cy);
+        const auto it = std::lower_bound(keys.begin(), keys.end(), key);
+        if (it == keys.end() || *it != key) return;
+        const uint32_t b = offs[it - keys.begin()], e = offs[it - keys.begin() + 1];
+        for (uint32_t i2 = b; i2 < e; ++i2) {
+            const TargetEntry& te = list[items[i2]];
+            if (te.e == exclude) continue;
+            const float d2 = LengthSq(te.pos - from);
+            if (d2 < bestD2) { // 严格小于（等距语义见 Systems.h 注释）
+                bestD2 = d2;
+                best = te.e;
+            }
+        }
+    };
+    // 环搜：ring r 只扫边缘 4 条（r=0 单格）；(r-1)*cell 为该环候选距查询点的
+    // 保守下界，其平方 ≥ bestD2 即停（已见更近者）；ring 全界超 range 亦停。
+    for (int r = 0;; ++r) {
+        const float ringMin = r == 0 ? 0.0f : (float)(r - 1) * kCell;
+        if (ringMin * ringMin >= bestD2) break;
+        if ((float)(r - 1) * kCell > range) break;
+        for (int dx = -r; dx <= r; ++dx) { // 上下边（dy=±r 全宽；r=0 同格只扫一次）
+            scanCell(cx0 + dx, cy0 - r);
+            if (r > 0) scanCell(cx0 + dx, cy0 + r);
+        }
+        for (int dy = -r + 1; dy <= r - 1; ++dy) { // 左右边（去角）
+            scanCell(cx0 - r, cy0 + dy);
+            scanCell(cx0 + r, cy0 + dy);
+        }
+    }
+    return best;
 }
 
 Entity TargetBoard::Nearest(uint32_t team, Vec2 from, float range,
                             Entity exclude) const {
-    const std::vector<TargetEntry>* list = nullptr;
-    for (const auto& t : teams_)
-        if (t.id == team) {
-            list = &t.list;
+    const TeamList* t = nullptr;
+    for (const auto& cand : teams_)
+        if (cand.id == team) {
+            t = &cand;
             break;
         }
-    if (!list) return Entity::Null();
-    Entity best = Entity::Null();
-    float bestD2 = range * range;
-    for (const TargetEntry& te : *list) {
-        if (te.e == exclude) continue;
-        float d2 = LengthSq(te.pos - from);
-        if (d2 < bestD2) { // 严格小于：等距保留池序靠前者（确定性）
-            bestD2 = d2;
-            best = te.e;
+    if (!t) return Entity::Null();
+    if (t->list.size() < TeamList::Grid::kMinList) {
+        // 线性快径：严格小于 = 等距保留池序靠前者（确定性；存量场景逐位不变）
+        Entity best = Entity::Null();
+        float bestD2 = range * range;
+        for (const TargetEntry& te : t->list) {
+            if (te.e == exclude) continue;
+            float d2 = LengthSq(te.pos - from);
+            if (d2 < bestD2) {
+                bestD2 = d2;
+                best = te.e;
+            }
         }
+        return best;
     }
-    return best;
+    return t->grid.Nearest(t->list, from, range, exclude);
 }
 
 Entity TargetBoard::NearestAny(Vec2 from, float range, Entity exclude) const {
@@ -349,13 +446,28 @@ void AISystem::Tick(World& world, Scene& scene, float dt) {
         }
     }
 
-    // Shooter：冷却到点朝目标发射投射物（生成走工厂）
+    // Shooter：冷却到点朝目标发射投射物（生成走工厂）。
+    // 2026-09-26 拆两段：冷却/索敌并行（Nearest 对目标板只读、逐实体写——
+    // 五万行军场此段是 AI 首位热点）；开火生成保持主线程按原 view 序串行
+    // （工厂变更池 + 事件入队序 = 回放确定）——净行为与原单线程逐位同构。
     {
+        {
+            auto& pool = scene.Pool<Shooter>();
+            const uint32_t n = (uint32_t)pool.size();
+            world.Jobs().ParallelFor(n, 256, [&](uint32_t b, uint32_t e) {
+                for (uint32_t i = b; i < e; ++i) {
+                    entt::entity ent = pool[i];
+                    if (!scene.Registry().all_of<Transform2D>(ent)) continue;
+                    Shooter& sh = pool.get(ent);
+                    Transform2D& tf = *scene.Registry().try_get<Transform2D>(ent);
+                    sh.cooldown -= dt;
+                    sh.target = board_.Nearest(sh.targetTeam, tf.pos, sh.range,
+                                               Scene::FromEntt(ent));
+                }
+            });
+        }
         auto view = scene.View<Shooter, Transform2D>();
         for (auto [ent, sh, tf] : view.each()) {
-            sh.cooldown -= dt;
-            sh.target = board_.Nearest(sh.targetTeam, tf.pos, sh.range,
-                                       Scene::FromEntt(ent));
             if (sh.cooldown > 0.0f || sh.target.IsNull()) continue;
             sh.cooldown = sh.interval;
 
@@ -384,21 +496,31 @@ void AISystem::Tick(World& world, Scene& scene, float dt) {
         }
     }
 
-    // Patrol：往返（暂停逻辑随 clip/玩法层完善，M5）
+    // Patrol：往返（暂停逻辑随 clip/玩法层完善，M5）。并行池切分（2026-09-26
+    // 五万行军场：单线程全量写是 AI 段巨耗源）——逐实体纯写、零跨实体访问，
+    // 守卫同 Chase 段；结果与迭代序确定性不变（ParallelFor 按池索引切分）。
     {
-        auto view = scene.View<Patrol, Transform2D, Velocity>();
-        for (auto [ent, pt, tf, vel] : view.each()) {
-            Vec2 dest = pt.headingToB ? pt.b : pt.a;
-            Vec2 toD = dest - tf.pos;
-            if (LengthSq(toD) < 4.0f) {
-                pt.headingToB = !pt.headingToB;
-                // [ISSUE-6] 折返同帧改向：重算 dest 再写速度（原速度滞后一帧，
-                // 端点过冲 ~1px 后才回头）
-                dest = pt.headingToB ? pt.b : pt.a;
-                toD = dest - tf.pos;
+        auto& pool = scene.Pool<Patrol>();
+        const uint32_t n = (uint32_t)pool.size();
+        world.Jobs().ParallelFor(n, 256, [&](uint32_t b, uint32_t e) {
+            for (uint32_t i = b; i < e; ++i) {
+                entt::entity ent = pool[i];
+                if (!scene.Registry().all_of<Transform2D, Velocity>(ent)) continue;
+                Patrol& pt = pool.get(ent);
+                Transform2D& tf = *scene.Registry().try_get<Transform2D>(ent);
+                Velocity& vel = *scene.Registry().try_get<Velocity>(ent);
+                Vec2 dest = pt.headingToB ? pt.b : pt.a;
+                Vec2 toD = dest - tf.pos;
+                if (LengthSq(toD) < 4.0f) {
+                    pt.headingToB = !pt.headingToB;
+                    // [ISSUE-6] 折返同帧改向：重算 dest 再写速度（原速度滞后一帧，
+                    // 端点过冲 ~1px 后才回头）
+                    dest = pt.headingToB ? pt.b : pt.a;
+                    toD = dest - tf.pos;
+                }
+                vel.v = Normalize(toD) * 60.0f;
             }
-            vel.v = Normalize(toD) * 60.0f;
-        }
+        });
     }
 }
 
@@ -411,6 +533,19 @@ void NavigationSystem::Tick(World& world, Scene& scene, float dt) {
 // ------------------------------------------------------------- #6 分离力 --
 void SeparationSystem::Tick(World& world, Scene& scene, float dt) {
     const TeamTable& teams = world.Teams();
+    // soft-collide 队掩码预计算（表静态，每 tick 一次 32×32 查表）：查询按掩码
+    // 进 SpatialHash = cell 位图整格早退 + 候选级内联拒（SpatialHash.h L125）。
+    // 掩码 = 0 的队（互穿队，如 Battle 场蓝军 team 3）整体跳过查询——此前全量
+    // 扫邻居再逐候选 SoftCollide 拒掉，密场下纯耗（Battle 场实测 5000 蓝军
+    // ~7ms）。语义不变：掩码命中的候选 = 原 SoftCollide 判定恰会接受的候选
+    // （无 Meta 实体恒放行不入位图，回调内 om==nullptr 分支保留同旧序）。
+    uint32_t softMasks[TeamTable::kMaxTeams];
+    for (uint32_t t = 0; t < TeamTable::kMaxTeams; ++t) {
+        uint32_t m = 0;
+        for (uint32_t u = 0; u < TeamTable::kMaxTeams; ++u)
+            if (teams.SoftCollide(t, u)) m |= 1u << u;
+        softMasks[t] = m;
+    }
     auto& pool = scene.Pool<Meta>();
     const uint32_t n = (uint32_t)pool.size();
     const float r = radius, r2 = r * r;
@@ -424,18 +559,25 @@ void SeparationSystem::Tick(World& world, Scene& scene, float dt) {
             Transform2D& tf = *reg.try_get<Transform2D>(ent);
             Velocity& vel = *reg.try_get<Velocity>(ent);
 
+            const uint32_t softMask =
+                meta.team < TeamTable::kMaxTeams ? softMasks[meta.team] : 0;
+            if (softMask == 0) continue; // 无任何可分离关系：跳过查询
+
             // 密度截断（03 §14"密度上限"）：每实体只处理前 maxNeighbors 个
             // 有效邻居。哈希回调序 = cell 序 → id 升序 → 截断确定（回放安全）。
             // 万怪堆叠时若不截断，cell 内遍历退化为 O(n²)（实测 6ms@1k）。
             Vec2 push{};
             uint32_t count = 0;
+            physics2d::QueryFilter f;
+            f.teamMask = softMask;
+            f.exclude = Scene::FromEntt(ent);
             scene.Spatial().OverlapCircle(
-                scene, tf.pos, r, physics2d::QueryFilter{}, 0.0f,
+                scene, tf.pos, r, f, 0.0f,
                 [&](Entity other, const Transform2D& otf) -> bool {
                     if (other == Scene::FromEntt(ent)) return true;
                     const Meta* om = scene.TryGet<Meta>(other);
                     if (!om) return true;
-                    // 只有 soft-collide 关系才分离（03 §9；默认表：怪群同队）
+                    // 只有 soft-collide 关系才分离（03 §9；掩码预滤同语义）
                     if (!teams.SoftCollide(meta.team, om->team)) return true;
                     Vec2 d = tf.pos - otf.pos;
                     float d2 = LengthSq(d);

@@ -97,7 +97,7 @@ struct IncrementalState { double rate, multiplier; double cached; };     // 增�
 | 1 | InputSnapshot | 输入队列 | — | — | 主线程采样→模拟线程消费 |
 | 2 | DirectorSystem | WaveDirector 波次表 | WaveStart/Spawn 事件 + 出生（经 SpawnFn） | — | 波次调度（§8；M5 批②落地：直接出生通道，非 Spawner 配额） |
 | 3 | SpawnSystem | 销毁队列/池 | Transform2D 等 | — | 池取用 + 事件入队 onSpawn |
-| 4 | AISystem(Behavior) | Chase/Patrol/Flee/Shooter | Velocity | ✅ grain 256 | 纯函数逐实体 |
+| 4 | AISystem(Behavior) | Chase/Patrol/Flee/Shooter | Velocity | ✅ grain 256 | 纯函数逐实体。目标板 Nearest = 网格桶（cell 64px CSR + 占位位图）环搜（2026-09-25：many-vs-many 线性全扫在红蓝对抗场实测 25.4ms/帧 → 1.7ms，15×；列表 <64 走线性快径 = 存量场景逐位不变，金回放零重录实证；等距平局语义 = 环扫序先见者，见 Systems.h 注释） |
 | 5 | NavigationSystem | Chase | Velocity | — | 采样 FlowField/避障（§7） |
 | 6 | SeparationSystem | Transform2D/Meta.team | Velocity | ✅ | 同队分离力（软碰撞，割草不堆叠的关键） |
 | 7 | MovementSystem | Velocity/Mover/Knockback | Transform2D | ✅ | 积分 + 地形碰撞钳制（查询层） |
@@ -113,6 +113,18 @@ struct IncrementalState { double rate, multiplier; double cached; };     // 增�
 | 17 | DestroyCommit | 销毁队列 | 池归还 | — | Essential 阶段执行 |
 
 顺序声明：系统在注册表里写 `After("Movement")`；编辑器性能面板显示实际序列与毫秒。
+
+> **并行段开发契约**（2026-09-26 随 AISystem 全段并行化立——违者 = 数据竞争或
+> 回放漂移，来历与实测见 DevLog 2026-09-26-ai-parallelize.md）：
+> 1. `ParallelFor` lambda 内只允许三件事：读只读结构（TargetBoard/TeamTable 等
+>    帧内快照）、写"当前实体自己"的组件、`thread_local` 累加（出循环后主线程
+>    按线程号序合并——顺序合并保确定性）；
+> 2. 跨实体读走"帧内快照"范式：主线程先 Rebuild/收集摘要，并行段只读
+>    （TargetBoard 本身即示范；群体协同类需求照此加邻居摘要通道）；
+> 3. 实体创建/销毁/事件入队/弹体生成一律"收集意图 → 主线程按池序稳定归并提交"
+>    （DestroyCommit 两阶段与 SceneOps 命令缓冲同款；Shooter 段"并行查询 +
+>    串行生成"即本条示范——齐射/散射将来照此骨架写）。动并行段或生成路径的
+>    改动，合并前必跑金回放三档；涉及跨实体逻辑须配孪生世界多线程单测。
 
 ## 5. 空间哈希 Broadphase（物理查询层地基）
 
