@@ -2520,8 +2520,8 @@ int EditorApp::Run(const EditorLaunch& launch) {
     device_ = rhi::Device::Create(dd);
     rhi::SwapchainDesc sd;
     sd.nativeWindow = window_->NativeHandle();
-    sd.present = launch.benchSurvivor
-                     ? rhi::PresentModePref::Immediate // M5 压测口径：禁 vsync（否则帧时被 60Hz 钉住测不出 45fps 档）
+    sd.present = (launch.benchSurvivor || launch.benchScene)
+                     ? rhi::PresentModePref::Immediate // 压测口径：禁 vsync（否则帧时被 60Hz 钉住测不出真实档位）
                      : rhi::PresentModePref::Fifo;     // 编辑器 vsync（05 §9）
     if (!device_->CreateSwapchain(sd)) return 1;
     device_->EnableTimestamps(); // Profiler 面板 GPU 列（02 §3.5）
@@ -2727,6 +2727,16 @@ int EditorApp::Run(const EditorLaunch& launch) {
         }
         if (!ctx_.EnterPlay()) return 1;
     }
+    // --bench-scene（2026-09-25 工具化）：--project/--scene 已开，进 Play 跑同款测量
+    //（Immediate + 帧八段 + 逐系统分解）。不播种、无场景特定判据——RESULT 只报数，
+    // 退出码恒 0：用户压测场景（如 svr-test Battle 场）的瓶颈检测器。
+    if (launch.benchScene) {
+        if (launch.openScene.empty()) {
+            LEMON_ERROR("--bench-scene 需要 --scene（绝对路径）+ --project");
+            return 2;
+        }
+        if (!ctx_.EnterPlay()) return 1;
+    }
     // M5 批④ --smoke-template：EnterPlay 已由上方 playTest 块完成（模板含 Game/、
     // 编译成功才走到这——PlayBlockedByScripts 守卫先行）。此处挂事件计数 sink。
     if (launch.smokeTemplate && ctx_.Playing()) {
@@ -2769,6 +2779,10 @@ int EditorApp::Run(const EditorLaunch& launch) {
     if (launch.benchSurvivor && launch.frames < 600) {
         LEMON_ERROR("--bench-survivor 需要 --frames N（N>=600：怪海涨满 ~240 帧预热 + "
                     "测量窗 ≥360）");
+        return 2;
+    }
+    if (launch.benchScene && launch.frames < 600) {
+        LEMON_ERROR("--bench-scene 需要 --frames N（N>=600：预热 240 + 测量窗 ≥360）");
         return 2;
     }
     if (launch.smokeTemplate && launch.frames < 3000) {
@@ -3903,12 +3917,13 @@ int EditorApp::Run(const EditorLaunch& launch) {
             firstFrameMs = std::chrono::duration<double, std::milli>(
                                std::chrono::steady_clock::now() - tColdStart)
                                .count();
-        if (launch.benchSurvivor && ctx_.Playing() && frame >= kBenchWarmup) {
-            // M6a 批①：fx 饱和灌入（验收④口径 = 池满最坏情形：256 飘字 + 128 血条
-            // 每帧全量在场）。飘字确定性网格撒玩家周边（渲染视口内）；血条挂前 128
-            // 只动画怪（each 早退收集；怪被击杀 = 渲染侧 resolve 跳过、槽位 sticky
-            // 到期次帧收集补位——计数恒 128）
-            {
+        if ((launch.benchSurvivor || launch.benchScene) && ctx_.Playing() &&
+            frame >= kBenchWarmup) {
+            // M6a 批①：fx 饱和灌入（survivor 专属口径：验收④ = 池满最坏情形，
+            // 256 飘字 + 128 血条每帧全量在场）。飘字确定性网格撒玩家周边（渲染
+            // 视口内）；血条挂前 128 只动画怪（each 早退收集；怪被击杀 = 渲染侧
+            // resolve 跳过、槽位 sticky 到期次帧收集补位——计数恒 128）
+            if (launch.benchSurvivor) {
                 ecs::FxChannel& fx = ctx_.ActiveWorld().Fx();
                 for (uint32_t i = 0; i < ecs::FxChannel::kMaxTexts; ++i)
                     fx.PopupText("12", -300.0f + (float)(i % 16) * 40.0f,
@@ -3971,8 +3986,11 @@ int EditorApp::Run(const EditorLaunch& launch) {
     uint32_t benchFxTexts = 0, benchFxBars = 0; // 批① fx 饱和证据（停跑时通道计数）
     float benchPlayerHp = -1.0f; // Hazard 化证据（方案 A 批）：玩家（收集者）掉血 =
                                  // 万怪 Hazard tick 真实发生（<1e6 即证）
-    if (launch.benchSurvivor && ctx_.Playing()) {
+    if ((launch.benchSurvivor || launch.benchScene) && ctx_.Playing()) {
         benchPlayProfiles = ctx_.ActiveWorld().Pipeline().Profiles(); // ExitPlay 弃世界前留证
+        if (launch.benchScene)
+            playAliveAtStop = ctx_.ActiveScene().AliveCount();
+        if (launch.benchSurvivor) { // 以下证据采集 = survivor 专属（bench-scene 只取 profiles + alive）
         ctx_.ActiveScene().View<ecs::XpProgress>().each([&](auto ent, ecs::XpProgress&) {
             if (const ecs::Health* hp = ctx_.ActiveScene().TryGet<ecs::Health>(
                     ecs::Scene::FromEntt(ent)))
@@ -4001,6 +4019,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
                         ++benchAnimHit;
             });
         }
+        } // survivor 专属证据到此
     }
     if (ctx_.Playing()) { // --play：跑满帧数后 Stop（恢复编辑世界）
         playAliveAtStop = ctx_.ActiveScene().AliveCount();
@@ -4116,6 +4135,61 @@ int EditorApp::Run(const EditorLaunch& launch) {
                                                (benchUiSum / segN)
                                          : 0.0);
         if (!pass) exitCode = 1;
+    }
+    // --bench-scene 裁决（2026-09-25）：无场景特定判据——只报数，退出码恒 0
+    //（测量工具；判读归调用方/README 口径）。分解块与 survivor 同构、前缀独立。
+    if (launch.benchScene) {
+        const double bAvg = benchFrameN ? benchFrameSum / (double)benchFrameN : 0.0;
+        const double bFps = bAvg > 0.0 ? 1000.0 / bAvg : 0.0;
+        const double bSegN = benchFrameN ? (double)benchFrameN : 1.0;
+        std::printf("[bench-scene] 分段avg ms: pump=%.2f sim=%.2f glue=%.2f ui=%.2f "
+                    "acquire=%.2f scene=%.2f uidraw=%.2f present=%.2f | segSum=%.2f\n",
+                    benchPumpSum / bSegN, benchSimSum / bSegN, benchGlueSum / bSegN,
+                    benchUiSum / bSegN, benchAcqSum / bSegN, benchSceneSum / bSegN,
+                    benchUiDrawSum / bSegN, benchPresentSum / bSegN,
+                    (benchPumpSum + benchSimSum + benchGlueSum + benchUiSum + benchAcqSum +
+                     benchSceneSum + benchUiDrawSum + benchPresentSum) / bSegN);
+        std::printf("[bench-scene] RESULT frames=%u warmup=%u alive=%u frameAvg=%.2fms "
+                    "fps=%.0f => REPORT\n",
+                    (unsigned)frame, (unsigned)kBenchWarmup, playAliveAtStop, bAvg, bFps);
+        {
+            std::vector<ecs::SystemProfile> rows;
+            for (const ecs::SystemProfile& p : benchPlayProfiles)
+                if (p.runs > 0) rows.push_back(p);
+            std::sort(rows.begin(), rows.end(), [](const ecs::SystemProfile& a,
+                                                   const ecs::SystemProfile& b) {
+                return a.totalMs > b.totalMs;
+            });
+            double sysSum = 0.0;
+            for (const ecs::SystemProfile& p : rows) sysSum += p.totalMs / (double)p.runs;
+            std::printf("[bench-scene] sim系统分解 (Σ=%.2fms vs seg sim=%.2fms):\n",
+                        sysSum, benchSimSum / bSegN);
+            for (const ecs::SystemProfile& p : rows)
+                std::printf("    %-24s avg=%7.3fms max=%7.3fms runs=%llu\n", p.name,
+                            p.totalMs / (double)p.runs, (double)p.maxMs,
+                            (unsigned long long)p.runs);
+        }
+        {
+            const char* segNames[kSegN] = {"pump", "sim", "glue", "ui",
+                                           "acquire", "scene", "uidraw", "present"};
+            std::printf("[bench-scene] frameMax=%.2fms 帧八段:", benchFrameMax);
+            for (int i = 0; i < kSegN; ++i) std::printf(" %s=%.2f", segNames[i], benchMaxSeg[i]);
+            std::printf("\n");
+            std::printf("[bench-scene] 每段max:");
+            for (int i = 0; i < kSegN; ++i)
+                std::printf(" %s=%.2f@%llu", segNames[i], benchSegMax[i],
+                            (unsigned long long)benchSegMaxF[i]);
+            std::printf("\n");
+            if (benchSpikeN > 0) {
+                std::printf("[bench-scene] 尖刺帧>25ms: %llu 个，其分段均值:",
+                            (unsigned long long)benchSpikeN);
+                for (int i = 0; i < kSegN; ++i)
+                    std::printf(" %s=%.2f", segNames[i], benchSpikeSeg[i] / (double)benchSpikeN);
+                std::printf("\n");
+            } else {
+                std::printf("[bench-scene] 尖刺帧>25ms: 0 个\n");
+            }
+        }
     }
     // --smoke-close 裁决（M4.6 §4-9）：独立于 --smoke——专用最小跑（无项目/无播种）
     if (!launch.smokeClose.empty()) {

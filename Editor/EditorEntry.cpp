@@ -78,6 +78,8 @@ int main(int argc, char** argv) {
             launch.smokeAnim = launch.smoke = launch.playTest = true; // 动画链冒烟（M5 批③）
         else if (!std::strcmp(argv[i], "--bench-survivor"))
             launch.benchSurvivor = true; // M5 压测基线（1 万怪刷怪 + Immediate + 帧时）
+        else if (!std::strcmp(argv[i], "--bench-scene"))
+            launch.benchScene = true; // 任意 --project/--scene 场景压测（帧八段 + 逐系统分解，只报数）
         else if (!std::strcmp(argv[i], "--gen-vs-template") && i + 1 < argc)
             launch.genVsTemplate = argv[++i]; // M5 批④：模板生成（开发工具，跑一次）
         else if (!std::strcmp(argv[i], "--smoke-template"))

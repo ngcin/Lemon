@@ -53,6 +53,9 @@ struct EditorLaunch {
                              // 隐含 --smoke --play：程序化 4 帧表必验，yami 表在场即验）
     bool benchSurvivor = false; // --bench-survivor：M5 压测基线（临时项目 + 1 万怪刷怪
                                 // 场景 + Immediate 呈现 + 帧时统计；08 §3 判据 ≥45fps）
+    bool benchScene = false;    // --bench-scene：任意 --project/--scene 场景跑同款测量
+                                //（Immediate + 帧八段 + 逐系统分解；不播种无判据，只报数
+                                //——用户压测场景的瓶颈检测器，2026-09-25 随 Battle 场加）
     std::string genVsTemplate;  // --gen-vs-template <dir>：M5 批④ 开发工具——生成
                                 // vs-survivor 模板项目文件后退出（不开窗；跑一次入库）
     bool smokeTemplate = false; // --smoke-template：M5 批④ 模板链冒烟（向导复制 →
