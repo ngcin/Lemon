@@ -14,7 +14,7 @@ Status: planned
 |---|---|---|---|
 | ⓪ | [2026-09-24-b0-multiscript-guid](./2026-09-24-b0-multiscript-guid.md) | 架构地基：`scripts[]` 多脚本 + sprite 引用 GUID 化 | **done**（2026-09-24；出口判据 5/6/7 本批落账 ✅） |
 | ① | [2026-09-24-b1-combat-feel](./2026-09-24-b1-combat-feel.md) | 表现打击感：Animator `Play`/`Queue`/`CrossFade` + 位图数字/飘字/世界血条 | **done**（2026-09-24；回归 14/14、金回放零重录、bench fx 饱和 fps=78） |
-| ② | （开批新建） | 内容生产：配置表外置 ADR + AnimationEditor 最小版 + 技能路径数据化 + 存档分档 | planned |
+| ② | [2026-09-25-b2-content-production](./2026-09-25-b2-content-production.md) | 内容生产：配置表外置（[ADR-012](../../ADR/ADR-012-Config-Table-Dual-Track.md) 双轨）+ AnimationEditor 最小版 + 技能路径数据化 + 存档分档 | **active**（2026-09-25 开工分解，T0 ADR 已落；T1→T6 依序） |
 | ③ | （开批新建） | 产品壳：通用模态面板通道 + 流程状态机（档1 单场景零引擎改动）+ LoadScene 评估（档2 ADR） | planned |
 
 批次顺序理由：批⓪ 先行（多脚本与 GUID 晚做返工面最大）；批①–③ 可按游戏侧卡点紧迫度微调次序（如游戏先需要配置表可提前批②）。
