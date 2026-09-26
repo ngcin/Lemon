@@ -101,12 +101,15 @@ void HierarchyPanel::OnGui(EditorApp& app) {
             ++g_hierProbe.frames;
         }
     };
-    if (!ImGui::Begin(Name(), nullptr,
+    bool winOpen = true;
+    if (!ImGui::Begin(Name(), &winOpen,
                       ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar)) {
         ImGui::End();
+        if (!winOpen) app.ClosePanel(Name()); // × 关闭（T3b-8）
         probeAccum(); // 折叠帧也计（折叠时几乎为零——本身即归因信号）
         return;
     }
+    if (!winOpen) app.ClosePanel(Name());
     EditorContext& ctx = app.Ctx();
     ecs::Scene& scene = ctx.ActiveScene();
 

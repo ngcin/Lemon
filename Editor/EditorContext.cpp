@@ -554,12 +554,17 @@ void EditorContext::BuildPlayClipCache() {
                 AssetDatabase::HexToGuid(fr.at("sheet").get<std::string>().c_str());
             const AssetEntry* sheet = assets_.FindByGuid(sheetGuid);
             const uint32_t cell = fr.at("cell").get<uint32_t>();
-            const uint32_t spriteId =
-                sheet && !sheet->missing && sheet->type == AssetType::Sprite
-                    ? sheet->SliceSpriteId(cell)
-                    : 0;
+            // M6a 批② T3b-1：整图引用——未切片 sheet 的 cell 0 = 本体号（文件夹
+            // 多单图动画，一帧一图）；切片表照旧 cell 界内连号
+            uint32_t spriteId = 0;
+            if (sheet && !sheet->missing && sheet->type == AssetType::Sprite) {
+                if (sheet->Sliced())
+                    spriteId = sheet->SliceSpriteId(cell);
+                else if (cell == 0)
+                    spriteId = sheet->spriteId;
+            }
             if (spriteId == 0) {
-                LEMON_WARN("clip 帧悬空（sheet 缺失/未切片/cell 越界 %u）：%s 帧 %zu——跳过该 clip",
+                LEMON_WARN("clip 帧悬空（sheet 缺失/未切片且 cell≠0/cell 越界 %u）：%s 帧 %zu——跳过该 clip",
                            cell, e.relPath.c_str(), frames.size());
                 ok = false;
                 break;

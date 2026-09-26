@@ -95,12 +95,15 @@ void PushOverlayRectSnapped(ViewportRenderer& vr, const Camera2D& cam, uint32_t 
 
 // -------------------------------------------------------------- SceneView --
 void SceneViewPanel::OnGui(EditorApp& app) {
-    if (!ImGui::Begin("Scene", nullptr,
+    bool winOpen = true;
+    if (!ImGui::Begin("Scene", &winOpen,
                       ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar |
                           ImGuiWindowFlags_NoScrollWithMouse)) {
         ImGui::End();
+        if (!winOpen) app.ClosePanel("Scene"); // × 关闭（T3b-8）
         return;
     }
+    if (!winOpen) app.ClosePanel("Scene");
     EditorContext& ctx = app.Ctx();
     ViewportRenderer& vr = app.Viewport();
 
@@ -752,12 +755,15 @@ void SceneViewPanel::DrawGizmoHandles(EditorApp& app, ViewportRenderer& vr, ecs:
 
 // -------------------------------------------------------------- GameView --
 void GameViewPanel::OnGui(EditorApp& app) {
-    if (!ImGui::Begin("Game", nullptr,
+    bool winOpen = true;
+    if (!ImGui::Begin("Game", &winOpen,
                       ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar |
                           ImGuiWindowFlags_NoScrollWithMouse)) {
         ImGui::End();
+        if (!winOpen) app.ClosePanel("Game"); // × 关闭（T3b-8）
         return;
     }
+    if (!winOpen) app.ClosePanel("Game");
     ViewportRenderer& vr = app.Viewport();
     // M4.7c：Aspect 下拉（Free/16:9/4:3/1:1）——替代固定 16:9 letterbox
     static const char* kAspects[] = {"Free", "16:9", "4:3", "1:1"};

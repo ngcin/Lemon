@@ -609,10 +609,13 @@ FieldResult DrawField(EditorApp& app, const ecs::ComponentMeta& meta, ecs::Entit
 } // namespace
 
 void InspectorPanel::OnGui(EditorApp& app) {
-    if (!ImGui::Begin(Name(), nullptr, ImGuiWindowFlags_NoCollapse)) {
+    bool winOpen = true;
+    if (!ImGui::Begin(Name(), &winOpen, ImGuiWindowFlags_NoCollapse)) {
         ImGui::End();
+        if (!winOpen) app.ClosePanel(Name()); // × 关闭（T3b-8；Window 菜单可重开）
         return;
     }
+    if (!winOpen) app.ClosePanel(Name());
     EditorContext& ctx = app.Ctx();
     // Play 横幅（M5 批④ / ADR-011）：显式告知调参改动随 Stop 丢弃——正路 =
     // 编辑态改 → Play 验证（波次表/数值全是编辑态可改的字段）

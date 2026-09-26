@@ -20,6 +20,7 @@
 
 #include "App/ImGuiBackend.h"
 #include "Assets/AssetDatabase.h"
+#include "Assets/ClipEdit.h" // M6a 批② T3：smoke-anim clip 编辑链（面板数据面同款）
 #include "Assets/ProjectWizard.h"
 #include "Interaction/ViewportRenderer.h"
 #include "Tooling/Icons.h"
@@ -93,6 +94,11 @@ constexpr uint64_t kAnimSheetGuid = 0x5bd31a7c30000001ull; // anim-sheet.png（1
 constexpr uint64_t kAnimClipGuid = 0x5bd31a7c30000002ull;  // anim.clip（fps10 × cells 0..3）
 constexpr uint64_t kAnimHitClipGuid = 0x5bd31a7c30000003ull; // anim-hit.clip（M6a 批①：
 // fps12 × cells [3,2] loop=0——切段断言的受击段）
+constexpr uint64_t kAnimEditClipGuid = 0x5bd31a7c30000004ull; // anim-edit.clip（M6a 批②
+// T3：AnimationPanel 数据面编辑链断言——写→改 fps/增帧→存→roundtrip→Play 快照）
+constexpr uint64_t kAnimWholeClipGuid = 0x5bd31a7c30000005ull; // anim-whole.clip（T3b-1
+// 整图引用断言——未切片 smoke.png cell0 → 本体号，Play 快照 1 帧）
+constexpr uint64_t kSmokePngGuid = 0x5bd31a7c10e9f2c8ull;     // smoke.png（未切片整图）
 constexpr uint64_t kYamiHeroSheetGuid = 0x5bd31a7c10000001ull; // Samples yami-dungeon hero_1（在场即验）
 constexpr uint64_t kYamiHeroClipGuid = 0x5bd31a7c20000001ull;  // hero-walk.clip（9 帧 @8fps）
 
@@ -1183,11 +1189,17 @@ void EditorApp::SetupDefaultLayout() {
     ImGui::DockBuilderDockWindow("Inspector", rightId);
     ImGui::DockBuilderDockWindow("Scene", mainId);
     ImGui::DockBuilderDockWindow("Game", mainId);      // 同区域 = 标签页
+    // Animation（M6a 批② T3）：按需窗口（OpenByDefault=false），停靠请求照样
+    // 预挂——首次打开落位而非随机浮窗（DockBuilder 队列对未建窗口有效）；
+    // 实际停靠位 = bottomId（见下方 T3b 注记）
     // Profiler 补进 bottom 区（BUG-3：此前未停靠 → 首启以浮窗随机遮挡
     // Hierarchy）；先于 Console/Assets 停靠 = 不抢当前标签，默认隐藏页
     ImGui::DockBuilderDockWindow("Profiler", bottomId);
     ImGui::DockBuilderDockWindow("Console", bottomId);
     ImGui::DockBuilderDockWindow("Assets", bottomId);  // 同区域 = 标签页
+    // T3b：Animation 落底部区（Unity 同款——宽矮窗配横排胶片带；不开在中央区，
+    // 否则打开即抢 Scene 标签页 → 视口像素断言/编辑视图被盖）
+    ImGui::DockBuilderDockWindow("Animation", bottomId);
     ImGui::DockBuilderFinish(dock);
     LEMON_LOG("editor: default layout built");
 }
@@ -2085,6 +2097,36 @@ void EditorApp::RescanAssets() {
                   cs.removed.size());
 }
 
+void EditorApp::OpenAnimationEditor(uint64_t guid) {
+    // M6a 批② T3：首个"资产 → 专用编辑面板"通道（05 §5 先例）。按名取注册表
+    // 条目（AnimationPanel 是按需窗口：open 置位 + 设目标；装载惰性在面板 OnGui）
+    if (PanelRegistry::Entry* en = panels_.FindEntry("Animation")) {
+        en->open = true;
+        static_cast<AnimationPanel*>(en->panel)->SetTarget(guid);
+    }
+}
+
+void EditorApp::OpenAnimationCreateFromFolder(const std::string& relDir) {
+    // M6a 批② T3b-5：文件夹右键入口——开向导文件夹页；落点跟随浏览器当前目录
+    if (PanelRegistry::Entry* en = panels_.FindEntry("Animation")) {
+        en->open = true;
+        static_cast<AnimationPanel*>(en->panel)->StartCreateFromFolder(relDir,
+                                                                       AssetBrowserDir());
+    }
+}
+
+void EditorApp::ClosePanel(const char* name) {
+    if (PanelRegistry::Entry* en = panels_.FindEntry(name)) en->open = false;
+}
+
+const char* EditorApp::AssetBrowserDir() const {
+    // ""（根）归一 "Assets"；assetPanel_ 未装配（极早期/无项目会话）兜底根
+    static const char* kRoot = "Assets";
+    if (!assetPanel_) return kRoot;
+    const std::string& d = assetPanel_->CurrentDir();
+    return (d.empty() || d == "Assets") ? kRoot : d.c_str();
+}
+
 // ------------------------------------------------ 项目/脚本管线（M4.5）----
 // ---- M4.6b 日常编辑效率（§5）----
 void EditorApp::CopySelection() {
@@ -2705,6 +2747,62 @@ int EditorApp::Run(const EditorLaunch& launch) {
     if (!launch.finalTest && !ctx_.Assets().ProjectRoot().empty())
         recoveryPath_ = ctx_.DetectAutosaveRecovery();
 
+    // M6a 批② T3：--smoke-anim 扩 clip 编辑链（验收②）。专档 anim-edit.clip
+    //（固定 guid，幂等重写基线）走 AnimationPanel 数据面同款链路：落盘 →
+    // ParseClipJson → 改 fps/增帧 → ClipToJson → 原子写 → Rescan → 回读 roundtrip。
+    // 不动 anim.clip 种子（既有帧映射/切段断言零改动）。
+    bool smokeClipEditOk = false, smokeClipPlayCacheOk = false;
+    bool smokeWholeOk = false;
+    if (launch.smokeAnim) {
+        const std::filesystem::path clipPath =
+            std::filesystem::path(ctx_.Assets().ProjectRoot()) / "Assets" / "anim-edit.clip";
+        {
+            std::ofstream f(clipPath, std::ios::trunc);
+            f << "{\n  \"schemaVersion\": 1,\n  \"name\": \"smoke-anim-edit\",\n  \"fps\": 10,\n"
+                 "  \"loop\": true,\n  \"frames\": [\n"
+                 "    {\n      \"sheet\": \"5bd31a7c30000001\",\n      \"cell\": 0\n    }\n"
+                 "  ]\n}\n";
+            std::ofstream m(clipPath.string() + ".meta", std::ios::trunc);
+            m << "{\n  \"guid\": \"5bd31a7c30000004\",\n  \"type\": \"clip\",\n  \"hash\": 0,\n"
+                 "  \"importedAt\": 0\n}\n";
+            // T3b-1 整图引用：未切片 smoke.png（cell 0）单帧——BuildPlayClipCache
+            // 应解析为本体号（文件夹多单图动画的运行时前提）
+            const std::filesystem::path wholePath =
+                std::filesystem::path(ctx_.Assets().ProjectRoot()) / "Assets" /
+                "anim-whole.clip";
+            std::ofstream wf(wholePath, std::ios::trunc);
+            wf << "{\n  \"schemaVersion\": 1,\n  \"name\": \"smoke-anim-whole\",\n  \"fps\": 2,\n"
+                  "  \"loop\": true,\n  \"frames\": [\n"
+                  "    {\n      \"sheet\": \"5bd31a7c10e9f2c8\",\n      \"cell\": 0\n    }\n"
+                  "  ]\n}\n";
+            std::ofstream wm(wholePath.string() + ".meta", std::ios::trunc);
+            wm << "{\n  \"guid\": \"5bd31a7c30000005\",\n  \"type\": \"clip\",\n  \"hash\": 0,\n"
+                  "  \"importedAt\": 0\n}\n";
+        }
+        RescanAssets();
+        std::ifstream rf(clipPath, std::ios::binary);
+        std::string text((std::istreambuf_iterator<char>(rf)), std::istreambuf_iterator<char>());
+        if (ClipData c = ParseClipJson(text); c.ok) {
+            c.fps = 13.0f;                        // 改帧率（面板 DragInt 同字段）
+            c.frames.push_back({kAnimSheetGuid, 3}); // 增帧（承接 sheet）
+            if (WriteFileAtomic(clipPath.string(), ClipToJson(c) + "\n")) {
+                RescanAssets(); // 保存 = 原子写 + 主动重扫（面板同款）
+                std::ifstream vf(clipPath, std::ios::binary);
+                std::string vtext((std::istreambuf_iterator<char>(vf)),
+                                  std::istreambuf_iterator<char>());
+                const ClipData v = ParseClipJson(vtext);
+                smokeClipEditOk = v.ok && v.fps == 13.0f && v.frames.size() == 2 &&
+                                  v.frames[1].cell == 3 && v.frames[1].sheetGuid == kAnimSheetGuid;
+            }
+        }
+        if (!smokeClipEditOk)
+            LEMON_ERROR("smoke-anim：clip 编辑链失败（anim-edit.clip roundtrip 不符）");
+        // T3b：面板本体无头覆盖——开 Animation 面板每帧跑 OnGui（装载/胶片带/
+        // 预览路径；ImGui 错误计数归零断言兜底）。选编辑过的 anim-edit（后续
+        // 编辑写回 hash 变更 → 覆盖 LoadFrom 重入）
+        OpenAnimationEditor(kAnimEditClipGuid);
+    }
+
     // --play：Play 往返验收（§6 #4/#5）：进 Play → 中段编辑落 Play World → Stop 逐字节断言
     // --final 同样进 Play（终验 §6 #2/#6：Play 中热重载 + fps）
     if ((launch.playTest || launch.finalTest) && launch.smoke) {
@@ -2717,6 +2815,21 @@ int EditorApp::Run(const EditorLaunch& launch) {
             return 1;
         }
         if (!ctx_.EnterPlay()) return 1;
+    }
+    // M6a 批② T3：编辑后的 clip 进 Play 快照生效（BuildPlayClipCache 吃到 13fps×2 帧
+    // ——验收②"保存 → 重进 Play 帧率/帧数生效"的程序化侧）。T3b-1：整图引用
+    // 单帧档同断言（未切片 smoke.png cell0 → 本体号 1 帧）。
+    if (launch.smokeAnim && ctx_.Playing()) {
+        if (const ecs::ClipDef* cd =
+                ctx_.ActiveWorld().Clips().Find((uint32_t)kAnimEditClipGuid))
+            smokeClipPlayCacheOk = cd->fps == 13.0f && cd->frames.size() == 2;
+        if (const ecs::ClipDef* wd =
+                ctx_.ActiveWorld().Clips().Find((uint32_t)kAnimWholeClipGuid))
+            smokeWholeOk = wd->frames.size() == 1;
+        if (!smokeClipPlayCacheOk)
+            LEMON_ERROR("smoke-anim：编辑档未进 Play clip 快照（anim-edit 13fps×2 帧）");
+        if (!smokeWholeOk)
+            LEMON_ERROR("smoke-anim：整图引用未进 Play clip 快照（anim-whole 1 帧）");
     }
     // --bench-survivor（M5 清障③）：播种压测场景（tempdir 项目 + 1 万怪 Spawner）并进
     // Play。无 Game/（tempdir）——无脚本属合法形态，不走 PlayBlockedByScripts 守卫。
@@ -4305,12 +4418,17 @@ int EditorApp::Run(const EditorLaunch& launch) {
             }
             const bool queueOk = hitBooked && smokeQueueHit && smokeQueueBack;
             animOk = animOk && queueOk && smokeFxSeen;
+            // M6a 批② T3：clip 编辑链（roundtrip + Play 快照生效）；T3b-1 整图引用
+            animOk = animOk && smokeClipEditOk && smokeClipPlayCacheOk && smokeWholeOk;
             std::printf("[lemon] smoke-anim: prog(maxFrame=%u slice=%s booked=%u)%s "
-                        "queue(hitClip=%s hit=%s back=%s) fx(text/bar=%s) => %s\n",
+                        "queue(hitClip=%s hit=%s back=%s) fx(text/bar=%s) "
+                        "edit(rt=%s cache=%s whole=%s) => %s\n",
                         (unsigned)smokeAnimMax[0], smokeAnimSlice[0] ? "YES" : "NO",
                         sh ? sh->sliceCount : 0, yami, hitBooked ? "booked" : "MISSING",
                         smokeQueueHit ? "YES" : "NO", smokeQueueBack ? "YES" : "NO",
-                        smokeFxSeen ? "YES" : "NO", animOk ? "OK" : "FAIL");
+                        smokeFxSeen ? "YES" : "NO", smokeClipEditOk ? "YES" : "NO",
+                        smokeClipPlayCacheOk ? "YES" : "NO", smokeWholeOk ? "YES" : "NO",
+                        animOk ? "OK" : "FAIL");
             if (!animOk) exitCode = 1;
         }
         // M5 批④模板链验收：向导复制 → build → Play 全链在跑（能到这 = 前两环已过）；
@@ -4620,15 +4738,23 @@ void EditorApp::SeedSmokeScene() {
                 !hero.IsNull()) {
                 ecs::Animator2D& an = s.Emplace<ecs::Animator2D>(hero);
                 an.clipId = (uint32_t)kAnimClipGuid; // fps10 × 4 帧
+                // 编辑态引用 cell 0（切片表按 cell 口径——批⓪ ResolveSpriteRefs 对
+                // 本体号引用会降级 cell 0，快照/重建逐字节比对因此失配；实体在
+                // Play 中本就被 Animator 驱到 cell 区间，cell 0 才是真实用法）
+                s.Get<ecs::SpriteRenderer>(hero).spriteId = sheet->SliceSpriteId(0);
             }
         }
         if (const AssetEntry* yc = ctx_.Assets().FindByGuid(kYamiHeroClipGuid);
             yc && !yc->missing) {
-            if (ecs::Entity y = ctx_.CreateSpriteEntityFromAsset(
-                    "AnimYami", kYamiHeroSheetGuid, Vec2{840, 540});
-                !y.IsNull()) {
-                ecs::Animator2D& an = s.Emplace<ecs::Animator2D>(y);
-                an.clipId = (uint32_t)kYamiHeroClipGuid; // 9 帧 @8fps（Samples 素材）
+            if (const AssetEntry* ysh = ctx_.Assets().FindByGuid(kYamiHeroSheetGuid);
+                ysh && !ysh->missing && ysh->Sliced()) {
+                if (ecs::Entity y = ctx_.CreateSpriteEntityFromAsset(
+                        "AnimYami", kYamiHeroSheetGuid, Vec2{840, 540});
+                    !y.IsNull()) {
+                    ecs::Animator2D& an = s.Emplace<ecs::Animator2D>(y);
+                    an.clipId = (uint32_t)kYamiHeroClipGuid; // 9 帧 @8fps（Samples 素材）
+                    s.Get<ecs::SpriteRenderer>(y).spriteId = ysh->SliceSpriteId(0);
+                }
             }
         }
     }

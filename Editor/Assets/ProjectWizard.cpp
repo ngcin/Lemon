@@ -122,8 +122,10 @@ std::string ProjectWizard::Create(const ProjectDesc& d, uint64_t* outSpawnGuid) 
         return root.string();
     }
 
-    for (const char* dir : {"Assets", "Scenes", "Prefabs", "Game", "Data", ".lemon/editor",
-                            "Builds"})
+    // 目录骨架（06 §1）。T3b-9：Assets/anims、Assets/sprites = 推荐分类落点
+    //（约定不强制——用户可自由重组/删除；guid 随 .meta 走，引用不受目录影响）
+    for (const char* dir : {"Assets", "Assets/anims", "Assets/sprites", "Scenes", "Prefabs",
+                            "Game", "Data", ".lemon/editor", "Builds"})
         fs::create_directories(root / dir, ec);
 
     // project.lemon：引擎版本锚点（06 §1：启动校验/迁移提示的依据）

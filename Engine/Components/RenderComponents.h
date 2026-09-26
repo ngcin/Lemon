@@ -28,6 +28,10 @@ struct Animator2D {
     uint32_t clipId = 0;
     float time = 0.0f;
     float speed = 1.0f;
+    // M6a 批② T3b-2：LoopMode（0=Once 钳末帧 / 1=Loop 回绕 / 2=PingPong 往返）。
+    // 旧值 0/1 语义逐位不变（布局冻结/C# bool 写路径兼容）；PingPong 帧映射 =
+    // 纯函数（period=2(n-1)，无逐帧累加状态机）。档面 clip.loopMode = 创建默认，
+    // 本字段 = 运行时权威（Inspector 下拉热调参）。
     uint8_t loop = 1;
     uint8_t playOnStart = 1;
     uint16_t curFrame = 0;

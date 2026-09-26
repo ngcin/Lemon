@@ -15,10 +15,13 @@
 namespace lemon::editor {
 
 void ProfilerPanel::OnGui(EditorApp& app) {
-    if (!ImGui::Begin(Name(), nullptr, ImGuiWindowFlags_NoCollapse)) {
+    bool winOpen = true;
+    if (!ImGui::Begin(Name(), &winOpen, ImGuiWindowFlags_NoCollapse)) {
         ImGui::End();
+        if (!winOpen) app.ClosePanel(Name()); // × 关闭（T3b-8）
         return;
     }
+    if (!winOpen) app.ClosePanel(Name());
     EditorContext& ctx = app.Ctx();
 
     // 帧时间曲线（ImGui 自带 PlotLines；编辑器帧全量 ms）

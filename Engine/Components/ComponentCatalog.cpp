@@ -66,6 +66,7 @@ constexpr FieldEditorMeta kEdSpriteRenderer[] = {
     ED_ASSET("精灵资产槽（AssetBrowser 拖入 / 下拉选择；M4.4 接通）"), ED_COLOR, ED, ED,
     ED_TIP("bit2 enabled / bit0 flipX / bit1 flipY"),
     ED_HIDE};
+static constexpr const char* kLoopModeNames[] = {"Once", "Loop", "PingPong"};
 constexpr FieldMeta kAnimator2D[] = {
     FIELD(Animator2D, clipId, UInt32), FIELD(Animator2D, time, Float),
     FIELD(Animator2D, speed, Float), FIELD(Animator2D, loop, UInt8),
@@ -77,7 +78,10 @@ constexpr FieldMeta kAnimator2D[] = {
 constexpr FieldEditorMeta kEdAnimator2D[] = {
     ED_CLIPREF("clip 资产槽（.clip GUID 低 32 位；下拉/拖入。0 = 无 clip，走 M2 纯计时）"),
     ED_RANGE(0.0f, 100.0f), ED_RANGE(0.0f, 100.0f),
-    ED_BOOL8, ED_BOOL8, ED_TIP("运行时帧号（clip 帧映射自动写；playOnStart=0 = 暂停开关）"),
+    // T3b-2：LoopMode 下拉（0/1/2；旧档 0/1 语义不变，PingPong = 往返纯函数）
+    {FieldHint::Enum, 0, 0, kLoopModeNames, 3,
+     "循环模式：Once 钳末帧 / Loop 回绕 / PingPong 往返（运行时权威）"},
+    ED_BOOL8, ED_TIP("运行时帧号（clip 帧映射自动写；playOnStart=0 = 暂停开关）"),
     ED_HIDE, ED_HIDE, ED_HIDE};
 constexpr FieldMeta kParticleEmitterRef[] = {
     FIELD(ParticleEmitterRef, emitterId, UInt32),

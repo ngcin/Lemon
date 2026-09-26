@@ -80,7 +80,7 @@ public struct Animator2D : IComponent     // 28B（M6a 批①：尾加换段队�
     public uint ClipId;
     public float Time;
     public float Speed;
-    public byte Loop;
+    public byte Loop;          // T3b-2：LoopMode（0=Once/1=Loop/2=PingPong；见 Lemon.Anim.LoopMode）
     public byte PlayOnStart;
     public ushort CurFrame;
     public uint NextClipId;    // 换段队列目标（0 = 无；Lemon.Anim 写）

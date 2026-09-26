@@ -3095,6 +3095,39 @@ void TestVerifyAnimatorQueue() {
     Expect(qa == qb, "anim queue twin worlds: identical state hash");
 }
 
+// ---- M6a 批② T3b-2：PingPong 往返帧映射（纯函数；0/1 旧语义由既有覆盖）----
+void TestVerifyAnimatorPingPong() {
+    World w;
+    w.InstallDefaultSystems();
+    Scene& s = w.CreateScene("pp");
+    w.SetActiveScene(&s);
+    w.Clips().Add(0x99u, {20u, 21u, 22u, 23u}, 1.0f, true);
+
+    Entity e = s.Create();
+    SpriteRenderer& sr = s.Emplace<SpriteRenderer>(e);
+    sr.spriteId = 999u;
+    Animator2D& a = s.Emplace<Animator2D>(e);
+    a.clipId = 0x99u;
+    a.loop = 2; // PingPong
+
+    // dt=1s、fps=1 → 第 t 步后 pos=t。period=2(n-1)=6：0..3..0 往返（含 t=0 起点）
+    const int seq[16] = {1, 2, 3, 2, 1, 0, 1, 2, 3, 2, 1, 0, 1, 2, 3, 2};
+    bool allOk = true;
+    for (int i = 0; i < 16; ++i) {
+        w.Step(1.0f);
+        if (a.curFrame != (uint16_t)seq[i] || sr.spriteId != 20u + (uint32_t)seq[i])
+            allOk = false;
+    }
+    Expect(allOk, "clip: pingpong frame sequence 1,2,3,2,1,0 ...");
+    Expect(a.time < 6.0f, "clip: pingpong time bounded by period 2(n-1)/fps");
+
+    // 单帧 clip PingPong 防御：恒帧 0（period 0 路径）
+    w.Clips().Add(0x9Au, {30u}, 1.0f, true);
+    a.clipId = 0x9Au;
+    for (int k = 0; k < 5; ++k) w.Step(1.0f);
+    Expect(a.curFrame == 0 && sr.spriteId == 30u, "clip: single-frame pingpong stays 0");
+}
+
 // ---- 批①：FxChannel（飘字池淘汰/上浮淡出、血条覆写/sticky、产包数学）----
 void TestVerifyFxChannel() {
     // ① 飘字环形池：满 256 后最老者淘汰（第 257 条覆写第 1 条槽位）
@@ -3699,6 +3732,7 @@ void TestEditorMetaSanity() {
 #include <unistd.h>
 
 #include "Assets/AssetDatabase.h"
+#include "Assets/ClipEdit.h"
 #include "Assets/Csv.h"
 #include "Assets/FileWatcher.h"
 #include "Assets/ProjectWizard.h"
@@ -3833,6 +3867,60 @@ void TestAssetDatabaseLifecycle() {
 }
 
 // ---- F-02（2026-09-24）：路径 containment——重命名/导入/项目名不得越出项目根 ----
+// ---- M6a 批② T3b-3：SetGridSlice（.meta importer 写入 → Rescan 连号块/烧号/撤销）----
+void TestGridSliceConfig() {
+    namespace fs = std::filesystem;
+    using lemon::editor::AssetDatabase;
+    using lemon::editor::AssetEntry;
+
+    const fs::path root = fs::temp_directory_path() /
+                          ("lemon-test-slice-" + std::to_string(::getpid()));
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    AssetDatabase db;
+    Expect(db.OpenProject(root.string(), 100), "open project for slice");
+    { std::ofstream f(root / "Assets" / "sheet.png", std::ios::binary); f << "png"; }
+    db.Rescan();
+    const AssetEntry* e = db.FindByPath("Assets/sheet.png");
+    Expect(e && !e->Sliced(), "unsliced at start");
+
+    AssetEntry* m = db.FindByGuid(e->guid);
+    Expect(db.SetGridSlice(*m, 32, 48, 8, 1), "set grid slice writes meta");
+    db.Rescan();
+    e = db.FindByPath("Assets/sheet.png");
+    Expect(e && e->Sliced() && e->gridCols == 8 && e->gridRows == 1 && e->cellW == 32 &&
+               e->cellH == 48 && e->sliceCount == 8 &&
+               e->SliceSpriteId(7) == e->sliceBase + 7,
+           "rescan picks up importer block");
+    Expect(e->SliceSpriteId(8) == 0, "cell out of range -> 0");
+
+    // frames 增大 → 新块烧号（旧块留号；"只增不减"语义）
+    const uint32_t oldBase = e->sliceBase;
+    m = db.FindByGuid(e->guid);
+    Expect(db.SetGridSlice(*m, 32, 48, 8, 2), "grow grid");
+    db.Rescan();
+    e = db.FindByPath("Assets/sheet.png");
+    Expect(e && e->sliceCount == 16 && e->sliceBase >= oldBase + 8,
+           "grown block burns ids");
+
+    // 撤销切片 → 整图（meta importer 段移除）
+    m = db.FindByGuid(e->guid);
+    Expect(db.SetGridSlice(*m, 0, 0, 0, 0), "clear slice");
+    db.Rescan();
+    e = db.FindByPath("Assets/sheet.png");
+    Expect(e && !e->Sliced(), "cleared back to whole image");
+
+    // 非 sprite 拒绝
+    { std::ofstream f(root / "Assets" / "x.clip", std::ios::binary); f << "{}"; }
+    db.Rescan();
+    if (const AssetEntry* c = db.FindByPath("Assets/x.clip"))
+        Expect(!db.SetGridSlice(*db.FindByGuid(c->guid), 1, 1, 1, 1),
+               "non-sprite rejected");
+    else
+        Expect(false, "clip entry found");
+    fs::remove_all(root, ec);
+}
+
 void TestAssetPathContainment() {
     namespace fs = std::filesystem;
     using lemon::editor::AssetDatabase;
@@ -3951,6 +4039,99 @@ void TestCsvTable() {
     // 非法网格过不了 TableToJson（超限 → 空串）
     Expect(TableToJson("x", std::vector<std::vector<std::string>>(1025, {"a"})).empty(),
            "to json rejects oversized grid");
+}
+
+// ---- M6a 批② T3：.clip 解析/序列化（AnimationPanel 数据面；验收② roundtrip）----
+void TestClipEdit() {
+    using lemon::editor::ClipData;
+    using lemon::editor::ClipToJson;
+    using lemon::editor::ParseClipJson;
+
+    // 规范档（Samples/yami 同型多行格式）
+    const char* doc =
+        "{\n  \"schemaVersion\": 1,\n  \"name\": \"hero-walk\",\n  \"fps\": 8,\n"
+        "  \"loop\": true,\n  \"frames\": [\n"
+        "    {\n      \"sheet\": \"5bd31a7c10000001\",\n      \"cell\": 0\n    },\n"
+        "    {\n      \"sheet\": \"5bd31a7c10000001\",\n      \"cell\": 8\n    }\n"
+        "  ]\n}";
+    ClipData c = ParseClipJson(doc);
+    Expect(c.ok && c.name == "hero-walk" && c.fps == 8.0f && c.loopMode == 1 &&
+               c.frames.size() == 2 && c.frames[0].sheetGuid == 0x5bd31a7c10000001ull &&
+               c.frames[0].cell == 0 && c.frames[1].cell == 8,
+           "clip parse canonical");
+
+    // 定版格式：序列化与规范档逐字符同型（AnimationPanel 保存后旧档 diff 只见
+    // 被改字段——验收②"打开 hero-walk → 改字段 → 保存 → diff 仅预期"的依据）
+    c.ok = true;
+    Expect(ClipToJson(c) == doc, "clip golden format stable");
+
+    // roundtrip：改 fps/loop/增删帧/换 sheet → 序列化 → 再解析等值
+    c.fps = 13.0f;
+    c.loopMode = 0;
+    c.frames.push_back({0x5bd31a7c10000005ull, 7});
+    c.frames.erase(c.frames.begin());
+    const ClipData back = ParseClipJson(ClipToJson(c));
+    Expect(back.ok && back.name == c.name && back.fps == c.fps &&
+               back.loopMode == c.loopMode && back.frames == c.frames,
+           "clip roundtrip after edit");
+
+    // 缺省：loop 缺省 true / name 缺省空（面板补文件名）/ 小数 fps 往返
+    c = ParseClipJson(
+        "{\"schemaVersion\":1,\"fps\":7.5,\"frames\":[{\"sheet\":\"000000000000000f\","
+        "\"cell\":3}]}");
+    Expect(c.ok && c.loopMode == 1 && c.name.empty() && std::fabs(c.fps - 7.5f) < 1e-6f,
+           "clip defaults + fractional fps");
+    Expect(ParseClipJson(ClipToJson(c)).fps == c.fps, "clip fractional fps roundtrip");
+
+    // 空帧表合法（新建 clip 起步态；保存侧 ≥1 帧校验归面板）
+    c = ParseClipJson("{\"fps\":8,\"frames\":[]}");
+    Expect(c.ok && c.frames.empty(), "clip empty frames parse");
+    Expect(ClipToJson(c).find("\"frames\": []") != std::string::npos,
+           "clip empty frames serialize");
+
+    // 坏档拒入（不炸面板）：非 JSON / 缺 frames / 缺 fps / 帧缺字段 /
+    // sheet 非 hex / cell 负数 / cell 类型错
+    Expect(!ParseClipJson("{").ok, "clip bad json rejected");
+    Expect(!ParseClipJson("{\"fps\":8}").ok, "clip missing frames rejected");
+    Expect(!ParseClipJson("{\"frames\":[]}").ok, "clip missing fps rejected");
+    Expect(!ParseClipJson(
+               "{\"fps\":8,\"frames\":[{\"sheet\":\"000000000000000f\"}]}")
+                .ok,
+           "clip frame missing cell rejected");
+    Expect(!ParseClipJson(
+               "{\"fps\":8,\"frames\":[{\"sheet\":\"zz\",\"cell\":0}]}")
+                .ok,
+           "clip non-hex sheet rejected");
+    Expect(!ParseClipJson(
+               "{\"fps\":8,\"frames\":[{\"sheet\":\"000000000000000f\",\"cell\":-1}]}")
+                .ok,
+           "clip negative cell rejected");
+    Expect(!ParseClipJson(
+               "{\"fps\":8,\"frames\":[{\"sheet\":\"000000000000000f\",\"cell\":\"0\"}]}")
+                .ok,
+           "clip string cell rejected");
+    // ok=false 输入 → ClipToJson 空串（门卫）
+    ClipData bad;
+    Expect(ClipToJson(bad).empty(), "clip tojson rejects !ok");
+
+    // T3b-2：loopMode——legacy loop 派生 / pingpong 落盘加字段 / 越界防御 /
+    // 旧档 no-edit 往返不含 loopMode（golden 已证；此处锁字段策略）
+    c = ParseClipJson(
+        "{\"fps\":8,\"loop\":true,\"loopMode\":2,\"frames\":[{\"sheet\":\"000000000000000f\","
+        "\"cell\":0}]}");
+    Expect(c.ok && c.loopMode == 2, "clip loopMode field parsed");
+    const std::string pp = ClipToJson(c);
+    Expect(pp.find("\"loop\": true") != std::string::npos &&
+               pp.find("\"loopMode\": 2") != std::string::npos,
+           "clip pingpong serializes loop+loopMode");
+    Expect(ParseClipJson(pp).loopMode == 2, "clip pingpong roundtrip");
+    c = ParseClipJson(
+        "{\"fps\":8,\"loop\":false,\"frames\":[{\"sheet\":\"000000000000000f\",\"cell\":0}]}");
+    Expect(c.ok && c.loopMode == 0 && ClipToJson(c).find("loopMode") == std::string::npos,
+           "clip legacy once stays field-free");
+    c = ParseClipJson(
+        "{\"fps\":8,\"loopMode\":5,\"frames\":[{\"sheet\":\"000000000000000f\",\"cell\":0}]}");
+    Expect(c.ok && c.loopMode == 1, "clip loopMode out of range falls back to Loop");
 }
 
 // ---- M6a 批② T1：.csv → .tab 转换导入生命周期（csv 不拷入 / 覆盖重导 / guid 稳定）----
@@ -4746,6 +4927,7 @@ int main() {
     TestVerifyAnimatorAdvance();
     TestVerifyAnimatorFrameMapping();
     TestVerifyAnimatorQueue();
+    TestVerifyAnimatorPingPong(); // M6a 批② T3b-2
     TestVerifyFxChannel();
     TestVerifyStatEffectsAndXp();
     TestVerifyMovementKnockbackAndClamp();
@@ -4775,6 +4957,8 @@ int main() {
     TestAssetDatabaseLifecycle();
     TestAssetPathContainment();
     TestCsvTable();       // M6a 批② T1：CSV/表格序列化（ADR-012）
+    TestGridSliceConfig(); // M6a 批② T3b-3：SetGridSlice 连号块
+    TestClipEdit();       // M6a 批② T3：.clip 解析/序列化（AnimationPanel 数据面）
     TestTableAssetImport(); // M6a 批② T1：.csv → .tab 转换导入生命周期
     TestDebounceGatePending();
     TestProjectWizard();

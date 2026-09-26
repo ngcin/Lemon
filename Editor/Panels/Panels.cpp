@@ -22,10 +22,13 @@ class ConsolePanel final : public IEditorPanel {
 public:
     const char* Name() const override { return "Console"; }
     void OnGui(EditorApp& app) override {
-        if (!ImGui::Begin(Name(), nullptr, ImGuiWindowFlags_NoCollapse)) {
+        bool winOpen = true;
+        if (!ImGui::Begin(Name(), &winOpen, ImGuiWindowFlags_NoCollapse)) {
             ImGui::End();
+            if (!winOpen) app.ClosePanel(Name()); // × 关闭（T3b-8）
             return;
         }
+        if (!winOpen) app.ClosePanel(Name());
         std::vector<EditorLogLine> snap = app.Log().Snapshot();
         // 分级计数（徽标原料；环容量级遍历，每帧成本可忽略）
         uint32_t n[3] = {0, 0, 0};
@@ -139,6 +142,9 @@ std::vector<std::unique_ptr<IEditorPanel>> CreateAllPanels() {
     out.push_back(std::make_unique<AssetBrowserPanel>());
     out.push_back(std::make_unique<ConsolePanel>());
     out.push_back(std::make_unique<ProfilerPanel>());
+    // M6a 批② T3：Animation（05 §3 冻结的既列解冻件，唯一一件；OpenByDefault
+    // = false——按需窗口，双击 .clip 资产 / Window 菜单进入）
+    out.push_back(std::make_unique<AnimationPanel>());
     return out;
 }
 

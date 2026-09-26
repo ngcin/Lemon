@@ -16,6 +16,15 @@ namespace Lemon;
 
 public static class Anim
 {
+    /// <summary>T3b-2 循环模式：Once 钳末帧 / Loop 回绕 / PingPong 往返（0..n-1..0）。
+    /// 与 Animator2D.Loop 字节同值域（0/1 旧语义不变）。</summary>
+    public enum LoopMode : byte
+    {
+        Once = 0,
+        Loop = 1,
+        PingPong = 2,
+    }
+
     /// <summary>clip 资产 GUID（16 位 hex）→ clipId（GUID 低 32 位直取，零跨界）。</summary>
     public static uint ClipId(string clipGuidHex)
         => (uint)ulong.Parse(clipGuidHex, System.Globalization.NumberStyles.HexNumber);
@@ -23,11 +32,15 @@ public static class Anim
     /// <summary>立即播放段（time 归零、打断在途队列）。loop=false 播完钳末帧——
     /// 配 Queue 做受击→回行走；同段重复调用 = 重播。</summary>
     public static void Play(GameObject g, uint clipId, bool loop = true)
+        => Play(g, clipId, loop ? LoopMode.Loop : LoopMode.Once);
+
+    /// <summary>T3b-2：LoopMode 版（PingPong = 往返）。</summary>
+    public static void Play(GameObject g, uint clipId, LoopMode mode)
     {
         if (!g.TryGetComponent<Animator2D>(out var an)) return;
         an.ClipId = clipId;
         an.Time = 0f;
-        an.Loop = loop ? (byte)1 : (byte)0;
+        an.Loop = (byte)mode;
         an.PlayOnStart = 1;
         an.NextClipId = 0;
         an.FadeRemain = 0f;
@@ -36,6 +49,9 @@ public static class Anim
 
     public static void Play(GameObject g, string clipGuidHex, bool loop = true)
         => Play(g, ClipId(clipGuidHex), loop);
+
+    public static void Play(GameObject g, string clipGuidHex, LoopMode mode)
+        => Play(g, ClipId(clipGuidHex), mode);
 
     /// <summary>排队：当前段收尾（非 loop）或回绕点（loop）切到目标段。
     /// 后到的 Queue/CrossFade 覆写前队；Play 清队列。</summary>

@@ -1041,7 +1041,8 @@ void AnimatorSystem::Tick(World& world, Scene& scene, float dt) {
     for (auto [ent, an] : view.each()) {
         const ClipDef* clip = anyClip ? clips.Find(an.clipId) : nullptr;
         if (!clip) {
-            // M2：时间推进（含 loop 回绕）；占位周期 1.0 保证 time 有界
+            // M2：时间推进（含 loop 回绕）；占位周期 1.0 保证 time 有界。
+            // loop=2（PingPong）truthy 同 1——无 clip 无帧表，M2 语义不变（金档锚）
             an.time += an.speed * dt;
             if (an.loop) {
                 float period = 1.0f; // 占位周期；无 clip 路径恒此值（勿动——金档锚）
@@ -1052,9 +1053,22 @@ void AnimatorSystem::Tick(World& world, Scene& scene, float dt) {
         // playOnStart=0 = 暂停开关（time/curFrame/spriteId/换段队列全冻结）
         if (!an.playOnStart) continue;
         an.time += an.speed * dt; // 缩放 dt：timeScale=0 冻结动画（批① D5 同语义）
-        const float total = (float)clip->frames.size() / clip->fps;
+        const uint32_t n = (uint32_t)clip->frames.size();
+        const float total = (float)n / clip->fps;
+        // T3b-2：PingPong 周期 = 2(n-1)/fps（0→n-1→0 往返，回绕点 = 回到帧 0）；
+        // n==1 防御钳 0。loop 旧值 0/1 路径逐位不变（金回放零重录）
+        const float totalPP = n > 1 ? (2.0f * (float)(n - 1)) / clip->fps : 0.0f;
         bool wrapped = false; // 本 tick 发生回绕减法（Queue 的 loop 段切点）
-        if (an.loop) {
+        if (an.loop == 2) {
+            if (totalPP > 0.0f) {
+                while (an.time >= totalPP) {
+                    an.time -= totalPP;
+                    wrapped = true;
+                }
+            } else if (an.time > 0.0f)
+                an.time = 0.0f;
+            if (an.time < 0.0f) an.time = 0.0f; // 负 speed 防御
+        } else if (an.loop) {
             while (an.time >= total) {
                 an.time -= total;
                 wrapped = true;
@@ -1090,8 +1104,17 @@ void AnimatorSystem::Tick(World& world, Scene& scene, float dt) {
                 an.fadeRemain = 0.0f;
             }
         }
-        uint32_t f = (uint32_t)(an.time * clip->fps);
-        if (f >= clip->frames.size()) f = (uint32_t)clip->frames.size() - 1; // total 边界
+        uint32_t f;
+        if (an.loop == 2 && n > 1) {
+            // T3b-2 PingPong 帧映射（纯函数）：pos ∈ [0,2(n-1))，前半正放
+            // 后半反放——0..n-1..1..0，无逐帧累加状态（回放确定）
+            const uint32_t period = 2 * (n - 1);
+            const uint32_t pos = (uint32_t)(an.time * clip->fps) % period;
+            f = pos < n ? pos : period - pos;
+        } else {
+            f = (uint32_t)(an.time * clip->fps);
+            if (f >= n) f = n - 1; // total 边界
+        }
         an.curFrame = (uint16_t)f;
         if (SpriteRenderer* sr = scene.TryGet<SpriteRenderer>(Scene::FromEntt(ent)))
             sr->spriteId = clip->frames[f]; // SpriteRenderer 可缺 = 纯计时推进

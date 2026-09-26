@@ -58,10 +58,13 @@ const char* StrIStr(const char* hay, const char* needle) {
 } // namespace
 
 void AssetBrowserPanel::OnGui(EditorApp& app) {
-    if (!ImGui::Begin(Name(), nullptr, ImGuiWindowFlags_NoCollapse)) {
+    bool winOpen = true;
+    if (!ImGui::Begin(Name(), &winOpen, ImGuiWindowFlags_NoCollapse)) {
         ImGui::End();
+        if (!winOpen) app.ClosePanel(Name()); // × 关闭（T3b-8）
         return;
     }
+    if (!winOpen) app.ClosePanel(Name());
     EditorContext& ctx = app.Ctx();
     AssetDatabase& db = ctx.Assets();
 
@@ -110,6 +113,17 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
     ImGui::SameLine();
     ImGui::TextDisabled("%u 资产 / 体检红字 %u", db.SpriteAssetCount(), db.HealthIssues());
     ImGui::Separator();
+
+    // 类型过滤（T3b-9）："找资产靠过滤/搜索，不靠目录纪律"（约定不强制配套）
+    {
+        static const char* kLabels[6] = {"全部", "图", "动画", "Prefab", "表", "脚本"};
+        for (int i = 0; i < 6; ++i) {
+            if (i) ImGui::SameLine();
+            if (typeFilter_ == i) ImGui::PushStyleColor(ImGuiCol_Button, theme::kAccentDim);
+            if (ImGui::SmallButton(kLabels[i])) typeFilter_ = i;
+            if (typeFilter_ == i) ImGui::PopStyleColor();
+        }
+    }
 
     // .tab 表格区（M6a 批② T1）：选中 Table 条目时网格下方长出。空间预留用
     // 上一帧的 tableOpen_（头部本帧才提交，取简——首帧/开合切换一帧跳变可接受）。
@@ -174,6 +188,12 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
                 ImGui::Button("/", size);
             const bool iconHover = ImGui::IsItemHovered();
             if (iconHover) ImGui::SetTooltip("文件夹（单击进入）\n%s", d.c_str());
+            // 右键：从此文件夹创建动画（T3b-5 通道 A——多单图文件夹一键建 clip）
+            if (ImGui::BeginPopupContextItem("folder_ctx")) {
+                if (ImGui::MenuItem("从此文件夹创建动画…"))
+                    app.OpenAnimationCreateFromFolder(d);
+                ImGui::EndPopup();
+            }
             char dirName[16];
             std::snprintf(dirName, sizeof(dirName), "%.12s%s", rest.c_str(),
                           rest.size() > 12 ? "…" : "");
@@ -205,7 +225,18 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
 
     // 条目网格：根（""）= Assets/ 直下；子目录 = currentDir_ 直下（同上面包屑语义）
     const std::string entryDir = currentDir_.empty() ? "Assets" : currentDir_;
+    const auto passType = [this](AssetType t) { // 类型过滤（T3b-9）
+        switch (typeFilter_) {
+            case 1: return t == AssetType::Sprite;
+            case 2: return t == AssetType::Clip;
+            case 3: return t == AssetType::Prefab;
+            case 4: return t == AssetType::Table;
+            case 5: return t == AssetType::Script;
+            default: return true;
+        }
+    };
     for (const AssetEntry* e : db.EntriesInDir(entryDir)) {
+        if (!passType(e->type)) continue;
         if (!filter_.empty() && !StrIStr(e->FileName().c_str(), filter_.c_str())) continue;
         if (col++ > 0) ImGui::SameLine();
         DrawItem(app, *e);
@@ -325,6 +356,7 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
                                ? "已导入 " + std::to_string(w) + "x" + std::to_string(h)
                                : (isSprite ? "未导入" : AssetTypeName(e.type));
         if (e.type == AssetType::Table) dims += "\n双击：放大编辑";
+        if (e.type == AssetType::Clip)  dims += "\n双击：动画编辑"; // M6a 批② T3
         ImGui::SetTooltip("%s\n%s  guid %s\n%s", e.FileName().c_str(), AssetTypeName(e.type),
                           AssetDatabase::GuidToHex(e.guid).c_str(), dims.c_str());
     }
@@ -353,6 +385,10 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
         tableWinOpen_ = true;
         tableWinGuid_ = e.guid;
     }
+
+    // 双击 .clip = Animation 面板（M6a 批② T3）——首个"资产 → 专用编辑面板"
+    // 通道（EditorApp 汇聚：FindEntry 置 open + SetTarget）
+    if (doubleClicked && e.type == AssetType::Clip) app.OpenAnimationEditor(e.guid);
 
     // 文件名（截断 12 字符；钉到按钮宽换行——单元格宽确定，网格列距公式才精确；
     // 右键菜单已上移绑缩略图）

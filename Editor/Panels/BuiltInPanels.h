@@ -11,6 +11,7 @@
 #include "ECS/Hierarchy.h" // WorldTransform2D（Select resize 的父链世界变换缓存）
 
 #include "Assets/AssetDatabase.h"
+#include "Assets/ClipEdit.h" // ClipData（AnimationPanel 编辑态副本）
 #include "Assets/Csv.h" // TableData（AssetBrowserPanel .tab 表格区缓存）
 #include "Components/CoreComponents.h"
 #include "ECS/ComponentRegistry.h"
@@ -176,6 +177,7 @@ private:
 
     std::string currentDir_ = ""; // "" = Assets/ 根
     std::string filter_;
+    int typeFilter_ = 0;          // 类型过滤（T3b-9）：0 全部/1 图/2 动画/3 Prefab/4 表/5 脚本
     uint64_t renamingGuid_ = 0;   // 0 = 无重命名进行中
     std::string renameBuf_;
 
@@ -203,6 +205,72 @@ private:
     std::vector<float> frameMs_;
     bool showGpu_ = true;
     uint64_t gcPrev_ = 0; // GcAllocated 差分基线（M4.5 GC 红字口径）
+};
+
+/// Animation（M6a 批② T3 + T3b）：.clip 帧动画编辑——05 §7 内容编辑器三件套
+/// 之一。读-改-写 + 三条生产通道（T3b 用户实测反馈）：
+///   A 文件夹多单图 → 一键建动画（右键文件夹/向导；整图引用 T3b-1）
+///   B 单图切片（meta importer，Unity 式 + 面板内入口 T3b-3）
+///   C 网格拖框选区间 → 追加/替换帧（Godot 式交互，T3b-4）
+/// 帧列表 = 横排胶片带（拖拽重排/Ctrl 多选删，T3b-7）；LoopMode 三模式
+///（Once/Loop/PingPong，T3b-2）。EnterPlay 快照语义 = 保存后下次 Enter Play 生效；
+/// Play 中只读。双击 AssetBrowser 的 .clip 进入。
+class AnimationPanel final : public IEditorPanel {
+public:
+    const char* Name() const override { return "Animation"; }
+    /// 按需窗口（Unity 同款：双击资产/Window 菜单打开，不占默认布局位）
+    bool OpenByDefault() const override { return false; }
+    void OnGui(EditorApp& app) override;
+    /// AssetBrowser 双击 clip → EditorApp::OpenAnimationEditor 的落点
+    void SetTarget(uint64_t guid) { targetGuid_ = guid; }
+    /// 文件夹右键"从此文件夹创建动画"入口：开面板 + 向导文件夹页预选（T3b-5）。
+    /// destDir = 落点目录（AssetBrowser 当前浏览目录——决策 4：跟随当前目录）
+    void StartCreateFromFolder(const std::string& relDir, const std::string& destDir);
+
+private:
+    void LoadFrom(const AssetDatabase& db, const AssetEntry& e); // 缓存键失效 → 重读
+    void DrawCellImage(EditorApp& app, const AssetEntry* sheet, uint32_t cell,
+                       float edge); // 切片号/整图 → 页缩略图直染（未切片 = 全幅 UV）
+    bool TrySave(EditorApp& app, const AssetEntry& e); // 校验 + 原子写 + 主动 Rescan
+    /// 新建落盘共用：Assets 下 dir/<name>.clip 写盘 + Rescan + SetTarget（T3b-5/6）
+    bool TryCreateClip(EditorApp& app, const ClipData& c, const std::string& dir,
+                       std::string& err);
+    void DrawFilmstrip(EditorApp& app);      // 胶片带（T3b-7）
+    void DrawSelectedFrameRow(EditorApp& app); // 选中帧编辑行（sheet/cell/删）
+    void DrawWizard(EditorApp& app);         // 新建三通道向导（T3b-5/6）
+    void DrawSheetPicker(EditorApp& app);    // 从精灵表加帧/选定区间弹窗（T3b-4）
+
+    uint64_t targetGuid_ = 0;               // 编辑目标（0 = 未选）
+    uint64_t loadedGuid_ = 0, loadedHash_ = 0; // 缓存键（外部改动/保存回读 = 重读）
+    ClipData edit_;                         // 编辑态副本（ok=false = 坏档红字只读态）
+    int fpsI_ = 8;                          // DragInt 镜像（1..60；schema 仍存 float）
+    bool dirty_ = false;                    // 有未保存改动（关面板不拦——资产在 git）
+    std::string saveMsg_;                   // 上次保存/校验结果（一行红/绿）
+    bool saveOk_ = false;                   // saveMsg_ 的着色位（√ 绿 / × 红）
+    // 播放预览：编辑器时钟推进（非确定无妨——纯预览，不进模拟/回放）
+    bool previewing_ = false;
+    double previewT0_ = 0.0;
+    int previewFrame_ = 0; // 暂停位/手动步进
+    // 胶片带（T3b-7）：当前选中帧 + Ctrl 多选集（有序去重；空 = 无多选）
+    int selFrame_ = -1;
+    std::vector<int> selSet_;
+    // 新建向导（T3b-5/6）：三通道 + 落点（默认 = AssetBrowser 当前目录，可改）
+    bool wizOpen_ = false;
+    int wizTab_ = 0;              // 0 文件夹 / 1 精灵表 / 2 空白
+    std::string wizDir_;          // 文件夹页源目录（"Assets/..."）
+    std::string wizPath_;         // 落点目录（相对项目根；"Assets" = 根）
+    std::string wizName_ = "new-clip";
+    int wizFps_ = 8, wizLoop_ = 1;
+    std::string wizErr_;
+    std::vector<ClipFrame> wizFrames_; // 精灵表页已选定区间（[选定] 暂存）
+    bool wizPicked_ = false;      // 精灵表页有暂存区间（显示来源摘要）
+    // 从精灵表加帧（T3b-4）：追加/替换（pickCreate_=false）与向导选定（true）共用
+    bool pickOpen_ = false, pickCreate_ = false;
+    uint64_t pickGuid_ = 0;       // 目标精灵资产
+    int pickCols_ = 8, pickRows_ = 1, pickCellW_ = 32, pickCellH_ = 32;
+    int pickInput_ = 0;          // 切片输入法：0 = 格数（尺寸按图算）/ 1 = 像素
+    bool pickHasRect_ = false, pickDrag_ = false; // 拖框选状态
+    int pickR0_ = 0, pickC0_ = 0, pickR1_ = 0, pickC1_ = 0; // 框选格区间（含端点）
 };
 
 } // namespace lemon::editor

@@ -572,6 +572,42 @@ bool AssetDatabase::Rename(AssetEntry& e, const std::string& newRelPath) {
     return true;
 }
 
+bool AssetDatabase::SetGridSlice(AssetEntry& e, uint32_t cellW, uint32_t cellH,
+                                 uint32_t cols, uint32_t rows) {
+    // M6a 批② T3b-3：切片配置进 .meta importer 段（读改写原子——guid/type/hash/
+    // importedAt 保原值，只动 importer 键）。全零 = 撤销切片（整图导入）。生效 =
+    // 调用方随后 Rescan()：网格重读 → 连号块分配（frames 增大烧号 / 缩小基不变
+    // 余号空洞，既有语义）；内存 entry 同步刷新供 UI 即时反馈。
+    if (e.type != AssetType::Sprite || e.missing) return false;
+    const std::string metaPath = AbsolutePath(e) + ".meta";
+    Json doc = Json::object();
+    if (std::ifstream mf(metaPath, std::ios::binary); mf) {
+        std::string text((std::istreambuf_iterator<char>(mf)), std::istreambuf_iterator<char>());
+        const Json r = Json::parse(text, nullptr, false);
+        if (!r.is_discarded()) doc = r;
+    }
+    doc["guid"] = GuidToHex(e.guid);
+    doc["type"] = AssetTypeName(e.type);
+    if (!doc.contains("hash")) doc["hash"] = e.hash;
+    if (!doc.contains("importedAt")) doc["importedAt"] = (uint64_t)std::time(nullptr);
+    const bool grid = cellW && cellH && cols && rows;
+    if (grid) {
+        Json imp = Json::object();
+        imp["slice"] = "grid";
+        imp["cell"] = Json::array({cellW, cellH});
+        imp["frames"] = Json::array({cols, rows});
+        doc["importer"] = std::move(imp);
+    } else {
+        doc.erase("importer");
+    }
+    if (!WriteFileAtomic(metaPath, doc.dump(2) + "\n")) return false;
+    e.cellW = (uint16_t)cellW;
+    e.cellH = (uint16_t)cellH;
+    e.gridCols = (uint16_t)cols;
+    e.gridRows = (uint16_t)rows;
+    return true;
+}
+
 bool AssetDatabase::Remove(AssetEntry& e) {
     std::error_code ec;
     fs::remove(AbsolutePath(e), ec);

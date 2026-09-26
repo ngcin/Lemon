@@ -106,6 +106,11 @@ public:
     // ---- 编辑器操作（同步落盘；guid 稳定 → 场景引用不断）----
     /// 重命名/移动（相对 Assets/ 的新路径）。失败（目标存在/IO 错）false。
     bool Rename(AssetEntry& e, const std::string& newRelPath);
+    /// 配置/更新网格切片（M6a 批② T3b-3：写 .meta importer 段，读改写原子；
+    /// guid/type/hash 保原值）。全零 = 撤销切片转整图。生效 = 调用方随后
+    /// Rescan()（连号块分配 / frames 增大烧号）。false = 非 sprite / 写盘失败。
+    bool SetGridSlice(AssetEntry& e, uint32_t cellW, uint32_t cellH, uint32_t cols,
+                      uint32_t rows);
     /// 删除（文件 + .meta；条目转墓碑）。undo 层面由调用方抓场景快照。
     bool Remove(AssetEntry& e);
     /// 导入外部文件（复制进 Assets/ 下 relDest）；返回新条目（失败 nullptr）。

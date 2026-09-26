@@ -181,7 +181,49 @@ Status: active（2026-09-25 开工分解；T0 ADR-012 已落）
   先例二第五例落账）；真进程 `--bench-scene Main.scene --frames 900`：表快照
   17×19 → 载入 16 波 → alive 2→47（首波 t=5 刷怪 + 玩家击杀动态平衡），整链通。
 
-### T3 编辑器：AnimationPanel 最小版 + 双击打开通道 —— 约 1.25 天
+### T3 编辑器：AnimationPanel 最小版 + 双击打开通道 —— ✅ 2026-09-26 完工
+
+- 数据面先行：新 `Editor/Assets/ClipEdit.h/.cpp`（lemon-editor-core，ImGui-free 可
+  单测——Csv.h 同款形态）：`ParseClipJson`（宽容度对齐运行时 BuildPlayClipCache：
+  frames[]/fps 必需、loop 缺省 true、坏类型/非 hex sheet/负 cell 拒入不炸）+
+  `ClipToJson`（**手写定版序列化**——字段序/缩进与 Samples/yami 既有 .clip 逐字符
+  同型的多行格式；fps 整值整数/非整值一位小数）；
+- `AnimationPanel`（BuiltInPanels.h 声明 + 新 `Editor/Panels/AnimationPanel.cpp`
+  ~470 行）：目标选择（clip 下拉）/新建（模态：名字校验 → `Assets/<名>.clip` →
+  Rescan 反查 guid）/name·fps（DragInt 1..60）·loop/帧列表（每行 = 帧缩略图（切片
+  UV 偏移直染，悬空红框）+ sheet 下拉（只列已切片精灵——未切片 = SliceSpriteId 恒
+  0 必悬空）+ cell DragInt（界内钳制）+ 上移/下移/删除；拖 Assets 精灵进缩略图 =
+  换 sheet）/加帧（承接上行，空表起步取首个切片精灵）/播放预览（编辑器时钟推进
+  ▶/⏸/步进/回起点——纯预览不进模拟）/保存（校验三关：可解析·非空帧·全帧可解析
+  （判据同 BuildPlayClipCache）→ WriteFileAtomic → 主动 Rescan → 提示行交代
+  EnterPlay 快照语义）；缓存键 guid+hash（切目标/保存回读/外部改动同路重读）；
+  Play 中面板只读（BeginDisabled + 黄字横幅）；
+- 双击通道：`AssetBrowserPanel DrawItem` clip 分支 → `EditorApp::OpenAnimationEditor
+  (guid)`（FindEntry 置 open + SetTarget）——**首个"资产 → 专用编辑面板"通道**
+  （05 §5 先例注记归 T6 文档回写）；tooltip 补"双击：动画编辑"；
+- 注册四处：Panels.cpp CreateAllPanels 尾加 + CMakeLists 双处（core：ClipEdit /
+  editor：AnimationPanel）+ DockBuilder 中央区预挂（OpenByDefault=false 按需窗口
+  ——Unity 同款；停靠请求对未建窗口有效，首开即落 Scene|Game 标签页）；
+- **顺手修既有回归（非 T3 引入，HEAD 复现 3/3）**：smoke-anim 的 play-roundtrip
+  byte-exact 自批⓪起实际一直 FAIL——根因 = SeedSmokeScene 给 AnimHero 写切片表
+  **本体号**，而批⓪ ResolveSpriteRefs 对切片表"一律按 cell 口径归一（本体引用
+  降级 cell 0）"→ 快照 104/重建 105 失配；回归脚本 anim 步 grep 只看
+  `smoke-anim: .* => OK` 汇总行，FAIL 行被 masked（14/14 因此"绿"着）。修法 =
+  播种改 cell 0（Play 中 Animator 本就驱到 cell 区间，cell 0 才是真实用法）——
+  批⓪降级语义不动（逐 cell guid 化仍归 v1.x 候补）；
+- 验证记录（2026-09-26）：smoke-anim 扩 clip 编辑链断言（专档 anim-edit.clip 固定
+  guid `5bd31a7c30000004`，幂等重写：落盘 → ParseClipJson → 改 fps 10→13 + 增帧 →
+  ClipToJson → 原子写 → Rescan → 回读 roundtrip；EnterPlay 后 `Clips().Find` 快照
+  13fps×2 帧）——裁决行增 `edit(rt=YES cache=YES)`，byte-exact=YES、editor-smoke
+  PASS；engine-tests +15（TestClipEdit：规范解析/golden 定版格式/roundtrip/缺省/
+  小数 fps/空帧表/七类坏档拒入/门卫空串）= **33425 checks**（双 preset 同数）；
+  ctest 3/3 ×2；`editor-regression.sh full` **14/14**（首跑 12/14：smoke-drag/
+  smoke-ui 负载抖动——单独复跑各 3/3 全绿 + 整套复跑 14/14，T1 同类先例）；
+  hero-walk.clip 实文件验收（一次性程序链 ClipEdit 实测）：**不改动的往返逐字节
+  相同**、改 fps+增帧后 diff 仅 fps 行 + 新增帧块（验收②"diff 仅预期字段"实证）；
+  05 §3 解冻注记（AnimationEditor 一件）/§5 双击先例注记归 T6 文档回写清单。
+
+### T4 模板：数值表落地 + 验收② 演示（散射武器 + fast-mob）—— 约 1 天
 
 - `Editor/Panels/BuiltInPanels.h`：`AnimationPanel` 声明（成员：targetGuid_、
   编辑态 fps/loop/frames 副本、dirty 标记、`SetTarget(guid)`）；

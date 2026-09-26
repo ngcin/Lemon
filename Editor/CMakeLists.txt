@@ -22,6 +22,7 @@ add_library(lemon-editor-core STATIC
   EditorContext.cpp
   Assets/AssetDatabase.cpp
   Assets/AssetGpuCache.cpp
+  Assets/ClipEdit.cpp
   Assets/Csv.cpp
   Assets/FileWatcher.cpp
   Assets/ProjectWizard.cpp
@@ -61,6 +62,7 @@ add_executable(lemon-editor
   App/EditorApp.cpp
   App/ImGuiBackend.cpp
   Panels/Panels.cpp
+  Panels/AnimationPanel.cpp
   Panels/AssetBrowserPanel.cpp
   Panels/HierarchyPanel.cpp
   Panels/InspectorPanel.cpp
