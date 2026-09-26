@@ -19,6 +19,7 @@
 #include "ECS/SaveChannel.h"
 #include "ECS/Scene.h"
 #include "ECS/SystemPipeline.h"
+#include "ECS/TableStore.h"
 #include "ECS/TeamTable.h"
 
 namespace lemon::ecs {
@@ -136,6 +137,11 @@ public:
     ClipTable& Clips() { return clips_; }
     const ClipTable& Clips() const { return clips_; }
 
+    // ---- 配置表存储（M6a 批② T2；TableStore.h 头说明——.tab 全字符串格，
+    // C# Lemon.Table 读；World 持有 + 非 ECS 不入 StateHash，零重录 09 §6.8 先例二）----
+    TableStore& Tables() { return tables_; }
+    const TableStore& Tables() const { return tables_; }
+
     // ---- Game RT UI 通道（上方 RtUiChannel 说明）----
     RtUiChannel& RtUi() { return rtUi_; }
     const RtUiChannel& RtUi() const { return rtUi_; }
@@ -208,6 +214,7 @@ private:
     ClipTable clips_;
     FxChannel fx_;
     SaveChannel saves_;
+    TableStore tables_; // M6a 批②：.tab 配置表（Tables()；非 ECS 通道，零重录）
     uint64_t tick_ = 0;
     float timeScale_ = 1.0f;
 };

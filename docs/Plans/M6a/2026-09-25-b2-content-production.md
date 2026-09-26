@@ -48,7 +48,7 @@ Status: active（2026-09-25 开工分解；T0 ADR-012 已落）
 
 ## 2. 设计决策（本批定案；D1–D3 违者走 ADR——已落 [ADR-012](../../ADR/ADR-012-Config-Table-Dual-Track.md)）
 
-1. **A 线全按 ADR-012**：`.table` JSON 资产唯一权威（全字符串格，64 列 × 1024 行 ×
+1. **A 线全按 ADR-012**：`.tab` JSON 资产唯一权威（全字符串格，64 列 × 1024 行 ×
    128 字符/格）；CSV 拖入一次性转换（不留 csv 源）；AssetBrowser 内嵌表格区查看 +
    单格微调写回（不加新面板）；World::Tables() + EnterPlay 快照 + vtable 尾加 3 项
    （tableRows/tableCols/tableCell）；波次留组件面（D2）；xpCurveK 提 World 级单参数
@@ -64,14 +64,14 @@ Status: active（2026-09-25 开工分解；T0 ADR-012 已落）
    Slot——源码兼容，模板/用户项目零改即编译）；v1 固定 slot_0，**多档切换 API 裁剪**
    （游戏无多档刚需，登记 v1.1；06 §10 桌面路径 %USERPROFILE% 归 M7/M8）；
    EnterPlay 载全档、ExitPlay/Flush 落全档；坏档兜底每档独立（主→bak 逻辑参数化）。
-4. **验收② 演示口径**：交付物 = weapons.table/upgrades.table 新行 + 新 prefab
+4. **验收② 演示口径**：交付物 = weapons.tab/upgrades.tab 新行 + 新 prefab
    （散射武器）+ 新敌人变体 prefab（fast-mob）+ Main.scene 波次条目替换——运行时
    （Engine/ + Editor/ 非生成器部分）零 diff；模板生成器 vs_template 同步扩展属
    模板工程面（`--gen-vs-template` 重生成口径，不算"引擎改动"）。
 
 ## 3. 验收判据（全部满足才勾销）
 
-1. **表通道全链**：拖 CSV（含中文表头 + BOM）→ `.table` 入库（GUID/.meta）→
+1. **表通道全链**：拖 CSV（含中文表头 + BOM）→ `.tab` 入库（GUID/.meta）→
    AssetBrowser 内嵌表格查看 → 双击改格写回 → EnterPlay 后 C# 读格一致
    （script-tests + smoke 断言）；
 2. **AnimationEditor**：打开 yami `hero-walk.clip` → 改 fps/增删帧 → 保存 → 重进
@@ -112,40 +112,74 @@ Status: active（2026-09-25 开工分解；T0 ADR-012 已落）
 - [ADR-012-Config-Table-Dual-Track.md](../../ADR/ADR-012-Config-Table-Dual-Track.md)
   D1 双轨 / D2 波次留组件 / D3 xpCurveK World 级；后续任务违者回 ADR 修订。
 
-### T1 编辑器：.table 资产类型 + CSV 导入 + AssetBrowser 内嵌表格区 —— 约 1 天
+### T1 编辑器：.table 资产类型 + CSV 导入 + AssetBrowser 内嵌表格区 —— ✅ 2026-09-26 完工（后缀定名 `.tab`，见 ADR-012 修订注记）
 
-- `AssetDatabase.h/.cpp`：**首条核对 `.meta` type 序列化形态**（字符串名 → Table
-  插 Clip 后自由位；数值序 → 尾加 Generic 后，TypeOf 的 `.table` 匹配前插即可）；
-  AssetType 加 `Table` + TypeOf 加 `.table` + AssetTypeName 加行；
-- 新 `Editor/Assets/Csv.h/.cpp`：mini CSV 解析（引号/逗号/换行/UTF-8 BOM 剥除；
-  上限 64 列 × 1024 行 × 128 字符超限红字拒入）+ `TableToJon`（行网格 → .table
-  JSON 文本，schemaVersion/name/rows，第 0 行 = 列头）；
-- `AssetDatabase.cpp ImportFile`（:582-602）分支：`.csv` 源 → 解析 → 同名 `.table`
-  落盘入库 + meta 生成，**csv 不拷入**；`.table` 直接导入照常（手写 JSON 流）；
-- `AssetBrowserPanel.cpp`：选中 `.table` 时 OnGui 底部 CollapsingHeader 表格区
-  （ImGui BeginTable，先例 InspectorPanel.cpp:851-877）：列头行 + 数据行只读渲染 +
-  双击单格 InputText 编辑 → 写回 `.table`（WriteFileAtomic + 主动 RescanAssets）；
-  行数超 32 行虚拟化裁剪（ImGui 表格裁剪器或分页，取简）；
-- engine-tests：CSV 解析单测（引号/转义/BOM/超限拒绝）+ .table JSON roundtrip。
+- 首条核对落账：`.meta`/manifest 的 type 均**字符串名**（`AssetTypeName`）→ 枚举
+  插位自由，`Table` 插 Clip 后（`AssetDatabase.h:26` 一带）；
+- `AssetType::Table` + TypeOf `.tab` + AssetTypeName `"table"`；
+- 新 `Editor/Assets/Csv.h/.cpp`（lemon-editor-core，ImGui-free 可单测）：`ParseCsv`
+  （引号/逗号/换行转义 + BOM 剥除 + GBK 拒入（UTF-8 校验）+ 空行跳过 + 参差行矩形化；
+  上限 64 列 × 1024 行 × 128 **码点**/格超限拒入）+ `TableToJson`/`ParseTableJson`
+  （roundtrip；JSON 侧裸数值/布尔格宽松归一为字符串——ADR 示例形态）+
+  `NormalizeTable`（三口共用的校验核心）；
+- `ImportFile` 分支：`.csv` 源 → 解析 → 同名 `.tab` 落盘入库（csv 不拷入；重拖
+  同名 = 覆盖再导入，guid 走路径继承稳定）；`.tab` 手写直接导入照常；
+- `AssetBrowserPanel`：单击选中（缩略图高亮）+ 选中 Table 条目时面板底部
+  CollapsingHeader 表格区（BeginTable + ScrollY 行裁剪 + 列头钉住；双击单格
+  InputText（IME 焦点抢占）→ NormalizeTable 校验 → 原子写 + 主动 Rescan；
+  提示行交代 EnterPlay 快照语义）；
+- engine-tests +35 checks（`TestCsvTable`×21 + `TestTableAssetImport`×14：引号/转义/BOM/
+  CJK 码点上限/roundtrip/坏档拒入/导入生命周期含覆盖重导与跨会话 guid 稳定）。
+- 验证记录（2026-09-26）：mac/mac-debug 双 preset ctest 3/3；engine-tests
+  **33410 checks**（双档同数）；`editor-regression.sh full` **14/14 PASS**；金回放
+  三档现录现放 **mismatches=0**（sim-st/sim-mt/script；T1 零引擎改动，bench 二进制
+  不链 editor-core，回放不受影响属结构性结论，跑齐三档为纪律自证）；编辑器真进程
+  冒烟（含 .tab 项目）`--smoke --frames 200` PASS errors=0，meta/manifest 落
+  `type: "table"`。
+- **T1 反馈批（2026-09-26 用户实测：内嵌区可操作面太小 + 无横向滚动）**：表格
+  渲染重构为内嵌区/浮动窗共用（`RenderTableGrid`）——补 `ScrollX` +
+  `SizingFixedFit`（列宽=内容宽，超窗横滚）+ 行号列 + `ScrollFreeze(1,1)` 双向
+  钉住；内嵌预留按面板高比例化（≥12 行）；新增**浮动放大编辑器**（双击 .tab /
+  「放大编辑」按钮打开；居中 1040×560 起步、可拖拽缩放、Esc 关窗、按需工具窗
+  不进面板注册表 = 05 §3 冻结不破，`NoSavedSettings` 不落 imgui.ini）。
+  验证：回归 14/14（首跑 2 FAIL 系后台回放负载抖动，复跑 ×3 全绿 + final 单跑
+  PASS）；编辑器与浮动窗共用缓存/编辑态（单缓存按 guid+hash 键，双表并存交替
+  重读，小文件可接受）。
+- **T1 反馈批②（2026-09-26 用户五点：双击不顺畅/点别处应退出/行高/表头固定/
+  点别处应保存）**：整格热区（`Selectable SpanAvailWidth`——此前热区=文字宽，
+  宽列空白双击无响应，即"不顺畅"根因）；**Excel 语义**（Enter 或点别处失焦 =
+  保存退出，Esc = 弃改，提交失败也退出编辑态防僵尸态）；行高 = CellPadding.y
+  ×2.5；表头固定根因 = 表格外高下限可高过窗口 → 滚动升格窗口级、冻结失效
+  ——改为外高恒占余量（-2px）+ 浮动窗 `NoScrollbar`，滚动恒归表格内部。
 
-### T2 引擎+SDK：TableStore + vtable 尾加 + Lemon.Table —— 约 1 天
+### T2 引擎+SDK：TableStore + vtable 尾加 + Lemon.Table —— ✅ 2026-09-26 完工
 
-- 新 `Engine/ECS/TableStore.h/.cpp`：`TableGrid{vector<vector<string>> rows}` 按
-  `uint32 guidLow` 登记（ClipTable 同款形态）；Add/Clear/Find/RowsOf；构造上限
-  防呆（解析期拒绝超限表，warn-once）；
-- `World.h/.cpp`：`TableStore& Tables()`（成员 tables_，:131 Clips 旁；头注释
-  "不入 StateHash，零重录——09 §6.8 先例二"）；
+- 新 `Engine/ECS/TableStore.h/.cpp`（ClipTable 同款形态）：按 `uint32 guidLow`
+  登记全字符串格网格；Add（id=0/空网格拒）/Find/Cell（越界 nullptr）/Clear/Count；
+  上限归解析器（T1 ParseTableJson），引擎零 JSON 依赖（依赖向下不破）；
+- `World.h`：`TableStore& Tables()`（成员 tables_，Clips 旁；非 ECS 通道零重录
+  ——09 §6.8 先例二第五例：Clips/Saves/RtUi/Fx/TableStore 全家同款）；
 - `EditorContext.cpp`：`BuildPlayTableCache()`（EnterPlay 内 BuildPlayClipCache
-  :782 旁调用；AssetType::Table → nlohmann 解析 → guidLow 入 store；坏表 warn +
-  跳过不炸 Play）；
-- `ScriptHost.h/.cpp`：NativeApiVtable 尾加 3 项——`tableRows(guidHex)`（-1 无表）、
-  `tableCols(guidHex)`、`tableCell(guidHex,row,col,char* out,uint cap)`（-1 越界 /
-  -2 cap 不足 / ≥0 返回拷贝数）；实现读 `g_world->Tables()`，空 store 全 -1 降级；
-- SDK `Table.cs`：`static int Rows(string guidHex)` / `Cols` /
-  `string? Str(guid,row,col)` / `int Int(...)` / `float Float(...)`（Parse 容错：
-  空串/格式错 → 0 + Console.Warn 一次）/ `bool Has(guid)`；
-- script-tests：注册表 → Rows/Cols/Str/Int/Float 往返、越界格、无表降级、
-  cap 不足二段调用。
+  后调用；坏表 warn + 跳过不炸 Play）；
+- `ScriptHost.h/.cpp`：NativeApiVtable 尾加 3 项 `tableRows/tableCols/tableCell`
+  （-1 无表/越界、-2 cap 不足、≥0 拷贝数；空宿主全 -1；桥内自持 mini hex→低 32
+  解析）；
+- SDK 新 `Table.cs`（Rows/Cols/Str/Has/Int/Float，Int/Float Invariant 容错 +
+  warn 一次/格）+ `NativeApi.cs` 尾加 3 委托；配套（D2 用户项目例外）：
+  WaveDirector/WaveDef 镜像加 `GetWave/SetWave/GetEntry/SetEntry` 拷贝语义
+  读写口（布局冻结不动，纯加方法）；
+- script-tests 新 `TestTableChannel`（+12 checks：容器单元 + 端到端全 API 面 +
+  无表降级 + 越界 + 坏格容错 + 新 World 自清零；TableProbeBehaviour typeId 12
+  表尾注册）；热重载名单断言 12→13；
+- **使用范例落地（用户拍板，ADR-012 D2 用户项目例外）**：svr-test 波次表数据化
+  ——`Assets/tables/waves.tab`（16 波全量迁移，prefab 列存完整 GUID）+
+  `Game/WaveTableLoader.cs`（Awake 读表 → GetWave/SetWave 灌回组件 → 引擎
+  WaveDirectorSystem 零改动）+ Main.scene 波次清零 + Director 挂 scripts[]；
+- 验证记录（2026-09-26）：mac/mac-debug ctest 3/3 ×2；engine-tests 33410（不变）+
+  script-tests **1566**（+12）；`editor-regression.sh full` **14/14**；金回放三档
+  现录现放 mismatches=0（TableStore 不入 StateHash + 基准场零表脚本 = 零重录，
+  先例二第五例落账）；真进程 `--bench-scene Main.scene --frames 900`：表快照
+  17×19 → 载入 16 波 → alive 2→47（首波 t=5 刷怪 + 玩家击杀动态平衡），整链通。
 
 ### T3 编辑器：AnimationPanel 最小版 + 双击打开通道 —— 约 1.25 天
 
@@ -174,8 +208,8 @@ Status: active（2026-09-25 开工分解；T0 ADR-012 已落）
 ### T4 模板：数值表落地 + 验收② 演示（散射武器 + fast-mob）—— 约 1 天
 
 - 模板生成器 `vs_template`（`EditorApp.cpp:282-330` 段）增资产：`Assets/tables/
-  weapons.table`（列：id/label/prefabGuid/interval/speed/pierce/count——直射/穿透/
-  环绕参数三行起步）+ `Assets/tables/upgrades.table`（列：id/label/kind/value——
+  weapons.tab`（列：id/label/prefabGuid/interval/speed/pierce/count——直射/穿透/
+  环绕参数三行起步）+ `Assets/tables/upgrades.tab`（列：id/label/kind/value——
   现六选项逐行对应，数值与现硬编码一致）；`--gen-vs-template` 重生成；
 - `PlayerCombat.cs`：`Start` 读两表（Table.Rows/Str/Int 载内存 List，缺表/坏行
   warn + 空池保底——模板永不因表缺炸 Play）；`kOptions` 数组与 `ApplyOption`
@@ -185,8 +219,8 @@ Status: active（2026-09-25 开工分解；T0 ADR-012 已落）
   `Systems.cpp:795` 换读点；vtable 尾加 2 项（getXpCurveK/setXpCurveK，TimeScale
   同款 clamp 无需）；模板 GameMain.Start 从 weapons/balance 列写值（缺省不写 =
   引擎默认）；
-- **验收② 演示**：weapons.table 加"散射"行（prefab = 新 ScatterBullet.prefab，
-  生成器固定 guid 段顺延）+ upgrades.table 加"散射弹"行（kind 3 换弹种变体）；
+- **验收② 演示**：weapons.tab 加"散射"行（prefab = 新 ScatterBullet.prefab，
+  生成器固定 guid 段顺延）+ upgrades.tab 加"散射弹"行（kind 3 换弹种变体）；
   fast-mob = Mob.prefab 拷贝改 speed/hp + Main.scene 波次条目 e2 槽替换两波；
   smoke-template 断言增：表载入行数、散射弹发射证据（teamAlive/弹体计数口径
   实现时定）、fast-mob 出场；

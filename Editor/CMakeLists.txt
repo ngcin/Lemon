@@ -22,6 +22,7 @@ add_library(lemon-editor-core STATIC
   EditorContext.cpp
   Assets/AssetDatabase.cpp
   Assets/AssetGpuCache.cpp
+  Assets/Csv.cpp
   Assets/FileWatcher.cpp
   Assets/ProjectWizard.cpp
   Tooling/StbImpl.cpp

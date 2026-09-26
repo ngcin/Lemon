@@ -2,6 +2,8 @@
 
 - 日期：2026-09-25
 - 状态：已采纳（M6a 批② T0 定形；08 §2 M6a 批② "开工时 ADR 定形" 条款闭合）
+- **修订 2026-09-26**（用户定名）：表资产后缀 `.table` → **`.tab`**（实施 T1 时定）。
+  本文及各文档历史行中 `.table` 字样按此映射读取；schema 与其余决策不变。
 - 影响：`06-Asset-Pipeline-Out-of-Box.md`（§2.2 表资产行落地、§10 分档另议）、`05-Editor.md`（§3 面板集注记、§7）、`08-Development-Roadmap.md` M6a 批②、`Editor/Assets/AssetDatabase.*`、`Engine/ECS/`（新 TableStore）、`Engine/Scripting/`（vtable 尾加 + `Lemon.Table`）
 
 ## 背景
@@ -64,6 +66,13 @@ json 数据资产行未实现。
 - **表资产服务项目级数值配置**：武器参数/升级池/掉落表/成长曲线/伙伴参数——
   "场景内结构化玩法数据（组件，回放哈希面）vs 项目级数值表（资产，脚本读取面）"
   分工立界。`DrawArraySeg` 精细化（列宽/行复制等）若游戏侧真实卡点再另批，不并本批。
+- > **D2 用户项目例外（2026-09-26 修订）**：D2 约束的**引擎模板与金档基准场**口径
+  > 不变（vs-survivor 模板波次留组件）。用户项目可自行选择表驱动波次——首个先例
+  > = svr-test（用户拍板，作表通道使用范例）：`Assets/tables/waves.tab` +
+  > `WaveTableLoader.cs`（Awake 读表 → `GetWave/SetWave` 写回组件 → 引擎
+  > WaveDirectorSystem 消费链零改动）。"表→组件"载入器归用户脚本层，不进引擎；
+  > 用户项目非金档基准，无回放说明义务。SDK 侧配套：WaveDirector/WaveDef 镜像加
+  > 拷贝语义读写口（布局冻结不动，纯加方法）。
 
 ### D3：XP 曲线可配 = World 级单参数（默认值不变），逐级查表曲线 v1.1
 

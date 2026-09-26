@@ -11,6 +11,7 @@
 #include "ECS/Hierarchy.h" // WorldTransform2D（Select resize 的父链世界变换缓存）
 
 #include "Assets/AssetDatabase.h"
+#include "Assets/Csv.h" // TableData（AssetBrowserPanel .tab 表格区缓存）
 #include "Components/CoreComponents.h"
 #include "ECS/ComponentRegistry.h"
 #include "ECS/Entity.h"
@@ -156,6 +157,7 @@ struct AssetDragPayload {         // "LemonAsset" 拖拽载荷（面板间约定
     uint64_t guid;
     uint32_t spriteId;
     uint8_t kind;                 // 0=sprite 1=prefab 2=script 3=generic 4=clip（M5 批③）
+                                  // 5=table（M6a 批②；暂无消费者，占位防后续重编）
 };
 
 class AssetBrowserPanel final : public IEditorPanel {
@@ -168,11 +170,28 @@ public:
 
 private:
     void DrawItem(EditorApp& app, const AssetEntry& e);
+    void DrawTableArea(EditorApp& app, const AssetEntry& e); // .tab 内嵌表格区（M6a 批② T1）
+    void RenderTableGrid(EditorApp& app, const AssetEntry& e); // 内嵌区/浮动窗共用的表格渲染
+    void DrawTableEditorWindow(EditorApp& app); // .tab 浮动放大编辑器（按需工具窗）
 
     std::string currentDir_ = ""; // "" = Assets/ 根
     std::string filter_;
     uint64_t renamingGuid_ = 0;   // 0 = 无重命名进行中
     std::string renameBuf_;
+
+    // ---- .tab 表格区（M6a 批② T1 / ADR-012 D1）----
+    uint64_t selectedGuid_ = 0;  // 单击选中（表格区只在选中 Table 条目时长出）
+    bool tableOpen_ = true;      // CollapsingHeader 开合（空间预留用上一帧值）
+    TableData table_;            // 缓存网格（键 = guid + 内容 hash，写回后失效重读）
+    uint64_t tableGuid_ = 0, tableHash_ = 0;
+    int editRow_ = -1, editCol_ = -1; // 双击进入编辑的格（-1 = 无）
+    bool editJustStarted_ = false;    // 编辑首帧抢键盘焦点（IME 输入前提）
+    std::string editBuf_;
+    std::string tableError_;     // 上次提交/解析的红字提示（成功即清）
+    // 浮动放大编辑器（T1 反馈批：内嵌区可操作面不足——横向滚动 + 大编辑面）。
+    // 按需工具窗，不进 CreateAllPanels/DockBuilder = 不破 05 §3 面板集冻结。
+    bool tableWinOpen_ = false;
+    uint64_t tableWinGuid_ = 0;  // 编辑目标（guid 稳定；条目被删自动关窗）
 };
 
 class ProfilerPanel final : public IEditorPanel {

@@ -7,6 +7,7 @@ add_library(lemon-engine STATIC
   ECS/Hierarchy.cpp
   ECS/ClipTable.cpp
   ECS/FxChannel.cpp
+  ECS/TableStore.cpp
   ECS/SaveChannel.cpp
   ECS/Scene.cpp
   ECS/StateHash.cpp

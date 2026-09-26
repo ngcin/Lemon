@@ -3699,6 +3699,7 @@ void TestEditorMetaSanity() {
 #include <unistd.h>
 
 #include "Assets/AssetDatabase.h"
+#include "Assets/Csv.h"
 #include "Assets/FileWatcher.h"
 #include "Assets/ProjectWizard.h"
 #include "EditorContext.h"
@@ -3873,6 +3874,157 @@ void TestAssetPathContainment() {
 
     fs::remove_all(root, ec);
     fs::remove(outside, ec);
+}
+
+// ---- M6a 批② T1：CSV 解析 + .tab 表格资产序列化（ADR-012 D1）----
+void TestCsvTable() {
+    using lemon::editor::ParseCsv;
+    using lemon::editor::ParseTableJson;
+    using lemon::editor::TableToJson;
+    using lemon::editor::TableData;
+
+    // 基本 + BOM 剥除 + CRLF 归一 + 中文表头
+    TableData t = ParseCsv("\xEF\xBB\xBFid,label\r\nshoot,直射\r\n");
+    Expect(t.ok && t.rows.size() == 2 && t.rows[0][0] == "id" && t.rows[1][1] == "直射",
+           "csv basic + BOM + CRLF");
+    // 引号包裹（格内逗号）+ "" 转义引号
+    t = ParseCsv("a,\"b,c\",\"d\"\"e\"\n");
+    Expect(t.ok && t.rows[0].size() == 3 && t.rows[0][1] == "b,c" && t.rows[0][2] == "d\"e",
+           "csv quotes/escape");
+    // 引号内换行原样入格
+    t = ParseCsv("a,\"line1\nline2\",b\n");
+    Expect(t.ok && t.rows.size() == 1 && t.rows[0][1] == "line1\nline2", "quoted newline");
+    // 空行跳过（尾换行不产生幽灵行）；无尾换行的末行
+    t = ParseCsv("a,b\n\nc,d\n");
+    Expect(t.ok && t.rows.size() == 2, "blank line skipped");
+    t = ParseCsv("a,b");
+    Expect(t.ok && t.rows.size() == 1 && t.rows[0][1] == "b", "no trailing newline");
+    // 参差行 → 补空矩形化（以最长行为准）
+    t = ParseCsv("a\nb,c\n");
+    Expect(t.ok && t.rows.size() == 2 && t.rows[0].size() == 2 && t.rows[0][1].empty(),
+           "ragged rows padded");
+
+    // 非 UTF-8（GBK "中" = D6 D0）拒入
+    t = ParseCsv(std::string_view("a,\xD6\xD0\n", 6));
+    Expect(!t.ok && t.error.find("UTF-8") != std::string::npos, "non-utf8 rejected");
+    // 上限拒入：65 列 / 1025 行 / 129 码点格（128 汉字恰过线）
+    std::string wide;
+    for (int i = 0; i < 65; ++i) {
+        if (i) wide += ',';
+        wide += 'c';
+    }
+    t = ParseCsv(wide);
+    Expect(!t.ok, "cols over limit rejected");
+    std::string tall;
+    for (int i = 0; i < 1025; ++i) tall += "r\n";
+    t = ParseCsv(tall);
+    Expect(!t.ok, "rows over limit rejected");
+    t = ParseCsv(std::string(129, 'x') + "\n");
+    Expect(!t.ok, "cell over limit rejected");
+    std::string cjk;
+    for (int i = 0; i < 129; ++i) cjk += "\xE4\xB8\xAD";
+    t = ParseCsv(cjk + "\n");
+    Expect(!t.ok, "129 CJK codepoints rejected");
+    cjk.resize(128 * 3); // 128 码点恰在上限内
+    Expect(ParseCsv(cjk + "\n").ok, "128 CJK codepoints within limit");
+
+    // TableToJson → ParseTableJson roundtrip
+    t = ParseCsv("id,label,note\nshoot,直射,\"a,b\"\npierce,穿透,x\n");
+    Expect(t.ok, "parse for roundtrip");
+    const std::string json = TableToJson("weapons", t.rows);
+    Expect(!json.empty(), "table to json");
+    const TableData back = ParseTableJson(json);
+    Expect(back.ok && back.rows == t.rows, "table json roundtrip equal");
+
+    // .tab 宽松归一：裸数值/布尔格转字符串（ADR-012 示例形态）
+    t = ParseTableJson(
+        "{\"schemaVersion\":1,\"name\":\"w\",\"rows\":[[\"id\",\"v\",\"on\"],"
+        "[\"a\",0.12,true]]}");
+    Expect(t.ok && t.rows[1][1] == "0.12" && t.rows[1][2] == "true",
+           "json bare number/bool coerced");
+    // 坏档拒入：语法错 / schemaVersion 不符 / 空 rows / 嵌套对象格
+    Expect(!ParseTableJson("{").ok, "bad json rejected");
+    Expect(!ParseTableJson("{\"schemaVersion\":2,\"rows\":[[\"a\"]]}").ok,
+           "bad schemaVersion rejected");
+    Expect(!ParseTableJson("{\"rows\":[]}").ok, "empty rows rejected");
+    Expect(!ParseTableJson("{\"rows\":[[{\"x\":1}]]}").ok, "object cell rejected");
+    // 非法网格过不了 TableToJson（超限 → 空串）
+    Expect(TableToJson("x", std::vector<std::vector<std::string>>(1025, {"a"})).empty(),
+           "to json rejects oversized grid");
+}
+
+// ---- M6a 批② T1：.csv → .tab 转换导入生命周期（csv 不拷入 / 覆盖重导 / guid 稳定）----
+void TestTableAssetImport() {
+    namespace fs = std::filesystem;
+    using lemon::editor::AssetDatabase;
+    using lemon::editor::AssetEntry;
+    using lemon::editor::AssetType;
+    using lemon::editor::ParseTableJson;
+
+    const std::string tag = std::to_string(::getpid());
+    const fs::path root = fs::temp_directory_path() / ("lemon-test-table-" + tag);
+    const fs::path src = fs::temp_directory_path() / ("lemon-test-table-src-" + tag + ".csv");
+    const fs::path badSrc =
+        fs::temp_directory_path() / ("lemon-test-table-bad-" + tag + ".csv");
+    std::error_code ec;
+    fs::remove_all(root, ec);
+
+    AssetDatabase db;
+    Expect(db.OpenProject(root.string(), 100), "open project");
+
+    { std::ofstream f(src, std::ios::binary); f << "id,label\nshoot,直射\n"; }
+    const AssetEntry* e = db.ImportFile(src.string(), "tables/weapons.csv");
+    Expect(e && e->type == AssetType::Table, "csv imported as Table");
+    Expect(e->relPath == "Assets/tables/weapons.tab", "tab dest path");
+    Expect(!fs::exists(root / "Assets" / "tables" / "weapons.csv", ec), "csv not copied in");
+    Expect(fs::exists(root / "Assets" / "tables" / "weapons.tab", ec), "tab file written");
+    Expect(fs::exists(root / "Assets" / "tables" / "weapons.tab.meta", ec), "meta written");
+    const uint64_t guid = e->guid;
+
+    { // 落盘内容 = 全字符串格 JSON，roundtrip 与源一致
+        std::ifstream f(root / "Assets" / "tables" / "weapons.tab", std::ios::binary);
+        std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        const auto t = ParseTableJson(text);
+        Expect(t.ok && t.rows.size() == 2 && t.rows[0][0] == "id" && t.rows[1][1] == "直射",
+               "tab content roundtrip");
+    }
+
+    // 重拖同名 csv = 覆盖再导入（ADR-012：批量再编辑回 Excel 改完重拖）→ guid 稳定
+    { std::ofstream f(src, std::ios::binary | std::ios::trunc); f << "id,label\npierce,穿透\n"; }
+    const AssetEntry* e2 = db.ImportFile(src.string(), "tables/weapons.csv");
+    Expect(e2 && e2->guid == guid && e2->relPath == "Assets/tables/weapons.tab",
+           "re-import overwrites same guid");
+    {
+        std::ifstream f(root / "Assets" / "tables" / "weapons.tab", std::ios::binary);
+        std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        const auto t = ParseTableJson(text);
+        Expect(t.ok && t.rows[1][0] == "pierce" && t.rows.size() == 2, "overwritten content");
+    }
+
+    // guid/type 跨会话稳定（manifest 记账走字符串名 "table"）
+    {
+        AssetDatabase db2;
+        Expect(db2.OpenProject(root.string(), 100), "reopen project");
+        const AssetEntry* w2 = db2.FindByPath("Assets/tables/weapons.tab");
+        Expect(w2 && w2->guid == guid && w2->type == AssetType::Table,
+               "table guid/type stable across sessions");
+    }
+
+    // 手写 .tab 放进 Assets/ 照常入库（不经 csv 的直接导入流）
+    { std::ofstream f(root / "Assets" / "balance.tab", std::ios::binary);
+      f << "{\"schemaVersion\":1,\"name\":\"balance\",\"rows\":[[\"k\"],[\"xpCurveK\"]]}"; }
+    db.Rescan();
+    const AssetEntry* bal = db.FindByPath("Assets/balance.tab");
+    Expect(bal && bal->type == AssetType::Table, "handwritten tab discovered as Table");
+
+    // 坏 csv（非 UTF-8）拒入且不留半档
+    { std::ofstream f(badSrc, std::ios::binary); f << "a,\xD6\xD0\n"; }
+    Expect(db.ImportFile(badSrc.string(), "tables/bad.csv") == nullptr, "bad csv rejected");
+    Expect(!fs::exists(root / "Assets" / "tables" / "bad.tab", ec), "no half tab left");
+
+    fs::remove_all(root, ec);
+    fs::remove(src, ec);
+    fs::remove(badSrc, ec);
 }
 
 // ---- F-15（2026-09-24）：防抖门——窗口内取走的脏事件转 pending，不再吞 ----
@@ -4622,6 +4774,8 @@ int main() {
     TestAtlasPageHotUpdate();
     TestAssetDatabaseLifecycle();
     TestAssetPathContainment();
+    TestCsvTable();       // M6a 批② T1：CSV/表格序列化（ADR-012）
+    TestTableAssetImport(); // M6a 批② T1：.csv → .tab 转换导入生命周期
     TestDebounceGatePending();
     TestProjectWizard();
     TestEditorUsability();

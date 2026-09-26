@@ -36,6 +36,8 @@ public static class GameMain
         Lemon.Behaviours.Register<DualRouteProbeBehaviour>();
         // M6a 批①：Anim 状态控制 + Fx 通道（typeId 11，表尾注册同上约定）
         Lemon.Behaviours.Register<AnimFxProbeBehaviour>();
+        // M6a 批② T2：Lemon.Table 配置表读取（typeId 12，表尾注册同上约定）
+        Lemon.Behaviours.Register<TableProbeBehaviour>();
     }
 }
 
@@ -370,5 +372,37 @@ public sealed class AnimFxProbeBehaviour : Lemon.LemonBehaviour
                               default, default);
             gameObject.Destroy();
         }
+    }
+}
+
+/// <summary>M6a 批② T2：Lemon.Table 配置表读取验收（typeId 12，表尾注册同上约定）。
+/// C++ 侧（script-tests TestTableRead）预登记表（guid "123456780000beef" 低 32 位
+/// 0xbeef；列头行 + 中文章头格 + 数值格 + 非数值格）。帧1 读全 API 面
+/// （Rows/Cols/Str/Int/Float/Has + 无表降级 + 越界格）→ 结果串 Ui.Set("tbl") +
+/// Custom 1260 后自毁；"bad" 格 Float 容错 = 0 + warn 一次（stderr 可见）。</summary>
+public sealed class TableProbeBehaviour : Lemon.LemonBehaviour
+{
+    const string kTbl = "123456780000beef";
+    const string kMiss = "00000000deadbeef"; // 未登记 → 全 API -1/null/false
+
+    protected override void Update()
+    {
+        if (Lemon.Time.FrameCount != 1) return;
+        int rows = Lemon.Table.Rows(kTbl);
+        int cols = Lemon.Table.Cols(kTbl);
+        string label = Lemon.Table.Str(kTbl, 1, 1) ?? "?";       // 中文章头数据格
+        int count = Lemon.Table.Int(kTbl, 1, 2);                 // "12" → 12
+        int rate10 = (int)(Lemon.Table.Float(kTbl, 1, 3) * 10f); // "0.5" → 5（×10 避免插值文化漂移）
+        int bad = (int)Lemon.Table.Float(kTbl, 2, 3);            // "bad" → 0（容错）
+        int miss = Lemon.Table.Rows(kMiss);                      // 无表 → -1
+        bool oob = Lemon.Table.Str(kTbl, 9, 9) != null;          // 越界 → null → false
+        bool has = Lemon.Table.Has(kTbl) && !Lemon.Table.Has(kMiss);
+        // RtUi 槽 text 定长 48B——压缩编码：i=Int f=Float×10 b=坏格容错 m=无表
+        // F=越界(False) T=Has(True)
+        Lemon.Ui.Set("tbl",
+            $"{rows}x{cols} {label} i{count} f{rate10} b{bad} m{miss} F{oob} T{has}",
+            -1f);
+        Lemon.Events.Push(Lemon.Interop.GameEvent.Custom, 1260, default, default);
+        gameObject.Destroy();
     }
 }

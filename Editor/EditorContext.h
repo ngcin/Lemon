@@ -184,6 +184,10 @@ private:
     // M5 批③：EnterPlay 建 clip 表（.clip JSON → (sheet guid, cell) 解析为 spriteId
     // 入 playWorld_->Clips()；进 Play 时刻快照——Play 中改 .clip 不生效）
     void BuildPlayClipCache();
+    // M6a 批② T2：EnterPlay 建配置表（.tab JSON → 全字符串格网格入
+    // playWorld_->Tables()，键 = 资产 GUID 低 32 位；进 Play 时刻快照——
+    // Play 中改 .tab 不生效；C# Lemon.Table 读，ADR-012 D1）
+    void BuildPlayTableCache();
 
     std::unique_ptr<ecs::World> world_;
     ecs::Scene* scene_ = nullptr;

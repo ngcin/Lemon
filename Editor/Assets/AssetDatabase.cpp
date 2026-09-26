@@ -13,6 +13,7 @@
 
 #include "Core/Guid.h"
 #include "Core/Log.h"
+#include "Assets/Csv.h"
 
 namespace lemon::editor {
 namespace fs = std::filesystem;
@@ -24,6 +25,7 @@ const char* AssetTypeName(AssetType t) {
         case AssetType::Prefab: return "prefab";
         case AssetType::Script: return "script";
         case AssetType::Clip: return "clip"; // M5 批③：06 §2.2 clip2d（.clip JSON）
+        case AssetType::Table: return "table"; // M6a 批②：.tab 配置表（ADR-012）
         default: return "generic";
     }
 }
@@ -163,6 +165,7 @@ AssetType AssetDatabase::TypeOf(const std::string& relPath) {
     if (ext == ".prefab") return AssetType::Prefab;
     if (ext == ".cs") return AssetType::Script;
     if (ext == ".clip") return AssetType::Clip; // M5 批③帧动画资产（06 §2.2）
+    if (ext == ".tab") return AssetType::Table; // M6a 批②配置表资产（ADR-012）
     return AssetType::Generic;
 }
 
@@ -588,6 +591,42 @@ const AssetEntry* AssetDatabase::ImportFile(const std::string& absSrc, const std
         LEMON_WARN("导入失败：目标路径越出资产目录（拒绝）：%s", relDest.c_str());
         return nullptr;
     }
+    // .csv → .tab 转换导入（M6a 批② T1 / ADR-012 D1）：解析后同名 .tab 落库，
+    // csv 源不拷入（.tab 为唯一权威，避免双源漂移；批量再编辑 = Excel 改完重拖，
+    // 同名覆盖再导入）。解析失败（坏编码/超限）红字拒入，不留半档。
+    std::string srcExt = fs::path(absSrc).extension().string();
+    for (char& c : srcExt) c = (char)std::tolower((unsigned char)c);
+    if (srcExt == ".csv") {
+        std::ifstream f(absSrc, std::ios::binary);
+        if (!f) {
+            LEMON_WARN("CSV 导入失败（读不了源文件）：%s", absSrc.c_str());
+            return nullptr;
+        }
+        std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        const TableData t = ParseCsv(text);
+        if (!t.ok) {
+            LEMON_ERROR("CSV 导入失败（%s）：%s", t.error.c_str(), absSrc.c_str());
+            return nullptr;
+        }
+        const fs::path dest(relDest); // 落点跟随 relDest 词干（调用方 = 源文件名）
+        const std::string stem = dest.stem().string();
+        const std::string tabRel =
+            (dest.parent_path() / (stem + ".tab")).generic_string();
+        const std::string tabAbs = AssetsRoot() + "/" + tabRel;
+        std::error_code ecDir;
+        fs::create_directories(fs::path(tabAbs).parent_path(), ecDir);
+        const std::string json = TableToJson(stem, t.rows);
+        if (json.empty() || !WriteFileAtomic(tabAbs, json + "\n")) {
+            LEMON_ERROR("CSV 导入失败（.tab 写盘，磁盘满/权限？）：%s", tabAbs.c_str());
+            return nullptr;
+        }
+        Rescan();
+        SaveManifest();
+        LEMON_LOG("CSV 已转换导入：%s（%zu 行 × %u 列，csv 源不拷入）", tabRel.c_str(),
+                  t.rows.size(), t.Cols());
+        return FindByPath("Assets/" + tabRel);
+    }
+
     // relDest 语义 = Assets/ 下的相对路径（导入落点恒在资产目录）
     std::error_code ec;
     fs::create_directories(fs::path(AssetsRoot() + "/" + relDest).parent_path(), ec);

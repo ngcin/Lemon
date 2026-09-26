@@ -66,6 +66,13 @@ struct NativeApiVtable {
     // 零调用 = 零漂移）----
     void (*setSeparation)(float radius, float strength, int32_t maxNeighbors,
                           int32_t densityCap); // 各参 <0 = 保持现值
+    // ---- M6a 批②（配置表读取：Lemon.Table → World.Tables；表尾追加同上约定。
+    // guidHex 16 位 hex → 低 32 位查表；空宿主/无表 = -1 降级（SDK 侧自查）。
+    // 表通道不入 StateHash，基准场零调用 = 零漂移）----
+    int32_t (*tableRows)(const char* guidHex);                       // 行数（含列头行）；-1 = 无表
+    int32_t (*tableCols)(const char* guidHex);                       // 列数；-1 = 无表
+    int32_t (*tableCell)(const char* guidHex, int32_t row, int32_t col,
+                         char* out, uint32_t cap); // 拷贝数（不含 NUL）；-1 越界/无表；-2 cap 不足
 };
 
 /// 编辑器资产钩子（M4.4：编辑器宿主装配期经 SetEditorAssetHooks 注入；

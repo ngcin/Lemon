@@ -299,6 +299,11 @@ public unsafe struct WaveDef // 76B
     public byte EntryCount;
     fixed byte _pad[3];
     internal fixed byte _entries[4 * 16]; // C++ WaveEntry entries[4]（64B，不透明镜像）
+
+    // ---- M6a 批② T2：波次表数据化写入口（布局冻结不动，纯加方法；拷贝语义
+    // 避开 fixed 作用域——GetEntry 取副本改字段再 SetEntry 写回）----
+    public WaveEntry GetEntry(int i) { fixed (byte* p = _entries) { return ((WaveEntry*)p)[i]; } }
+    public void SetEntry(int i, in WaveEntry e) { fixed (byte* p = _entries) { ((WaveEntry*)p)[i] = e; } }
 }
 
 [StructLayout(LayoutKind.Sequential)]
@@ -314,6 +319,11 @@ public unsafe struct WaveDirector : IComponent // 1260B
     internal fixed ushort _spawned[4];   // 运行时：waveSpawned[4]
     public byte WaveIndex;               // 运行时：已生效波数
     fixed byte _pad2[3];
+
+    /// <summary>M6a 批② T2：波次读写（拷贝语义；i 越界由调用方自理——引擎消费
+    /// 侧按 WaveCount 钳制）。表数据化载入用法示例见 demo/svr-test（waves.tab）。</summary>
+    public WaveDef GetWave(int i) { fixed (byte* p = _waves) { return ((WaveDef*)p)[i]; } }
+    public void SetWave(int i, in WaveDef w) { fixed (byte* p = _waves) { ((WaveDef*)p)[i] = w; } }
 }
 
 // ---- 事件包镜像（Events.h：48B 固定布局，桥侧 blittable）----

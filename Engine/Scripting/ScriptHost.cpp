@@ -170,7 +170,7 @@ void NativeFxBar(uint64_t entity, float frac, uint32_t color, float width) {
 // 2026-09-26 调参下放批：分离力参数场景侧覆盖（引擎默认不动；呈现/调参通道
 // 不入 StateHash，基准场脚本零调用 = 回放零漂移）
 void NativeSetSeparation(float radius, float strength, int32_t maxNeighbors,
-                         int32_t densityCap) {
+                        int32_t densityCap) {
     if (!g_world) return;
     if (auto* sep = g_world->Separation(); sep) {
         if (radius >= 0.0f) sep->radius = radius;
@@ -178,6 +178,45 @@ void NativeSetSeparation(float radius, float strength, int32_t maxNeighbors,
         if (maxNeighbors >= 0) sep->maxNeighbors = (uint32_t)maxNeighbors;
         if (densityCap >= 0) sep->densityCap = (uint32_t)densityCap;
     }
+}
+
+// M6a 批② T2：配置表读取（Lemon.Table → World.Tables；ADR-012 D1）。guidHex
+// 取低 32 位查表（clipId/prefabId 同款映射约定——AssetDatabase::HexToGuid 在
+// 编辑器层，桥内自持 mini 解析）。空宿主/无表 = -1；负 row/col 经 uint32 化
+// 落到越界分支（Cell 双保险）。
+uint32_t TableIdOfHex(const char* guidHex) {
+    uint64_t v = 0;
+    if (!guidHex) return 0;
+    for (const char* p = guidHex; *p && p - guidHex < 16; ++p) {
+        v <<= 4;
+        const char c = *p;
+        if (c >= '0' && c <= '9') v |= (uint64_t)(c - '0');
+        else if (c >= 'a' && c <= 'f') v |= (uint64_t)(c - 'a' + 10);
+        else if (c >= 'A' && c <= 'F') v |= (uint64_t)(c - 'A' + 10);
+        else return 0; // 非 hex = 无表
+    }
+    return (uint32_t)v; // 低 32 位
+}
+int32_t NativeTableRows(const char* guidHex) {
+    if (!g_world) return -1;
+    const auto* t = g_world->Tables().Find(TableIdOfHex(guidHex));
+    return t ? (int32_t)t->size() : -1;
+}
+int32_t NativeTableCols(const char* guidHex) {
+    if (!g_world) return -1;
+    const auto* t = g_world->Tables().Find(TableIdOfHex(guidHex));
+    return t && !t->empty() ? (int32_t)(*t)[0].size() : -1;
+}
+int32_t NativeTableCell(const char* guidHex, int32_t row, int32_t col, char* out,
+                        uint32_t cap) {
+    if (!g_world) return -1;
+    const std::string* c =
+        g_world->Tables().Cell(TableIdOfHex(guidHex), (uint32_t)row, (uint32_t)col);
+    if (!c) return -1;
+    if (c->size() + 1 > cap) return -2; // cap 需含 NUL（SaveGet 同款二段语义）
+    std::memcpy(out, c->data(), c->size());
+    out[c->size()] = '\0';
+    return (int32_t)c->size();
 }
 
 const NativeApiVtable kNativeApi{NativeIsAlive,
@@ -201,7 +240,10 @@ const NativeApiVtable kNativeApi{NativeIsAlive,
                                  NativeUiCardPick,
                                  NativeFxPopup,
                                  NativeFxBar,
-                                 NativeSetSeparation};
+                                 NativeSetSeparation,
+                                 NativeTableRows,
+                                 NativeTableCols,
+                                 NativeTableCell};
 } // namespace
 
 void SetScriptIoHooks(const ScriptIoHooks& hooks) { g_scriptIo = hooks; }

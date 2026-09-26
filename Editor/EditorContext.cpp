@@ -10,6 +10,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "Assets/Csv.h" // ParseTableJson（BuildPlayTableCache；M6a 批② T2）
 #include "Components/CoreComponents.h"
 #include "Components/RenderComponents.h"
 #include "Core/Guid.h"
@@ -575,6 +576,35 @@ void EditorContext::BuildPlayClipCache() {
     }
 }
 
+// ---- M6a 批② T2：Play 世界配置表（.tab JSON → TableStore；ADR-012 D1）----
+// 格式（Assets/Csv.h）：{ schemaVersion:1, name, rows[[]...] 全字符串格，第 0 行 =
+// 列头 }。键 = 资产 GUID 低 32 位（clipId/prefabId 同款映射约定）。进 Play 时刻
+// 快照（BuildPlayClipCache 同语义）；坏表红字跳过不炸 Play（行×列×格字符上限归
+// ParseTableJson——超限即坏表）。Play 中改 .tab 不生效（表格区提示行已交代）。
+void EditorContext::BuildPlayTableCache() {
+    playWorld_->Tables().Clear();
+    for (const AssetEntry& e : assets_.Entries()) {
+        if (e.type != AssetType::Table || e.missing) continue;
+        std::ifstream f(assets_.AbsolutePath(e), std::ios::binary);
+        if (!f) continue;
+        std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        TableData t = ParseTableJson(text);
+        if (!t.ok) {
+            LEMON_WARN("表解析失败（%s）：%s——跳过", t.error.c_str(), e.relPath.c_str());
+            continue;
+        }
+        const uint32_t id = (uint32_t)e.guid; // 低 32 位（映射约定同 clipId）
+        const size_t rowCount = t.rows.size();
+        const uint32_t colCount = t.Cols();
+        if (!playWorld_->Tables().Add(id, std::move(t.rows))) {
+            LEMON_WARN("表登记失败（空网格）：%s", e.relPath.c_str());
+            continue;
+        }
+        LEMON_LOG("Play 表：'%s' → id %08x（%zu 行 × %u 列）", e.relPath.c_str(), id,
+                  rowCount, colCount);
+    }
+}
+
 bool EditorContext::ApplyPrefabInstance(ecs::Entity e) {
     if (e.IsNull() || !scene_->Alive(e)) return false;
     const ecs::Meta* m = scene_->TryGet<ecs::Meta>(e);
@@ -780,6 +810,8 @@ bool EditorContext::EnterPlay() {
     });
     // M5 批③：clip 表（.clip 资产 → 帧映射；AnimatorSystem #13 消费）
     BuildPlayClipCache();
+    // M6a 批② T2：配置表（.tab 资产 → 全字符串格网格；C# Lemon.Table 读）
+    BuildPlayTableCache();
     // M5 批④：存档载入（进 Play 快照语义：上一局数据进通道，C# Save.Get 即读）
     LoadSaveFile(playWorld_->Saves());
     // M4.4 装配通路（#7）：脚本后端接入 + 场景 ScriptBox 按 className 解析挂载

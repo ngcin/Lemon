@@ -33,6 +33,9 @@ public unsafe struct NativeApi
     public delegate* unmanaged<byte*, float, float, uint, void> FxPopup;       // M6a 批①：飘字 → World.Fx
     public delegate* unmanaged<ulong, float, uint, float, void> FxBar;         // M6a 批①：世界血条 → World.Fx
     public delegate* unmanaged<float, float, int, int, void> SetSeparation;    // 调参下放批：Lemon.Physics.Separation（<0 = 保持）
+    public delegate* unmanaged<byte*, int> TableRows;                          // M6a 批②：行数（含列头行）；-1 = 无表/空宿主
+    public delegate* unmanaged<byte*, int> TableCols;                          // M6a 批②：列数；-1 = 无表/空宿主
+    public delegate* unmanaged<byte*, int, int, byte*, uint, int> TableCell;   // M6a 批②：-1 越界/无表 -2 cap 不足；返回拷贝数
 }
 
 internal static unsafe class Native
@@ -235,5 +238,35 @@ internal static unsafe class Native
     internal static void SaveFlushCall()
     {
         if (Api.SaveFlush != null) Api.SaveFlush();
+    }
+
+    // ---- M6a 批②（配置表：Lemon.Table → World.Tables；旧宿主未注册 = -1 降级）----
+
+    internal static unsafe int TableRows(string guidHex)
+    {
+        if (Api.TableRows == null || guidHex == null) return -1;
+        byte* g = stackalloc byte[64];
+        CopyUtf8(guidHex, g, 63);
+        return Api.TableRows(g);
+    }
+
+    internal static unsafe int TableCols(string guidHex)
+    {
+        if (Api.TableCols == null || guidHex == null) return -1;
+        byte* g = stackalloc byte[64];
+        CopyUtf8(guidHex, g, 63);
+        return Api.TableCols(g);
+    }
+
+    /// <summary>取格 UTF-8 串；null = 无表/越界。格上限 128 码点（≤512B），
+    /// 640B 栈缓冲恒足够（-2 只可能是非法宿主表，按 null 降级）。</summary>
+    internal static unsafe string? TableCell(string guidHex, int row, int col)
+    {
+        if (Api.TableCell == null || guidHex == null) return null;
+        byte* g = stackalloc byte[64];
+        CopyUtf8(guidHex, g, 63);
+        byte* buf = stackalloc byte[640];
+        int n = Api.TableCell(g, row, col, buf, 640);
+        return n < 0 ? null : System.Text.Encoding.UTF8.GetString(buf, n);
     }
 }

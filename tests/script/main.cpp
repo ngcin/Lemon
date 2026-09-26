@@ -313,11 +313,11 @@ void TestDomainManager() {
         Expect(d2 == (double)0.1f, "hot-reload new domain fresh state");
         Expect(leaks >= 0 && leaksFn && leaksFn() == leaks, "leak count visible + consistent");
         Expect(reloadsFn && reloadsFn() >= 1, "reload count visible");
-        // 换装后新域 GameMain.Configure 已跑：behaviours 列表可拉（12 个类型）
+        // 换装后新域 GameMain.Configure 已跑：behaviours 列表可拉（13 个类型）
         auto listFn = (int (*)(char*, int))GetExport("lemon_behaviours_list");
         char buf[4096];
         int n = listFn ? listFn(buf, (int)sizeof buf) : -1;
-        Expect(n == 12, "behaviours list after hot reload (+M11/M15/F-08.2/T3/b1 probes)");
+        Expect(n == 13, "behaviours list after hot reload (+M11/M15/F-08.2/T3/b1/b2 probes)");
         // M4.6 回归（用户实测闪退根因）：相对路径进 dm_reload 曾抛 ArgumentException
         // 逃逸 UnmanagedCallersOnly → coreclr abort。拦截层必须转 0 返回且进程存活
         // （本断言能跑到 = 进程没死）。换装失败后旧域已弃——再换一次真路径恢复。
@@ -1119,6 +1119,83 @@ void TestAnimFxSdk() {
            "animfx: fresh world fx channel clear");
 }
 
+// M6a 批② T2：配置表通道端到端（TableStore 登记 → vtable 尾加 3 项 →
+// C# Lemon.Table 全 API 面 + 无表降级 + 越界格 + 容错数值 → RtUi 回读断言；
+// TableProbeBehaviour typeId 12 表尾注册）
+void TestTableChannel() {
+    using namespace lemon::ecs;
+    auto opsSubmit = (void (*)(unsigned char, unsigned char, uint64_t))GetExport("lemon_ops_submit");
+    auto timeResetFn = (void (*)())GetExport("lemon_time_reset");
+    Expect(opsSubmit && timeResetFn, "ops/time exports resolved");
+    timeResetFn(); // 探针按 FrameCount 分段——本测试 = 新一局
+
+    WorldDesc d;
+    d.threadCount = 1;
+    World w(d);
+    Scene& s = w.CreateScene("Tbl");
+    w.SetActiveScene(&s);
+    w.SetScriptBackend(&g_sh);
+    w.Pipeline().AddSystem(std::make_unique<DestroyCommitSystem>());
+    w.Pipeline().AddSystem(std::make_unique<CSharpBatchSystem>());
+    w.Pipeline().AddSystem(std::make_unique<ScriptEventDispatchSystem>());
+    w.Pipeline().ResolveOrder();
+
+    // ---- 引擎侧单元：TableStore 登记/查格/越界/坏参拒绝 ----
+    {
+        TableStore ts;
+        Expect(!ts.Add(0, {{"x"}}), "id 0 rejected");
+        Expect(!ts.Add(7, {}), "empty grid rejected");
+        Expect(ts.Add(0x0000beefu, {{"id", "label", "count", "rate"},
+                                     {"shoot", "直射", "12", "0.5"},
+                                     {"pierce", "穿透", "7", "bad"}}),
+               "table registered");
+        Expect(ts.Count() == 1 && ts.Find(0x0000beefu) && !ts.Find(1), "find hit/miss");
+        const std::string* c = ts.Cell(0x0000beefu, 1, 1);
+        Expect(c && *c == "直射", "cell utf8 readback");
+        Expect(!ts.Cell(0x0000beefu, 9, 9) && !ts.Cell(0x0000beefu, 0, 4) &&
+                   !ts.Cell(0x1234u, 0, 0),
+               "oob/unknown-table cell null");
+        ts.Clear();
+        Expect(ts.Count() == 0 && !ts.Find(0x0000beefu), "clear");
+    }
+
+    // 预登记（guid "123456780000beef" 低 32 = 0x0000beef；编辑器 BuildPlayTableCache 同构）
+    Expect(w.Tables().Add(0x0000beefu, {{"id", "label", "count", "rate"},
+                                        {"shoot", "直射", "12", "0.5"},
+                                        {"pierce", "穿透", "7", "bad"}}),
+           "world table registered");
+
+    int sawDone = 0;
+    w.SetEventSink([&](World&, const EventPacket& p) {
+        if (p.type == GameEvent::Custom && p.user == 1260) ++sawDone;
+    });
+
+    opsSubmit(0, 0, 0x800000000000000Cull); // Create + Attach TableProbeBehaviour（typeId 12 表尾）
+    opsSubmit(4, 12, 0x800000000000000Cull);
+
+    w.Step(0.25f); // 帧1：全 API 读 + Ui.Set("tbl") + Custom 1260 + 自毁命令
+    w.Step(0.25f); // 应用销毁
+    Expect(sawDone == 1, "table: probe done (Custom 1260)");
+
+    bool slotOk = w.RtUi().Count() == 1;
+    if (slotOk) {
+        const RtUiSlot& slot = w.RtUi().At(0);
+        std::printf("script-tests: [diag] table slot: key='%s' text='%s'\n", slot.key,
+                    slot.text);
+        slotOk = std::strcmp(slot.key, "tbl") == 0 &&
+                 std::strcmp(slot.text, "3x4 直射 i12 f5 b0 m-1 FFalse TTrue") == 0;
+    }
+    Expect(slotOk, "table: Rows/Cols/Str/Int/Float/Has + degrade + oob roundtrip");
+
+    // 新 World 自清零（EnterPlay 同语义——编辑器每局新建 playWorld）
+    {
+        World w2(d);
+        Expect(w2.Tables().Count() == 0, "table: fresh world store clear");
+    }
+
+    g_sh.ResetPlayDomain(); // 收尾自清（同上）
+}
+
 } // namespace
 
 int main() {
@@ -1171,6 +1248,7 @@ int main() {
     TestCppDestroyNotify();
     TestSdkDualRoute();
     TestAnimFxSdk();
+    TestTableChannel(); // M6a 批② T2：Lemon.Table 配置表通道端到端
 
     // M4.6 探针（编辑器切项目场景）：同进程二次 ScriptHost 生命周期。CoreCLR 运行时
     // 进程单例——第二次 Initialize 的真实行为必须钉板（成功/失败都合法，崩 = 缺陷）。

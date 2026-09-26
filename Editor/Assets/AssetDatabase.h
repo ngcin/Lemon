@@ -23,7 +23,9 @@ inline bool WriteFileAtomic(const std::string& path, const std::string& s) {
     return WriteFileAtomic(path, s.data(), s.size());
 }
 
-enum class AssetType : uint8_t { Sprite, Prefab, Script, Clip, Generic };
+// Table = .tab 配置表资产（M6a 批②，ADR-012；.meta/manifest 按 AssetTypeName 字符串
+// 序列化 → 枚举插位自由，历史档不受影响）
+enum class AssetType : uint8_t { Sprite, Prefab, Script, Clip, Table, Generic };
 
 const char* AssetTypeName(AssetType t);
 struct AssetEntry {
