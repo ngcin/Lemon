@@ -223,6 +223,7 @@ PickerResult FilePicker::Draw() {
         ImGui::SameLine();
         ImGui::BeginDisabled(multiSel_.empty());
         if (ImGui::Button("打开")) ConfirmMulti(out);
+        testhooks::Stash("picker.open", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
         ImGui::EndDisabled();
         ImGui::SameLine();
     }
@@ -230,6 +231,7 @@ PickerResult FilePicker::Draw() {
         out = {PickerAction::Cancel, ""};
         open_ = false;
     }
+    testhooks::Stash("picker.cancel", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
 
     firstFrame_ = false;
     if (!open_) ImGui::CloseCurrentPopup();

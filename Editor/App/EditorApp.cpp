@@ -2831,9 +2831,14 @@ int EditorApp::Run(const EditorLaunch& launch) {
     bool smokeSetModalQueuedPrev = false; // 诊断：模态 queued 探针的帧间沿
     bool smokePickClickOk = false, smokePickShiftOk = false, smokePickAllOk = false;
     bool smokePickFlowDone = false;
+    bool smokeSheetAllOk = false, smokeSheetClearOk = false, smokeSheetCloseOk = false;
+    bool smokeSheetFlowDone = false; // 三图优化点③：选帧对话框计数/清空/关窗
+    bool smokeAddCountOk = false, smokeAddOrderOk = false, smokeAddFlowDone = false;
+    size_t smokeAddBase = 0; // 帧序事故回归：多图追加前编辑态帧数基数
     bool smokeLeftColOk = false, smokeLeftColDone = false; // 三图优化点①：左列段行元信息
     Vec2 smokeCreatePt{-1.0e9f, -1.0e9f};
     Vec2 smokePickPt{-1.0e9f, -1.0e9f};
+    Vec2 smokeSheetPt{-1.0e9f, -1.0e9f};
     if (launch.smokeAnim) {
         const std::filesystem::path clipPath =
             std::filesystem::path(ctx_.Assets().ProjectRoot()) / "Assets" / "anim-edit.anim";
@@ -3748,6 +3753,113 @@ int EditorApp::Run(const EditorLaunch& launch) {
                         static_cast<AnimationPanel*>(en->panel)->PickerSelCountForTest() == 11;
                 if (!smokePickAllOk)
                     LEMON_ERROR("smoke-anim：Ctrl+A 全选后计数 != 11");
+            }
+            // ---- 三图优化点③（选帧对话框已选计数+清空）：f68 真实点击关掉第一段
+            // 文件选择器（picker.cancel 本轮新登记——此前该链测完不关窗，叠加
+            // 模态栈留隐患）→ f70 语义直开选帧对话框（OpenSheetPickForTest，第一
+            // 段不重跑）→ f72/73 真实点「全选」→ f76 断言右栏计数=4（anim-sheet
+            // 4×1 格）→ f78/79 点「清空」→ f82 断言计数=0 且 sheetpick.count 矩形
+            // 在（计数确画在右参数区的证据）→ f84/85 点「取消」→ f88 断言对话框
+            // 关（pickOpen_ 回落防悬空开态）。
+            else if (frame == 68) {
+                ImVec2 mn, mx;
+                if (testhooks::Find("picker.cancel", mn, mx)) {
+                    smokeSheetPt = Vec2{(mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f};
+                    ui_->SetInputOverride(smokeSheetPt.x, smokeSheetPt.y, 1);
+                } else {
+                    LEMON_ERROR("smoke-anim：文件选择器「取消」未登记（选择器没开？）");
+                }
+            } else if (frame == 69 && smokeSheetPt.x > -1.0e8f) {
+                ui_->SetInputOverride(smokeSheetPt.x, smokeSheetPt.y, 0);
+            } else if (frame == 70) {
+                if (PanelRegistry::Entry* en = panels_.FindEntry("Animation"))
+                    static_cast<AnimationPanel*>(en->panel)
+                        ->OpenSheetPickForTest(*this, kAnimSheetGuid);
+            } else if (frame == 72 || frame == 78 || frame == 84) {
+                const char* key = frame == 72   ? "sheetpick.all"
+                                  : frame == 78 ? "sheetpick.none"
+                                                : "sheetpick.cancel";
+                ImVec2 mn, mx;
+                if (testhooks::Find(key, mn, mx)) {
+                    smokeSheetPt = Vec2{(mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f};
+                    ui_->SetInputOverride(smokeSheetPt.x, smokeSheetPt.y, 1);
+                } else {
+                    LEMON_ERROR("smoke-anim：选帧对话框 %s 未登记（对话框没开？）", key);
+                }
+            } else if ((frame == 73 || frame == 79 || frame == 85) && smokeSheetPt.x > -1.0e8f) {
+                ui_->SetInputOverride(smokeSheetPt.x, smokeSheetPt.y, 0);
+            } else if (frame == 76) {
+                if (PanelRegistry::Entry* en = panels_.FindEntry("Animation"))
+                    smokeSheetAllOk =
+                        static_cast<AnimationPanel*>(en->panel)->SheetPickCountForTest() == 4;
+                if (!smokeSheetAllOk)
+                    LEMON_ERROR("smoke-anim：选帧对话框全选后已选计数 != 4");
+            } else if (frame == 82) {
+                ImVec2 mn, mx;
+                const bool cntRect = testhooks::Find("sheetpick.count", mn, mx);
+                if (PanelRegistry::Entry* en = panels_.FindEntry("Animation"))
+                    smokeSheetClearOk =
+                        cntRect &&
+                        static_cast<AnimationPanel*>(en->panel)->SheetPickCountForTest() == 0;
+                if (!smokeSheetClearOk)
+                    LEMON_ERROR("smoke-anim：清空后已选计数 != 0 或右栏计数矩形未登记");
+            } else if (frame == 88 && !smokeSheetFlowDone) {
+                smokeSheetFlowDone = true;
+                if (PanelRegistry::Entry* en = panels_.FindEntry("Animation"))
+                    smokeSheetCloseOk =
+                        !static_cast<AnimationPanel*>(en->panel)->SheetPickOpenForTest();
+                if (!smokeSheetCloseOk)
+                    LEMON_ERROR("smoke-anim：取消后选帧对话框未关（pickOpen_ 悬空）");
+            }
+            // ---- 帧序事故回归（2026-09-27 用户实测 Monster03 dying 反序；根因 =
+            // InsertFrameAfter(-1) 头插冒充末尾追加）：f90 重开多图通道（记加帧前
+            // 基数）→ f92 Ctrl+A 全选 11 图（显示序 = 文件名升序归一）→ f96/97
+            // 真实点「打开」确认 → f104 断言：追加数 = 11 且逐位 = Assets 目录
+            // 文件名升序 guid 序（旧 bug 下首帧 = 排序最后一张图）。
+            else if (frame == 90) {
+                if (PanelRegistry::Entry* en = panels_.FindEntry("Animation")) {
+                    AnimationPanel* p = static_cast<AnimationPanel*>(en->panel);
+                    smokeAddBase = p->EditFrameCountForTest();
+                    p->StartImageFilePick(*this);
+                }
+            } else if (frame == 92) {
+                ui_->SetKeyChordOverride((int)ImGuiMod_Ctrl, (int)ImGuiKey_A);
+            } else if (frame == 94) {
+                if (PanelRegistry::Entry* en = panels_.FindEntry("Animation")) {
+                    const size_t n = static_cast<AnimationPanel*>(en->panel)
+                                         ->PickerSelCountForTest();
+                    if (n != 11) LEMON_ERROR("smoke-anim：重开选择器 Ctrl+A 后计数 != 11（%zu）", n);
+                }
+            } else if (frame == 96) {
+                ImVec2 mn, mx;
+                if (testhooks::Find("picker.open", mn, mx)) {
+                    smokeSheetPt = Vec2{(mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f};
+                    ui_->SetInputOverride(smokeSheetPt.x, smokeSheetPt.y, 1);
+                } else {
+                    LEMON_ERROR("smoke-anim：选择器「打开」未登记（选择器没开/无选中？）");
+                }
+            } else if (frame == 97 && smokeSheetPt.x > -1.0e8f) {
+                ui_->SetInputOverride(smokeSheetPt.x, smokeSheetPt.y, 0);
+            } else if (frame == 104 && !smokeAddFlowDone) {
+                smokeAddFlowDone = true;
+                std::vector<uint64_t> want; // 期望 = Assets 根图片按文件名升序的 guid
+                for (const AssetEntry* e : ctx_.Assets().EntriesInDir("Assets"))
+                    if (e->type == AssetType::Sprite && !e->missing) want.push_back(e->guid);
+                AnimationPanel* p = nullptr;
+                if (PanelRegistry::Entry* en = panels_.FindEntry("Animation"))
+                    p = static_cast<AnimationPanel*>(en->panel);
+                if (p) {
+                    smokeAddCountOk = p->EditFrameCountForTest() == smokeAddBase + want.size();
+                    if (!smokeAddCountOk)
+                        LEMON_ERROR("smoke-anim：多图追加后帧数 %zu != 基数 %zu + %zu",
+                                    p->EditFrameCountForTest(), smokeAddBase, want.size());
+                    smokeAddOrderOk = smokeAddCountOk;
+                    for (size_t k = 0; k < want.size() && smokeAddOrderOk; ++k)
+                        smokeAddOrderOk = p->EditFrameSheetForTest(smokeAddBase + k) == want[k];
+                    if (!smokeAddOrderOk)
+                        LEMON_ERROR("smoke-anim：多图追加帧序 != 文件名升序（第 %zu 位起错位）",
+                                    smokeAddBase);
+                }
             }
         }
 
@@ -4754,12 +4866,15 @@ int EditorApp::Run(const EditorLaunch& launch) {
                      smokeSetCreateOk && smokeSetCreateOpenOk && smokeGraphEditOk &&
                      smokeGraphCacheOk && smokeGraphSwitchOk &&
                      smokePickClickOk && smokePickShiftOk && smokePickAllOk &&
+                     smokeSheetAllOk && smokeSheetClearOk && smokeSheetCloseOk &&
+                     smokeAddCountOk && smokeAddOrderOk &&
                      smokeLeftColOk;
             std::printf("[lemon] smoke-anim: prog(maxFrame=%u slice=%s booked=%u)%s "
                         "queue(hitClip=%s hit=%s back=%s) fx(text/bar=%s) "
                         "edit(rt=%s cache=%s whole=%s) set(rt=%s cache=%s open=%s "
                         "create=%s flow=%s) graph(rt=%s cache=%s switch=%s) "
-                        "pick(click=%s shift=%s all=%s) leftcol(meta=%s) => %s\n",
+                        "pick(click=%s shift=%s all=%s sheet(all=%s clear=%s close=%s)) "
+                        "multiadd(count=%s order=%s) leftcol(meta=%s) => %s\n",
                         (unsigned)smokeAnimMax[0], smokeAnimSlice[0] ? "YES" : "NO",
                         sh ? sh->sliceCount : 0, yami, hitBooked ? "booked" : "MISSING",
                         smokeQueueHit ? "YES" : "NO", smokeQueueBack ? "YES" : "NO",
@@ -4771,7 +4886,10 @@ int EditorApp::Run(const EditorLaunch& launch) {
                         smokeGraphEditOk ? "YES" : "NO", smokeGraphCacheOk ? "YES" : "NO",
                         smokeGraphSwitchOk ? "YES" : "NO",
                         smokePickClickOk ? "YES" : "NO", smokePickShiftOk ? "YES" : "NO",
-                        smokePickAllOk ? "YES" : "NO", smokeLeftColOk ? "YES" : "NO",
+                        smokePickAllOk ? "YES" : "NO", smokeSheetAllOk ? "YES" : "NO",
+                        smokeSheetClearOk ? "YES" : "NO", smokeSheetCloseOk ? "YES" : "NO",
+                        smokeAddCountOk ? "YES" : "NO", smokeAddOrderOk ? "YES" : "NO",
+                        smokeLeftColOk ? "YES" : "NO",
                         animOk ? "OK" : "FAIL");
             if (!animOk) exitCode = 1;
         }

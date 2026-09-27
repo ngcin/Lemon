@@ -253,6 +253,18 @@ public:
     void PickerClickForTest(size_t idx, bool ctrl, bool shift) {
         picker_.ApplyMultiClickForTest(idx, ctrl, shift);
     }
+    /// 冒烟（三图优化点③）：语义直开选帧对话框第二段（跳过文件选择器——第一段
+    /// 已有 pick(click/shift/all) 独立回归位）；网格参数取该图 .meta 现值
+    void OpenSheetPickForTest(EditorApp& app, uint64_t guid);
+    /// 冒烟：对话框本帧渲染的已选帧数（右栏计数同源；-1 = 对话框未画过）
+    int SheetPickCountForTest() const { return pickCountLast_; }
+    /// 冒烟：选帧对话框开态（取消真实点击后的回落断言）
+    bool SheetPickOpenForTest() const { return pickOpen_; }
+    /// 冒烟（帧序事故回归）：当前编辑态帧数 / 第 idx 帧 sheet guid（越界 = 0）
+    size_t EditFrameCountForTest() const { return edit_.frames.size(); }
+    uint64_t EditFrameSheetForTest(size_t idx) const {
+        return idx < edit_.frames.size() ? edit_.frames[idx].sheetGuid : 0;
+    }
     /// 冒烟：左列段行元信息缓存（三图优化点①回归位）——返回该段 .anim 帧数；
     /// -1 = 面板尚未画过该行 / 越界 / 集未开（缓存由左列绘制侧填充）
     int SegRowFramesForTest(size_t idx) const;
@@ -362,6 +374,7 @@ private:
     float pickZoom_ = 1.0f;      // 表预览缩放（0.25..8 × fit 宽；Ctrl+滚轮/按钮）
     int pickOrderMode_ = 0;      // 0 = 拖框选（行优先）/ 1 = 点选（按点击序 = Godot As Selected）
     std::vector<uint32_t> pickSelCells_; // 点选序收集的 cell（有序去重）
+    int pickCountLast_ = -1;     // 冒烟探针：本帧渲染的已选帧数（右栏计数渲染侧缓存）
     bool pickCreate_ = false;    // 选帧对话框产出流向：true = 向导 wizFrames_
     FilePicker picker_;          // 面板私有文件选择器（v3.1：选图入口）
     int pickFlow_ = 0;           // 0 无 / 1 精灵表单图（编辑态）/ 2 多图整图入帧 / 3 精灵表（向导）

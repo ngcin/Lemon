@@ -19,13 +19,19 @@ inline void DrawIcon(EditorApp& app, IconKind k, const ImVec2& size, const ImVec
                        ImVec4(0.0f, 0.0f, 0.0f, 0.0f), tint);
 }
 
-/// 图标按钮：透明底（active = 主题蓝强调底），图标叠于按钮上
+/// 图标按钮：透明底（active = 主题蓝强调底），图标叠于按钮上；flipX = 水平
+/// 镜像（上一帧/下一帧共用同形 glyph 的方向性图标）
 inline bool IconButton(EditorApp& app, IconKind k, const char* id, bool active,
-                       const ImVec2& iconSize = ImVec2(18, 18)) {
+                       const ImVec2& iconSize = ImVec2(18, 18), bool flipX = false) {
     void* tex = app.Viewport().IconTex();
     if (!tex) return ImGui::Button(id);
     float u0, v0, u1, v1;
     app.Viewport().Assets().IconUV(k, u0, v0, u1, v1);
+    if (flipX) {
+        const float t = u0;
+        u0 = u1;
+        u1 = t;
+    }
     ImGui::PushStyleColor(ImGuiCol_Button,
                           active ? theme::kAccentDim : ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered,

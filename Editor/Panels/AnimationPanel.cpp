@@ -10,7 +10,8 @@
 //   "删帧顺手删实体"双触发）。拖 Assets 精灵：入胶片带格 = 换图 / 入带尾或
 //   预览 = 加帧 / 入 sheet 槽 = 换 sheet。从精灵表对话框 v2 = 全选/清空 +
 //   框选(行优先)/点选(按点击序 = Godot As Selected) + Ctrl+滚轮缩放 + 动态
-//   按钮文案；sheet combo 项带缩略图（纯路径列表翻找是旧痛点）。
+//   按钮文案；v2.1（三图优化点③）右栏「选择」区带已选计数——选择操作处
+//   即时反馈；sheet combo 项带缩略图（纯路径列表翻找是旧痛点）。
 // .anim 三条生产通道（T3b：文件夹多单图/网格切片/框选建帧）+ 集容器（T3c：
 // .override = Unity .controller 壳，段身份 = 文件 GUID，集=显式成员关系）数据模型
 // 不变。LoopMode 三模式（Once/Loop/PingPong）。播放预览 = 编辑器时钟推进（非
@@ -227,8 +228,11 @@ bool AnimationPanel::TryCreateClip(EditorApp& app, const ClipData& c, const std:
 // ------------------------------------------------------------ 帧操作原语 ----
 
 void AnimationPanel::InsertFrameAfter(int idx, const ClipFrame& f) {
-    // v3 插入语义：idx = -1（或越界）= 末尾追加；否则插到 idx 后（旧版只能
-    // 末尾追加再拖拽到位）。插入选中新帧并预览跟随。
+    // v3 插入语义：idx ∈ [0, n-1] = 插到 idx 后；**idx = -1 = 插到最前**
+    // （「在之前插入副本」首帧位依赖此）；其他越界（< -1 或 >= n）= 末尾追加
+    // → 末尾追加请传 (int)edit_.frames.size()。2026-09-27 帧序事故根因：旧注释
+    // 称"-1 = 末尾追加"而实现是头插，多图逐张"追加"经此整表反序（svr-test
+    // Monster03 四 clip 实测 014..000）——契约以本注释为准，勿再改回。
     if (idx < -1 || idx >= (int)edit_.frames.size()) idx = (int)edit_.frames.size() - 1;
     edit_.frames.insert(edit_.frames.begin() + idx + 1, f);
     selFrame_ = idx + 1;
@@ -461,7 +465,8 @@ void AnimationPanel::DrawFilmstrip(EditorApp& app, bool ro, int playFrame) {
         if (const ImGuiPayload* pay = ImGui::AcceptDragDropPayload("LemonAsset")) {
             AssetDragPayload d{};
             std::memcpy(&d, pay->Data, sizeof(d));
-            if (d.kind == 0) InsertFrameAfter(-1, {d.guid, 0});
+            if (d.kind == 0)
+                InsertFrameAfter((int)edit_.frames.size(), {d.guid, 0}); // 末尾追加
             else if (d.kind == 4) AppendClipFrames(app, d.guid); // .anim = 复制帧表
         }
         ImGui::EndDragDropTarget();
@@ -657,12 +662,12 @@ void AnimationPanel::HandlePickerResult(EditorApp& app) {
         pickCreate_ = (flow == 3);
         pickOpen_ = true;    // 边沿触发：第二段模态（选帧对话框）
         pickPending_ = true;
-    } else if (flow == 2) { // 多图整图入帧（按选择顺序）
+    } else if (flow == 2) { // 多图整图入帧（按选择顺序 = 显示序文件名升序）
         size_t added = 0;
         for (const std::string& abs : r.paths) {
             const AssetEntry* e = nullptr;
             if (resolveSprite(abs, e) && e->type == AssetType::Sprite) {
-                InsertFrameAfter(-1, {e->guid, 0});
+                InsertFrameAfter((int)edit_.frames.size(), {e->guid, 0}); // 末尾追加
                 ++added;
             }
         }
@@ -671,6 +676,27 @@ void AnimationPanel::HandlePickerResult(EditorApp& app) {
             saveOk_ = false;
         }
     }
+}
+
+void AnimationPanel::OpenSheetPickForTest(EditorApp& app, uint64_t guid) {
+    // 冒烟语义直调（三图优化点③）：复刻 HandlePickerResult 流 1 的第二段就位
+    // （跳过文件选择器——第一段已有 pick(click/shift/all) 独立回归位）。此后
+    // 全选/清空/取消走真实模态点击（TestHooks 矩形 + hold/release 隔帧注入）。
+    const AssetEntry* e = app.Ctx().Assets().FindByGuid(guid);
+    if (!e || e->missing || e->type != AssetType::Sprite) return;
+    pickFlow_ = 0;
+    pickGuid_ = e->guid;
+    if (e->Sliced()) { // 与真实流同款：网格参数就位 = meta 现值
+        pickInput_ = 0;
+        pickCols_ = e->gridCols;
+        pickRows_ = e->gridRows;
+    }
+    pickHasRect_ = false;
+    pickSelCells_.clear();
+    pickZoom_ = 1.0f;
+    pickCreate_ = false;
+    pickOpen_ = true;
+    pickPending_ = true;
 }
 
 void AnimationPanel::DrawSheetPicker(EditorApp& app) {
@@ -792,6 +818,10 @@ void AnimationPanel::DrawSheetPicker(EditorApp& app) {
     int ra = pickR0_, rb = pickR1_, ca = pickC0_, cb = pickC1_;
     if (ra > rb) std::swap(ra, rb);
     if (ca > cb) std::swap(ca, cb);
+    const int cnt = pickOrderMode_ == 0
+                        ? (pickHasRect_ ? (rb - ra + 1) * (cb - ca + 1) : 0)
+                        : (int)pickSelCells_.size();
+    pickCountLast_ = cnt; // 冒烟探针缓存（右栏计数/动态按钮文案用的就是这个值）
     if (pickOrderMode_ == 0 && pickHasRect_) {
         const ImVec2 q0 = pmin + ImVec2(dispW * (float)ca / (float)cols,
                                         dispH * (float)ra / (float)rows);
@@ -841,7 +871,8 @@ void AnimationPanel::DrawSheetPicker(EditorApp& app) {
     ImGui::TextDisabled("添加时写入图片 .meta（全项目生效）");
 
     ImGui::SeparatorText("选择");
-    if (ImGui::SmallButton("全选##pickall")) {
+    // 常规按钮（原 SmallButton——选择是本对话框主操作，Godot 参照同为常规钮）
+    if (ImGui::Button("全选##pickall")) {
         if (pickOrderMode_ == 0) {
             pickHasRect_ = true;
             pickR0_ = pickC0_ = 0;
@@ -854,11 +885,17 @@ void AnimationPanel::DrawSheetPicker(EditorApp& app) {
                 for (uint32_t c = 0; c < cols; ++c) pickSelCells_.push_back(r * cols + c);
         }
     }
+    testhooks::Stash("sheetpick.all", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
     ImGui::SameLine();
-    if (ImGui::SmallButton("清空##picknone")) {
+    if (ImGui::Button("清空##picknone")) {
         pickHasRect_ = false;
         pickSelCells_.clear();
     }
+    testhooks::Stash("sheetpick.none", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+    // 已选计数画在选择操作处（三图优化点③：调格/点选/全选时不必看底行——
+    // 底行动态按钮文案仍带计数，Godot Add N Frame(s) 同款）
+    ImGui::Text("已选 %d 帧", cnt);
+    testhooks::Stash("sheetpick.count", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
     if (ImGui::Combo("##pickorder", &pickOrderMode_, "框选（行优先）\0点选（按点击序）\0")) {
         pickHasRect_ = false;
         pickSelCells_.clear();
@@ -875,10 +912,8 @@ void AnimationPanel::DrawSheetPicker(EditorApp& app) {
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("图区 Ctrl+滚轮缩放");
     ImGui::EndChild();
 
-    // ---- 底行：计数 + 取消/产出（动态按钮文案——按钮即计数反馈）----
-    const int cnt = pickOrderMode_ == 0
-                        ? (pickHasRect_ ? (rb - ra + 1) * (cb - ca + 1) : 0)
-                        : (int)pickSelCells_.size();
+    // ---- 底行：取消/产出（计数本体在右栏「选择」区；底行动态按钮文案仍带
+    // 计数——按钮即反馈，Godot Add N Frame(s) 同款）----
     const auto buildFrames = [&]() {
         std::vector<ClipFrame> out;
         if (pickOrderMode_ == 0) {
@@ -890,8 +925,6 @@ void AnimationPanel::DrawSheetPicker(EditorApp& app) {
         }
         return out;
     };
-    ImGui::Text("已选 %d 帧", cnt);
-    ImGui::SameLine();
     const float bw = 150.0f;
     ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),
                                   ImGui::GetContentRegionAvail().x - bw * 2.0f -
@@ -901,6 +934,7 @@ void AnimationPanel::DrawSheetPicker(EditorApp& app) {
         pickOpen_ = false;
         ImGui::CloseCurrentPopup();
     }
+    testhooks::Stash("sheetpick.cancel", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
     ImGui::SameLine();
     ImGui::BeginDisabled(cnt <= 0);
     char b1[64], b2[64];
@@ -1913,7 +1947,8 @@ void AnimationPanel::DrawFrameToolbar(EditorApp& app, bool ro) {
                         break;
                     }
             }
-            InsertFrameAfter(selFrame_, nf); // -1/越界 = 末尾追加
+            InsertFrameAfter(selFrame_ >= 0 ? selFrame_ : (int)edit_.frames.size(),
+                             nf); // 有选中 = 插其后；无选中 = 末尾追加（-1 是头插，勿传）
         }
         if (ImGui::MenuItem("从精灵表…（选图 → 分割 → 选帧）")) StartSheetPick(app, false);
         if (ImGui::MenuItem("从图片文件…（多选，整图入帧）")) StartImageFilePick(app);
@@ -1976,7 +2011,8 @@ void AnimationPanel::DrawPreview(EditorApp& app, bool ro, int shown) {
     }
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("回起点");
     ImGui::SameLine();
-    if (ui::IconButton(app, IconKind::Step, "##animprev", false)) {
+    if (ui::IconButton(app, IconKind::Step, "##animprev", false, ImVec2(18, 18),
+                       /*flipX=*/true)) { // 镜像同形 glyph——与「下一帧」区分方向
         if (n) previewFrame_ = (previewFrame_ + n - 1) % n;
         previewing_ = false;
     }
@@ -2016,7 +2052,7 @@ void AnimationPanel::DrawPreview(EditorApp& app, bool ro, int shown) {
             AssetDragPayload d{};
             std::memcpy(&d, pay->Data, sizeof(d));
             if (d.kind == 0)
-                InsertFrameAfter(-1, {d.guid, 0}); // sprite = 末尾加帧
+                InsertFrameAfter((int)edit_.frames.size(), {d.guid, 0}); // sprite = 末尾加帧
             else if (d.kind == 4)
                 AppendClipFrames(app, d.guid); // .anim = 复制帧表
         }
