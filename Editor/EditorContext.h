@@ -181,9 +181,13 @@ private:
     };
     void BuildPlayPrefabCache(); // EnterPlay：Prefab 资产 → {低 32 位 → 缓存}
     ecs::Entity SpawnPlayPrefab(ecs::Scene& s, uint32_t prefabId, Vec2 pos, uint32_t team);
-    // M5 批③：EnterPlay 建 clip 表（.clip JSON → (sheet guid, cell) 解析为 spriteId
-    // 入 playWorld_->Clips()；进 Play 时刻快照——Play 中改 .clip 不生效）
+    // M5 批③：EnterPlay 建 clip 表（.anim JSON → (sheet guid, cell) 解析为 spriteId
+    // 入 playWorld_->Clips()；进 Play 时刻快照——Play 中改 .anim 不生效）
     void BuildPlayClipCache();
+    // M6a 批② T3d：EnterPlay 建状态机表（.controller JSON → 下标形态入
+    // playWorld_->Controllers()；进 Play 时刻快照——Play 中改 .controller 不生效；
+    // AnimGraphSystem 图评估消费，ADR-013 D1）
+    void BuildPlayControllerCache();
     // M6a 批② T2：EnterPlay 建配置表（.tab JSON → 全字符串格网格入
     // playWorld_->Tables()，键 = 资产 GUID 低 32 位；进 Play 时刻快照——
     // Play 中改 .tab 不生效；C# Lemon.Table 读，ADR-012 D1）

@@ -19,6 +19,7 @@
 #include "Components/RenderComponents.h"
 #include "Core/Random.h"
 #include "ECS/ComponentRegistry.h"
+#include "ECS/ControllerTable.h" // T3d：ControllerDef/AnimParamKind（AnimGraph 探针）
 #include "ECS/Events.h"
 #include "ECS/StateHash.h"
 #include "ECS/World.h"
@@ -80,14 +81,14 @@ int (*lemonEventPacketLayout)(uint16_t*, uint16_t*, uint16_t*, uint16_t*, uint16
 void TestLayoutAgainstRegistry() {
     lemon::ecs::RegisterAllComponents();
     auto& reg = lemon::ecs::ComponentRegistry::Instance();
-    Expect(reg.Count() == 28, "registry count 28（M5 批② + WaveDirector）");
+    Expect(reg.Count() == 30, "registry count 30（M5 批② + WaveDirector + T3d AnimGraph/AnimParams）");
 
     std::vector<CompLayoutRow> comps(64);
     std::vector<FieldLayoutRow> fields(256);
     std::vector<SegLayoutRow> segs(8);
     int n = lemonSdkLayout(comps.data(), (int)comps.size(), fields.data(), (int)fields.size(),
                            segs.data(), (int)segs.size());
-    Expect(n == 28, "sdk layout comp count");
+    Expect(n == 30, "sdk layout comp count");
 
     uint32_t totalFields = 0;
     for (int i = 0; i < n; i++) {
@@ -313,11 +314,11 @@ void TestDomainManager() {
         Expect(d2 == (double)0.1f, "hot-reload new domain fresh state");
         Expect(leaks >= 0 && leaksFn && leaksFn() == leaks, "leak count visible + consistent");
         Expect(reloadsFn && reloadsFn() >= 1, "reload count visible");
-        // 换装后新域 GameMain.Configure 已跑：behaviours 列表可拉（13 个类型）
+        // 换装后新域 GameMain.Configure 已跑：behaviours 列表可拉（15 个类型）
         auto listFn = (int (*)(char*, int))GetExport("lemon_behaviours_list");
         char buf[4096];
         int n = listFn ? listFn(buf, (int)sizeof buf) : -1;
-        Expect(n == 13, "behaviours list after hot reload (+M11/M15/F-08.2/T3/b1/b2 probes)");
+        Expect(n == 15, "behaviours list after hot reload (+M11/M15/F-08.2/T3/b1/b2/T3c/T3d probes)");
         // M4.6 回归（用户实测闪退根因）：相对路径进 dm_reload 曾抛 ArgumentException
         // 逃逸 UnmanagedCallersOnly → coreclr abort。拦截层必须转 0 返回且进程存活
         // （本断言能跑到 = 进程没死）。换装失败后旧域已弃——再换一次真路径恢复。
@@ -1119,6 +1120,142 @@ void TestAnimFxSdk() {
            "animfx: fresh world fx channel clear");
 }
 
+// M6a 批② T3c：动画集按名解析端到端（World.Clips 预登记集 → vtable clipByName →
+// C# Anim.Play(name)）。管线不含 AnimatorSystem——只断言解析结果落 Animator2D；
+// 三分支：按名命中 / 集内无名 no-op（stderr 红字一次）/ GUID hex 回退（旧脚本
+// 兼容）。ClipByNameProbeBehaviour typeId 13 表尾注册。
+void TestClipByName() {
+    using namespace lemon::ecs;
+    auto timeResetFn = (void (*)())GetExport("lemon_time_reset");
+    Expect(timeResetFn, "clipname: time reset export resolved");
+    timeResetFn();
+
+    WorldDesc d;
+    d.threadCount = 1;
+    World w(d);
+    Scene& s = w.CreateScene("ClipByName");
+    w.SetActiveScene(&s);
+    w.SetScriptBackend(&g_sh);
+    w.Pipeline().AddSystem(std::make_unique<DestroyCommitSystem>());
+    w.Pipeline().AddSystem(std::make_unique<CSharpBatchSystem>());
+    w.Pipeline().AddSystem(std::make_unique<ScriptEventDispatchSystem>());
+    w.Pipeline().ResolveOrder();
+
+    // 预登记集（桥只查名索引，段无需 Add 帧——管线无 AnimatorSystem 不消费帧表）
+    w.Clips().RegisterSet(0xABu, {{"idle", 0x11u}, {"hit", 0x22u}});
+
+    int saw[3] = {0, 0, 0};
+    w.SetEventSink([&](World&, const EventPacket& p) {
+        if (p.type != GameEvent::Custom) return;
+        if (p.user == 1301) ++saw[0];
+        else if (p.user == 1302) ++saw[1];
+        else if (p.user == 1303) ++saw[2];
+    });
+
+    Entity e = s.Create();
+    s.Emplace<Transform2D>(e);
+    Animator2D& an = s.Emplace<Animator2D>(e);
+    an.clipId = 0x11u; // 集成员 = 按名作用域锚点
+    g_sh.AttachBehaviour(w, s, e, 13); // ClipByNameProbe（表尾 typeId 13）
+
+    w.Step(0.25f); // 帧1：Play("hit") 按名命中
+    Expect(saw[0] == 1, "clipname: frame1 marker");
+    Expect(s.Get<Animator2D>(e).clipId == 0x22u, "clipname: Play(\"hit\") resolves in set");
+
+    w.Step(0.25f); // 帧2：Play("nope") 集内无名 → no-op
+    Expect(saw[1] == 1, "clipname: frame2 marker");
+    Expect(s.Get<Animator2D>(e).clipId == 0x22u, "clipname: unknown name leaves clipId");
+
+    w.Step(0.25f); // 帧3："0000000000000033" 非段名 → GUID hex 回退（旧脚本兼容）
+    Expect(saw[2] == 1, "clipname: frame3 marker");
+    Expect(s.Get<Animator2D>(e).clipId == 0x33u, "clipname: GUID hex fallback (legacy)");
+    w.Step(0.25f); // 应用自毁
+    Expect(!s.Alive(e), "clipname: probe self-destroyed");
+}
+
+// M6a 批② T3d：状态机通道端到端（ControllerTable + ClipTable 集/事件登记 →
+// AnimGraphSystem 图评估 → 换段消费 → 帧事件/段末事件）。AnimGraphProbeBehaviour
+// typeId 14 表尾注册。覆盖：绑定集按状态名解析、SetParam 条件边、Trigger 边 +
+// 消费即清、exitTime 段末回归（非 loop 收尾）、GetParam 回读、AnimFinished/
+// AnimFrame 事件入队。
+void TestAnimGraphProbe() {
+    using namespace lemon::ecs;
+    auto timeResetFn = (void (*)())GetExport("lemon_time_reset");
+    Expect(timeResetFn, "animgraph: time reset export resolved");
+    timeResetFn();
+
+    WorldDesc d;
+    d.threadCount = 1;
+    World w(d);
+    Scene& s = w.CreateScene("AnimGraph");
+    w.SetActiveScene(&s);
+    w.SetScriptBackend(&g_sh);
+    // 注册序 = 执行序：Animator（帧映射+段末）→ CSharpBatch（脚本写参数）→
+    // AnimGraph（图评估，读当 tick 参数写段）→ 事件派发 → 销毁提交
+    w.Pipeline().AddSystem(std::make_unique<AnimatorSystem>());
+    w.Pipeline().AddSystem(std::make_unique<CSharpBatchSystem>());
+    w.Pipeline().AddSystem(std::make_unique<AnimGraphSystem>());
+    w.Pipeline().AddSystem(std::make_unique<ScriptEventDispatchSystem>());
+    w.Pipeline().AddSystem(std::make_unique<DestroyCommitSystem>());
+    w.Pipeline().ResolveOrder();
+
+    // 集绑定：状态名 → clip（Attack 非 loop 2 帧 @10fps = 0.2s；帧 1 打点事件 id 9）
+    w.Clips().Add(0x11u, {1, 1, 1, 1}, 10.0f, true);
+    w.Clips().Add(0x22u, {2, 2, 2, 2}, 10.0f, true);
+    w.Clips().Add(0x33u, {3, 3}, 10.0f, false, {{1, 9}});
+    w.Clips().RegisterSet(0xABu, {{"Idle", 0x11u}, {"Walk", 0x22u}, {"Attack", 0x33u}});
+    // controller 0x77：Idle↔Walk（speed 条件）、Walk→Attack（trigger）、
+    // Attack→Idle（exitTime）
+    ControllerDef def;
+    def.states = {"Idle", "Walk", "Attack"};
+    def.params = {{"speed", AnimParamKind::Float, 0.0f},
+                  {"atk", AnimParamKind::Trigger, 0.0f}};
+    def.transitions.push_back({0, 1, false, {{0, AnimCondOp::Gt, 0.1f}}});
+    def.transitions.push_back({1, 0, false, {{0, AnimCondOp::Le, 0.1f}}});
+    def.transitions.push_back({1, 2, false, {{1, AnimCondOp::Trigger, 0.0f}}});
+    def.transitions.push_back({2, 0, true, {}}); // exitTime（聚合初始化：from,to,exitTime,conds）
+    w.Controllers().Add(0x77u, std::move(def));
+
+    int saw[8] = {0};
+    int animFinished = 0, animFrame9 = 0;
+    w.SetEventSink([&](World&, const EventPacket& p) {
+        if (p.type == GameEvent::Custom) {
+            int idx = p.user == 1401 ? 0 : p.user == 1402 ? 1 : p.user == 1403 ? 2
+                     : p.user == 1404   ? 3 : p.user == 1405 ? 4 : p.user == 1406 ? 5
+                                                                : p.user == 1420 ? 6 : 7;
+            ++saw[idx];
+        } else if (p.type == GameEvent::AnimFinished && p.userArg == 0x33u) {
+            ++animFinished;
+        } else if (p.type == GameEvent::AnimFrame && p.user == 9 && p.userArg == 0x33u) {
+            ++animFrame9;
+        }
+    });
+
+    Entity e = s.Create();
+    s.Emplace<Transform2D>(e);
+    Animator2D& an = s.Emplace<Animator2D>(e); // clipId=0：图初始化 tick 应 Play(entry Idle)
+    (void)an;
+    AnimGraph& gr = s.Emplace<AnimGraph>(e);
+    gr.controllerGuid = 0x77u;
+    gr.setGuid = 0xABu;
+    s.Emplace<AnimParams>(e);
+    g_sh.AttachBehaviour(w, s, e, 14); // AnimGraphProbe（表尾 typeId 14）
+
+    const float dt = 1.0f / 60.0f;
+    for (int i = 0; i < 22; ++i) w.Step(dt);
+    Expect(saw[0] == 1 && saw[1] == 1 && saw[3] == 1 && saw[4] == 1, "animgraph: 帧标记齐");
+    Expect(saw[2] == 1, "animgraph: SetParam(speed) → 条件边切 Walk");
+    Expect(saw[5] == 1, "animgraph: GetParam 回读");
+    Expect(saw[6] == 1, "animgraph: exitTime 段末回 Idle");
+    Expect(saw[7] == 0, "animgraph: 无失败标记");
+    Expect(animFinished >= 1, "animgraph: AnimFinished(Attack) 事件");
+    Expect(animFrame9 >= 1, "animgraph: AnimFrame(帧1 打点) 事件");
+    if (s.Alive(e)) { // 帧 20 自毁，销毁提交下一 tick 生效
+        w.Step(dt);
+        Expect(!s.Alive(e), "animgraph: probe self-destroyed");
+    }
+}
+
 // M6a 批② T2：配置表通道端到端（TableStore 登记 → vtable 尾加 3 项 →
 // C# Lemon.Table 全 API 面 + 无表降级 + 越界格 + 容错数值 → RtUi 回读断言；
 // TableProbeBehaviour typeId 12 表尾注册）
@@ -1249,6 +1386,8 @@ int main() {
     TestSdkDualRoute();
     TestAnimFxSdk();
     TestTableChannel(); // M6a 批② T2：Lemon.Table 配置表通道端到端
+    TestClipByName();   // M6a 批② T3c：动画集按名解析通道端到端
+    TestAnimGraphProbe(); // M6a 批② T3d：状态机通道（绑定/参数/trigger/exitTime/帧事件）
 
     // M4.6 探针（编辑器切项目场景）：同进程二次 ScriptHost 生命周期。CoreCLR 运行时
     // 进程单例——第二次 Initialize 的真实行为必须钉板（成功/失败都合法，崩 = 缺陷）。

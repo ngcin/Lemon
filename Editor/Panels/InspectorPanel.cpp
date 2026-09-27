@@ -236,7 +236,7 @@ bool DrawSpriteSlot(EditorApp& app, uint8_t* p, ecs::SpriteRenderer& sr) {
     return false; // 写入已就地完成（combo 尾置 → 属性轨由 Deactivated 捕获）
 }
 
-/// clip 资产槽（FieldHint::ClipRef；M5 批③）。值 = .clip 资产 GUID 低 32 位
+/// clip 资产槽（FieldHint::ClipRef；M5 批③）。值 = .anim 资产 GUID 低 32 位
 /// （Animator2D.clipId；映射约定同 prefabId）。下拉全列 / AssetBrowser 拖入（kind 4）/
 /// 右键清空。写入就地完成（combo 尾置 → 属性轨由 Deactivated 捕获）。
 bool DrawClipSlot(EditorApp& app, uint8_t* p) {
@@ -279,8 +279,64 @@ bool DrawClipSlot(EditorApp& app, uint8_t* p) {
         ImGui::EndDragDropTarget();
     }
     if (ImGui::BeginPopupContextItem("clip_ctx")) {
+        if (ImGui::MenuItem("在动画工作台打开") && entry)
+            app.OpenAnimationEditor(entry->guid); // T3c：归属集解析在 EditorApp 汇聚
         if (ImGui::MenuItem("清空引用")) {
             id = 0;
+            ctx.dirty = true;
+        }
+        ImGui::EndPopup();
+    }
+    return false;
+}
+
+/// GUID 资产槽（FieldHint::AnimSetRef/ControllerRef + UInt64；T3d 批①）。
+/// 值 = 资产 GUID 全量（u64，非 clipId 的低 32 位截断——绑定是配置面）。
+/// 下拉全列同类型 / AssetBrowser 拖入（kind 6=集 / 7=controller）/ 右键清空。
+/// 写入就地完成（combo 尾置 → 属性轨由 Deactivated 捕获，DrawClipSlot 同款）。
+bool DrawGuidSlot(EditorApp& app, uint8_t* p, AssetType type, uint8_t dragKind,
+                  const char* noneLabel) {
+    EditorContext& ctx = app.Ctx();
+    AssetDatabase& db = ctx.Assets();
+    uint64_t& guid = *(uint64_t*)p;
+    const AssetEntry* entry = guid != 0 ? db.FindByGuid(guid) : nullptr;
+
+    char label[96];
+    if (entry)
+        std::snprintf(label, sizeof(label), "%s%s", entry->missing ? "⚠ " : "",
+                      entry->relPath.c_str());
+    else if (guid != 0)
+        std::snprintf(label, sizeof(label), "悬空 %016llx", (unsigned long long)guid);
+    else
+        std::snprintf(label, sizeof(label), "%s", noneLabel);
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::BeginCombo("##guidv", label)) {
+        for (const auto& e : db.Entries()) {
+            if (e.type != type) continue;
+            char item[160];
+            std::snprintf(item, sizeof(item), "%s%s", e.guid == guid ? "√ " : "",
+                          e.relPath.c_str());
+            if (ImGui::Selectable(item, e.guid == guid)) {
+                guid = e.guid;
+                ctx.dirty = true;
+            }
+        }
+        ImGui::EndCombo();
+    }
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* pay = ImGui::AcceptDragDropPayload("LemonAsset")) {
+            AssetDragPayload d{};
+            std::memcpy(&d, pay->Data, sizeof(d));
+            if (d.kind == dragKind && d.guid != 0) {
+                guid = d.guid;
+                ctx.dirty = true;
+            }
+        }
+        ImGui::EndDragDropTarget();
+    }
+    if (ImGui::BeginPopupContextItem("guid_ctx")) {
+        if (ImGui::MenuItem("清空引用")) {
+            guid = 0;
             ctx.dirty = true;
         }
         ImGui::EndPopup();
@@ -371,6 +427,8 @@ FieldResult DrawField(EditorApp& app, const ecs::ComponentMeta& meta, ecs::Entit
         !ecs::HasHint(ed.hints, FieldHint::Hide) &&
         !ecs::HasHint(ed.hints, FieldHint::AssetRef) &&
         !ecs::HasHint(ed.hints, FieldHint::ClipRef) &&
+        !ecs::HasHint(ed.hints, FieldHint::AnimSetRef) &&
+        !ecs::HasHint(ed.hints, FieldHint::ControllerRef) &&
         !ecs::HasHint(ed.hints, FieldHint::Enum) &&
         !ecs::HasHint(ed.hints, FieldHint::ColorHex) &&
         (f.type == FieldType::Float || f.type == FieldType::Double ||
@@ -403,7 +461,9 @@ FieldResult DrawField(EditorApp& app, const ecs::ComponentMeta& meta, ecs::Entit
     if (ecs::HasHint(ed.hints, ecs::FieldHint::Reset) && meta.constructFn &&
         meta.sizeOf <= kResetBuf && !ecs::HasHint(ed.hints, ecs::FieldHint::Hide) &&
         !ecs::HasHint(ed.hints, ecs::FieldHint::AssetRef) &&
-        !ecs::HasHint(ed.hints, ecs::FieldHint::ClipRef)) {
+        !ecs::HasHint(ed.hints, ecs::FieldHint::ClipRef) &&
+        !ecs::HasHint(ed.hints, ecs::FieldHint::AnimSetRef) &&
+        !ecs::HasHint(ed.hints, ecs::FieldHint::ControllerRef)) {
         const float iconSz = ImGui::GetFrameHeight() - 4.0f;
         ImGui::SameLine();
         // slack 必须在 SameLine 之后取：文本绘制后光标已换行到列首，之前取到的
@@ -440,6 +500,10 @@ FieldResult DrawField(EditorApp& app, const ecs::ComponentMeta& meta, ecs::Entit
         DrawSpriteSlot(app, p, *static_cast<ecs::SpriteRenderer*>(comp));
     } else if (ecs::HasHint(ed.hints, FieldHint::ClipRef) && f.type == FieldType::UInt32) {
         DrawClipSlot(app, p); // M5 批③：Animator2D.clipId（写入就地完成）
+    } else if (ecs::HasHint(ed.hints, FieldHint::AnimSetRef) && f.type == FieldType::UInt64) {
+        DrawGuidSlot(app, p, AssetType::AnimSet, 6, "(无集 · 按名回退当前段所属集)");
+    } else if (ecs::HasHint(ed.hints, FieldHint::ControllerRef) && f.type == FieldType::UInt64) {
+        DrawGuidSlot(app, p, AssetType::Controller, 7, "(无状态机 · 仅集绑定)");
     } else if (ecs::HasHint(ed.hints, FieldHint::Enum)) {
         changed = DrawEnumControl(f, ed, p);
     } else if (ecs::HasHint(ed.hints, FieldHint::ColorHex) && f.type == FieldType::UInt32) {

@@ -21,6 +21,11 @@ public:
     virtual void OnGui(EditorApp& app) = 0;
     /// 默认布局中的开关（Window 菜单可切换；有 ini 时以 ini 恢复为准）
     virtual bool OpenByDefault() const { return true; }
+    /// 键盘捕获声明（动画工作台 v3）：返回 true = 本面板正持有键盘焦点，要消费
+    /// Delete/Ctrl+D 等与全局实体操作同名的键——EditorApp 据此跳过实体级分发，
+    /// 防"删帧顺手删实体"双触发。焦点 = 面板 OnGui 内记录的上一帧值（本帧
+    /// 快捷键先行于面板绘制，滞后一帧无碍）。默认 false（既有面板零影响）。
+    virtual bool CapturesGlobalKeys() const { return false; }
 };
 
 class PanelRegistry {

@@ -14,6 +14,7 @@ enum class PickerAction { None, Open, Save, Cancel };
 struct PickerResult {
     PickerAction action = PickerAction::None;
     std::string path; // 完整路径（目录 + 文件名）
+    std::vector<std::string> paths; // 多选模式（action=Open 且非空 = 多选集；path = 首项）
 };
 
 class FilePicker {
@@ -25,6 +26,13 @@ public:
     /// 目录选择模式（M4.6 §4-2）：只列目录 + "选择此目录"返回当前目录（action=Open）；
     /// 向导父目录 / 打开项目起点用
     void OpenDir(const char* title, const std::string& defaultDir);
+    /// 多选模式（动画工作台 v3.1 图片多选加帧）：filterExts 非空 = 只列这些扩展名
+    /// 的文件（目录恒显示，如 {".png", ".jpg"}）。系统式选择语义（T3-UX4）：单击 =
+    /// 单选清余；Ctrl+单击 = 加选/移除；Shift+单击 = 锚点范围连选；Ctrl+A = 全选
+    /// 文件；双击 = 确认。默认缩略图视图（可切列表）。确认返回 paths（action=Open，
+    /// 按显示序）。与 Open 互斥——Open 重置多选态。
+    void OpenMulti(const char* title, const std::string& defaultDir,
+                   std::vector<std::string> filterExts);
     /// 每帧调用；弹窗打开期间返回 None 以外的动作恰好一次
     PickerResult Draw();
     bool IsOpen() const { return open_; }
@@ -34,13 +42,34 @@ public:
         quickDirs_ = std::move(dirs);
     }
 
+    // ---- T3-UX4 冒烟注入面（--smoke-anim）----
+    /// 多选计数（真实 multiSel_ 大小）
+    size_t MultiSelCountForTest() const { return multiSel_.size(); }
+    /// 直接走真实选择语义（点击处理器同款入口；idx = entries_ 下标）
+    void ApplyMultiClickForTest(size_t idx, bool ctrl, bool shift) {
+        ApplyMultiClick(idx, ctrl, shift);
+    }
+
 private:
     void Refresh();
+    void ApplyMultiClick(size_t idx, bool ctrl, bool shift); // 系统式选择语义核心
+    /// 确认路径集（按显示序归一——Ctrl 逐张点选的点击序 ≠ 直觉的帧序）
+    std::vector<std::filesystem::path> OrderedMultiSel() const;
+    void ConfirmMulti(PickerResult& out);       // 双击/打开按钮共用出口
+    void NavigateTo(const std::filesystem::path& sub); // 清锚点/选集 + 刷新
+    void DrawListEntries(PickerResult& out);    // 列表视图（原路径）
+    void DrawIconEntries(PickerResult& out);    // 缩略图网格（T3-UX4）
 
     bool open_ = false;
     bool firstFrame_ = true;
     bool opening_ = false;  // Open 后首帧 OpenPopup（模态化：打开期间主 UI 不可点）
     bool dirMode_ = false;  // 目录选择模式
+    bool multi_ = false;    // 多选模式（T3-UX2）
+    enum class View { List, Icons };
+    View view_ = View::List; // T3-UX4：列表 / 缩略图网格（多选默认网格）
+    std::vector<std::string> filterExts_;          // 扩展名白名单（小写含点；空 = 不过滤）
+    std::vector<std::filesystem::path> multiSel_;  // 多选累积集（有序）
+    int anchorIdx_ = -1;                           // Shift 范围锚（最近一次单击/Ctrl+A 首文件）
     std::string title_;
     std::filesystem::path dir_;
     std::string fileName_;

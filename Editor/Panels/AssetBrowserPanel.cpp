@@ -36,6 +36,8 @@ uint8_t KindOf(AssetType t) {
         case AssetType::Script: return 2;
         case AssetType::Clip: return 4;  // M5 批③（3 保留 generic）
         case AssetType::Table: return 5; // M6a 批②（暂无拖拽消费者）
+        case AssetType::AnimSet: return 6; // M6a 批② T3c（Inspector AnimGraph 集槽）
+        case AssetType::Controller: return 7; // T3d（Inspector AnimGraph 状态机槽）
         default: return 3;
     }
 }
@@ -114,14 +116,18 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
     ImGui::TextDisabled("%u 资产 / 体检红字 %u", db.SpriteAssetCount(), db.HealthIssues());
     ImGui::Separator();
 
-    // 类型过滤（T3b-9）："找资产靠过滤/搜索，不靠目录纪律"（约定不强制配套）
+    // 类型过滤（T3b-9）："找资产靠过滤/搜索，不靠目录纪律"（约定不强制配套）。
+    // 状态先取快照：按钮点击当帧改 typeFilter_，前后两次判定会失衡 →
+    // 只有 Pop 没有配对 Push（"PopStyleColor too many times" 实测报错）
     {
-        static const char* kLabels[6] = {"全部", "图", "动画", "Prefab", "表", "脚本"};
-        for (int i = 0; i < 6; ++i) {
+        static const char* kLabels[8] = {"全部", "图",   "动画", "集",
+                                         "Prefab", "表", "脚本", "状态机"};
+        for (int i = 0; i < 8; ++i) {
             if (i) ImGui::SameLine();
-            if (typeFilter_ == i) ImGui::PushStyleColor(ImGuiCol_Button, theme::kAccentDim);
+            const bool on = typeFilter_ == i;
+            if (on) ImGui::PushStyleColor(ImGuiCol_Button, theme::kAccentDim);
             if (ImGui::SmallButton(kLabels[i])) typeFilter_ = i;
-            if (typeFilter_ == i) ImGui::PopStyleColor();
+            if (on) ImGui::PopStyleColor();
         }
     }
 
@@ -188,8 +194,10 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
                 ImGui::Button("/", size);
             const bool iconHover = ImGui::IsItemHovered();
             if (iconHover) ImGui::SetTooltip("文件夹（单击进入）\n%s", d.c_str());
-            // 右键：从此文件夹创建动画（T3b-5 通道 A——多单图文件夹一键建 clip）
+            // 右键：动画集/动画创建入口（T3c 集工作台 + T3b-5 通道 A）
             if (ImGui::BeginPopupContextItem("folder_ctx")) {
+                if (ImGui::MenuItem("新建动画集…"))
+                    app.OpenAnimationCreateSet(d);
                 if (ImGui::MenuItem("从此文件夹创建动画…"))
                     app.OpenAnimationCreateFromFolder(d);
                 ImGui::EndPopup();
@@ -225,13 +233,15 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
 
     // 条目网格：根（""）= Assets/ 直下；子目录 = currentDir_ 直下（同上面包屑语义）
     const std::string entryDir = currentDir_.empty() ? "Assets" : currentDir_;
-    const auto passType = [this](AssetType t) { // 类型过滤（T3b-9）
+    const auto passType = [this](AssetType t) { // 类型过滤（T3b-9；T3c 加集）
         switch (typeFilter_) {
             case 1: return t == AssetType::Sprite;
             case 2: return t == AssetType::Clip;
-            case 3: return t == AssetType::Prefab;
-            case 4: return t == AssetType::Table;
-            case 5: return t == AssetType::Script;
+            case 3: return t == AssetType::AnimSet;
+            case 4: return t == AssetType::Prefab;
+            case 5: return t == AssetType::Table;
+            case 6: return t == AssetType::Script;
+            case 7: return t == AssetType::Controller; // T3d（.controller）
             default: return true;
         }
     };
@@ -243,10 +253,15 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
         if (col >= cols) col = 0;
     }
 
-    // 空区右键：导入。NoOpenOverItems 同 HierarchyPanel（右键资产条目时禁开本
-    // 菜单——与 asset_ctx 同帧双触发会被本菜单盖掉，条目右键永远只见"导入"）
+    // 空区右键：导入 + 动画资产创建（v3.1：新建动画集/剪辑入口放这里——面板内
+    // 不再放"新建"按钮，创建动作归资产浏览器）。NoOpenOverItems 同
+    // HierarchyPanel（右键资产条目时禁开本菜单——与 asset_ctx 同帧双触发会被本
+    // 菜单盖掉，条目右键永远只见"导入"）
     if (ImGui::BeginPopupContextWindow("assets_bg", ImGuiPopupFlags_NoOpenOverItems)) {
         if (ImGui::MenuItem("导入文件…")) app.MenuImportAsset();
+        ImGui::Separator();
+        if (ImGui::MenuItem("新建动画集…")) app.OpenAnimationCreateSet(entryDir);
+        if (ImGui::MenuItem("新建动画剪辑…")) app.OpenAnimationCreateClip(entryDir);
         ImGui::EndPopup();
     }
     // 拖 prefab 进空区 = 实例化到编辑相机中心
@@ -320,6 +335,7 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
         tint = e.type == AssetType::Prefab ? theme::kAccent
                : e.type == AssetType::Script ? theme::kTextOk
                : e.type == AssetType::Table ? theme::kTextWarn // 琥珀 = 数据表（M6a 批②）
+               : e.type == AssetType::AnimSet ? theme::kAccentDim // 亮蓝灰 = 动画集（T3c）
                                             : theme::kTextDim;
     }
     const bool selected = e.guid == selectedGuid_; // 单击选中（M6a 批②：表格区锚点）
@@ -357,6 +373,7 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
                                : (isSprite ? "未导入" : AssetTypeName(e.type));
         if (e.type == AssetType::Table) dims += "\n双击：放大编辑";
         if (e.type == AssetType::Clip)  dims += "\n双击：动画编辑"; // M6a 批② T3
+        if (e.type == AssetType::AnimSet) dims += "\n双击：动画工作台"; // M6a 批② T3c
         ImGui::SetTooltip("%s\n%s  guid %s\n%s", e.FileName().c_str(), AssetTypeName(e.type),
                           AssetDatabase::GuidToHex(e.guid).c_str(), dims.c_str());
     }
@@ -386,9 +403,10 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
         tableWinGuid_ = e.guid;
     }
 
-    // 双击 .clip = Animation 面板（M6a 批② T3）——首个"资产 → 专用编辑面板"
-    // 通道（EditorApp 汇聚：FindEntry 置 open + SetTarget）
+    // 双击 .anim/.override = Animation 面板（M6a 批② T3/T3c）——"资产 → 专用编辑面板"
+    // 通道（EditorApp 汇聚：.anim 归属集解析 → 集工作台选中该段；.override 直接开集）
     if (doubleClicked && e.type == AssetType::Clip) app.OpenAnimationEditor(e.guid);
+    if (doubleClicked && e.type == AssetType::AnimSet) app.OpenAnimationEditor(e.guid);
 
     // 文件名（截断 12 字符；钉到按钮宽换行——单元格宽确定，网格列距公式才精确；
     // 右键菜单已上移绑缩略图）

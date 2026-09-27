@@ -25,7 +25,11 @@ inline bool WriteFileAtomic(const std::string& path, const std::string& s) {
 
 // Table = .tab 配置表资产（M6a 批②，ADR-012；.meta/manifest 按 AssetTypeName 字符串
 // 序列化 → 枚举插位自由，历史档不受影响）
-enum class AssetType : uint8_t { Sprite, Prefab, Script, Clip, Table, Generic };
+// AnimSet = .override 动画集容器（M6a 批② T3c：段名 → .anim 引用清单；Unity
+// AnimatorController 壳——段身份仍是 .anim 文件 GUID，集只存引用）
+// Controller = .controller 动画状态机（M6a 批② T3d，ADR-013：状态词表 + 过渡
+// 条件 + 参数表；World 级 ControllerTable，AnimGraphSystem #16 消费）
+enum class AssetType : uint8_t { Sprite, Prefab, Script, Clip, Table, AnimSet, Controller, Generic };
 
 const char* AssetTypeName(AssetType t);
 struct AssetEntry {

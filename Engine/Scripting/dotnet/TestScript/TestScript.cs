@@ -38,6 +38,11 @@ public static class GameMain
         Lemon.Behaviours.Register<AnimFxProbeBehaviour>();
         // M6a 批② T2：Lemon.Table 配置表读取（typeId 12，表尾注册同上约定）
         Lemon.Behaviours.Register<TableProbeBehaviour>();
+        // M6a 批② T3c：动画集按名解析（typeId 13，表尾注册同上约定）
+        Lemon.Behaviours.Register<ClipByNameProbeBehaviour>();
+        // M6a 批② T3d：状态机通道（AnimGraph 绑定 + SetParam/Trigger + exitTime，
+        // typeId 14，表尾注册同上约定）
+        Lemon.Behaviours.Register<AnimGraphProbeBehaviour>();
     }
 }
 
@@ -404,5 +409,73 @@ public sealed class TableProbeBehaviour : Lemon.LemonBehaviour
             -1f);
         Lemon.Events.Push(Lemon.Interop.GameEvent.Custom, 1260, default, default);
         gameObject.Destroy();
+    }
+}
+
+/// <summary>M6a 批② T3c：动画集按名解析验收（typeId 13，表尾注册同上约定）。
+/// C++ 侧（script-tests TestClipByName）预登记集 {idle:0x11, hit:0x22}，实体
+/// clipId=0x11（集成员——作用域锚点）。帧1 Play("hit") 按名命中 → 1301；
+/// 帧2 Play("nope") 集内无名 → 红字一次 + no-op → 1302；帧3
+/// Play("0000000000000033") 非 16 段名 → GUID hex 回退（旧脚本兼容）→ 1303 后
+/// 自毁。</summary>
+public sealed class ClipByNameProbeBehaviour : Lemon.LemonBehaviour
+{
+    protected override void Update()
+    {
+        var fc = Lemon.Time.FrameCount;
+        if (fc == 1) {
+            Lemon.Anim.Play(gameObject, "hit");
+            Lemon.Events.Push(Lemon.Interop.GameEvent.Custom, 1301, default, default);
+        } else if (fc == 2) {
+            Lemon.Anim.Play(gameObject, "nope");
+            Lemon.Events.Push(Lemon.Interop.GameEvent.Custom, 1302, default, default);
+        } else if (fc == 3) {
+            Lemon.Anim.Play(gameObject, "0000000000000033");
+            Lemon.Events.Push(Lemon.Interop.GameEvent.Custom, 1303, default, default);
+            gameObject.Destroy();
+        }
+    }
+}
+
+/// <summary>M6a 批② T3d：状态机通道端到端验收（typeId 14，表尾注册同上约定）。
+/// C++ 侧（script-tests TestAnimGraphProbe）预登记集 {Idle:0x11, Walk:0x22,
+/// Attack:0x33} + controller 0x77（speed/atk 参数；Idle↔Walk 条件边 + Walk→Attack
+/// trigger 边 + Attack→Idle exitTime 边），实体带 AnimGraph/AnimParams 绑定。
+/// 时序（图评估在脚本后）：帧1 仅标记（图初始化 tick 会播种默认值——该 tick 的
+/// 脚本参数写被覆写，常态脚本每帧写无感）；帧2 SetParam(speed=5)；帧3 断言已切
+/// Walk；帧4 Trigger(atk)；帧5 断言已切 Attack；帧6 GetParam 回读 + speed 归零；
+/// 帧20 断言 exitTime 段末回 Idle（atk 非 loop 0.2s 收尾）。1403/1405/1406/1420 =
+/// 通过，1493/1495/1496/1490 = 对应断言失败。</summary>
+public sealed class AnimGraphProbeBehaviour : Lemon.LemonBehaviour
+{
+    private void Mark(ushort id)
+        => Lemon.Events.Push(Lemon.Interop.GameEvent.Custom, id, default, default);
+
+    protected override void Update()
+    {
+        var fc = Lemon.Time.FrameCount;
+        if (fc == 1) {
+            Mark(1401);
+        } else if (fc == 2) {
+            Lemon.Anim.SetParam(gameObject, "speed", 5f);
+            Mark(1402);
+        } else if (fc == 3) {
+            var an = gameObject.GetComponent<Lemon.Interop.Animator2D>();
+            Mark(an.ClipId == 0x22 ? (ushort)1403 : (ushort)1493);
+        } else if (fc == 4) {
+            Lemon.Anim.Trigger(gameObject, "atk");
+            Mark(1404);
+        } else if (fc == 5) {
+            var an = gameObject.GetComponent<Lemon.Interop.Animator2D>();
+            Mark(an.ClipId == 0x33 ? (ushort)1405 : (ushort)1495);
+        } else if (fc == 6) {
+            float sp = Lemon.Anim.GetParam(gameObject, "speed");
+            Mark(System.Math.Abs(sp - 5f) < 0.01f ? (ushort)1406 : (ushort)1496);
+            Lemon.Anim.SetParam(gameObject, "speed", 0f);
+        } else if (fc == 20) {
+            var an = gameObject.GetComponent<Lemon.Interop.Animator2D>();
+            Mark(an.ClipId == 0x11 ? (ushort)1420 : (ushort)1490);
+            gameObject.Destroy();
+        }
     }
 }

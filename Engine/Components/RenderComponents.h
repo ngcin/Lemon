@@ -41,7 +41,31 @@ struct Animator2D {
     uint32_t nextClipId = 0;
     float fadeRemain = 0.0f;
     uint16_t nextLoop = 1;
-    uint8_t _pad[2] = {};
+    // T3d 批③：段末边沿（FIELD_RT）。借原 _pad[2] 首字节——28B 布局逐位不动；
+    // 非 loop 段收尾钳 total 时置 1（0→1 边沿发 AnimFinished 事件），切段归 0。
+    // M6a 批①/③前基线场景零 Animator2D 实例 → 入哈希零重录（同款口径）。
+    uint8_t ended = 0;
+    uint8_t _pad = 0;
+};
+
+// T3d 批①（ADR-013 D1/D2）：实体 ↔ controller/集 显式绑定——按名解析作用域与
+// AnimGraphSystem 图评估都经此组件（消灭"当前 clip 恰属哪个集"的隐式反推）。
+// 入档入哈希（配置引用面，spriteGuid/prefabId 同款）；0 = 未绑（旁路图/回退隐式集）。
+struct AnimGraph {
+    uint64_t controllerGuid = 0; // .controller 资产 GUID（0 = 无图，纯绑定用）
+    uint64_t setGuid = 0;        // .override 集资产 GUID（按名解析作用域）
+    // T3d 批②：图初始化边沿（FIELD_RT，入哈希不入档）——首 tick 由此触发：
+    // AnimParams 槽从 controller 默认值播种 + 当前段不在集内时 Play(entry)。
+    uint8_t inited = 0;
+    uint8_t _pad[7] = {};
+};
+
+// T3d 批②（ADR-013 D1）：参数黑板（float/bool/trigger 统一 f32 槽；槽位 = 实体
+// 所绑 controller 参数表定序）。全 FIELD_RT（入哈希不入档）——参数是运行时态，
+// 每局由 controller 默认值重新播种（AnimGraph.inited 边沿驱动）。trigger 语义 =
+// 非 0 待消费，AnimGraphSystem 评估命中即清 0（消费即清发生在图评估内）。
+struct AnimParams {
+    float v[8] = {};
 };
 
 struct ParticleEmitterRef {
@@ -58,6 +82,8 @@ struct SortingOverride {
 // ---- 布局冻结（M3 桥侧 blittable 前提：C# 镜像 struct 与此逐字节对齐，改动=破回放）----
 static_assert(std::is_trivially_copyable_v<SpriteRenderer> && sizeof(SpriteRenderer) == 24, "SpriteRenderer 布局冻结");
 static_assert(std::is_trivially_copyable_v<Animator2D> && sizeof(Animator2D) == 28, "Animator2D 布局冻结");
+static_assert(std::is_trivially_copyable_v<AnimGraph> && sizeof(AnimGraph) == 24, "AnimGraph 布局冻结");
+static_assert(std::is_trivially_copyable_v<AnimParams> && sizeof(AnimParams) == 32, "AnimParams 布局冻结");
 static_assert(std::is_trivially_copyable_v<ParticleEmitterRef> && sizeof(ParticleEmitterRef) == 8, "ParticleEmitterRef 布局冻结");
 static_assert(std::is_trivially_copyable_v<SortingOverride> && sizeof(SortingOverride) == 2, "SortingOverride 布局冻结");
 

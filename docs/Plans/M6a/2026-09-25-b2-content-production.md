@@ -223,6 +223,40 @@ Status: active（2026-09-25 开工分解；T0 ADR-012 已落）
   相同**、改 fps+增帧后 diff 仅 fps 行 + 新增帧块（验收②"diff 仅预期字段"实证）；
   05 §3 解冻注记（AnimationEditor 一件）/§5 双击先例注记归 T6 文档回写清单。
 
+#### T3c 动画集工作台 + 按名播放 —— ✅ 2026-09-26 完工（独立批文件）
+
+用户 T3b 实测反馈"动画很孤立/参考 Godot"驱动的集化重构：`.ani` 集容器（Unity
+.controller 壳——容器+段文件，段身份 = 文件 GUID 零迁移；"目录=角色"作用域方案
+讨论中被否，作用域 = 集成员关系）+ ClipTable 集按名索引（World 持有零哈希 = 金
+回放零重录）+ vtable `clipByName` + SDK 字符串重载按名化 + 工作台 v2（左列段清单/
+连续建段/重命名/移除/删除）。**决策记录、U/G 对照与验证全录见
+[T3c 批文件](./2026-09-26-b2-t3c-animset-workbench.md)**（回归 14/14、script-tests
+1574、smoke-anim 增 `set(rt/cache)` 断言；真人验收余"真素材连续建五段 +
+`Play(g, "attack1")`"）。
+
+#### T3-UX 动画工作台 v3 交互重设计 —— ✅ 2026-09-27 完工（独立批文件）
+
+用户 T3c 实测反馈"操作太不方便"驱动的交互重设计（Godot SpriteFrames 式主从
+布局，参照截图 `docs/animation/`）：左列段清单工具条化（inline 新建/改名、搜索、
+复制段——**建段只输入名字**，选帧回右区）+ 右区三层（工具条/大预览 fit≤512/
+胶片带+属性行）+ 帧操作键盘化（←/→/Del/Ctrl+D/Space，`IEditorPanel::
+CapturesGlobalKeys()` 键仲裁防双触发删实体）+ 拖 Assets 精灵三通道选图 + 从精灵
+表对话框 v2（全选/点选序/缩放）+ 统一保存（段+集连存）。数据面零改动。**全录见
+[T3-UX 批文件](./2026-09-27-b2-t3-ux-anim-workbench.md)**（回归 14/14、smoke-anim
+errors=0；真人验收清单四条余）。
+
+#### T3-UX2 动画工作台 v3.1 修正批 —— ✅ 2026-09-27 完工（独立批文件）
+
+T3-UX 同日第二轮实测反馈十项：新建入口归 AssetBrowser **空白区右键**（面板删
+目标行 = 纯编辑器）；加帧四通道（空帧/从精灵表**文件选择→选帧对话框两段式**/
+多选图片/从 .clip 复制 + 拖 .clip 复制帧表）；从精灵表对话框重做（分割参数与
+预览同屏实时网格、**添加时才写 .meta**、InvisibleButton 命中层修复"拖框选拖走
+对话框"、"关闭"→取消）；布局修复"右侧空白"（预览改紧凑条、**帧网格主体化**）；
+左列 IconKind 图标化（尾加 Add/Duplicate/Delete/Rename/Search 五枚）；命名统一
+段→动画（Unity 术语面，schema 不动）；FilePicker 扩 OpenMulti 多选+扩展名过滤。
+**全录见 [T3-UX2 批文件](./2026-09-27-b2-t3-ux2-anim-workbench-round2.md)**
+（回归 14/14、smoke-anim errors=0；遗留 auto-slice 与多选拖批量加帧）。
+
 ### T4 模板：数值表落地 + 验收② 演示（散射武器 + fast-mob）—— 约 1 天
 
 - `Editor/Panels/BuiltInPanels.h`：`AnimationPanel` 声明（成员：targetGuid_、

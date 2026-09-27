@@ -105,12 +105,19 @@ public:
     // ---- 资产动作（M4.4）----
     void MenuImportAsset();  // 文件选择器（复制进 Assets/ + 导入）
     void RescanAssets();     // FileWatcher/手动重扫 → DB + GPU 增量导入
-    /// 双击 .clip 资产 → 打开 Animation 面板并设目标（M6a 批② T3——首个
-    /// "资产 → 专用编辑面板"通道，05 §5 先例）
+    /// 双击 .anim/.override 资产 → 打开 Animation 面板（M6a 批② T3——首个"资产 →
+    /// 专用编辑面板"通道）。T3c 集归并：.anim 若已属某 .override 集 → 开集工作台并
+    /// 选中该段；否则裸 clip 传统模式；.override 直接开集。
     void OpenAnimationEditor(uint64_t guid);
     /// 文件夹右键"从此文件夹创建动画"（M6a 批② T3b-5）：开 Animation 向导并
     /// 预选文件夹页；落点 = AssetBrowser 当前浏览目录（决策 4）
     void OpenAnimationCreateFromFolder(const std::string& relDir);
+    /// 文件夹右键"新建动画集…"（M6a 批② T3c）：开新建集弹窗（源目录非空 =
+    /// 显示"并建首段"勾选）；落点 = AssetBrowser 当前浏览目录
+    void OpenAnimationCreateSet(const std::string& relDir);
+    /// 空白区右键"新建动画剪辑…"（动画工作台 v3.1）：开向导空白页；落点 = 浏览
+    /// 目录。面板内不再放"新建"按钮——创建入口归 AssetBrowser（用户实测反馈）
+    void OpenAnimationCreateClip(const std::string& destDir);
     /// 面板 × 关闭按钮的落点（T3b-8）：同步 PanelRegistry 开关（Window 菜单可重开）
     void ClosePanel(const char* name);
     /// AssetBrowser 当前浏览目录（"" = 根 → 归一 "Assets"；向导落点默认值用）

@@ -130,6 +130,9 @@ struct Chase { LEMON_FIELD(speed, Range{0,500}); LEMON_FIELD(aggroRange); LEMON_
 
 - 注册表展开出：字段名/类型/范围/控件（DragFloat/Color/枚举下拉/Team 选择器/sprite 选择器）→ Inspector 绘制、JSON 序列化、C# Source Generator 的 struct 镜像，三处共用一份元数据。
 - **可编辑数组段（M5 批②，2026-09-23）**：定长数组段（StatusEffects.active / Inventory.items / WaveDirector.waves）的元素表从只读 Text 升级为按 FieldType 裸派发的编辑控件（DragFloat/InputScalar/Checkbox），active/deactivated 汇入 M4.7d 属性轨（Undo 组件级字节快照天然覆盖）；元素级无 FieldEditorMeta——Range/枚举/prefab 反查等精细化归 M6a 批② 配置表/波次表编辑 ADR（2026-09-24 重排）。**WaveDirector 作者路径**：字段行改 `waveCount` 出槽位 → 表格逐格填 startTime/条目（或手改 `.scene` JSON，03 §8 形态示例）。定长标量数组（Equipment.relicIds）维持只读。
+- **动画绑定槽（T3d 批①）**：`FieldHint::AnimSetRef/ControllerRef`（`AnimGraph`
+  两 u64 槽）——下拉同类型全列 / AssetBrowser 拖入（kind 6/7）/ 右键清空；
+  `AnimGraph` 组件 = 实体↔集/状态机显式绑定（按名解析作用域 + 图评估归属）。
 - **clip 资产槽（M5 批③）**：`FieldHint::ClipRef`（`Animator2D.clipId`）——下拉
   AssetType::Clip 全列 / AssetBrowser 拖入（drag kind 4）/ 右键清空；值 = `.clip`
   资产 GUID 低 32 位（prefabId 同款约定），反查 entry 显示 relPath。sprite 资产槽

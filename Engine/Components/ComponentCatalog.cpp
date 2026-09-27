@@ -74,20 +74,43 @@ constexpr FieldMeta kAnimator2D[] = {
     // M6a 批①：换段队列（运行时指令态，入哈希不入档；作者面经 Lemon.Anim API 写）
     FIELD_RT(Animator2D, nextClipId, UInt32),
     FIELD_RT(Animator2D, fadeRemain, Float),
-    FIELD_RT(Animator2D, nextLoop, UInt16)};
+    FIELD_RT(Animator2D, nextLoop, UInt16),
+    // T3d 批③：段末边沿（借原 _pad 位，28B 布局不动；0→1 发 AnimFinished 事件）
+    FIELD_RT(Animator2D, ended, UInt8)};
 constexpr FieldEditorMeta kEdAnimator2D[] = {
-    ED_CLIPREF("clip 资产槽（.clip GUID 低 32 位；下拉/拖入。0 = 无 clip，走 M2 纯计时）"),
+    ED_CLIPREF("clip 资产槽（.anim GUID 低 32 位；下拉/拖入。0 = 无 clip，走 M2 纯计时）"),
     ED_RANGE(0.0f, 100.0f), ED_RANGE(0.0f, 100.0f),
     // T3b-2：LoopMode 下拉（0/1/2；旧档 0/1 语义不变，PingPong = 往返纯函数）
     {FieldHint::Enum, 0, 0, kLoopModeNames, 3,
      "循环模式：Once 钳末帧 / Loop 回绕 / PingPong 往返（运行时权威）"},
     ED_BOOL8, ED_TIP("运行时帧号（clip 帧映射自动写；playOnStart=0 = 暂停开关）"),
-    ED_HIDE, ED_HIDE, ED_HIDE};
+    ED_HIDE, ED_HIDE, ED_HIDE, ED_HIDE};
 constexpr FieldMeta kParticleEmitterRef[] = {
     FIELD(ParticleEmitterRef, emitterId, UInt32),
     FIELD(ParticleEmitterRef, playing, UInt8)};
 constexpr FieldEditorMeta kEdParticleEmitterRef[] = {ED, ED_BOOL8};
 constexpr FieldMeta kSortingOverride[] = {FIELD(SortingOverride, order, Int16)};
+// T3d 批①（ADR-013 D1/D2）：实体 ↔ controller/集 显式绑定（登记表尾 = id 28/29，
+// 只增不改序）。GUID 全量存储（u64，非 clipId 的低 32 位截断——绑定是配置面，
+// 无热路径消费）。inited = 图初始化边沿（FIELD_RT）。
+constexpr FieldMeta kAnimGraph[] = {
+    FIELD(AnimGraph, controllerGuid, UInt64), FIELD(AnimGraph, setGuid, UInt64),
+    FIELD_RT(AnimGraph, inited, UInt8)};
+constexpr FieldEditorMeta kEdAnimGraph[] = {
+    ED_TIP("状态机资产槽（.controller GUID；0 = 无图，仅集绑定用于按名解析）"),
+    ED_TIP("动画集资产槽（.override/.override GUID；按名解析作用域 + 图状态绑定的集）"),
+    ED_HIDE};
+// T3d 批②：参数黑板 8 槽（数组无逐槽名，手动行——Projectile.hitMemory 同法；
+// 全 FIELD_RT：入状态哈希不入档，每局由 controller 默认值重播种）
+constexpr FieldMeta kAnimParams[] = {
+    { "param0", FieldType::Float, (uint16_t)(offsetof(AnimParams, v) + 0 * sizeof(float)), kFieldRuntime },
+    { "param1", FieldType::Float, (uint16_t)(offsetof(AnimParams, v) + 1 * sizeof(float)), kFieldRuntime },
+    { "param2", FieldType::Float, (uint16_t)(offsetof(AnimParams, v) + 2 * sizeof(float)), kFieldRuntime },
+    { "param3", FieldType::Float, (uint16_t)(offsetof(AnimParams, v) + 3 * sizeof(float)), kFieldRuntime },
+    { "param4", FieldType::Float, (uint16_t)(offsetof(AnimParams, v) + 4 * sizeof(float)), kFieldRuntime },
+    { "param5", FieldType::Float, (uint16_t)(offsetof(AnimParams, v) + 5 * sizeof(float)), kFieldRuntime },
+    { "param6", FieldType::Float, (uint16_t)(offsetof(AnimParams, v) + 6 * sizeof(float)), kFieldRuntime },
+    { "param7", FieldType::Float, (uint16_t)(offsetof(AnimParams, v) + 7 * sizeof(float)), kFieldRuntime }};
 
 // ---- Behavior（id 9..20）----
 constexpr FieldMeta kHealth[] = {FIELD(Health, max, Float), FIELD(Health, cur, Float),
@@ -397,6 +420,8 @@ void RegisterAllComponents() {
     REGISTER_ED(XpProgress, kXpProgress, kEdXpProgress)
     REGISTER(IncrementalState, kIncrementalState)
     REGISTER_ED_SEG(WaveDirector, kWaveDirector, kEdWaveDirector, kWaveDirectorSeg)
+    REGISTER_ED(AnimGraph, kAnimGraph, kEdAnimGraph) // T3d 批①：id 28（表尾追加）
+    REGISTER(AnimParams, kAnimParams)                // T3d 批②：id 29（全 RT 槽，无编辑面）
 }
 
 } // namespace lemon::ecs

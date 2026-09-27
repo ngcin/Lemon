@@ -237,6 +237,30 @@ clipId = `.clip` 资产 GUID 低 32 位（prefabId 同款映射约定）；编�
   **队列目标未命中 clip 表 = warn-once 丢队列**（显式指令的目标缺失是作者错误，
   区别于 clipId 未命中走 M2 的档面宽容）。
 - 无 clip 表 = 队列整体旁路（字段不动不消费）——M2 逐位不变。
+- **T3d 批③**：`ended`（借原 _pad 位，FIELD_RT）= 非 loop 段收尾边沿——钳 total
+  时 0→1 发 `AnimFinished` 事件（userArg=clipId），切段归 0；帧跨越发 `AnimFrame`
+  （user=事件 id、userArg=clipId、payload[0]=帧号，`.anim events[]` 打点，帧号纯
+  函数 ⇒ 事件序确定；loop 回绕/pingpong 反放重进该帧重发）。
+
+### 8.2 动画状态机（T3d；ADR-013 D1 决策层——决策与执行分离）
+
+**controller 表（`ECS/ControllerTable.h`，World 持有）**：controllerId（GUID 低 32 位）
+→ {params[≤8]（float/bool/trigger 统一 f32 槽，名字→下标）、states[]（= 集内段名，
+绑定键）、entry、transitions[]}。EnterPlay 快照（BuildPlayControllerCache，字符串
+形态编译为下标形态——运行时零字符串查找）；坏档红字跳过不炸 Play。
+
+**组件**：`AnimGraph{controllerGuid, setGuid, inited}`（id 28，入档；绑定 = 按名
+解析作用域 + 图归属）；`AnimParams{v[8]}`（id 29，全 FIELD_RT——每局由 controller
+默认值重播种；**图初始化 tick 的脚本参数写会被默认值覆写**，常态脚本每帧写无感）。
+
+**#16 AnimGraphSystem（插 CSharpBatch 后、事件派发前）**：读当 tick 脚本写的参数
+→ 评估当前状态出边（同 from 按文件序首条命中，每实体每 tick 至多一条，无级联）
+→ **Play 语义直写切段（清在途队列）**，下一 tick #13 消费——与脚本直写 Play 同拍。
+确定性口径：当前状态 = clipId 经集绑定反查（`ClipTable::NameOfClip`；RegisterSet
+对同集同 clip 多段名去名保一一对应）；trigger 评估命中即清（未命中出边不动）；
+脚本直写优先于图（段被 Play 到集外/词表外 = 图让位不抢回）。exitTime = 非 loop
+段收尾边沿（an.ended；loop 段 exitTime 不触发，挂起）。缺绑目标状态 = warn-once
+保持当前状态（词表不对称的正当形态，ADR-013 D4）。不消费 RNG（不占子流）。
 
 ## 9. Team 势力系统（照搬 yami `Data/teams.json` schema）
 

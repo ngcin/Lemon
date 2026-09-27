@@ -241,7 +241,10 @@ public readonly struct Transform               // 视图结构：逐属性访问
   死亡不被引擎自动销毁**（03 销毁两阶段注记）——复活类逻辑在脚本侧自理。
   **M6a 批① 追加 2 项**：`fxPopup`（飘字 → World.Fx 飘字池）+ `fxBar`（世界
   血条 → World.Fx 键控槽；06 §8 恒定原则——恒走 sprite 管线不进 UI 框架）。
-  SDK 新面：`Lemon.Anim`（Play/Queue/CrossFade/Pause/Resume/IsPlaying/Queued/
+  SDK 新面：`Lemon.Anim`（T3d 批①②追加：SetSet/SetController 绑定写 +
+  SetParam/GetParam/Trigger 参数黑板——trigger 消费即清在引擎图评估内；事件侧
+  GameEvent 尾加 AnimFrame/AnimFinished 两值（帧打点/段末，m.User=事件 id、
+  m.UserArg=clipId）。基础面 Play/Queue/CrossFade/Pause/Resume/IsPlaying/Queued/
   ClipId——纯 Animator2D 字段读写，clipId = clip 资产 GUID 低 32 位客户端自算，
   换段语义见 03 §8.1）、`Lemon.Fx`（Text 飘字/数字 + Bar 世界血条——呈现层专用
   不入 StateHash，池化上限飘字 256/血条 128 最老者淘汰）。

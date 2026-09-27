@@ -210,6 +210,32 @@ rhi::Texture ProceduralAtlas::BuildIconPage(rhi::Device& device) {
         c.FillRect(5.5f, 3, 10.5f, 8);  // 极靴（加深两臂端头）
         c.FillRect(21.5f, 3, 26.5f, 8);
     }
+    { // Add ＋（列表行"新建"）
+        IconCanvas& c = cv[(int)IconKind::Add];
+        c.FillRect(6, 14, 26, 18);
+        c.FillRect(14, 6, 18, 26);
+    }
+    { // Duplicate ⧉（前实后虚两个错位矩形）
+        IconCanvas& c = cv[(int)IconKind::Duplicate];
+        c.StrokeRect(4, 10, 20, 26, 2.6f); // 后块（描边）
+        c.FillRect(11, 3, 27, 19);         // 前块（实心，盖住后块一角）
+    }
+    { // Delete ×（两道粗对角线）
+        IconCanvas& c = cv[(int)IconKind::Delete];
+        c.StrokeLine({8, 8}, {24, 24}, 4.5f);
+        c.StrokeLine({24, 8}, {8, 24}, 4.5f);
+    }
+    { // Rename ✎（铅笔 = 斜杆 + 笔尖三角 + 笔尾横杠）
+        IconCanvas& c = cv[(int)IconKind::Rename];
+        c.StrokeLine({7, 25}, {22, 10}, 4.2f);        // 笔杆
+        c.FillTri({4, 28}, {10, 28}, {7, 21});        // 笔尖（斜切三角）
+        c.StrokeLine({19, 5}, {26, 12}, 4.2f);        // 笔尾橡皮头
+    }
+    { // Search 🔍（圆 + 斜柄）
+        IconCanvas& c = cv[(int)IconKind::Search];
+        c.StrokeArc({13, 13}, 7.5f, 0.0f, math::kTau, 3.4f);
+        c.StrokeLine({18.5f, 18.5f}, {27, 27}, 4.2f);
+    }
 
     // 覆盖缓冲 → 白 RGBA（4×4 box 降采样）
     constexpr uint32_t n = kIconCount, px = ProceduralAtlas::kIconPx;

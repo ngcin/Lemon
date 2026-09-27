@@ -13,6 +13,7 @@
 #include "Core/Random.h"
 #include "Core/RingQueue.h"
 #include "ECS/ClipTable.h"
+#include "ECS/ControllerTable.h"
 #include "ECS/Events.h"
 #include "ECS/FxChannel.h"
 #include "ECS/Input.h"
@@ -137,6 +138,12 @@ public:
     ClipTable& Clips() { return clips_; }
     const ClipTable& Clips() const { return clips_; }
 
+    // ---- 动画状态机 controller 表（M6a 批② T3d；ADR-013 D1 决策层。
+    // AnimGraphSystem #16 图评估消费；World 持有 + 非 ECS 不入 StateHash——
+    // 基准场零 AnimGraph 实例 = 零重录，ClipTable/TableStore 同款口径）----
+    ControllerTable& Controllers() { return controllers_; }
+    const ControllerTable& Controllers() const { return controllers_; }
+
     // ---- 配置表存储（M6a 批② T2；TableStore.h 头说明——.tab 全字符串格，
     // C# Lemon.Table 读；World 持有 + 非 ECS 不入 StateHash，零重录 09 §6.8 先例二）----
     TableStore& Tables() { return tables_; }
@@ -212,6 +219,7 @@ private:
     RtUiChannel rtUi_;
     RtUiCards cards_;
     ClipTable clips_;
+    ControllerTable controllers_; // T3d：.controller 状态机（Controllers()；非 ECS 通道，零重录）
     FxChannel fx_;
     SaveChannel saves_;
     TableStore tables_; // M6a 批②：.tab 配置表（Tables()；非 ECS 通道，零重录）

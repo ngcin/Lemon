@@ -17,6 +17,7 @@
 #include "ECS/ComponentRegistry.h"
 #include "ECS/Entity.h"
 #include "Panels/Panel.h"
+#include "Tooling/FilePicker.h" // AnimationPanel 面板私有文件选择器（v3.1 选图）
 #include "Renderer/Camera2D.h"
 
 namespace lemon::editor {
@@ -207,38 +208,117 @@ private:
     uint64_t gcPrev_ = 0; // GcAllocated 差分基线（M4.5 GC 红字口径）
 };
 
-/// Animation（M6a 批② T3 + T3b）：.clip 帧动画编辑——05 §7 内容编辑器三件套
-/// 之一。读-改-写 + 三条生产通道（T3b 用户实测反馈）：
-///   A 文件夹多单图 → 一键建动画（右键文件夹/向导；整图引用 T3b-1）
-///   B 单图切片（meta importer，Unity 式 + 面板内入口 T3b-3）
-///   C 网格拖框选区间 → 追加/替换帧（Godot 式交互，T3b-4）
-/// 帧列表 = 横排胶片带（拖拽重排/Ctrl 多选删，T3b-7）；LoopMode 三模式
-///（Once/Loop/PingPong，T3b-2）。EnterPlay 快照语义 = 保存后下次 Enter Play 生效；
-/// Play 中只读。双击 AssetBrowser 的 .clip 进入。
+/// Animation（M6a 批② T3/T3b/T3c + 工作台 v3 交互重设计）：.anim 帧动画编辑
+/// ——05 §7 内容编辑器三件套之一。Godot SpriteFrames 式主从工作台（用户实测
+/// 三轮反馈收敛）：左列段清单（inline 新建/改名、搜索、复制段——建段只输入
+/// 名字，选帧回到右区做）+ 右区三层（帧操作/播放工具条 · 大预览自适应 ·
+/// 胶片带+属性行）。帧操作键盘化（←/→ 移选 · Ctrl+←/→ 换序 · Del 删 ·
+/// Ctrl+D 复制 · Space 播放，面板持焦点时经 CapturesGlobalKeys 仲裁吃键）；
+/// 拖 Assets 精灵入胶片带格=换图、入带尾/预览=加帧；从精灵表对话框 =
+/// 全选/点选序/缩放（Godot Select Frames 式）。数据模型（.anim/.override schema）
+/// 与三通道向导/集弹窗边沿触发机制不变；EnterPlay 快照语义 = 保存后下次
+/// Enter Play 生效；Play 中只读。双击 AssetBrowser 的 .anim/.override 进入。
 class AnimationPanel final : public IEditorPanel {
 public:
     const char* Name() const override { return "Animation"; }
     /// 按需窗口（Unity 同款：双击资产/Window 菜单打开，不占默认布局位）
     bool OpenByDefault() const override { return false; }
     void OnGui(EditorApp& app) override;
+    /// 窗口（含子窗）持焦点时捕获 Delete/Ctrl+D（帧操作）——EditorApp 据此
+    /// 跳过实体级同名键，防双触发（见 Panel.h / BuildShortcuts）
+    bool CapturesGlobalKeys() const override { return keysFocused_; }
     /// AssetBrowser 双击 clip → EditorApp::OpenAnimationEditor 的落点
     void SetTarget(uint64_t guid) { targetGuid_ = guid; }
     /// 文件夹右键"从此文件夹创建动画"入口：开面板 + 向导文件夹页预选（T3b-5）。
     /// destDir = 落点目录（AssetBrowser 当前浏览目录——决策 4：跟随当前目录）
     void StartCreateFromFolder(const std::string& relDir, const std::string& destDir);
+    /// 空白区右键"新建动画剪辑…"入口（v3.1）：向导空白页；面板内不再放"新建"
+    /// 按钮——创建动作归 AssetBrowser（用户实测反馈）
+    void StartCreateBlank(const std::string& destDir);
+    // ---- T3c 动画集工作台 ----
+    /// 打开 .override 集（浏览器双击 .override / OpenAnimationEditor 集归并解析落点）
+    void OpenSet(uint64_t setGuid) { setGuid_ = setGuid; }
+    /// 集模式下选中段（双击 .anim → 归属集解析后调；clipGuid 0 = 清选）
+    void SelectSegment(uint64_t clipGuid) { segGuid_ = clipGuid; targetGuid_ = clipGuid; }
+    /// 文件夹右键"新建动画集…"入口：开新建集弹窗（srcDir 非空 = 并建首段勾选）
+    void StartCreateSet(const std::string& relDir, const std::string& destDir);
+    /// 冒烟回归钩子：当前集模式目标（0 = 传统 clip 模式）——2026-09-27 修复
+    /// "双击 .override 不开集"后补的程序化断言面（OpenAnimationEditor 直接分支）
+    uint64_t SetGuidForTest() const { return setGuid_; }
+    /// 工具条「从图片文件…」同款入口（T3-UX4 抽取：菜单与冒烟注入共用）
+    void StartImageFilePick(EditorApp& app);
+    /// 冒烟：多选计数（FilePicker.multiSel_ 大小）
+    size_t PickerSelCountForTest() const { return picker_.MultiSelCountForTest(); }
+    /// 冒烟：直走真实选择语义（Shift 范围/Ctrl 加选——修饰键不便注入）
+    void PickerClickForTest(size_t idx, bool ctrl, bool shift) {
+        picker_.ApplyMultiClickForTest(idx, ctrl, shift);
+    }
 
 private:
     void LoadFrom(const AssetDatabase& db, const AssetEntry& e); // 缓存键失效 → 重读
     void DrawCellImage(EditorApp& app, const AssetEntry* sheet, uint32_t cell,
                        float edge); // 切片号/整图 → 页缩略图直染（未切片 = 全幅 UV）
     bool TrySave(EditorApp& app, const AssetEntry& e); // 校验 + 原子写 + 主动 Rescan
-    /// 新建落盘共用：Assets 下 dir/<name>.clip 写盘 + Rescan + SetTarget（T3b-5/6）
+    /// 统一保存（v3）：段 TrySave 成功 → 集模式连存集（一个按钮，替代双保存位）
+    bool SaveAll(EditorApp& app);
+    /// 新建落盘共用：Assets 下 dir/<name>.anim 写盘 + Rescan + SetTarget（T3b-5/6）
     bool TryCreateClip(EditorApp& app, const ClipData& c, const std::string& dir,
                        std::string& err);
-    void DrawFilmstrip(EditorApp& app);      // 胶片带（T3b-7）
-    void DrawSelectedFrameRow(EditorApp& app); // 选中帧编辑行（sheet/cell/删）
-    void DrawWizard(EditorApp& app);         // 新建三通道向导（T3b-5/6）
-    void DrawSheetPicker(EditorApp& app);    // 从精灵表加帧/选定区间弹窗（T3b-4）
+    // ---- 帧操作原语（工具条/键盘/右键菜单三入口共用）----
+    /// idx 后插入帧（idx=-1 = 末尾追加）并选中新帧
+    void InsertFrameAfter(int idx, const ClipFrame& f);
+    void DuplicateSelectedFrames(); // 复制选中帧插其后（多选 = 各自插后）
+    void DeleteSelectedFrames();    // 删 selSet_（无多选 = selFrame_ 单帧）
+    // ---- 右区三层 ----
+    void DrawFrameToolbar(EditorApp& app, bool ro); // 帧操作+播放传输+fps/循环+保存
+    void DrawPreview(EditorApp& app, bool ro, int shown); // 大预览（fit ≤512）+拖入加帧+信息角标
+    void DrawFilmstrip(EditorApp& app, bool ro, int playFrame); // 胶片带（v3）
+    void DrawSelectedFrameRow(EditorApp& app); // 属性行（多选批量/单帧 sheet+cell）
+    void HandleKeys(bool ro); // 键盘帧操作（焦点/WantTextInput/弹窗守卫）
+    void DrawWizard(EditorApp& app);         // 新建动画剪辑向导（三通道；入口 = AssetBrowser）
+    // ---- 从精灵表添加帧 v3.1（用户实测反馈重做）：文件选择 → 选帧对话框 ----
+    /// 开文件选择器选精灵图（createMode=true = 向导页产出 wizFrames_）
+    void StartSheetPick(EditorApp& app, bool createMode);
+    /// 文件选择器结果路由（v3.1 三流：精灵表单图 / 多图整图入帧 / 向导精灵表）。
+    /// 项目内文件 → FindByPath（未登记则 Rescan 收编）；项目外 → ImportFile 落
+    /// 到集目录/浏览器目录。内含 Rescan——调用后 OnGui 只用 guid 重查。
+    void HandlePickerResult(EditorApp& app);
+    /// 选帧对话框 v3.1（Godot Select Frames 式）：左图区（网格实时重绘 +
+    /// InvisibleButton 覆盖捕获拖动——修复"拖框选变成拖窗口"）+ 右参数栏（按
+    /// 块数/按像素，改动即清选区）+ 底行动态按钮。**添加时**才把网格写 .meta
+    /// （SetGridSlice + Rescan + guid 重查）——分割全程所见即所得。
+    void DrawSheetPicker(EditorApp& app);
+    /// 从 .anim 复制帧：列表弹窗（v3.1 加帧通道之一）
+    void DrawClipPickModal(EditorApp& app);
+    /// 读 clip 资产帧表追加到当前编辑态（弹窗与拖 .anim 资产两入口共用）
+    void AppendClipFrames(EditorApp& app, uint64_t clipGuid);
+    // ---- T3c 动画集工作台 ----
+    void LoadSetFrom(const AssetDatabase& db, const AssetEntry& e); // 集档缓存键失效 → 重读
+    /// 集校验（段名非空唯一 / 段引用可解析）+ 原子写 + Rescan（调用后段/集指针失效）
+    bool TrySaveSet(EditorApp& app, const AssetEntry& setEntry);
+    /// .override 新建落盘（TryCreateClip 同款：撞路拒 + 墓碑复活 + Rescan + OpenSet）
+    bool TryCreateSet(EditorApp& app, const std::string& dir, const std::string& name,
+                      std::vector<AnimSetSeg> segs, std::string& err);
+    /// 创建流程入口统一清编辑态（2026-09-27 热修②：面板常驻 PanelRegistry，
+    /// 右键"新建…"弹窗背后不得照渲染上次打开的集/剪辑——历史数据误读源）
+    void ResetEditingState();
+    /// 左列 v3.2（Godot Animations 列）：集名行 + 图标工具条（新动画/改名/复制/
+    /// 移除）+ 搜索 + 动画清单（inline 改名 + 右键菜单）+ 底部 inline 新建输入。
+    /// width/height <0 = 该向填满（宽窗 = 竖列全高 230px；窄窗 = 顶部横条 38% 高）；
+    /// sameLineAfter = 画完回右侧同行（宽窗并排；窄窗堆叠传 false）
+    void DrawLeftColumn(EditorApp& app, float width, float height, bool sameLineAfter);
+    /// 右区 v3.2：ro 横幅 → 工具条 → 预览条 → 帧网格 → 属性行（时钟推进在内）。
+    /// 宿主为 ##right child——窄窗内容超宽出滚动条（v3.1 前直接裁切 = "右侧
+    /// 空白不可编辑"的窄窗根因）
+    void DrawRightArea(EditorApp& app, bool ro);
+    /// inline 新建落点：空 .anim 落盘 + 入集 + 选中（输入框保持开 = 连续建段）
+    void QuickCreateSegment(EditorApp& app);
+    /// inline 改名提交：校验 → db.Rename 段文件 → 集段名同步 → TrySaveSet
+    /// （失败保持输入开，setErr_ 提示）
+    void CommitSegRename(EditorApp& app, int idx);
+    /// 复制段：读源 .anim → 撞名后缀 -2.. 落盘 + 入集 + 选中
+    void DuplicateSegment(EditorApp& app, size_t idx);
+    void DrawSetModals(EditorApp& app);      // 新建集弹窗（边沿触发）
 
     uint64_t targetGuid_ = 0;               // 编辑目标（0 = 未选）
     uint64_t loadedGuid_ = 0, loadedHash_ = 0; // 缓存键（外部改动/保存回读 = 重读）
@@ -250,27 +330,61 @@ private:
     // 播放预览：编辑器时钟推进（非确定无妨——纯预览，不进模拟/回放）
     bool previewing_ = false;
     double previewT0_ = 0.0;
-    int previewFrame_ = 0; // 暂停位/手动步进
-    // 胶片带（T3b-7）：当前选中帧 + Ctrl 多选集（有序去重；空 = 无多选）
+    int previewFrame_ = 0; // 暂停位/手动步进（v3：暂停态跟随选中帧）
+    // 胶片带（v3）：当前选中帧 + 多选集 + Shift 范围锚 + 缩放
     int selFrame_ = -1;
     std::vector<int> selSet_;
-    // 新建向导（T3b-5/6）：三通道 + 落点（默认 = AssetBrowser 当前目录，可改）
-    bool wizOpen_ = false;
+    int selAnchor_ = -1;              // Shift 范围选锚（上次单选位）
+    float stripEdge_ = 64.0f;         // 帧缩略图边长（Ctrl+滚轮 / ± 按钮，40..128）
+    bool keysFocused_ = false;        // 本面板窗口（含子窗）持焦点（键捕获仲裁）
+    // 新建向导（T3b-5/6）：三通道 + 落点（默认 = AssetBrowser 当前目录，可改）。
+    // wizPending_ = 边沿触发（只在入口点击帧调一次 OpenPopup——每帧重调破坏
+    // 弹窗栈序，T3b 修正批实测）
+    bool wizOpen_ = false, wizPending_ = false;
     int wizTab_ = 0;              // 0 文件夹 / 1 精灵表 / 2 空白
     std::string wizDir_;          // 文件夹页源目录（"Assets/..."）
     std::string wizPath_;         // 落点目录（相对项目根；"Assets" = 根）
     std::string wizName_ = "new-clip";
     int wizFps_ = 8, wizLoop_ = 1;
     std::string wizErr_;
-    std::vector<ClipFrame> wizFrames_; // 精灵表页已选定区间（[选定] 暂存）
-    bool wizPicked_ = false;      // 精灵表页有暂存区间（显示来源摘要）
-    // 从精灵表加帧（T3b-4）：追加/替换（pickCreate_=false）与向导选定（true）共用
-    bool pickOpen_ = false, pickCreate_ = false;
+    std::vector<ClipFrame> wizFrames_; // 精灵表页已选帧（内嵌体产出）
+    bool wizPicked_ = false;      // 精灵表页有产出（显示"已选 N 帧"摘要）
+    // 从精灵表加帧（T3b-4 → v3.1 两段式：文件选择器 → 选帧对话框）；边沿触发
+    bool pickOpen_ = false, pickPending_ = false; // 选帧对话框（第二段模态）
     uint64_t pickGuid_ = 0;       // 目标精灵资产
-    int pickCols_ = 8, pickRows_ = 1, pickCellW_ = 32, pickCellH_ = 32;
-    int pickInput_ = 0;          // 切片输入法：0 = 格数（尺寸按图算）/ 1 = 像素
+    int pickCols_ = 4, pickRows_ = 4, pickCellW_ = 32, pickCellH_ = 32;
+    int pickInput_ = 0;          // 分割输入法：0 = 按块数 / 1 = 按像素 cell 尺寸
     bool pickHasRect_ = false, pickDrag_ = false; // 拖框选状态
     int pickR0_ = 0, pickC0_ = 0, pickR1_ = 0, pickC1_ = 0; // 框选格区间（含端点）
+    float pickZoom_ = 1.0f;      // 表预览缩放（0.25..8 × fit 宽；Ctrl+滚轮/按钮）
+    int pickOrderMode_ = 0;      // 0 = 拖框选（行优先）/ 1 = 点选（按点击序 = Godot As Selected）
+    std::vector<uint32_t> pickSelCells_; // 点选序收集的 cell（有序去重）
+    bool pickCreate_ = false;    // 选帧对话框产出流向：true = 向导 wizFrames_
+    FilePicker picker_;          // 面板私有文件选择器（v3.1：选图入口）
+    int pickFlow_ = 0;           // 0 无 / 1 精灵表单图（编辑态）/ 2 多图整图入帧 / 3 精灵表（向导）
+    bool clipPickOpen_ = false, clipPickPending_ = false; // 从 .anim 复制列表弹窗
+    // ---- T3c 动画集工作台（目标 = .override；段编辑复用上方 clip 机制——集模式下
+    // targetGuid_ 指向当前段，setGuid_ 指向集容器）----
+    uint64_t setGuid_ = 0;                    // 当前集（0 = 裸 clip 传统模式）
+    uint64_t setLoadedGuid_ = 0, setLoadedHash_ = 0; // 集档缓存键
+    AnimSetData setEdit_;                     // 集编辑态副本（ok=false = 坏档红字）
+    uint64_t segGuid_ = 0;                    // 集模式当前选中段（0 = 未选）
+    // 左列 v3：inline 新建（Enter 建段后输入保持开 = 连续建段）/ inline 改名 / 搜索
+    bool segNewActive_ = false;
+    std::string segNewName_;
+    bool segNewFocus_ = false;      // 建段输入一次性抢焦点（Enter 提交后重新抢）
+    int segEditIdx_ = -1;         // inline 改名目标段下标（-1 = 无）
+    std::string segEditBuf_;
+    bool segEditFocus_ = false;    // 改名输入一次性抢焦点
+    std::string segFilter_;       // 段搜索子串（大小写不敏感；建段时自动清）
+    std::string setMsg_;          // 集保存/校验结果行（左列底部）
+    bool setOk_ = false;
+    bool setCreateOpen_ = false, setCreatePending_ = false; // 新建集弹窗（边沿触发）
+    std::string setCreateName_ = "player";
+    std::string setCreateDir_;                // 落点目录（相对项目根）
+    std::string setCreateSrc_;                // 源目录（非空 = 显示"并建首段"勾选）
+    bool setCreateWithSeg_ = false;
+    std::string setErr_;
 };
 
 } // namespace lemon::editor

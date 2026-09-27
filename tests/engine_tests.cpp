@@ -725,7 +725,7 @@ void TestWorldServices() {
 void TestComponentRegistry() {
     RegisterAllComponents();
     auto& reg = ComponentRegistry::Instance();
-    Expect(reg.Count() == 28, "catalog count (5 core + 4 render + 12 behavior + 6 gameplay + M5 批② WaveDirector)");
+    Expect(reg.Count() == 30, "catalog count (5 core + 4 render + 12 behavior + 6 gameplay + M5 批② WaveDirector + T3d AnimGraph/AnimParams)");
 
     // 按 name 可查、id 稳定
     const ComponentMeta* tf = reg.Find("Transform2D");
@@ -774,7 +774,7 @@ void TestVerifyWorldAutoRegistersCatalog() {
     // ISSUE-9 回归：World 构造即登记组件目录——bench-sim 曾漏调 RegisterAllComponents，
     // StateHash 遍历空注册表逐帧恒等，M2 回放验收恒真空转（M3-0 修复，2026-09-19）
     World world;
-    Expect(ComponentRegistry::Instance().Count() == 28, "world ctor auto-registers catalog");
+    Expect(ComponentRegistry::Instance().Count() == 30, "world ctor auto-registers catalog");
 }
 
 } // namespace
@@ -1029,27 +1029,28 @@ void TestSystemPipelineOrder() {
     world.InstallDefaultSystems();
     auto& p = world.Pipeline();
 
-    Expect(p.Systems().size() == 17, "17 systems installed");
+    Expect(p.Systems().size() == 18, "18 systems installed（T3d 批② +AnimGraphSystem）");
     // Essential 阶段只有 DestroyCommit；FixedTick 按表序
-    // （#9 Pickup = M5 批①，16→17）
+    // （#9 Pickup = M5 批①；T3d 批② AnimGraph 插在 CSharpBatch 后——图评估读当
+    // tick 脚本参数，写段由下一 tick Animator 消费，与脚本直写 Play 同拍）
     const char* expected[] = {"InputSnapshot", "Director",    "Spawn",
                               "AI",            "Navigation",  "Separation",
                               "Movement",      "SpatialHashRebuild", "Pickup",
                               "Hitbox",        "Trigger",     "Stat",
                               "Animator",      "ProjectileLifetime", "CSharpBatch",
-                              "ScriptEventDispatch"};
+                              "AnimGraph",     "ScriptEventDispatch"};
     uint32_t fi = 0;
     for (const auto& s : p.Systems()) {
         if (s->Stage() == SystemStage::Essential) {
             Expect(std::string_view(s->Name()) == "DestroyCommit", "essential is destroy");
         } else {
-            Expect(fi < 16 && std::string_view(s->Name()) == expected[fi],
+            Expect(fi < 17 && std::string_view(s->Name()) == expected[fi],
                    "fixedtick order");
             ++fi;
         }
     }
-    Expect(fi == 16, "16 fixedtick systems");
-    Expect(p.Profiles().size() == 17, "profiles allocated");
+    Expect(fi == 17, "17 fixedtick systems");
+    Expect(p.Profiles().size() == 18, "profiles allocated");
 }
 
 void TestSimulationEndToEnd() {
@@ -3733,6 +3734,7 @@ void TestEditorMetaSanity() {
 
 #include "Assets/AssetDatabase.h"
 #include "Assets/ClipEdit.h"
+#include "Assets/ControllerEdit.h"
 #include "Assets/Csv.h"
 #include "Assets/FileWatcher.h"
 #include "Assets/ProjectWizard.h"
@@ -3911,9 +3913,9 @@ void TestGridSliceConfig() {
     Expect(e && !e->Sliced(), "cleared back to whole image");
 
     // 非 sprite 拒绝
-    { std::ofstream f(root / "Assets" / "x.clip", std::ios::binary); f << "{}"; }
+    { std::ofstream f(root / "Assets" / "x.anim", std::ios::binary); f << "{}"; }
     db.Rescan();
-    if (const AssetEntry* c = db.FindByPath("Assets/x.clip"))
+    if (const AssetEntry* c = db.FindByPath("Assets/x.anim"))
         Expect(!db.SetGridSlice(*db.FindByGuid(c->guid), 1, 1, 1, 1),
                "non-sprite rejected");
     else
@@ -4041,7 +4043,7 @@ void TestCsvTable() {
            "to json rejects oversized grid");
 }
 
-// ---- M6a 批② T3：.clip 解析/序列化（AnimationPanel 数据面；验收② roundtrip）----
+// ---- M6a 批② T3：.anim 解析/序列化（AnimationPanel 数据面；验收② roundtrip）----
 void TestClipEdit() {
     using lemon::editor::ClipData;
     using lemon::editor::ClipToJson;
@@ -4132,6 +4134,182 @@ void TestClipEdit() {
     c = ParseClipJson(
         "{\"fps\":8,\"loopMode\":5,\"frames\":[{\"sheet\":\"000000000000000f\",\"cell\":0}]}");
     Expect(c.ok && c.loopMode == 1, "clip loopMode out of range falls back to Loop");
+}
+
+// ---- M6a 批② T3c：.override 动画集解析/序列化 + ClipTable 集按名索引 ----
+void TestAnimSetAndClipIndex() {
+    using lemon::ecs::ClipTable;
+    using lemon::editor::AnimSetData;
+    using lemon::editor::AnimSetToJson;
+    using lemon::editor::ParseAnimSetJson;
+
+    // 规范档（ClipEdit 同款多行格式）+ 定版格式逐字符同型
+    const char* doc =
+        "{\n  \"schemaVersion\": 1,\n  \"name\": \"player\",\n  \"segments\": [\n"
+        "    {\n      \"name\": \"idle\",\n      \"clip\": \"5bd31a7c30000004\"\n    },\n"
+        "    {\n      \"name\": \"walk\",\n      \"clip\": \"5bd31a7c30000005\"\n    }\n"
+        "  ]\n}";
+    AnimSetData s = ParseAnimSetJson(doc);
+    Expect(s.ok && s.name == "player" && s.segments.size() == 2 &&
+               s.segments[0].name == "idle" &&
+               s.segments[0].clipGuid == 0x5bd31a7c30000004ull &&
+               s.segments[1].clipGuid == 0x5bd31a7c30000005ull,
+           "animset parse canonical");
+    s.ok = true;
+    Expect(AnimSetToJson(s) == doc, "animset golden format stable");
+
+    // roundtrip：改名/增删段
+    s.name = "enemy";
+    s.segments.push_back({"hit", 0x5bd31a7c30000006ull});
+    s.segments.erase(s.segments.begin());
+    const AnimSetData back = ParseAnimSetJson(AnimSetToJson(s));
+    Expect(back.ok && back.name == s.name && back.segments == s.segments,
+           "animset roundtrip after edit");
+
+    // 空集合法（新建起步态）+ name 缺省空（面板补文件名）
+    s = ParseAnimSetJson("{\"schemaVersion\":1,\"segments\":[]}");
+    Expect(s.ok && s.name.empty() && s.segments.empty(), "animset empty parses");
+    Expect(AnimSetToJson(s).find("\"segments\": []") != std::string::npos,
+           "animset empty serializes");
+
+    // 坏档拒入：非 JSON / 缺 segments / 段缺字段 / 空段名 / clip 非 hex
+    Expect(!ParseAnimSetJson("{").ok, "animset bad json rejected");
+    Expect(!ParseAnimSetJson("{\"name\":\"x\"}").ok, "animset missing segments rejected");
+    Expect(!ParseAnimSetJson("{\"segments\":[{\"name\":\"a\"}]}").ok,
+           "animset segment missing clip rejected");
+    Expect(!ParseAnimSetJson("{\"segments\":[{\"name\":\"\",\"clip\":\"000000000000000f\"}]}")
+                .ok,
+           "animset empty segment name rejected");
+    Expect(!ParseAnimSetJson("{\"segments\":[{\"name\":\"a\",\"clip\":\"zz\"}]}").ok,
+           "animset non-hex clip rejected");
+    AnimSetData bad;
+    Expect(AnimSetToJson(bad).empty(), "animset tojson rejects !ok");
+
+    // 集索引：登记 / 集内按名 / 跨集同名互不扰 / 反查 / 重名先到先得 / 防御 / Clear
+    ClipTable t;
+    Expect(t.Add(0x11, {1u, 2u, 3u}, 8.f, true) && t.Add(0x22, {4u}, 8.f, true) &&
+               t.Add(0x33, {5u}, 8.f, true) && t.Add(0x44, {6u}, 8.f, true),
+           "clips added for set index");
+    Expect(t.RegisterSet(0xAB, {{"idle", 0x11u}, {"walk", 0x22u}}) == 2, "register set A");
+    Expect(t.RegisterSet(0xCD, {{"idle", 0x33u}}) == 1, "register set B (cross-set same name)");
+    Expect(t.FindByName(0xAB, "walk") == 0x22, "by name in set A");
+    Expect(t.FindByName(0xCD, "idle") == 0x33, "same name resolves in own set");
+    Expect(t.FindByName(0xAB, "idle") == 0x11, "set A idle unaffected by set B");
+    Expect(t.FindByName(0xAB, "nope") == 0, "missing name → 0");
+    Expect(t.FindByName(0xEE, "idle") == 0, "missing set → 0");
+    Expect(t.SetOfClip(0x22) == 0xAB && t.SetOfClip(0x33) == 0xCD, "reverse lookup");
+    Expect(t.SetOfClip(0x44) == 0, "non-member → 0");
+    Expect(t.RegisterSet(0xEF, {{"idle", 0x44u}, {"idle", 0x33u}}) == 1,
+           "dup name first wins");
+    Expect(t.FindByName(0xEF, "idle") == 0x44, "dup name resolves to first");
+    Expect(t.SetOfClip(0x33) == 0xCD, "multi-set segment keeps first set");
+    Expect(t.RegisterSet(0, {{"x", 0x11u}}) == 0, "setId 0 rejected");
+    Expect(t.RegisterSet(0x99, {{"", 0x11u}, {"ok", 0x11u}}) == 1, "empty name skipped");
+    t.Clear();
+    Expect(t.FindByName(0xAB, "walk") == 0 && t.SetOfClip(0x22) == 0 && t.Count() == 0,
+           "clear wipes set index");
+}
+
+// ---- M6a 批② T3d：.controller 解析/序列化 + ControllerTable + 条件评估 +
+// ClipTable 事件表/集内反查（ADR-013 D1/D2/D4）---------------------------
+void TestControllerAndGraph() {
+    using ecs::AnimCondOp;
+    using ecs::AnimParamKind;
+    // -- ControllerTable：登记/索引/条件评估（引擎域纯逻辑）--
+    ecs::ControllerTable ct;
+    ecs::ControllerDef def;
+    def.states = {"Idle", "Walk", "Attack"};
+    def.params = {{"speed", AnimParamKind::Float, 0.0f},
+                  {"atk", AnimParamKind::Trigger, 0.0f}};
+    ecs::AnimTransitionDef walk;
+    walk.from = 0;
+    walk.to = 1;
+    walk.conds.push_back({0, AnimCondOp::Gt, 0.1f});
+    ecs::AnimTransitionDef back; // Attack → Idle 段末过渡（exitTime = Queue 图化）
+    back.from = 2;
+    back.to = 0;
+    back.exitTime = true;
+    def.transitions = {walk, back};
+    Expect(ct.Add(0x77, std::move(def)), "controller add");
+    const ecs::ControllerDef* d = ct.Find(0x77);
+    Expect(d && d->states.size() == 3 && d->transitions.size() == 2, "controller find");
+    Expect(d->StateIndex("Walk") == 1 && d->StateIndex("nope") == -1, "state index");
+    Expect(d->ParamIndex("atk") == 1 && d->ParamIndex("nope") == -1, "param index");
+    ecs::ControllerDef empty;
+    Expect(!ct.Add(0, std::move(empty)), "id 0 rejected");
+    ecs::ControllerDef noStates;
+    Expect(!ct.Add(0x88, std::move(noStates)), "empty states rejected");
+    float p[8] = {};
+    Expect(!ecs::AnimCondsHold(*d, d->transitions[0], p), "speed 0 → 不切");
+    p[0] = 1.0f;
+    Expect(ecs::AnimCondsHold(*d, d->transitions[0], p), "speed>0.1 → 切");
+    p[1] = 1.0f; // trigger 槽非 0
+    ecs::AnimCondDef tg{1, AnimCondOp::Trigger, 0.0f};
+    Expect(ecs::AnimCondHolds(tg, p[1]) && !ecs::AnimCondHolds(tg, 0.0f), "trigger 语义");
+    ct.Clear();
+    Expect(ct.Count() == 0 && ct.Find(0x77) == nullptr, "controller clear");
+
+    // -- ClipTable：事件表 + 集内反查 NameOfClip + 同集同 clip 换名去重 --
+    ecs::ClipTable t2;
+    t2.Add(0x10, {1, 2, 3}, 10.0f, true, {{1, 5}});
+    t2.Add(0x20, {9}, 10.0f, false);
+    Expect(t2.Find(0x10) && t2.Find(0x10)->events.size() == 1 &&
+               t2.Find(0x10)->events[0].frame == 1 && t2.Find(0x10)->events[0].id == 5,
+           "events stored");
+    Expect(t2.Find(0x20)->events.empty(), "no events default");
+    t2.RegisterSet(0xAB, {{"Idle", 0x10u}, {"Walk", 0x20u}});
+    const std::string* n = t2.NameOfClip(0xAB, 0x10);
+    Expect(n && *n == "Idle", "集内反查段名");
+    Expect(t2.NameOfClip(0xAB, 0x99) == nullptr, "反查 miss");
+    t2.RegisterSet(0xCD, {{"X", 0x10u}});
+    n = t2.NameOfClip(0xCD, 0x10);
+    Expect(n && *n == "X", "跨集复用段各有名（反查按集）");
+    t2.RegisterSet(0xAB, {{"Alias", 0x10u}}); // 同集同 clip 换名 → 撤名（首名胜）
+    n = t2.NameOfClip(0xAB, 0x10);
+    Expect(n && *n == "Idle", "同集同 clip 换名被撤（NameOfClip 确定性）");
+    Expect(t2.FindByName(0xAB, "Alias") == 0, "撤名后按名不可达");
+
+    // -- ControllerEdit：解析/roundtrip/坏档拒绝 --
+    const char* golden =
+        "{\n  \"schemaVersion\": 1,\n  \"name\": \"Basic\",\n  \"params\": [\n"
+        "    { \"name\": \"speed\", \"kind\": \"float\" },\n"
+        "    { \"name\": \"attack\", \"kind\": \"trigger\" }\n  ],\n"
+        "  \"entry\": \"Idle\",\n  \"states\": [\"Idle\", \"Walk\", \"Attack\"],\n"
+        "  \"transitions\": [\n"
+        "    { \"from\": \"Idle\", \"to\": \"Walk\", \"when\": [{ \"param\": \"speed\", \">\": 0.1 }] },\n"
+        "    { \"from\": \"Attack\", \"to\": \"Idle\", \"on\": \"exitTime\" }\n  ]\n}";
+    editor::ControllerData c = editor::ParseControllerJson(golden);
+    Expect(c.ok, "controller golden 解析");
+    Expect(c.states.size() == 3 && c.params.size() == 2 && c.transitions.size() == 2,
+           "controller 结构");
+    Expect(c.params[1].kind == 2 && c.transitions[1].exitTime, "kind/exitTime");
+    Expect(c.transitions[0].conds[0].op == 2 && c.transitions[0].conds[0].value > 0.09f,
+           "条件算子/阈值");
+    Expect(editor::ControllerToJson(c) == golden, "controller roundtrip 逐字节");
+    Expect(!editor::ParseControllerJson("{ \"states\": [] }").ok, "空 states 拒绝");
+    Expect(!editor::ParseControllerJson(
+                R"({ "states": ["A"], "transitions": [{"from":"A","to":"B"}] })")
+                .ok,
+           "to 引用未列状态拒绝");
+    Expect(!editor::ParseControllerJson(
+                R"({ "states": ["A","B"], "transitions": [{"from":"A","to":"B"}] })")
+                .ok,
+           "空条件非 exitTime 拒绝");
+    std::string nine;
+    for (int i = 0; i < 9; ++i) nine += (i ? "," : "") + std::string("{\"name\":\"p") +
+                                        std::to_string(i) + "\"}";
+    Expect(!editor::ParseControllerJson(
+                "{ \"states\": [\"A\"], \"params\": [" + nine + "] }")
+                .ok,
+           "参数 >8 拒绝");
+    Expect(!editor::ParseControllerJson(
+                R"({ "states": ["A","A"] })")
+                .ok,
+           "状态重名拒绝");
+    // 坏档 ok=false → ToJson 空串（ClipToJson 同款约定）；好档无 error
+    Expect(c.error.empty(), "好档无 error");
+    editor::ControllerData bad = editor::ParseControllerJson("{ \"states\": [] }");
+    Expect(!bad.ok && editor::ControllerToJson(bad).empty(), "坏档 ToJson 空串");
 }
 
 // ---- M6a 批② T1：.csv → .tab 转换导入生命周期（csv 不拷入 / 覆盖重导 / guid 稳定）----
@@ -4958,7 +5136,9 @@ int main() {
     TestAssetPathContainment();
     TestCsvTable();       // M6a 批② T1：CSV/表格序列化（ADR-012）
     TestGridSliceConfig(); // M6a 批② T3b-3：SetGridSlice 连号块
-    TestClipEdit();       // M6a 批② T3：.clip 解析/序列化（AnimationPanel 数据面）
+    TestClipEdit();       // M6a 批② T3：.anim 解析/序列化（AnimationPanel 数据面）
+    TestAnimSetAndClipIndex(); // M6a 批② T3c：.override 集 + ClipTable 按名索引
+    TestControllerAndGraph();  // T3d：.controller + ControllerTable + 事件/反查
     TestTableAssetImport(); // M6a 批② T1：.csv → .tab 转换导入生命周期
     TestDebounceGatePending();
     TestProjectWizard();

@@ -35,6 +35,7 @@ enum class IconKind : uint8_t {
     AssetSprite, AssetPrefab, AssetScript, AssetGeneric, // 资产类型
     Cursor,                            // Select 工具（Godot 式选择模式）
     Magnet,                            // 拖拽吸附开关（Godot 磁铁语义）
+    Add, Duplicate, Delete, Rename, Search, // 列表行操作（动画工作台 v3.1 左列图标化）
     Count
 };
 inline constexpr uint32_t kIconCount = (uint32_t)IconKind::Count;

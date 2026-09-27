@@ -118,7 +118,8 @@ public static unsafe class LayoutTables
             F("curFrame", FieldTypeCode.UInt16, 0, O(p, &p->CurFrame)),
             F("nextClipId", FieldTypeCode.UInt32, FieldTypeCode.RuntimeFlag, O(p, &p->NextClipId)),
             F("fadeRemain", FieldTypeCode.Float, FieldTypeCode.RuntimeFlag, O(p, &p->FadeRemain)),
-            F("nextLoop", FieldTypeCode.UInt16, FieldTypeCode.RuntimeFlag, O(p, &p->NextLoop)) }); }
+            F("nextLoop", FieldTypeCode.UInt16, FieldTypeCode.RuntimeFlag, O(p, &p->NextLoop)),
+            F("ended", FieldTypeCode.UInt8, FieldTypeCode.RuntimeFlag, O(p, &p->Ended)) }); }
         { ParticleEmitterRef t = default; ParticleEmitterRef* p = &t;
           Add<ParticleEmitterRef>("ParticleEmitterRef", (uint)sizeof(ParticleEmitterRef), new[] {
             F("emitterId", FieldTypeCode.UInt32, 0, O(p, &p->EmitterId)),
@@ -262,6 +263,23 @@ public static unsafe class LayoutTables
             F("spawned1", FieldTypeCode.UInt16, 1, (ushort)(spBase + 2)),
             F("spawned2", FieldTypeCode.UInt16, 1, (ushort)(spBase + 4)),
             F("spawned3", FieldTypeCode.UInt16, 1, (ushort)(spBase + 6)) }); }
+
+        // ---- T3d 批①/②（id 28/29；登记表尾追加，禁重排）----
+        { AnimGraph t = default; AnimGraph* p = &t;
+          Add<AnimGraph>("AnimGraph", (uint)sizeof(AnimGraph), new[] {
+            F("controllerGuid", FieldTypeCode.UInt64, 0, O(p, &p->ControllerGuid)),
+            F("setGuid", FieldTypeCode.UInt64, 0, O(p, &p->SetGuid)),
+            F("inited", FieldTypeCode.UInt8, 1, O(p, &p->Inited)) }); }
+        { AnimParams t = default; AnimParams* p = &t;
+          Add<AnimParams>("AnimParams", (uint)sizeof(AnimParams), new[] {
+            F("param0", FieldTypeCode.Float, 1, O(p, &p->P0)),
+            F("param1", FieldTypeCode.Float, 1, O(p, &p->P1)),
+            F("param2", FieldTypeCode.Float, 1, O(p, &p->P2)),
+            F("param3", FieldTypeCode.Float, 1, O(p, &p->P3)),
+            F("param4", FieldTypeCode.Float, 1, O(p, &p->P4)),
+            F("param5", FieldTypeCode.Float, 1, O(p, &p->P5)),
+            F("param6", FieldTypeCode.Float, 1, O(p, &p->P6)),
+            F("param7", FieldTypeCode.Float, 1, O(p, &p->P7)) }); }
 
         // ---- 数组段（元素字段行挂 Fields 尾部；对照 ArraySegMeta）----
         var segs = new List<SegLayoutRow>();

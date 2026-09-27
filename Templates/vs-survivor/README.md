@@ -9,7 +9,7 @@
 
 ## 素材来源与许可
 
-- `dungeon_*` 精灵表与 `*.clip`：yami-rpg-editor（MIT，Copyright (c) 2025
+- `dungeon_*` 精灵表与 `*.anim`：yami-rpg-editor（MIT，Copyright (c) 2025
   Yami & Xuran & Contributors）——随模板再分发需在发布物保留版权声明
   （仓库根 THIRD_PARTY.md 已登记）。
 - `gem/bullet/pierce/blade.png`：程序化生成（无版权负担）。

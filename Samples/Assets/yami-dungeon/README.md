@@ -17,11 +17,11 @@
 帧数与 yami `Assets/角色/角色动画/*.anim` 的 hframes 核对一致（hero 9 / monster 8 /
 boss 8）。
 
-## clip 样例（.clip 格式见 06 §2.2 / M5.md §16.2 D2）
+## clip 样例（.anim 格式见 06 §2.2 / M5.md §16.2 D2）
 
-- `hero-walk.clip`（guid `5bd31a7c20000001`）：hero_1 全 9 帧 @8fps loop
-- `monster-walk.clip`（`5bd31a7c20000002`）：monster_2 全 8 帧 @8fps loop
-- `boss-idle.clip`（`5bd31a7c20000003`）：boss_1 全 8 帧 @4fps loop
+- `hero-walk.anim`（guid `5bd31a7c20000001`）：hero_1 全 9 帧 @8fps loop
+- `monster-walk.anim`（`5bd31a7c20000002`）：monster_2 全 8 帧 @8fps loop
+- `boss-idle.anim`（`5bd31a7c20000003`）：boss_1 全 8 帧 @4fps loop
 
 ## 用法（编辑器）
 

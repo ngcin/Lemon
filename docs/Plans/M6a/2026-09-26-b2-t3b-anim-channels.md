@@ -124,3 +124,16 @@ Status: done（2026-09-26 完工；T3 最小版当日上午收口，本微批同
 **余项**：05 §3（Animation 停靠位/解冻注记更新）· 04（Lemon.Anim.LoopMode）·
 09 §6.8（先例三第三次应用 + 面板无头覆盖手法）文档回写归 T6；per-frame 时长
 仍为独立后续批（动帧映射纯函数根基）。
+
+## 6. 修正批（2026-09-26 用户实测三问题，同日修复）
+
+| 问题 | 根因 | 修法 |
+|---|---|---|
+| 控制台 `PopStyleColor() too many times`（Assets 窗） | 类型过滤按钮在**点击当帧**改 `typeFilter_`，前后两次判定失衡 → 只 Pop 不 Push | 状态先取快照（`const bool on = typeFilter_==i`）再 Push/Pop |
+| 向导点"选择帧区间"后**向导消失/面板卡死/ESC 后精灵表才冒出** | 每帧 `OpenPopup` + **模态套模态**：ImGui 只渲染弹窗栈栈顶模态，重复 OpenPopup 破坏栈序 → 下层模态被反复重开/上层被截断，出现"不可见模态挡输入" | 结构性重构：`DrawSheetBody` **内嵌体**——向导"从精灵表"页直接内嵌（创建流零弹窗嵌套）；编辑态独立弹窗与向导都改**边沿触发**（`wizPending_/pickPending_` 只在入口点击帧 OpenPopup 一次） |
+| 流程繁琐走不通 | 嵌套弹窗反模式 | 创建流 = 单窗口直通：选图 →（需要就配切片）→ 拖框选 →"已选 N 帧"→ 创建；`新建…` 重置 wizName_（防上次文件夹自动名误建同名） |
+
+验证：构建零错；engine-tests 33443 不变；smoke-anim `edit(rt/cache/whole)` OK +
+面板无头覆盖 editor-smoke PASS；`editor-regression.sh full` **14/14**（首跑
+13/14：smoke-drag/asset-chain/final 注入时序抖动——单独复跑各 3/3 全过 +
+整套复跑 14/14，T1 同类先例）。

@@ -219,6 +219,41 @@ int32_t NativeTableCell(const char* guidHex, int32_t row, int32_t col, char* out
     return (int32_t)c->size();
 }
 
+// M6a 批② T3c：动画集按名解析（Lemon.Anim Play/Queue/CrossFade 字符串重载）。
+// T3d 批①起作用域优先级：①实体 AnimGraph.setGuid 显式绑定集（绑定为作用域，
+// 不依赖"当前段恰属该集"的隐式反推——首段无需 Inspector 手工指 clip 即可按名）；
+// ②回退 T3c 口径 = 当前段（Animator2D.clipId）所属集（旧场景零改动兼容）。
+// 都失败 / 集内无名 = -1（SDK 侧红字 + no-op）。
+int64_t NativeClipByName(uint64_t entity, const char* name) {
+    if (!g_world || !g_scene || !name || !*name) return -1;
+    if (const auto* graph = g_scene->TryGet<ecs::AnimGraph>(ecs::Entity{entity})) {
+        if (graph->setGuid != 0) {
+            const uint32_t id =
+                g_world->Clips().FindByName((uint32_t)graph->setGuid, name);
+            return id != 0 ? (int64_t)id : -1;
+        }
+    }
+    const auto* an = g_scene->TryGet<ecs::Animator2D>(ecs::Entity{entity});
+    if (!an || an->clipId == 0) return -1;
+    const uint32_t setId = g_world->Clips().SetOfClip(an->clipId);
+    if (setId == 0) return -1;
+    const uint32_t id = g_world->Clips().FindByName(setId, name);
+    return id != 0 ? (int64_t)id : -1;
+}
+
+// T3d 批②：参数名 → 槽位（实体所绑 controller 参数表定序；0..7）。低频桥
+// （Lemon.Anim SetParam/GetParam/Trigger 首次解析后脚本侧可自缓存）。实体无
+// AnimGraph / 未绑 controller / controller 未登记 / 参数表无名 = -1。
+int32_t NativeAnimParamSlot(uint64_t entity, const char* name) {
+    if (!g_world || !g_scene || !name || !*name) return -1;
+    const auto* graph = g_scene->TryGet<ecs::AnimGraph>(ecs::Entity{entity});
+    if (!graph || graph->controllerGuid == 0) return -1;
+    const auto* ctrl = g_world->Controllers().Find((uint32_t)graph->controllerGuid);
+    if (!ctrl) return -1;
+    const int32_t slot = ctrl->ParamIndex(name);
+    return slot >= 0 && slot < 8 ? slot : -1;
+}
+
 const NativeApiVtable kNativeApi{NativeIsAlive,
                                  NativeHas,
                                  NativeRead,
@@ -243,7 +278,9 @@ const NativeApiVtable kNativeApi{NativeIsAlive,
                                  NativeSetSeparation,
                                  NativeTableRows,
                                  NativeTableCols,
-                                 NativeTableCell};
+                                 NativeTableCell,
+                                 NativeClipByName,
+                                 NativeAnimParamSlot};
 } // namespace
 
 void SetScriptIoHooks(const ScriptIoHooks& hooks) { g_scriptIo = hooks; }

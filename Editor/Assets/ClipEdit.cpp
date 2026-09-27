@@ -56,6 +56,36 @@ ClipData ParseClipJson(std::string_view text) {
             return Fail("cell 负数/超界", idx);
         }
     }
+    // T3d 批③：帧事件表（可选；帧号越帧表 = 解析期拒绝——打点必须落在实帧上）
+    if (doc.contains("events")) {
+        if (!doc.at("events").is_array()) return Fail("events 非数组", out.frames.size());
+        for (const nlohmann::json& ev : doc.at("events")) {
+            const size_t idx = out.events.size();
+            if (!ev.is_object() || !ev.contains("frame") || !ev.at("frame").is_number())
+                return Fail("事件缺 frame 数值", idx);
+            const nlohmann::json& fr = ev.at("frame");
+            uint32_t frame;
+            if (fr.is_number_unsigned())
+                frame = fr.get<uint32_t>();
+            else if (fr.is_number_integer() && fr.get<int64_t>() >= 0)
+                frame = (uint32_t)fr.get<int64_t>();
+            else
+                return Fail("事件 frame 负数/超界", idx);
+            if (frame >= out.frames.size()) return Fail("事件帧号越帧表", idx);
+            uint32_t id = 0;
+            if (ev.contains("id")) {
+                if (!ev.at("id").is_number()) return Fail("事件 id 非数值", idx);
+                const nlohmann::json& j = ev.at("id");
+                if (j.is_number_unsigned())
+                    id = j.get<uint32_t>();
+                else if (j.is_number_integer() && j.get<int64_t>() >= 0)
+                    id = (uint32_t)j.get<int64_t>();
+                else
+                    return Fail("事件 id 负数/超界", idx);
+            }
+            out.events.push_back({frame, id});
+        }
+    }
     out.ok = true;
     return out;
 }
@@ -75,7 +105,7 @@ std::string ClipToJson(const ClipData& c) {
     out += c.loopMode != 0 ? "true" : "false";
     if (c.loopMode == 2) out += ",\n  \"loopMode\": 2"; // T3b-2：仅 PingPong 落盘
     out += ",\n  \"frames\": [";
-    // 帧行 = Samples/yami 既有 .clip 同款多行对象（规范格式：面板保存后旧档 diff
+    // 帧行 = Samples/yami 既有 .anim 同款多行对象（规范格式：面板保存后旧档 diff
     // 只见被改字段；生成器单行档一旦经面板保存也归一到本格式）
     for (size_t i = 0; i < c.frames.size(); ++i) {
         char fr[112];
@@ -85,7 +115,78 @@ std::string ClipToJson(const ClipData& c) {
                       c.frames[i].cell);
         out += fr;
     }
-    out += c.frames.empty() ? "]\n}" : "\n  ]\n}";
+    out += c.frames.empty() ? "]" : "\n  ]";
+    // T3d 批③：帧事件表（仅非空时追加——旧档 no-edit 往返逐字节不变）
+    if (!c.events.empty()) {
+        out += ",\n  \"events\": [";
+        for (size_t i = 0; i < c.events.size(); ++i) {
+            char ev[96];
+            if (c.events[i].id != 0)
+                std::snprintf(ev, sizeof(ev), "%s\n    { \"frame\": %u, \"id\": %u }",
+                              i ? "," : "", c.events[i].frame, c.events[i].id);
+            else
+                std::snprintf(ev, sizeof(ev), "%s\n    { \"frame\": %u }", i ? "," : "",
+                              c.events[i].frame);
+            out += ev;
+        }
+        out += "\n  ]";
+    }
+    out += "\n}";
+    return out;
+}
+
+// ---- T3c 动画集（.override）----------------------------------------------------
+
+namespace {
+AnimSetData FailSet(const char* what, size_t seg) {
+    AnimSetData out;
+    char buf[160];
+    std::snprintf(buf, sizeof(buf), "%s（段 %zu）", what, seg);
+    out.error = buf;
+    return out;
+}
+} // namespace
+
+AnimSetData ParseAnimSetJson(std::string_view text) {
+    AnimSetData out;
+    const nlohmann::json doc = nlohmann::json::parse(text, nullptr, false);
+    if (doc.is_discarded() || !doc.is_object())
+        return FailSet("animset 解析失败：非 JSON 对象", 0);
+    if (!doc.contains("segments") || !doc.at("segments").is_array())
+        return FailSet("animset 解析失败：缺 segments[] 数组", 0);
+    if (doc.contains("name") && doc.at("name").is_string())
+        out.name = doc.at("name").get<std::string>();
+    for (const nlohmann::json& sg : doc.at("segments")) {
+        const size_t idx = out.segments.size();
+        if (!sg.is_object() || !sg.contains("name") || !sg.contains("clip"))
+            return FailSet("段缺 name/clip 字段", idx);
+        if (!sg.at("name").is_string() || !sg.at("clip").is_string())
+            return FailSet("段 name/clip 类型不对", idx);
+        out.segments.push_back({sg.at("name").get<std::string>(),
+                                AssetDatabase::HexToGuid(sg.at("clip").get<std::string>().c_str())});
+        if (out.segments.back().name.empty())
+            return FailSet("段 name 为空", idx);
+        if (out.segments.back().clipGuid == 0)
+            return FailSet("clip 非 16 位 hex GUID", idx);
+    }
+    out.ok = true;
+    return out;
+}
+
+std::string AnimSetToJson(const AnimSetData& s) {
+    if (!s.ok) return {};
+    std::string out = "{\n  \"schemaVersion\": 1,\n  \"name\": \"";
+    out += s.name;
+    out += "\",\n  \"segments\": [";
+    for (size_t i = 0; i < s.segments.size(); ++i) {
+        char sg[128];
+        std::snprintf(sg, sizeof(sg),
+                      "%s\n    {\n      \"name\": \"%s\",\n      \"clip\": \"%s\"\n    }",
+                      i ? "," : "", s.segments[i].name.c_str(),
+                      AssetDatabase::GuidToHex(s.segments[i].clipGuid).c_str());
+        out += sg;
+    }
+    out += s.segments.empty() ? "]\n}" : "\n  ]\n}";
     return out;
 }
 

@@ -15,7 +15,10 @@
 namespace lemon::rhi {
 
 constexpr uint32_t kInvalid = 0;
-constexpr uint32_t kMaxTextureSlots = 64;   // bindless sampled image 数组容量
+// T3d 过渡容量（64→256，2026-09-27）：多角色多 clip 项目（svr-test 双怪 111 张
+// 帧图）超出 M4 最小集——描述符数组/池随本常量同源缩放，显存开销可忽略；真正的
+// 解法是 M6c 图集打包（多图合页后槽位需求骤减），届时回落评估。
+constexpr uint32_t kMaxTextureSlots = 256;  // bindless sampled image 数组容量
 constexpr uint32_t kMaxSamplerSlots = 8;
 constexpr uint32_t kMaxPushConstants = 128; // Vulkan 保证下限，M1 用 48B
 // 实例环 SSBO 数组槽位数（binding 2；每视口合批器固定占一槽——与 sprite.vert 的

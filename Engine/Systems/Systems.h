@@ -230,7 +230,24 @@ public:
     void Tick(World& world, Scene& scene, float dt) override;
 };
 
-/// #16 事件派发：帧末批量派发给事件汇后清空（M3 换 C# 桥端）
+/// #16 动画状态机评估（M6a 批② T3d；ADR-013 D1 决策层）：AnimGraph 绑定的
+/// controller 出边评估 → 写 Animator2D（Play 语义直写，清在途队列）。排 C# 批量
+/// 之后（读当 tick 脚本写的 AnimParams）、写完由下一 tick #13 消费——与脚本直写
+/// Play 完全同拍，回放语义零新增例外。不消费 RNG（不占子流，尾插不移位既有 id）。
+/// 当前状态 = 换段消费后的 clipId 经集绑定反查（ClipTable::NameOfClip），无逐帧
+/// 累加图状态；trigger 评估命中即清。脚本直写优先于图：段被 Play 到集外/词表外
+/// clip = 图让位（不抢回）。
+class AnimGraphSystem final : public ISystem {
+public:
+    const char* Name() const override { return "AnimGraph"; }
+    void Tick(World& world, Scene& scene, float dt) override;
+
+private:
+    bool warnedBindingMiss_ = false; // 图目标状态缺绑告警一次（World 级）
+    bool warnedStateMiss_ = false;   // 当前段反查词表失败告警一次
+};
+
+/// #17 事件派发：帧末批量派发给事件汇后清空（M3 换 C# 桥端）
 class ScriptEventDispatchSystem final : public ISystem {
 public:
     const char* Name() const override { return "ScriptEventDispatch"; }

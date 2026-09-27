@@ -7,10 +7,14 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <unordered_set>
 
 #include <nlohmann/json.hpp>
 
 #include "Assets/Csv.h" // ParseTableJson（BuildPlayTableCache；M6a 批② T2）
+#include "Assets/ClipEdit.h" // ParseAnimSetJson（BuildPlayClipCache 集登记；T3c）
+#include "Assets/ControllerEdit.h" // ParseControllerJson（BuildPlayControllerCache；T3d）
+#include "ECS/ControllerTable.h" // ControllerDef（编译目标形态；T3d）
 #include "Components/CoreComponents.h"
 #include "Components/RenderComponents.h"
 #include "Core/Guid.h"
@@ -521,7 +525,7 @@ ecs::Entity EditorContext::SpawnPlayPrefab(ecs::Scene& s, uint32_t prefabId, Vec
     return root;
 }
 
-// ---- M5 批③：Play 世界 clip 表（.clip JSON → ClipTable；06 §2.2 / 03 §5）----
+// ---- M5 批③：Play 世界 clip 表（.anim JSON → ClipTable；06 §2.2 / 03 §5）----
 // 格式（M5.md §16.2 D2）：
 //   { "schemaVersion": 1, "fps": 8, "loop": true,
 //     "frames": [ {"sheet": "<guidHex>", "cell": 0}, ... ] }
@@ -572,12 +576,120 @@ void EditorContext::BuildPlayClipCache() {
             frames.push_back(spriteId);
         }
         if (!ok) continue;
+        // T3d 批③：帧事件表（可选 events[]；宽容解析——坏事件跳过不炸 clip，
+        // 与帧表同款"帧必须可解析"校验已在 ClipEdit 侧拦，此处防手写档越界）
+        std::vector<ecs::ClipEventDef> events;
+        if (doc.contains("events") && doc.at("events").is_array()) {
+            for (const nlohmann::json& ev : doc.at("events")) {
+                if (!ev.is_object() || !ev.contains("frame") || !ev.at("frame").is_number())
+                    continue;
+                const uint32_t frame = ev.at("frame").get<uint32_t>();
+                if (frame >= frames.size()) continue;
+                ecs::ClipEventDef d;
+                d.frame = (uint16_t)frame;
+                if (ev.contains("id") && ev.at("id").is_number())
+                    d.id = (uint16_t)ev.at("id").get<uint32_t>();
+                events.push_back(d);
+            }
+        }
         const uint32_t clipId = (uint32_t)e.guid; // 低 32 位（映射约定同 prefabId）
-        if (!playWorld_->Clips().Add(clipId, std::move(frames), fps, loop))
+        if (!playWorld_->Clips().Add(clipId, std::move(frames), fps, loop, std::move(events)))
             LEMON_WARN("clip 登记失败（空帧/fps 非法）：%s", e.relPath.c_str());
         else
             LEMON_LOG("Play clip 表：'%s' → id %08x（%zu 帧 @%.1ffps）", e.relPath.c_str(),
                       clipId, playWorld_->Clips().Find(clipId)->frames.size(), fps);
+    }
+
+    // ---- T3c 动画集（.override → 集按名索引；EnterPlay 快照同语义，Play 中改不生效）。
+    // Entries() = relPath 升序 → 同段入多集/同集重名一律"路径序先到先得"，可复现。
+    // 悬空段（clip 缺失/未登记）跳过不炸 Play；空集合法（脚本按名 miss = 报错）。
+    for (const AssetEntry& e : assets_.Entries()) {
+        if (e.type != AssetType::AnimSet || e.missing) continue;
+        std::ifstream f(assets_.AbsolutePath(e), std::ios::binary);
+        if (!f) continue;
+        std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        const editor::AnimSetData set = editor::ParseAnimSetJson(text);
+        if (!set.ok) {
+            LEMON_WARN("animset 解析失败：%s——%s", e.relPath.c_str(), set.error.c_str());
+            continue;
+        }
+        const uint32_t setId = (uint32_t)e.guid; // 低 32 位（clipId/prefabId 同款映射）
+        std::vector<std::pair<std::string, uint32_t>> segs;
+        std::unordered_set<std::string> seenNames;
+        for (const editor::AnimSetSeg& sg : set.segments) {
+            if (!seenNames.insert(sg.name).second) {
+                LEMON_WARN("animset 重名段（按名解析取先者）：%s「%s」", e.relPath.c_str(),
+                           sg.name.c_str());
+                continue;
+            }
+            const AssetEntry* clip = assets_.FindByGuid(sg.clipGuid);
+            if (!clip || clip->missing || clip->type != AssetType::Clip) {
+                LEMON_WARN("animset 段悬空（clip 缺失/非 clip）：%s「%s」", e.relPath.c_str(),
+                           sg.name.c_str());
+                continue;
+            }
+            const uint32_t cid = (uint32_t)clip->guid;
+            if (!playWorld_->Clips().Find(cid)) {
+                LEMON_WARN("animset 段未登记（clip 内容坏/空帧）：%s「%s」", e.relPath.c_str(),
+                           sg.name.c_str());
+                continue;
+            }
+            if (const uint32_t prevSet = playWorld_->Clips().SetOfClip(cid); prevSet != 0) {
+                LEMON_WARN("animset 段已属其他集（按名归先集）：%s「%s」", e.relPath.c_str(),
+                           sg.name.c_str());
+                continue;
+            }
+            segs.emplace_back(sg.name, cid);
+        }
+        const size_t n = playWorld_->Clips().RegisterSet(setId, segs);
+        LEMON_LOG("Play 动画集：'%s' → id %08x（%zu/%zu 段）", e.relPath.c_str(), setId, n,
+                  set.segments.size());
+    }
+}
+
+// ---- M6a 批② T3d：Play 世界状态机表（.controller JSON → ControllerTable；
+// ADR-013 D1 决策层。进 Play 时刻快照（同 BuildPlayClipCache 语义，Play 中改
+// .controller 不生效）。坏 controller 红字跳过不炸 Play——实体 AnimGraph 绑定
+// 未命中表 = AnimGraphSystem 旁路（不绑图的纯集绑定不受影响）。字符串形态
+//（ControllerData）编译为下标形态（ControllerDef：from/to/param 全部定序槽位，
+// 运行时零字符串查找）。
+void EditorContext::BuildPlayControllerCache() {
+    playWorld_->Controllers().Clear();
+    for (const AssetEntry& e : assets_.Entries()) {
+        if (e.type != AssetType::Controller || e.missing) continue;
+        std::ifstream f(assets_.AbsolutePath(e), std::ios::binary);
+        if (!f) continue;
+        std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        const editor::ControllerData c = editor::ParseControllerJson(text);
+        if (!c.ok) {
+            LEMON_WARN("controller 解析失败：%s——%s", e.relPath.c_str(), c.error.c_str());
+            continue;
+        }
+        ecs::ControllerDef def;
+        def.states = c.states;
+        def.entry = c.entry.empty() ? 0 : def.StateIndex(c.entry);
+        if (def.entry < 0) def.entry = 0; // 解析已拦，防御手改档
+        for (const editor::ControllerParamEdit& p : c.params)
+            def.params.push_back({p.name, (ecs::AnimParamKind)p.kind, p.def});
+        for (const editor::ControllerTransitionEdit& t : c.transitions) {
+            ecs::AnimTransitionDef td;
+            td.from = (uint16_t)def.StateIndex(t.from);
+            td.to = (uint16_t)def.StateIndex(t.to);
+            td.exitTime = t.exitTime;
+            for (const editor::ControllerCondEdit& cd : t.conds)
+                td.conds.push_back({(uint16_t)def.ParamIndex(cd.param),
+                                    (ecs::AnimCondOp)cd.op, cd.value});
+            def.transitions.push_back(std::move(td));
+        }
+        const uint32_t controllerId = (uint32_t)e.guid; // 低 32 位（同款映射约定）
+        if (!playWorld_->Controllers().Add(controllerId, std::move(def)))
+            LEMON_WARN("controller 登记失败（空 states）：%s", e.relPath.c_str());
+        else
+            LEMON_LOG("Play 状态机：'%s' → id %08x（%zu 状态/%zu 过渡/%zu 参数）",
+                      e.relPath.c_str(), controllerId,
+                      playWorld_->Controllers().Find(controllerId)->states.size(),
+                      playWorld_->Controllers().Find(controllerId)->transitions.size(),
+                      playWorld_->Controllers().Find(controllerId)->params.size());
     }
 }
 
@@ -813,8 +925,10 @@ bool EditorContext::EnterPlay() {
     playWorld_->SetSpawnFn([this](ecs::Scene& s, uint32_t prefabId, Vec2 pos, uint32_t team) {
         return SpawnPlayPrefab(s, prefabId, pos, team);
     });
-    // M5 批③：clip 表（.clip 资产 → 帧映射；AnimatorSystem #13 消费）
+    // M5 批③：clip 表（.anim 资产 → 帧映射；AnimatorSystem #13 消费）
     BuildPlayClipCache();
+    // M6a 批② T3d：状态机表（.controller 资产 → 出边评估；AnimGraphSystem 消费）
+    BuildPlayControllerCache();
     // M6a 批② T2：配置表（.tab 资产 → 全字符串格网格；C# Lemon.Table 读）
     BuildPlayTableCache();
     // M5 批④：存档载入（进 Play 快照语义：上一局数据进通道，C# Save.Get 即读）

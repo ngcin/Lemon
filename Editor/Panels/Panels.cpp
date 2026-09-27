@@ -143,7 +143,7 @@ std::vector<std::unique_ptr<IEditorPanel>> CreateAllPanels() {
     out.push_back(std::make_unique<ConsolePanel>());
     out.push_back(std::make_unique<ProfilerPanel>());
     // M6a 批② T3：Animation（05 §3 冻结的既列解冻件，唯一一件；OpenByDefault
-    // = false——按需窗口，双击 .clip 资产 / Window 菜单进入）
+    // = false——按需窗口，双击 .anim 资产 / Window 菜单进入）
     out.push_back(std::make_unique<AnimationPanel>());
     return out;
 }

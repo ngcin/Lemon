@@ -64,7 +64,9 @@ MyGame/                                   # 用户项目（升级永不触碰）
 | atlas | 目录/手选集 | 图集页 + sprite 重定向表（MaxRects，Prowl2D M0 实现移植思想） | §5 |
 | audio | ogg/wav | 解码缓存 + 元数据（循环点/预载标记） | miniaudio |
 | font | ttf/otf | 位图字体页(v1)/SDF 图集(v2) | 02 §7 |
-| clip2d | json | 帧动画资产 | AnimationEditor 产出 |
+| clip2d | json | 帧动画资产（**.anim**，T3d 批④前 .clip） | AnimationEditor 产出 |
+| animset | json | 动画集/每角色绑定（**.override**，批④前 .ani；段名→clip 引用清单） | AnimationEditor 产出 |
+| controller | json | 动画状态机（**.controller**：状态词表/参数/过渡；ADR-013） | 手写 JSON（图编辑器挂起） |
 | particles | json | 发射器资产 | ParticleEditor 产出 |
 | tileset | png + json | 图集 + 碰撞标志 + 自动瓦片变体表 | 05 §7 |
 | curve/data | json | 曲线、Team 表、波次表 | 数据资产 |

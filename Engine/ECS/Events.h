@@ -20,6 +20,10 @@ enum class GameEvent : uint16_t {
     Pickup,
     TimerFire,
     Custom, // 用户自定义区起点（Custom + 用户资产注册 id）
+    // T3d 批③（表尾追加在 Custom 之后——Custom 与用户区起点值零位移；事件为瞬态
+    // 帧内数据不入档不入哈希，两侧同编译即安全）：
+    AnimFrame,    // 帧事件（user = 事件 id；userArg = clipId；payload[0] = 帧号）
+    AnimFinished, // 非 loop 段播完（userArg = clipId；补 SDK IsPlaying 判不了播完的缺口）
 };
 
 struct EventPacket {

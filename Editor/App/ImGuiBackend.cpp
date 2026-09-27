@@ -158,7 +158,10 @@ bool ImGuiBackend::Init(Window& window, rhi::Device& device, const char* iniDir,
     info.Device = (VkDevice)vi.device;
     info.QueueFamily = vi.queueFamily;
     info.Queue = (VkQueue)vi.queue;
-    info.DescriptorPoolSize = 64; // 后端自建池（FREE_DESCRIPTOR_SET 位由后端置位）
+    info.DescriptorPoolSize = 512; // 后端自建池（FREE_DESCRIPTOR_SET 位由后端置位）。
+    // T3d 64→256（资产缩略图逐张 AddTexture，svr-test 111 帧图曾 OUT_OF_POOL）→
+    // T3-UX4 256→512：FilePicker 缩略图网格叠加（128 LRU + 资产页 + 视口句柄；
+    // 描述符集轻量，宽给防 OUT_OF_POOL；与 kMaxTextureSlots 同批口径）
     info.MinImageCount = vi.swapchainImageCount;
     info.ImageCount = vi.swapchainImageCount;
     info.UseDynamicRendering = true; // 引擎动态渲染（无 renderPass 对象），RHI.cpp 同款约定

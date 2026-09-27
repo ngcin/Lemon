@@ -36,6 +36,8 @@ public unsafe struct NativeApi
     public delegate* unmanaged<byte*, int> TableRows;                          // M6a 批②：行数（含列头行）；-1 = 无表/空宿主
     public delegate* unmanaged<byte*, int> TableCols;                          // M6a 批②：列数；-1 = 无表/空宿主
     public delegate* unmanaged<byte*, int, int, byte*, uint, int> TableCell;   // M6a 批②：-1 越界/无表 -2 cap 不足；返回拷贝数
+    public delegate* unmanaged<ulong, byte*, long> ClipByName;                 // M6a 批② T3c：集内按名 → clipId；-1 = 失败（T3d 起优先 AnimGraph 绑定集）
+    public delegate* unmanaged<ulong, byte*, int> AnimParamSlot;               // T3d 批②：实体所绑 controller 参数名 → 槽位 0..7；-1 = 失败
 }
 
 internal static unsafe class Native
@@ -268,5 +270,25 @@ internal static unsafe class Native
         byte* buf = stackalloc byte[640];
         int n = Api.TableCell(g, row, col, buf, 640);
         return n < 0 ? null : System.Text.Encoding.UTF8.GetString(buf, n);
+    }
+
+    // ---- M6a 批② T3c（动画集按名；旧宿主未注册 = -1 降级）----
+
+    internal static unsafe long ClipByName(ulong entity, string name)
+    {
+        if (Api.ClipByName == null || name == null) return -1;
+        byte* p = stackalloc byte[64];
+        CopyUtf8(name, p, 63);
+        return Api.ClipByName(entity, p);
+    }
+
+    // ---- T3d 批②（参数槽解析；旧宿主未注册 = -1 降级）----
+
+    internal static unsafe int AnimParamSlot(ulong entity, string name)
+    {
+        if (Api.AnimParamSlot == null || name == null) return -1;
+        byte* p = stackalloc byte[64];
+        CopyUtf8(name, p, 63);
+        return Api.AnimParamSlot(entity, p);
     }
 }

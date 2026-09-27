@@ -86,7 +86,8 @@ public struct Animator2D : IComponent     // 28B（M6a 批①：尾加换段队�
     public uint NextClipId;    // 换段队列目标（0 = 无；Lemon.Anim 写）
     public float FadeRemain;   // <0 = Queue（收尾/回绕点切）；>0 = CrossFade 倒计时
     public ushort NextLoop;    // 切换时写入 Loop
-    internal byte _pad2a, _pad2b; // C++ _pad[2] 衬齐
+    public byte Ended;         // T3d 批③：段末边沿（非 loop 段收尾 = 1；0→1 发事件）
+    internal byte _pad2b;      // C++ _pad 衬齐（28B 不变）
 }
 
 [StructLayout(LayoutKind.Sequential)]
@@ -326,11 +327,30 @@ public unsafe struct WaveDirector : IComponent // 1260B
     public void SetWave(int i, in WaveDef w) { fixed (byte* p = _waves) { ((WaveDef*)p)[i] = w; } }
 }
 
+// ---- T3d 批①/②（ADR-013）：id 28/29（登记表尾追加，与 ComponentCatalog 同步）----
+
+[StructLayout(LayoutKind.Sequential)]
+public unsafe struct AnimGraph : IComponent   // 24B
+{
+    public ulong ControllerGuid; // .controller 资产 GUID（0 = 无图，纯集绑定）
+    public ulong SetGuid;        // .override 集资产 GUID（按名解析作用域）
+    public byte Inited;          // 图初始化边沿（运行时；首 tick 播种参数/进 entry）
+    internal fixed byte _pad[7];
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public struct AnimParams : IComponent  // 32B：参数黑板 8 槽（float/bool/trigger 统一
+{                                      // f32；槽位 = 所绑 controller 参数表定序）
+    public float P0, P1, P2, P3, P4, P5, P6, P7;
+}
+
 // ---- 事件包镜像（Events.h：48B 固定布局，桥侧 blittable）----
 public enum GameEvent : ushort
 {
     Spawn = 0, Hit, Death, TriggerEnter, TriggerExit, WaveStart, LevelUp, Pickup,
     TimerFire, Custom, // 用户自定义区起点（Custom + 用户资产注册 id）
+    AnimFrame,    // T3d 批③：帧事件（user = 事件 id；userArg = clipId；payload[0] = 帧号）
+    AnimFinished, // T3d 批③：非 loop 段播完（userArg = clipId；补 IsPlaying 判不了播完的缺口）
 }
 
 [StructLayout(LayoutKind.Sequential)]

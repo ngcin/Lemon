@@ -13,7 +13,7 @@ public sealed class PlayerCombat : LemonBehaviour
     private const string kBladePrefab = "7e57100000000006";
     private const uint kPiercePrefabLow = 0x00000004; // PierceBullet.prefab 低 32 位
 
-    // 批①受击段 clip（Anim.ClipId = GUID 低 32 位自算；Assets/monster-hit.clip）
+    // 批①受击段 clip（Anim.ClipId = GUID 低 32 位自算；Assets/monster-hit.anim）
     private static readonly uint kMobWalk = Anim.ClipId("5bd31a7c20000002");
     private static readonly uint kMobHit = Anim.ClipId("5bd31a7c20000004");
 

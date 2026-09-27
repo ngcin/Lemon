@@ -1076,7 +1076,20 @@ void AnimatorSystem::Tick(World& world, Scene& scene, float dt) {
             if (an.time < 0.0f) an.time = 0.0f; // 负 speed 防御（回绕后仍负）
         } else {
             if (an.time < 0.0f) an.time = 0.0f;
-            if (an.time > total) an.time = total; // 钳末帧：M2"无界增长"随 clip 收口
+            if (an.time > total) {
+                an.time = total; // 钳末帧：M2"无界增长"随 clip 收口
+                // T3d 批③：段末边沿（0→1 一次）→ AnimFinished 事件（帧末批量派发，
+                // C# Events.Subscribe(GameEvent.AnimFinished) 消费；补 IsPlaying 判
+                // 不了 Once 播完的缺口）。切段处（本系统队列/AnimGraph/SDK Play）归 0。
+                if (!an.ended) {
+                    an.ended = 1;
+                    EventPacket fin{};
+                    fin.type = GameEvent::AnimFinished;
+                    fin.src = Scene::FromEntt(ent);
+                    fin.userArg = an.clipId;
+                    world.Events().Push(fin);
+                }
+            }
         }
         if (an.nextClipId != 0) { // 换段队列判定（无队列 = 零副作用，既有路径逐位不变）
             const bool atEnd = !an.loop && an.time >= total; // 非 loop 段收尾
@@ -1094,6 +1107,7 @@ void AnimatorSystem::Tick(World& world, Scene& scene, float dt) {
                     an.clipId = an.nextClipId;
                     an.loop = an.nextLoop ? 1 : 0;
                     an.time = 0.0f;
+                    an.ended = 0; // T3d 批③：新段从非收尾态起（段末边沿重置）
                     clip = next; // 本 tick 即按新段帧映射（首帧当帧生效）
                 } else if (!warnedQueueMiss_) {
                     warnedQueueMiss_ = true;
@@ -1114,6 +1128,22 @@ void AnimatorSystem::Tick(World& world, Scene& scene, float dt) {
         } else {
             f = (uint32_t)(an.time * clip->fps);
             if (f >= n) f = n - 1; // total 边界
+        }
+        // T3d 批③：帧事件——进入新帧（f != 上 tick 写入的 curFrame）且该帧有打点
+        // → AnimFrame 事件入队（帧末批量派发；user = 事件 id，userArg = clipId，
+        // payload[0] = 帧号）。帧号纯函数 ⇒ 事件序确定；loop 回绕/pingpong 反放
+        // 重进该帧会重发（Unity 循环重发同语义）；暂停（playOnStart=0）不推进不发。
+        if (f != an.curFrame && !clip->events.empty()) {
+            for (const ClipEventDef& ev : clip->events) {
+                if (ev.frame != f) continue;
+                EventPacket fev{};
+                fev.type = GameEvent::AnimFrame;
+                fev.src = Scene::FromEntt(ent);
+                fev.user = ev.id;
+                fev.userArg = an.clipId;
+                fev.payload[0] = (float)f;
+                world.Events().Push(fev);
+            }
         }
         an.curFrame = (uint16_t)f;
         if (SpriteRenderer* sr = scene.TryGet<SpriteRenderer>(Scene::FromEntt(ent)))
@@ -1149,6 +1179,96 @@ void ProjectileLifetimeSystem::Tick(World& world, Scene& scene, float dt) {
 void CSharpBatchSystem::Tick(World& world, Scene& scene, float dt) {
     // 桥后端（ScriptHost）构造块描述符（本线程）→ 域线程执行（ADR-010 D1）；未注入则空跑
     if (auto* backend = world.ScriptBackend()) backend->TickBatch(world, scene, dt);
+}
+
+// ------------------------------------------- #16 动画状态机评估（T3d）----
+void AnimGraphSystem::Tick(World& world, Scene& scene, float dt) {
+    (void)dt;
+    // 分层（ADR-013 D1）：本系统只做决策——评估出边、写切段（= SDK Play 的直写
+    // 语义：clipId/time/loop/ended 置位 + 清在途队列）；帧映射与队列消费仍在 #13。
+    // 空 controller 表 = 全体旁路（基准场零实例零成本，金回放零重录）。
+    const ControllerTable& controllers = world.Controllers();
+    if (controllers.Count() == 0) return;
+    const ClipTable& clips = world.Clips();
+    float zeroParams[8] = {};
+    auto view = scene.View<AnimGraph, Animator2D>();
+    for (auto [ent, graph, an] : view.each()) {
+        const Entity e = Scene::FromEntt(ent);
+        if (graph.setGuid == 0) continue; // 未绑集：图无从解析状态（批①纯绑定语义）
+        const uint32_t setId = (uint32_t)graph.setGuid;
+        const ControllerDef* ctrl = controllers.Find((uint32_t)graph.controllerGuid);
+        AnimParams* params = scene.TryGet<AnimParams>(e);
+        // 初始化边沿：参数槽从 controller 默认值播种 + 当前段不在集内（含 0）→
+        // Play(entry)。缺绑 entry = warn-once 保持现状（ADR-013 D4 空绑哲学）。
+        if (!graph.inited) {
+            graph.inited = 1;
+            if (ctrl && params)
+                for (size_t i = 0; i < ctrl->params.size() && i < 8; ++i)
+                    params->v[i] = ctrl->params[i].def;
+            if (ctrl && !clips.NameOfClip(setId, an.clipId)) {
+                const std::string& entry =
+                    ctrl->states[(size_t)ctrl->entry < ctrl->states.size()
+                                     ? (size_t)ctrl->entry : 0];
+                const uint32_t cid = clips.FindByName(setId, entry.c_str());
+                if (cid != 0) {
+                    an.clipId = cid;
+                    an.time = 0.0f;
+                    an.ended = 0;
+                } else if (!warnedBindingMiss_) {
+                    warnedBindingMiss_ = true;
+                    LEMON_WARN("AnimGraph 入口状态「%s」缺绑（集 %08x），保持当前段",
+                               entry.c_str(), setId);
+                }
+            }
+            continue; // 播种帧不评估出边（参数先就位，下一 tick 起评估）
+        }
+        if (!ctrl) continue; // 只绑集不绑图（批①纯绑定）= 不评估
+        // 当前状态反推：clipId → 段名 → 词表下标。不在集/不在词表 = 脚本直写了
+        // 图外段 → 图让位（脚本优先于图，ADR-013 D1）。
+        const std::string* curName = clips.NameOfClip(setId, an.clipId);
+        const int32_t cur = curName ? ctrl->StateIndex(*curName) : -1;
+        if (cur < 0) {
+            if (!warnedStateMiss_) {
+                warnedStateMiss_ = true;
+                LEMON_WARN("AnimGraph 当前段「%s」不在词表/集内，图让位（脚本直写优先）",
+                           curName ? curName->c_str() : "(不在集)");
+            }
+            continue;
+        }
+        const float* pv = params ? params->v : zeroParams;
+        // 出边评估：同 from 按文件序，首条命中即切（每实体每 tick 至多一条，无级联
+        // ——确定性）。exitTime = 非 loop 段收尾边沿（an.ended，#13 钳 total 时置位；
+        // loop 段 exitTime 不触发，挂起项）。缺绑目标 = warn-once 保持当前状态。
+        for (const AnimTransitionDef& t : ctrl->transitions) {
+            if (t.from != (uint16_t)cur) continue;
+            if (!AnimCondsHold(*ctrl, t, pv)) continue;
+            if (t.exitTime && !an.ended) continue;
+            const uint32_t cid = t.to < ctrl->states.size()
+                                     ? clips.FindByName(setId, ctrl->states[t.to].c_str())
+                                     : 0;
+            if (cid == 0) {
+                if (!warnedBindingMiss_) {
+                    warnedBindingMiss_ = true;
+                    LEMON_WARN("AnimGraph 目标状态「%s」缺绑（集 %08x），保持当前状态",
+                               t.to < ctrl->states.size() ? ctrl->states[t.to].c_str() : "?",
+                               setId);
+                }
+            } else if (cid != an.clipId) {
+                an.clipId = cid;
+                an.time = 0.0f;
+                an.ended = 0;
+                an.nextClipId = 0; // 图切换 = Play 语义直写（清在途队列）
+                an.fadeRemain = 0.0f;
+                if (const ClipDef* c = clips.Find(cid)) an.loop = c->loop ? 1 : 0;
+            }
+            // trigger 消费即清（参与命中出边的槽；未命中出边不动——保守不误清）
+            if (params)
+                for (const AnimCondDef& c : t.conds)
+                    if (c.op == AnimCondOp::Trigger && c.param < ctrl->params.size())
+                        params->v[c.param] = 0.0f;
+            break;
+        }
+    }
 }
 
 // ---------------------------------------------------- #16 事件派发 --------
@@ -1209,6 +1329,9 @@ void World::InstallDefaultSystems() {
     p.AddSystem(std::make_unique<AnimatorSystem>());
     p.AddSystem(std::make_unique<ProjectileLifetimeSystem>());
     p.AddSystem(std::make_unique<CSharpBatchSystem>());
+    // T3d 批②：图评估尾插在 C# 批量之后（读当 tick 脚本参数）、事件派发之前。
+    // 不消费 RNG——不占子流；其后系统（事件派发/销毁提交）本就不消费，id 语义零影响。
+    p.AddSystem(std::make_unique<AnimGraphSystem>());
     p.AddSystem(std::make_unique<ScriptEventDispatchSystem>());
     p.AddSystem(std::make_unique<DestroyCommitSystem>()); // Essential 阶段
     p.ResolveOrder();

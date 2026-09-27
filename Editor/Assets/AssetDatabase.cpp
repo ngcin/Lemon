@@ -24,8 +24,10 @@ const char* AssetTypeName(AssetType t) {
         case AssetType::Sprite: return "sprite";
         case AssetType::Prefab: return "prefab";
         case AssetType::Script: return "script";
-        case AssetType::Clip: return "clip"; // M5 批③：06 §2.2 clip2d（.clip JSON）
+        case AssetType::Clip: return "clip"; // M5 批③：06 §2.2 clip2d（.anim JSON）
         case AssetType::Table: return "table"; // M6a 批②：.tab 配置表（ADR-012）
+        case AssetType::AnimSet: return "animset"; // M6a 批② T3c：.override 动画集容器
+        case AssetType::Controller: return "controller"; // T3d：.controller 状态机
         default: return "generic";
     }
 }
@@ -164,8 +166,10 @@ AssetType AssetDatabase::TypeOf(const std::string& relPath) {
     if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp") return AssetType::Sprite;
     if (ext == ".prefab") return AssetType::Prefab;
     if (ext == ".cs") return AssetType::Script;
-    if (ext == ".clip") return AssetType::Clip; // M5 批③帧动画资产（06 §2.2）
+    if (ext == ".anim") return AssetType::Clip; // M5 批③帧动画资产（06 §2.2）
     if (ext == ".tab") return AssetType::Table; // M6a 批②配置表资产（ADR-012）
+    if (ext == ".override") return AssetType::AnimSet; // M6a 批② T3c 动画集容器
+    if (ext == ".controller") return AssetType::Controller; // T3d 动画状态机
     return AssetType::Generic;
 }
 
