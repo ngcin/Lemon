@@ -229,22 +229,21 @@ public:
     bool CapturesGlobalKeys() const override { return keysFocused_; }
     /// AssetBrowser 双击 clip → EditorApp::OpenAnimationEditor 的落点
     void SetTarget(uint64_t guid) { targetGuid_ = guid; }
-    /// 文件夹右键"从此文件夹创建动画"入口：开面板 + 向导文件夹页预选（T3b-5）。
-    /// destDir = 落点目录（AssetBrowser 当前浏览目录——决策 4：跟随当前目录）
+    /// 文件夹右键「从此文件夹创建动画…」唯一创建入口（T3-UX7 向导退役）：
+    /// destDir = 保存位置（AssetBrowser 当前浏览目录——Unity 同款隐式，只读展示）
     void StartCreateFromFolder(const std::string& relDir, const std::string& destDir);
-    /// 空白区右键"新建动画剪辑…"入口（v3.1）：向导空白页；面板内不再放"新建"
-    /// 按钮——创建动作归 AssetBrowser（用户实测反馈）
-    void StartCreateBlank(const std::string& destDir);
     // ---- T3c 动画集工作台 ----
     /// 打开 .override 集（浏览器双击 .override / OpenAnimationEditor 集归并解析落点）
     void OpenSet(uint64_t setGuid) { setGuid_ = setGuid; }
     /// 集模式下选中段（双击 .anim → 归属集解析后调；clipGuid 0 = 清选）
     void SelectSegment(uint64_t clipGuid) { segGuid_ = clipGuid; targetGuid_ = clipGuid; }
-    /// 文件夹右键"新建动画集…"入口：开新建集弹窗（srcDir 非空 = 并建首段勾选）
+    /// 空白区右键"新建动画集…"入口：开新建集弹窗（srcDir 非空 = 并建首段勾选）
     void StartCreateSet(const std::string& relDir, const std::string& destDir);
     /// 冒烟回归钩子：当前集模式目标（0 = 传统 clip 模式）——2026-09-27 修复
     /// "双击 .override 不开集"后补的程序化断言面（OpenAnimationEditor 直接分支）
     uint64_t SetGuidForTest() const { return setGuid_; }
+    /// 冒烟（T3-UX7 断路回归）：当前编辑目标（裸 clip 双击后应切到此、集态归零）
+    uint64_t TargetGuidForTest() const { return targetGuid_; }
     /// 工具条「从图片文件…」同款入口（T3-UX4 抽取：菜单与冒烟注入共用）
     void StartImageFilePick(EditorApp& app);
     /// 冒烟：多选计数（FilePicker.multiSel_ 大小）
@@ -290,11 +289,12 @@ private:
     void DrawFilmstrip(EditorApp& app, bool ro, int playFrame); // 胶片带（v3）
     void DrawSelectedFrameRow(EditorApp& app); // 属性行（多选批量/单帧 sheet+cell）
     void HandleKeys(bool ro); // 键盘帧操作（焦点/WantTextInput/弹窗守卫）
-    void DrawWizard(EditorApp& app);         // 新建动画剪辑向导（三通道；入口 = AssetBrowser）
+    /// 极简文件夹创建框（T3-UX7：三 tab 向导退役——单页无 tab，保存位置只读）
+    void DrawFolderCreate(EditorApp& app);
     // ---- 从精灵表添加帧 v3.1（用户实测反馈重做）：文件选择 → 选帧对话框 ----
-    /// 开文件选择器选精灵图（createMode=true = 向导页产出 wizFrames_）
-    void StartSheetPick(EditorApp& app, bool createMode);
-    /// 文件选择器结果路由（v3.1 三流：精灵表单图 / 多图整图入帧 / 向导精灵表）。
+    /// 开文件选择器选精灵图（T3-UX7：createMode 流随创建向导退役，仅剩加帧）
+    void StartSheetPick(EditorApp& app);
+    /// 文件选择器结果路由（两流：精灵表单图 / 多图整图入帧）。
     /// 项目内文件 → FindByPath（未登记则 Rescan 收编）；项目外 → ImportFile 落
     /// 到集目录/浏览器目录。内含 Rescan——调用后 OnGui 只用 guid 重查。
     void HandlePickerResult(EditorApp& app);
@@ -352,18 +352,15 @@ private:
     int selAnchor_ = -1;              // Shift 范围选锚（上次单选位）
     float stripEdge_ = 64.0f;         // 帧缩略图边长（Ctrl+滚轮 / ± 按钮，40..128）
     bool keysFocused_ = false;        // 本面板窗口（含子窗）持焦点（键捕获仲裁）
-    // 新建向导（T3b-5/6）：三通道 + 落点（默认 = AssetBrowser 当前目录，可改）。
+    // 极简文件夹创建框（T3-UX7：三 tab 向导退役，独立 clip 唯一创建入口）。
     // wizPending_ = 边沿触发（只在入口点击帧调一次 OpenPopup——每帧重调破坏
     // 弹窗栈序，T3b 修正批实测）
     bool wizOpen_ = false, wizPending_ = false;
-    int wizTab_ = 0;              // 0 文件夹 / 1 精灵表 / 2 空白
-    std::string wizDir_;          // 文件夹页源目录（"Assets/..."）
-    std::string wizPath_;         // 落点目录（相对项目根；"Assets" = 根）
+    std::string wizDir_;          // 源文件夹（"Assets/..."）
+    std::string wizSaveDir_;      // 保存位置（相对项目根；"Assets" = 根；只读展示）
     std::string wizName_ = "new-clip";
     int wizFps_ = 8, wizLoop_ = 1;
     std::string wizErr_;
-    std::vector<ClipFrame> wizFrames_; // 精灵表页已选帧（内嵌体产出）
-    bool wizPicked_ = false;      // 精灵表页有产出（显示"已选 N 帧"摘要）
     // 从精灵表加帧（T3b-4 → v3.1 两段式：文件选择器 → 选帧对话框）；边沿触发
     bool pickOpen_ = false, pickPending_ = false; // 选帧对话框（第二段模态）
     uint64_t pickGuid_ = 0;       // 目标精灵资产
@@ -375,9 +372,8 @@ private:
     int pickOrderMode_ = 0;      // 0 = 拖框选（行优先）/ 1 = 点选（按点击序 = Godot As Selected）
     std::vector<uint32_t> pickSelCells_; // 点选序收集的 cell（有序去重）
     int pickCountLast_ = -1;     // 冒烟探针：本帧渲染的已选帧数（右栏计数渲染侧缓存）
-    bool pickCreate_ = false;    // 选帧对话框产出流向：true = 向导 wizFrames_
+    int pickFlow_ = 0;           // 0 无 / 1 精灵表单图（编辑态）/ 2 多图整图入帧
     FilePicker picker_;          // 面板私有文件选择器（v3.1：选图入口）
-    int pickFlow_ = 0;           // 0 无 / 1 精灵表单图（编辑态）/ 2 多图整图入帧 / 3 精灵表（向导）
     bool clipPickOpen_ = false, clipPickPending_ = false; // 从 .anim 复制列表弹窗
     // ---- T3c 动画集工作台（目标 = .override；段编辑复用上方 clip 机制——集模式下
     // targetGuid_ 指向当前段，setGuid_ 指向集容器）----

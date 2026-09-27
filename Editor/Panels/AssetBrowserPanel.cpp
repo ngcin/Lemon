@@ -194,10 +194,9 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
                 ImGui::Button("/", size);
             const bool iconHover = ImGui::IsItemHovered();
             if (iconHover) ImGui::SetTooltip("文件夹（单击进入）\n%s", d.c_str());
-            // 右键：动画集/动画创建入口（T3c 集工作台 + T3b-5 通道 A）
+            // 右键：动画创建入口（T3-UX7 精简：集入口已删——集都从 Animations 下
+            // 空白区右键建，用户实测定论；文件夹右键只留"从此文件夹创建动画"）
             if (ImGui::BeginPopupContextItem("folder_ctx")) {
-                if (ImGui::MenuItem("新建动画集…"))
-                    app.OpenAnimationCreateSet(d);
                 if (ImGui::MenuItem("从此文件夹创建动画…"))
                     app.OpenAnimationCreateFromFolder(d);
                 ImGui::EndPopup();
@@ -253,15 +252,14 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
         if (col >= cols) col = 0;
     }
 
-    // 空区右键：导入 + 动画资产创建（v3.1：新建动画集/剪辑入口放这里——面板内
-    // 不再放"新建"按钮，创建动作归资产浏览器）。NoOpenOverItems 同
-    // HierarchyPanel（右键资产条目时禁开本菜单——与 asset_ctx 同帧双触发会被本
-    // 菜单盖掉，条目右键永远只见"导入"）
+    // 空区右键：导入 + 新建动画集（T3-UX7 精简：「新建动画剪辑…」已删——独立
+    // clip 唯一入口 = 文件夹右键极简创建框，集内建动画走工作台左列；三 tab
+    // 向导随之退役）。NoOpenOverItems 同 HierarchyPanel（右键资产条目时禁开本
+    // 菜单——与 asset_ctx 同帧双触发会被本菜单盖掉，条目右键永远只见"导入"）
     if (ImGui::BeginPopupContextWindow("assets_bg", ImGuiPopupFlags_NoOpenOverItems)) {
         if (ImGui::MenuItem("导入文件…")) app.MenuImportAsset();
         ImGui::Separator();
         if (ImGui::MenuItem("新建动画集…")) app.OpenAnimationCreateSet(entryDir);
-        if (ImGui::MenuItem("新建动画剪辑…")) app.OpenAnimationCreateClip(entryDir);
         ImGui::EndPopup();
     }
     // 拖 prefab 进空区 = 实例化到编辑相机中心

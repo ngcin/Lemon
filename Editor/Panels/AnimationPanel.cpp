@@ -570,10 +570,10 @@ void AnimationPanel::DrawSelectedFrameRow(EditorApp& app) {
 
 // ------------------------------------------- 从精灵表添加帧（v3.1 两段式）----
 
-void AnimationPanel::StartSheetPick(EditorApp& app, bool createMode) {
+void AnimationPanel::StartSheetPick(EditorApp& app) {
     // 第一段：文件选择器选精灵图（v3.1 用户实测反馈——原 combo 列全部资产翻找
     // 太麻烦）。起始目录 = 当前帧 sheet 所在目录（无则项目 Assets/）。
-    pickCreate_ = createMode;
+    // （T3-UX7：createMode 流 3 随创建向导退役——本通道只剩加帧。）
     pickFlow_ = 1;
     AssetDatabase& db = app.Ctx().Assets();
     std::string dir = db.ProjectRoot() + "/Assets";
@@ -642,7 +642,7 @@ void AnimationPanel::HandlePickerResult(EditorApp& app) {
         return out != nullptr;
     };
 
-    if (flow == 1 || flow == 3) { // 精灵表单图 → 第二段选帧对话框
+    if (flow == 1) { // 精灵表单图 → 第二段选帧对话框（流 3 随创建向导退役）
         const AssetEntry* e = nullptr;
         if (!resolveSprite(r.paths.front(), e)) return;
         if (e->type != AssetType::Sprite) {
@@ -659,8 +659,7 @@ void AnimationPanel::HandlePickerResult(EditorApp& app) {
         pickHasRect_ = false;
         pickSelCells_.clear();
         pickZoom_ = 1.0f;
-        pickCreate_ = (flow == 3);
-        pickOpen_ = true;    // 边沿触发：第二段模态（选帧对话框）
+        pickOpen_ = true; // 边沿触发：第二段模态（选帧对话框）
         pickPending_ = true;
     } else if (flow == 2) { // 多图整图入帧（按选择顺序 = 显示序文件名升序）
         size_t added = 0;
@@ -694,7 +693,6 @@ void AnimationPanel::OpenSheetPickForTest(EditorApp& app, uint64_t guid) {
     pickHasRect_ = false;
     pickSelCells_.clear();
     pickZoom_ = 1.0f;
-    pickCreate_ = false;
     pickOpen_ = true;
     pickPending_ = true;
 }
@@ -938,16 +936,9 @@ void AnimationPanel::DrawSheetPicker(EditorApp& app) {
     ImGui::SameLine();
     ImGui::BeginDisabled(cnt <= 0);
     char b1[64], b2[64];
-    std::snprintf(b1, sizeof(b1), "%s %d 帧", pickCreate_ ? "选定" : "添加", cnt);
+    std::snprintf(b1, sizeof(b1), "添加 %d 帧", cnt);
     std::snprintf(b2, sizeof(b2), "替换为 %d 帧", cnt);
-    if (pickCreate_) {
-        if (ImGui::Button(b1, ImVec2(bw, 0))) {
-            wizFrames_ = buildFrames();
-            wizPicked_ = true;
-            pickOpen_ = false;
-            ImGui::CloseCurrentPopup();
-        }
-    } else if (ImGui::Button(b1, ImVec2(bw, 0))) {
+    if (ImGui::Button(b1, ImVec2(bw, 0))) {
         std::vector<ClipFrame> add = buildFrames();
         // 网格与 meta 不一致（或未切片）且非 1×1 → 写 .meta + Rescan（连号块分
         // 配）→ guid 重查（Rescan 重建 entries_——sh 指针此后失效）
@@ -969,7 +960,7 @@ void AnimationPanel::DrawSheetPicker(EditorApp& app) {
         pickOpen_ = false;
         ImGui::CloseCurrentPopup();
     }
-    if (!pickCreate_) {
+    {
         ImGui::SameLine();
         if (ImGui::Button(b2, ImVec2(bw, 0))) {
             edit_.frames = buildFrames();
@@ -1740,121 +1731,53 @@ void AnimationPanel::DrawSetModals(EditorApp& app) {
 
 void AnimationPanel::StartCreateFromFolder(const std::string& relDir,
                                            const std::string& destDir) {
-    ResetEditingState(); // 同新建集口径：向导弹窗背后不残留旧集/旧剪辑
+    // 唯一创建入口（T3-UX7 向导退役重设计）：文件夹右键 → 极简创建框。
+    ResetEditingState(); // 同新建集口径：弹窗背后不残留旧集/旧剪辑
     wizOpen_ = true;
     wizPending_ = true;
-    wizTab_ = 0;
     wizDir_ = relDir.empty() || relDir == "Assets" ? "Assets" : relDir;
     const size_t slash = wizDir_.find_last_of('/');
     wizName_ = slash == std::string::npos ? wizDir_ : wizDir_.substr(slash + 1);
     if (wizName_.empty() || wizName_ == "Assets") wizName_ = "new-clip";
-    wizPath_ = destDir.empty() ? "Assets" : destDir;
+    wizSaveDir_ = destDir.empty() ? "Assets" : destDir; // 保存位置 = 浏览器当前目录
     wizErr_.clear();
-    wizPicked_ = false;
-    wizFrames_.clear();
 }
 
-void AnimationPanel::StartCreateBlank(const std::string& destDir) {
-    // v3.1：空白区右键"新建动画剪辑…"入口（面板内不放"新建"按钮——创建归
-    // AssetBrowser，用户实测反馈）
-    ResetEditingState(); // 同新建集口径：向导弹窗背后不残留旧集/旧剪辑
-    wizOpen_ = true;
-    wizPending_ = true;
-    wizTab_ = 2;
-    wizPath_ = destDir.empty() ? "Assets" : destDir;
-    wizName_ = "new-clip";
-    wizErr_.clear();
-    wizPicked_ = false;
-    wizFrames_.clear();
-    if (wizDir_.empty()) wizDir_ = "Assets";
-}
-
-void AnimationPanel::DrawWizard(EditorApp& app) {
-    // 新建动画剪辑向导（三通道；入口 = AssetBrowser 右键/空白区）。从精灵表页
-    // v3.1：选图走文件选择器 → 选帧对话框两段式（产出写 wizFrames_）。
-    // wizPending_ = 边沿触发（入口点击帧 OpenPopup 一次）。
+void AnimationPanel::DrawFolderCreate(EditorApp& app) {
+    // 极简文件夹创建框（T3-UX7，用户实测"三 tab 向导配置杂乱"驱动重设计）：
+    // 单页无 tab——源文件夹右键时上下文已定（换源 = 去浏览器点别的文件夹），
+    // 保存位置固定 = 浏览器当前目录（Unity 同款无位置字段，只读行提示——
+    // "落点"一词退役），创建后自动进面板可改名/调参。原向导的精灵表/空白
+    // 创建通道随之退役：集内 inline 新建段 + 加帧四通道覆盖（先起名后选帧，
+    // 顺序更顺）；独立 clip 仅此一入口。wizPending_ = 边沿触发（同新建集）。
     if (!wizOpen_) return;
     if (wizPending_) {
-        ImGui::OpenPopup("新建动画剪辑");
+        ImGui::OpenPopup("从文件夹创建动画");
         wizPending_ = false;
     }
-    ImGui::SetNextWindowSize(ImVec2(680.0f, 540.0f), ImGuiCond_Appearing);
-    if (!ImGui::BeginPopupModal("新建动画剪辑", nullptr, ImGuiWindowFlags_NoSavedSettings)) {
+    ImGui::SetNextWindowSize(ImVec2(460.0f, 0.0f), ImGuiCond_Appearing);
+    if (!ImGui::BeginPopupModal("从文件夹创建动画", nullptr,
+                                ImGuiWindowFlags_NoSavedSettings |
+                                    ImGuiWindowFlags_AlwaysAutoResize)) {
         wizPending_ = true; // 外力关（首开停靠换代杀弹窗）→ 重排队（新建集同口径）
         return;
     }
-    if (ImGui::Button("取消") ||
-        (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !ImGui::IsAnyItemActive())) {
-        wizOpen_ = false;
-        ImGui::CloseCurrentPopup();
-        ImGui::EndPopup();
-        return;
-    }
-
-    // 文件夹页素材收集（创建按钮也要用）
     std::vector<const AssetEntry*> imgs;
-    if (wizTab_ == 0)
-        for (const AssetEntry* e : app.Ctx().Assets().EntriesInDir(
-                 wizDir_.empty() ? "Assets" : wizDir_))
-            if (e->type == AssetType::Sprite && !e->missing) imgs.push_back(e);
-
-    AssetDatabase& db = app.Ctx().Assets();
-    if (ImGui::BeginTabBar("##wizsrc")) {
-        if (ImGui::BeginTabItem("从文件夹")) {
-            wizTab_ = 0;
-            ImGui::TextDisabled("文件夹直下的图片按文件名序逐张入帧（一帧一图，整图引用）");
-            char dlab[160];
-            std::snprintf(dlab, sizeof(dlab), "%s", wizDir_.empty() ? "Assets" : wizDir_.c_str());
-            ImGui::SetNextItemWidth(280);
-            if (ImGui::BeginCombo("##wizdir", dlab)) {
-                for (const std::string& d : db.Directories()) {
-                    if (d.empty()) continue; // 项目根散文件目录不参与
-                    if (ImGui::Selectable(d.c_str(), d == wizDir_)) {
-                        wizDir_ = d;
-                        const size_t s = d.find_last_of('/');
-                        wizName_ = s == std::string::npos ? d : d.substr(s + 1);
-                    }
-                }
-                ImGui::EndCombo();
-            }
-            ImGui::Text("将入帧 %zu 张（文件名序）", imgs.size());
-            const float avail = ImGui::GetContentRegionAvail().x;
-            const float step = 40.0f + ImGui::GetStyle().ItemSpacing.x;
-            const int fcols = std::max(1, (int)(avail / step));
-            int fcol = 0;
-            for (size_t i = 0; i < imgs.size() && i < 12; ++i) {
-                if (fcol++ > 0) ImGui::SameLine();
-                DrawCellImage(app, imgs[i], 0, 40.0f);
-                if (fcol >= fcols) fcol = 0;
-            }
-            if (imgs.empty())
-                ImGui::TextColored(theme::kTextError, "该文件夹没有图片");
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("从精灵表")) {
-            wizTab_ = 1;
-            ImGui::TextDisabled("选择一张精灵图 → 在选帧对话框里分割并选帧（产出 = 新动画的帧）");
-            if (ImGui::Button("选择精灵图…")) StartSheetPick(app, /*createMode=*/true);
-            if (wizPicked_) {
-                ImGui::SameLine();
-                ImGui::TextDisabled("已选 %zu 帧——确认参数后点「创建」", wizFrames_.size());
-                ImGui::SameLine();
-                if (ImGui::SmallButton("清除")) {
-                    wizPicked_ = false;
-                    wizFrames_.clear();
-                }
-            }
-            ImGui::EndTabItem();
-        }
-        if (ImGui::BeginTabItem("空白")) {
-            wizTab_ = 2;
-            ImGui::TextDisabled("建空 clip 后在面板加帧（保存需 ≥1 帧）");
-            ImGui::EndTabItem();
-        }
-        ImGui::EndTabBar();
+    for (const AssetEntry* e : app.Ctx().Assets().EntriesInDir(
+             wizDir_.empty() ? "Assets" : wizDir_))
+        if (e->type == AssetType::Sprite && !e->missing) imgs.push_back(e);
+    ImGui::TextDisabled("%s · %zu 张图（文件名序逐张入帧）", wizDir_.c_str(), imgs.size());
+    const float avail = ImGui::GetContentRegionAvail().x;
+    const float step = 40.0f + ImGui::GetStyle().ItemSpacing.x;
+    const int fcols = std::max(1, (int)(avail / step));
+    int fcol = 0;
+    for (size_t i = 0; i < imgs.size() && i < 12; ++i) {
+        if (fcol++ > 0) ImGui::SameLine();
+        DrawCellImage(app, imgs[i], 0, 40.0f);
+        if (fcol >= fcols) fcol = 0;
     }
-
-    ImGui::SeparatorText("动画参数");
+    if (imgs.empty()) ImGui::TextColored(theme::kTextError, "该文件夹没有图片");
+    ImGui::TextDisabled("保存位置：%s", wizSaveDir_.c_str());
     ImGui::InputText("名称", &wizName_);
     ImGui::SameLine();
     ImGui::SetNextItemWidth(72);
@@ -1862,7 +1785,6 @@ void AnimationPanel::DrawWizard(EditorApp& app) {
     ImGui::SameLine();
     ImGui::SetNextItemWidth(110);
     ImGui::Combo("循环##wiz", &wizLoop_, kLoopNames, 3);
-    ImGui::InputTextWithHint("落点目录", "Assets/…（默认 = 资产浏览器当前目录）", &wizPath_);
     if (!wizErr_.empty()) ImGui::TextColored(theme::kTextError, "%s", wizErr_.c_str());
 
     if (ImGui::Button("创建", ImVec2(140, 0)) ||
@@ -1872,24 +1794,22 @@ void AnimationPanel::DrawWizard(EditorApp& app) {
         cd.name = wizName_;
         cd.fps = (float)wizFps_;
         cd.loopMode = wizLoop_;
-        bool go = true;
-        if (wizTab_ == 0) {
-            if (imgs.empty()) {
-                wizErr_ = "文件夹无图片";
-                go = false;
-            }
+        if (imgs.empty()) {
+            wizErr_ = "文件夹无图片";
+        } else {
             for (const AssetEntry* e : imgs) cd.frames.push_back({e->guid, 0});
-        } else if (wizTab_ == 1) {
-            if (!wizPicked_ || wizFrames_.empty()) {
-                wizErr_ = "先在上方选定帧区间";
-                go = false;
-            } else
-                cd.frames = wizFrames_;
+            if (TryCreateClip(app, cd, wizSaveDir_, wizErr_)) {
+                wizOpen_ = false;
+                ImGui::CloseCurrentPopup();
+            }
         }
-        if (go && TryCreateClip(app, cd, wizPath_, wizErr_)) {
-            wizOpen_ = false;
-            ImGui::CloseCurrentPopup();
-        }
+    }
+    testhooks::Stash("clipcreate.ok", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+    ImGui::SameLine();
+    if (ImGui::Button("取消") ||
+        (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !ImGui::IsAnyItemActive())) {
+        wizOpen_ = false;
+        ImGui::CloseCurrentPopup();
     }
     ImGui::EndPopup();
 }
@@ -1950,7 +1870,7 @@ void AnimationPanel::DrawFrameToolbar(EditorApp& app, bool ro) {
             InsertFrameAfter(selFrame_ >= 0 ? selFrame_ : (int)edit_.frames.size(),
                              nf); // 有选中 = 插其后；无选中 = 末尾追加（-1 是头插，勿传）
         }
-        if (ImGui::MenuItem("从精灵表…（选图 → 分割 → 选帧）")) StartSheetPick(app, false);
+        if (ImGui::MenuItem("从精灵表…（选图 → 分割 → 选帧）")) StartSheetPick(app);
         if (ImGui::MenuItem("从图片文件…（多选，整图入帧）")) StartImageFilePick(app);
         if (ImGui::MenuItem("从动画剪辑 (.anim) 复制…")) {
             clipPickOpen_ = true;
@@ -2148,7 +2068,7 @@ void AnimationPanel::OnGui(EditorApp& app) {
     // ---- 模态层（v3.1：目标行已删——切换/打开资产走 AssetBrowser 双击，创建
     // 走浏览器右键；面板 = 纯编辑器）。HandlePickerResult 可能 ImportFile/
     // RescanAssets——此后 OnGui 条目一律 guid 重查，无陈旧指针 ----
-    DrawWizard(app);
+    DrawFolderCreate(app);
     DrawSheetPicker(app);
     DrawSetModals(app);
     DrawClipPickModal(app);

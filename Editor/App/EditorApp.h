@@ -109,15 +109,12 @@ public:
     /// 专用编辑面板"通道）。T3c 集归并：.anim 若已属某 .override 集 → 开集工作台并
     /// 选中该段；否则裸 clip 传统模式；.override 直接开集。
     void OpenAnimationEditor(uint64_t guid);
-    /// 文件夹右键"从此文件夹创建动画"（M6a 批② T3b-5）：开 Animation 向导并
-    /// 预选文件夹页；落点 = AssetBrowser 当前浏览目录（决策 4）
+    /// 文件夹右键「从此文件夹创建动画…」（T3-UX7：唯一创建入口）——开极简
+    /// 创建框；保存位置 = AssetBrowser 当前浏览目录（只读展示）
     void OpenAnimationCreateFromFolder(const std::string& relDir);
-    /// 文件夹右键"新建动画集…"（M6a 批② T3c）：开新建集弹窗（源目录非空 =
+    /// 空白区右键"新建动画集…"（M6a 批② T3c）：开新建集弹窗（源目录非空 =
     /// 显示"并建首段"勾选）；落点 = AssetBrowser 当前浏览目录
     void OpenAnimationCreateSet(const std::string& relDir);
-    /// 空白区右键"新建动画剪辑…"（动画工作台 v3.1）：开向导空白页；落点 = 浏览
-    /// 目录。面板内不再放"新建"按钮——创建入口归 AssetBrowser（用户实测反馈）
-    void OpenAnimationCreateClip(const std::string& destDir);
     /// 面板 × 关闭按钮的落点（T3b-8）：同步 PanelRegistry 开关（Window 菜单可重开）
     void ClosePanel(const char* name);
     /// AssetBrowser 当前浏览目录（"" = 根 → 归一 "Assets"；向导落点默认值用）

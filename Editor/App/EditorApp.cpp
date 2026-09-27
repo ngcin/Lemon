@@ -2151,7 +2151,11 @@ void EditorApp::OpenAnimationEditor(uint64_t guid) {
             panel->SelectSegment(0); // 装载后左列选首段（空集 = 清选）
             return;
         }
-        panel->SetTarget(guid); // 裸 clip
+        // 裸 clip（T3-UX7 断路修复）：必须先清集态——SetTarget 只设 targetGuid_，
+        // 而 OnGui 集模式优先（setGuid_ 非 0 时无视 targetGuid_）。曾因此：面板
+        // 开着集时双击独立 clip"没反应"（集吃掉渲染）——真人实测报告。
+        panel->OpenSet(0);
+        panel->SetTarget(guid);
     }
 }
 
@@ -2165,20 +2169,12 @@ void EditorApp::OpenAnimationCreateFromFolder(const std::string& relDir) {
 }
 
 void EditorApp::OpenAnimationCreateSet(const std::string& relDir) {
-    // M6a 批② T3c：文件夹右键"新建动画集…"——开新建集弹窗（源目录随行，弹窗
-    // 内可勾"并从源目录图片建首段"）；落点跟随浏览器当前目录
+    // M6a 批② T3c：空白区右键"新建动画集…"——开新建集弹窗（源目录随行，弹窗
+    // 内可勾"并从源目录图片建首段"）；落点跟随浏览器当前目录。
+    // （T3-UX7：文件夹右键的集入口已删——集都从 Animations 下建，用户实测定论）
     if (PanelRegistry::Entry* en = panels_.FindEntry("Animation")) {
         en->open = true;
         static_cast<AnimationPanel*>(en->panel)->StartCreateSet(relDir, AssetBrowserDir());
-    }
-}
-
-void EditorApp::OpenAnimationCreateClip(const std::string& destDir) {
-    // 动画工作台 v3.1：空白区右键"新建动画剪辑…"——向导空白页（集内建动画走
-    // 面板左列，独立 .anim 是低频传统通道，入口归浏览器）
-    if (PanelRegistry::Entry* en = panels_.FindEntry("Animation")) {
-        en->open = true;
-        static_cast<AnimationPanel*>(en->panel)->StartCreateBlank(destDir);
     }
 }
 
@@ -2835,6 +2831,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
     bool smokeSheetFlowDone = false; // 三图优化点③：选帧对话框计数/清空/关窗
     bool smokeAddCountOk = false, smokeAddOrderOk = false, smokeAddFlowDone = false;
     size_t smokeAddBase = 0; // 帧序事故回归：多图追加前编辑态帧数基数
+    bool smokeFolderCreateOk = false, smokeDblClipOk = false; // T3-UX7：极简创建/断路
     bool smokeLeftColOk = false, smokeLeftColDone = false; // 三图优化点①：左列段行元信息
     Vec2 smokeCreatePt{-1.0e9f, -1.0e9f};
     Vec2 smokePickPt{-1.0e9f, -1.0e9f};
@@ -3861,6 +3858,63 @@ int EditorApp::Run(const EditorLaunch& launch) {
                                     smokeAddBase);
                 }
             }
+            // ---- T3-UX7：极简文件夹创建框 + 裸 clip 双击断路。f107 现场播种
+            // walksrc/ 三图（文件名序 pick0<1<2——不随项目播种：选择器网格含目录
+            // 瓦片会挤占 tile 序，f50 链的 1/8 断言依赖"Assets 无子目录"前提）
+            // → f108 语义开框（浏览器在 Assets 根 → 保存位置 = Assets）→
+            // f110/111 真实点「创建」→ f114 断言 Assets/walksrc.anim 落盘 + 面板
+            // 切到新 clip + 3 帧 = 文件名序（文件夹通道帧序锁）→ f116 先开集
+            // （制造旧 bug 的集态残留）→ f117 "双击"新 clip（非任何集成员 = 裸
+            // 路径）断言集态清零 + 目标切换（断路回归：旧 bug 下面板继续显示集
+            // = "双击没反应"）。
+            else if (frame == 107) {
+                namespace fs = std::filesystem;
+                const fs::path a = fs::path(launchCopy_.projectDir) / "Assets";
+                std::error_code cec;
+                fs::create_directories(a / "walksrc", cec);
+                for (int k = 0; k < 3; ++k)
+                    fs::copy_file(a / ("pick" + std::to_string(k) + ".png"),
+                                  a / "walksrc" / ("pick" + std::to_string(k) + ".png"),
+                                  fs::copy_options::overwrite_existing, cec);
+                RescanAssets();
+            } else if (frame == 108) {
+                OpenAnimationCreateFromFolder("Assets/walksrc");
+            } else if (frame == 110) {
+                ImVec2 mn, mx;
+                if (testhooks::Find("clipcreate.ok", mn, mx)) {
+                    smokeSheetPt = Vec2{(mn.x + mx.x) * 0.5f, (mn.y + mx.y) * 0.5f};
+                    ui_->SetInputOverride(smokeSheetPt.x, smokeSheetPt.y, 1);
+                } else {
+                    LEMON_ERROR("smoke-anim：创建框「创建」未登记（框没开？）");
+                }
+            } else if (frame == 111 && smokeSheetPt.x > -1.0e8f) {
+                ui_->SetInputOverride(smokeSheetPt.x, smokeSheetPt.y, 0);
+            } else if (frame == 114) {
+                AnimationPanel* p = nullptr;
+                if (PanelRegistry::Entry* en = panels_.FindEntry("Animation"))
+                    p = static_cast<AnimationPanel*>(en->panel);
+                const AssetEntry* nc = ctx_.Assets().FindByPath("Assets/walksrc.anim");
+                const AssetEntry* i0 = ctx_.Assets().FindByPath("Assets/walksrc/pick0.png");
+                smokeFolderCreateOk = p && nc && i0 && !nc->missing &&
+                                      nc->type == AssetType::Clip &&
+                                      p->TargetGuidForTest() == nc->guid &&
+                                      p->EditFrameCountForTest() == 3 &&
+                                      p->EditFrameSheetForTest(0) == i0->guid;
+                if (!smokeFolderCreateOk)
+                    LEMON_ERROR("smoke-anim：文件夹创建链不符（落盘/切换/3帧/首帧序）");
+            } else if (frame == 116) {
+                OpenAnimationEditor(kAnimSetGuid);
+            } else if (frame == 117) {
+                AnimationPanel* p = nullptr;
+                if (PanelRegistry::Entry* en = panels_.FindEntry("Animation"))
+                    p = static_cast<AnimationPanel*>(en->panel);
+                const AssetEntry* nc = ctx_.Assets().FindByPath("Assets/walksrc.anim");
+                if (p && nc) OpenAnimationEditor(nc->guid); // 双击裸 clip（同步置态）
+                smokeDblClipOk = p && nc && p->SetGuidForTest() == 0 &&
+                                 p->TargetGuidForTest() == nc->guid;
+                if (!smokeDblClipOk)
+                    LEMON_ERROR("smoke-anim：双击裸 clip 未切换（集态残留 = 断路回归）");
+            }
         }
 
         // --smoke-ui（M4.7d 收尾轮）：真人会话注入回归。事件走真实 ImGui 管线
@@ -4868,13 +4922,15 @@ int EditorApp::Run(const EditorLaunch& launch) {
                      smokePickClickOk && smokePickShiftOk && smokePickAllOk &&
                      smokeSheetAllOk && smokeSheetClearOk && smokeSheetCloseOk &&
                      smokeAddCountOk && smokeAddOrderOk &&
+                     smokeFolderCreateOk && smokeDblClipOk &&
                      smokeLeftColOk;
             std::printf("[lemon] smoke-anim: prog(maxFrame=%u slice=%s booked=%u)%s "
                         "queue(hitClip=%s hit=%s back=%s) fx(text/bar=%s) "
                         "edit(rt=%s cache=%s whole=%s) set(rt=%s cache=%s open=%s "
                         "create=%s flow=%s) graph(rt=%s cache=%s switch=%s) "
                         "pick(click=%s shift=%s all=%s sheet(all=%s clear=%s close=%s)) "
-                        "multiadd(count=%s order=%s) leftcol(meta=%s) => %s\n",
+                        "multiadd(count=%s order=%s) create(folder=%s dblclip=%s) "
+                        "leftcol(meta=%s) => %s\n",
                         (unsigned)smokeAnimMax[0], smokeAnimSlice[0] ? "YES" : "NO",
                         sh ? sh->sliceCount : 0, yami, hitBooked ? "booked" : "MISSING",
                         smokeQueueHit ? "YES" : "NO", smokeQueueBack ? "YES" : "NO",
@@ -4889,6 +4945,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
                         smokePickAllOk ? "YES" : "NO", smokeSheetAllOk ? "YES" : "NO",
                         smokeSheetClearOk ? "YES" : "NO", smokeSheetCloseOk ? "YES" : "NO",
                         smokeAddCountOk ? "YES" : "NO", smokeAddOrderOk ? "YES" : "NO",
+                        smokeFolderCreateOk ? "YES" : "NO", smokeDblClipOk ? "YES" : "NO",
                         smokeLeftColOk ? "YES" : "NO",
                         animOk ? "OK" : "FAIL");
             if (!animOk) exitCode = 1;
