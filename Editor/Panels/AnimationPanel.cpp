@@ -98,32 +98,46 @@ void AnimationPanel::LoadFrom(const AssetDatabase& db, const AssetEntry& e) {
 
 // ---------------------------------------------------------------- 预览 ----
 
-void AnimationPanel::DrawCellImage(EditorApp& app, const AssetEntry* sheet, uint32_t cell,
-                                   float edge) {
+// 切片号/整图 → 页缩略图采样参数（DrawCellImage 与左列行小图共用）。成功时
+// tex 非空 + uv 区间 + aspect = 单元高宽比（ch/cw）；失败返回 false（画占位）。
+bool CellImageParams(EditorApp& app, const AssetEntry* sheet, uint32_t cell,
+                     void*& tex, ImVec2& uv0, ImVec2& uv1, float& aspect) {
     // 切片号 → 页缩略图 UV（行优先换算）；未切片 = 全幅（T3b-1 整图引用）
     const bool sliced = sheet && sheet->Sliced();
     const bool valid = sheet && !sheet->missing && sheet->type == AssetType::Sprite &&
                        (sliced ? cell < sheet->sliceCount : cell == 0);
-    void* tex = valid ? app.AssetGpu().Thumbnail(sheet->guid) : nullptr;
+    tex = valid ? app.AssetGpu().Thumbnail(sheet->guid) : nullptr;
     uint32_t w = 0, h = 0;
-    if (tex && valid && app.AssetGpu().PageInfo(sheet->guid, w, h) && w && h) {
-        float u0 = 0.0f, v0 = 0.0f, u1 = 1.0f, v1 = 1.0f;
-        uint32_t cw = w, ch = h;
-        if (sliced) {
-            const uint32_t cols = sheet->gridCols ? sheet->gridCols : 1;
-            const uint32_t rows = sheet->gridRows ? sheet->gridRows : 1;
-            cw = sheet->cellW ? sheet->cellW : w / cols;
-            ch = sheet->cellH ? sheet->cellH : h / rows;
-            const uint32_t cx = cell % cols, cy = cell / cols;
-            u0 = (float)(cx * cw) / (float)w;
-            v0 = (float)(cy * ch) / (float)h;
-            u1 = (float)((cx + 1) * cw) / (float)w;
-            v1 = (float)((cy + 1) * ch) / (float)h;
-        }
-        ImGui::Image(tex, ImVec2(edge, edge * (float)ch / (float)cw), ImVec2(u0, v0),
-                     ImVec2(u1, v1));
+    if (!tex || !valid || !app.AssetGpu().PageInfo(sheet->guid, w, h) || !w || !h)
+        return false;
+    uint32_t cw = w, ch = h;
+    if (sliced) {
+        const uint32_t cols = sheet->gridCols ? sheet->gridCols : 1;
+        const uint32_t rows = sheet->gridRows ? sheet->gridRows : 1;
+        cw = sheet->cellW ? sheet->cellW : w / cols;
+        ch = sheet->cellH ? sheet->cellH : h / rows;
+        const uint32_t cx = cell % cols, cy = cell / cols;
+        uv0 = ImVec2((float)(cx * cw) / (float)w, (float)(cy * ch) / (float)h);
+        uv1 = ImVec2((float)((cx + 1) * cw) / (float)w, (float)((cy + 1) * ch) / (float)h);
+    } else {
+        uv0 = ImVec2(0.0f, 0.0f);
+        uv1 = ImVec2(1.0f, 1.0f);
+    }
+    aspect = (float)ch / (float)cw;
+    return true;
+}
+
+void AnimationPanel::DrawCellImage(EditorApp& app, const AssetEntry* sheet, uint32_t cell,
+                                   float edge) {
+    void* tex = nullptr;
+    ImVec2 uv0, uv1;
+    float aspect = 1.0f;
+    if (CellImageParams(app, sheet, cell, tex, uv0, uv1, aspect)) {
+        ImGui::Image(tex, ImVec2(edge, edge * aspect), uv0, uv1);
         return;
     }
+    const bool valid = sheet && !sheet->missing && sheet->type == AssetType::Sprite &&
+                       (sheet->Sliced() ? cell < sheet->sliceCount : cell == 0);
     ImGui::PushStyleColor(ImGuiCol_Button, theme::kPlayStop);
     ImGui::Button(valid ? "?" : "×", ImVec2(edge, edge));
     ImGui::PopStyleColor();
@@ -1030,6 +1044,7 @@ void AnimationPanel::ResetEditingState() {
     setLoadedGuid_ = 0;
     segGuid_ = 0;
     targetGuid_ = 0;
+    segRowCache_.clear(); // 行元信息随集走——残留只会指向已删/他集的段
 }
 
 void AnimationPanel::StartImageFilePick(EditorApp& app) {
@@ -1059,6 +1074,7 @@ void AnimationPanel::StartCreateSet(const std::string& relDir, const std::string
 void AnimationPanel::LoadSetFrom(const AssetDatabase& db, const AssetEntry& e) {
     setLoadedGuid_ = e.guid;
     setLoadedHash_ = e.hash;
+    segRowCache_.clear(); // 换集：段行缓存全量重建（键 guid 跨集不撞，纯防陈旧）
     std::ifstream f(db.AbsolutePath(e), std::ios::binary);
     if (f) {
         std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
@@ -1169,6 +1185,63 @@ bool AnimationPanel::TryCreateSet(EditorApp& app, const std::string& dir,
     return true;
 }
 
+const AnimationPanel::SegRowInfo& AnimationPanel::LoadSegRow(EditorApp& app,
+                                                             const AssetEntry& clip) {
+    // 命中判据 = 段文件内容哈希（Rescan 每次重算）——面板保存/外部改动自动失效，
+    // 未变时零 IO（一集几十段 × 每帧，解析开销只在变更帧付一次）
+    SegRowInfo& r = segRowCache_[clip.guid];
+    if (r.hash != 0 && r.hash == clip.hash) return r;
+    r = SegRowInfo{};
+    r.hash = clip.hash;
+    std::ifstream f(app.Ctx().Assets().AbsolutePath(clip), std::ios::binary);
+    if (!f) return r;
+    std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    if (ClipData c = ParseClipJson(text); c.ok) {
+        r.ok = true;
+        r.frames = (int)c.frames.size();
+        r.fps = c.fps > 0.0f ? c.fps : 8.0f;
+        if (!c.frames.empty()) r.first = c.frames.front();
+    }
+    return r;
+}
+
+void AnimationPanel::DrawSegRowThumb(EditorApp& app, const AssetEntry* sheet, uint32_t cell,
+                                     float posX, float posY, float edge) {
+    // drawlist 直染（不走 ImGui::Image）：Image 也是 item，盖在 Selectable 上会抢
+    // HoveredId——左列双击改名/右键菜单的 IsItemHovered 判定就断了（胶片带同款
+    // 结论：交互件 + 覆盖内容 = 内容必须走 drawlist）
+    const ImVec2 pos{posX, posY};
+    void* tex = nullptr;
+    ImVec2 uv0, uv1;
+    float aspect = 1.0f;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    if (CellImageParams(app, sheet, cell, tex, uv0, uv1, aspect)) {
+        // 等比缩进 edge 框（长边贴边、短边居中）——竖长帧不撑破行高
+        float w = edge, h = edge * aspect;
+        if (h > edge) {
+            w = edge / aspect;
+            h = edge;
+        }
+        const ImVec2 c{pos.x + edge * 0.5f, pos.y + edge * 0.5f};
+        dl->AddImage(tex, ImVec2(c.x - w * 0.5f, c.y - h * 0.5f),
+                     ImVec2(c.x + w * 0.5f, c.y + h * 0.5f), uv0, uv1);
+        return;
+    }
+    // 占位灰框（悬空/坏档/未导入——具体原因在名字后缀与元信息行）
+    dl->AddRectFilled(pos, ImVec2(pos.x + edge, pos.y + edge),
+                      ImGui::ColorConvertFloat4ToU32(ImVec4(0.24f, 0.24f, 0.25f, 1.0f)),
+                      4.0f);
+}
+
+int AnimationPanel::SegRowFramesForTest(size_t idx) const {
+    // 缓存由左列绘制侧填充——返回 -1 即"没画过/没解析"，冒烟据此断言左列真的
+    // 走到了行渲染（比探针坐标更贴语义：帧数来自 .anim 解析结果）
+    if (idx >= setEdit_.segments.size()) return -1;
+    const auto it = segRowCache_.find(setEdit_.segments[idx].clipGuid);
+    if (it == segRowCache_.end() || it->second.hash == 0) return -1;
+    return it->second.frames;
+}
+
 void AnimationPanel::DrawLeftColumn(EditorApp& app, float width, float height,
                                     bool sameLineAfter) {
     // v3.2 左列（Godot Animations 列，图标工具条）：集名行（保存 = 右区「保存」
@@ -1270,7 +1343,19 @@ void AnimationPanel::DrawLeftColumn(EditorApp& app, float width, float height,
                 setErr_.clear();
             }
         } else {
-            if (ImGui::Selectable(lab, segGuid_ == sg.clipGuid)) {
+            // 三图优化点①：行 = 首帧小图 + 名 + 帧数/时长元信息（纯名字行要逐个
+            // 点开才知道内容——参考 Godot Animations 列带缩略图的可读性）。行交互
+            // 归 Selectable（点选/双击改名/右键菜单），内容 drawlist 直染——Image/
+            // Text 都是 item，盖上去会抢 HoveredId 断双击与右键。元信息读已存盘
+            // 内容：保存触发 Rescan → 内容哈希变 → 下帧自动重读（编辑中未保存的
+            // 改动不反映，与 Godot 口径一致）。
+            const SegRowInfo* ri = nullptr;
+            if (!dangling) ri = &LoadSegRow(app, *c);
+            const float lh = ImGui::GetTextLineHeight();
+            const float rowH = lh * 2.0f + 7.0f;
+            const float thumb = lh * 2.0f - 3.0f;
+            if (ImGui::Selectable("##segrow", segGuid_ == sg.clipGuid, 0,
+                                  ImVec2(0.0f, rowH))) {
                 segGuid_ = sg.clipGuid;
                 targetGuid_ = sg.clipGuid; // 右区复用 clip 编辑机制
             }
@@ -1280,6 +1365,26 @@ void AnimationPanel::DrawLeftColumn(EditorApp& app, float width, float height,
                 segEditFocus_ = true;
                 setErr_.clear();
             }
+            const ImVec2 p0 = ImGui::GetItemRectMin();
+            const float textX = p0.x + 6.0f + thumb + 7.0f;
+            const bool hasFirst = ri && ri->ok && ri->frames > 0;
+            DrawSegRowThumb(app, hasFirst ? db.FindByGuid(ri->first.sheetGuid) : nullptr,
+                            hasFirst ? ri->first.cell : 0, p0.x + 6.0f,
+                            p0.y + (rowH - thumb) * 0.5f, thumb);
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            dl->AddText(ImVec2(textX, p0.y + 3.0f), ImGui::GetColorU32(ImGuiCol_Text), lab);
+            char meta[64];
+            if (dangling)
+                std::snprintf(meta, sizeof(meta), "%s", "文件丢失");
+            else if (!ri->ok)
+                std::snprintf(meta, sizeof(meta), "%s", "坏档（右区看详情）");
+            else if (ri->frames == 0)
+                std::snprintf(meta, sizeof(meta), "%s", "0 帧（右区加帧）");
+            else
+                std::snprintf(meta, sizeof(meta), "%d 帧 · %.2fs", ri->frames,
+                              (float)ri->frames / ri->fps);
+            dl->AddText(ImVec2(textX, p0.y + 5.0f + lh),
+                        ImGui::GetColorU32(ImGuiCol_TextDisabled), meta);
             if (ImGui::BeginPopupContextItem("##segctx")) {
                 if (ro) ImGui::BeginDisabled();
                 if (ImGui::MenuItem("重命名（改名动画文件）")) {

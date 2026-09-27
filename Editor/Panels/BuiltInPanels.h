@@ -253,6 +253,9 @@ public:
     void PickerClickForTest(size_t idx, bool ctrl, bool shift) {
         picker_.ApplyMultiClickForTest(idx, ctrl, shift);
     }
+    /// 冒烟：左列段行元信息缓存（三图优化点①回归位）——返回该段 .anim 帧数；
+    /// -1 = 面板尚未画过该行 / 越界 / 集未开（缓存由左列绘制侧填充）
+    int SegRowFramesForTest(size_t idx) const;
 
 private:
     void LoadFrom(const AssetDatabase& db, const AssetEntry& e); // 缓存键失效 → 重读
@@ -377,6 +380,20 @@ private:
     std::string segEditBuf_;
     bool segEditFocus_ = false;    // 改名输入一次性抢焦点
     std::string segFilter_;       // 段搜索子串（大小写不敏感；建段时自动清）
+    // 左列段行元信息缓存（三图优化点①）：键 = 段 clip guid，命中判据 = 段文件
+    // 内容哈希（保存/外部改动触发 Rescan → hash 变 → 下帧重读，零轮询）。
+    // 换集/重置编辑态时整表清空。行小图取 first 帧经 AssetGpu 页缩略图直染。
+    struct SegRowInfo {
+        uint64_t hash = 0;    // AssetEntry.hash（0 = 未填——首画该行才解析）
+        bool ok = false;      // .anim 可解析（false = 坏档，行元信息标"坏档"）
+        int frames = 0;
+        float fps = 8.0f;
+        ClipFrame first{};    // 首帧（frames==0 时无效，画占位）
+    };
+    const SegRowInfo& LoadSegRow(EditorApp& app, const AssetEntry& clip);
+    void DrawSegRowThumb(EditorApp& app, const AssetEntry* sheet, uint32_t cell,
+                         float posX, float posY, float edge);
+    std::unordered_map<uint64_t, SegRowInfo> segRowCache_;
     std::string setMsg_;          // 集保存/校验结果行（左列底部）
     bool setOk_ = false;
     bool setCreateOpen_ = false, setCreatePending_ = false; // 新建集弹窗（边沿触发）

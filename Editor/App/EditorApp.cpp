@@ -2831,6 +2831,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
     bool smokeSetModalQueuedPrev = false; // 诊断：模态 queued 探针的帧间沿
     bool smokePickClickOk = false, smokePickShiftOk = false, smokePickAllOk = false;
     bool smokePickFlowDone = false;
+    bool smokeLeftColOk = false, smokeLeftColDone = false; // 三图优化点①：左列段行元信息
     Vec2 smokeCreatePt{-1.0e9f, -1.0e9f};
     Vec2 smokePickPt{-1.0e9f, -1.0e9f};
     if (launch.smokeAnim) {
@@ -3657,6 +3658,25 @@ int EditorApp::Run(const EditorLaunch& launch) {
                     std::printf("[lemon] probe: 新建集模态 queued=%s @f%llu\n",
                                 q ? "ON" : "OFF", (unsigned long long)frame);
                     smokeSetModalQueuedPrev = q;
+                }
+                // 三图优化点①：左列段行元信息缓存（f30 = 模态开着但工作台照画，
+                // 四段行都已解析）。walk/hit/whole = 播种原值；edit = 播种 1 帧 +
+                // clip 编辑链 +1 的复合值——顺带锁住"元信息读的是存盘内容"
+                if (frame == 30 && !smokeLeftColDone) {
+                    smokeLeftColDone = true;
+                    if (PanelRegistry::Entry* en = panels_.FindEntry("Animation")) {
+                        AnimationPanel* ap = static_cast<AnimationPanel*>(en->panel);
+                        const int walk = ap->SegRowFramesForTest(0);
+                        const int hit = ap->SegRowFramesForTest(1);
+                        const int edit = ap->SegRowFramesForTest(2);
+                        const int whole = ap->SegRowFramesForTest(3);
+                        smokeLeftColOk = walk == 4 && hit == 2 && edit == 2 && whole == 1;
+                        std::printf("[lemon] probe: 左列段行 walk=%d hit=%d edit=%d "
+                                    "whole=%d (expect 4/2/2/1) @f%llu\n",
+                                    walk, hit, edit, whole, (unsigned long long)frame);
+                    }
+                    if (!smokeLeftColOk)
+                        LEMON_ERROR("smoke-anim：左列段行元信息未填充/帧数不符（优化点①）");
                 }
             } else if (frame == 40) {
                 ImVec2 mn, mx;
@@ -4733,12 +4753,13 @@ int EditorApp::Run(const EditorLaunch& launch) {
                      smokeSetEditOk && smokeSetPlayCacheOk && smokeSetOpenOk &&
                      smokeSetCreateOk && smokeSetCreateOpenOk && smokeGraphEditOk &&
                      smokeGraphCacheOk && smokeGraphSwitchOk &&
-                     smokePickClickOk && smokePickShiftOk && smokePickAllOk;
+                     smokePickClickOk && smokePickShiftOk && smokePickAllOk &&
+                     smokeLeftColOk;
             std::printf("[lemon] smoke-anim: prog(maxFrame=%u slice=%s booked=%u)%s "
                         "queue(hitClip=%s hit=%s back=%s) fx(text/bar=%s) "
                         "edit(rt=%s cache=%s whole=%s) set(rt=%s cache=%s open=%s "
                         "create=%s flow=%s) graph(rt=%s cache=%s switch=%s) "
-                        "pick(click=%s shift=%s all=%s) => %s\n",
+                        "pick(click=%s shift=%s all=%s) leftcol(meta=%s) => %s\n",
                         (unsigned)smokeAnimMax[0], smokeAnimSlice[0] ? "YES" : "NO",
                         sh ? sh->sliceCount : 0, yami, hitBooked ? "booked" : "MISSING",
                         smokeQueueHit ? "YES" : "NO", smokeQueueBack ? "YES" : "NO",
@@ -4750,7 +4771,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
                         smokeGraphEditOk ? "YES" : "NO", smokeGraphCacheOk ? "YES" : "NO",
                         smokeGraphSwitchOk ? "YES" : "NO",
                         smokePickClickOk ? "YES" : "NO", smokePickShiftOk ? "YES" : "NO",
-                        smokePickAllOk ? "YES" : "NO",
+                        smokePickAllOk ? "YES" : "NO", smokeLeftColOk ? "YES" : "NO",
                         animOk ? "OK" : "FAIL");
             if (!animOk) exitCode = 1;
         }
