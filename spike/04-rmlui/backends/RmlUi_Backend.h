@@ -5,6 +5,9 @@
 #include <RmlUi/Core/SystemInterface.h>
 #include <RmlUi/Core/Types.h>
 
+struct SDL_Window;
+namespace Rml { class TextInputHandler; }
+
 using KeyDownCallback = bool (*)(Rml::Context* context, Rml::Input::KeyIdentifier key, int key_modifier, float native_dp_ratio, bool priority);
 
 /**
@@ -42,6 +45,16 @@ float GetWindowPixelDensity();
 // (spike acceptance only — pixel-level verification without screen-recording
 // permission; delete when porting onto the engine RHI).
 void RequestScreenshot(const Rml::String& path);
+
+// [Lemon spike 改造⑬] T7 文本输入微 spike：暴露窗口句柄——自定义 SystemInterface
+// 需继承 SystemInterface_SDL（ActivateKeyboard → SDL_SetTextInputArea/StartTextInput
+// 的候选窗贴光标通路），其构造要求窗口。
+SDL_Window* GetWindow();
+
+// [Lemon spike 改造⑭] T7 文本输入微 spike：暴露 IME 预编辑 handler——事件循环
+// （ProcessEvents 的 SDL_EVENT_TEXT_EDITING 分支）已调其 HandleEdit，但从未注册
+// 给 RmlUi 上下文；调用方经 Rml::CreateContext 第 4 参接上。
+Rml::TextInputHandler* GetTextInputHandler();
 
 // Prepares the render state to accept rendering commands from RmlUi, call before rendering the RmlUi context.
 void BeginFrame();

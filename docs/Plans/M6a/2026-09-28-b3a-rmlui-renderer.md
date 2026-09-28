@@ -1,6 +1,6 @@
 # M6a 批③a —— RmlUi 渲染地基：Engine/Ui + RenderInterface over RHI + GameView 静态文档冒烟
 
-Status: in-progress
+Status: done（主体 2026-09-28 勾销；T7 收尾同日过——③c 开工门槛清除）
 
 > [ADR-014](../../ADR/ADR-014-Game-UI-RmlUi-Integration.md) 五子批之首。本批目标 = 引擎侧 RmlUi 呈现通路打通（渲染/上下文/字体/文档加载 + 冒烟验收），**不含** C# API（③c）、资产通道（③b）、模板迁移（③d）。
 > 实现前调研结论（2026-09-28，Explore 全量走查 RHI/ViewportRenderer/spike-04/冒烟基建）已折入下文分解。
@@ -71,10 +71,16 @@ Status: in-progress
 - VERDICT：`[lemon] smoke-uirml: doc=%d font=%s panel=%u title=%u => OK/FAIL`；失败 → exitCode 1。
 - **回归脚本不动**（`tools/editor-regression.sh` 14 步维持——smoke-uirml 接入回归随 ③c 契约断言一起做，批文件登记）。
 
-### T7 文本输入微 spike（spike/04 扩展，可独立后置半日）
+### T7 文本输入微 spike（spike/04 扩展，可独立后置半日）✅ 2026-09-28（三判据全过，一次过）
 
-- `spike/04-rmlui/data/test.rml` 加 `<input type="text">`；main.cpp `SDL_StartTextInput` + 合成文本事件注入；断言 `GetElementById("name")->GetValue()` 回读 = 注入串。
-- 三判据：中文提交零乱码 / 候选窗贴光标（`SDL_SetTextInputArea`）/ 事件不串。**若本轮 context 不允许则留为 ③a 收尾项，③c 开工前必须过。**
+- 交付：`data/test.rml` 加 `<input type="text" id="name" maxlength="12">`（起名用例 + `:focus` 高亮）；main.cpp 重构 `SpikeSystem : SystemInterface_SDL`——原裸 `Rml::SystemInterface` 的 `ActivateKeyboard/DeactivateKeyboard` 是 no-op，继承 SDL 版后接通"`<input>` 聚焦 → RmlUi 自动调 `ActivateKeyboard(光标绝对坐标, 行高)` → `SDL_SetTextInputArea`/`SDL_StartTextInput`"候选窗通路（调用点 `WidgetTextInput.cpp:1615` 核心自带）。后端两处 spike 改造：**⑬ `Backend::GetWindow()`**（SystemInterface_SDL 构造需窗口）+ **⑭ `Backend::GetTextInputHandler()`**（事件循环早就在 `SDL_EVENT_TEXT_EDITING` 分支喂 `HandleEdit`，但 IME handler 从未注册给上下文——经 `Rml::CreateContext` 第 4 参接上）。
+- 注入器三件（main.cpp）：`PushTextInput`（TEXT_INPUT）/ `PushTextEditing`（预编辑——真实 IME 事件序 `EDITING(串)→EDITING(空)→INPUT(提交)`）/ `PushKey`（KEY_DOWN/UP 成对）；断言 = `GetValue()` **UTF-8 逐字节比对**（乱码必字节不等——判据①的机器化）。
+- 三判据实测（`build/mac/spike/04-rmlui/lemon-spike-rmlui`，VERDICT `text=OK(ime=OK route=OK) => PASS`，exit 0）：
+  - **① 中文提交零乱码**：IME 事件序提交"柠檬" + 纯 TEXT_INPUT"骑士" → 值逐字节 == `柠檬骑士`（4 字，LengthUTF8 核对）；
+  - **② 候选窗贴光标**：聚焦即 ActivateKeyboard，光标坐标随打字推进（1052→1084→1116，行高 19），锚点 (1100,278.8) 落输入框 (1040,269) 344×39 内；失焦 DeactivateKeyboard 成对；
+  - **③ 事件不串**：裸 KEY_DOWN('N') 不插字（字只能走 TEXT_INPUT 通道）/ RETURN 的 `'\n'`（平台层 key_down 分支转 `ProcessTextInput('\n')`）被单行 input 吞 / ←→ 只移光标 / 退格恰删一字 / 点按钮失焦出 change。
+- **结论（ADR-014 D4 定案）**：RmlUi 自带 `<input>` 质量过关，③c 提交制文本输入直接吃核心控件，**M8 自定义元素兜底不触发**。
+- 对 ③c 的两条白送发现：**change 在每个提交边界派发**（每次文本落定 + 回车，非只 blur）——M3 的 change/submit 映射有现成语义底座（注意过滤"逐键 change"，D4 语义是提交制）；**光标每次移动都重发 ActivateKeyboard**——候选窗跟随光标是核心自带行为，引擎无需自建机制。真人 IME 视觉确认（候选窗实贴光标）余用户，机制面已全部机器化。
 
 ## 验收判据（全过才勾销）
 
@@ -82,6 +88,7 @@ Status: in-progress
 2. ✅ `./build/mac/Editor/lemon-editor --smoke-uirml --frames 180 --validate`：VERDICT OK（panel=102652(>3000) title=791(>20) body=374(>20)，font=Hiragino Sans GB）+ **验证层零错误** + exit 0。
 3. ✅ 既有回归 `tools/editor-regression.sh` 14/14 不回归（**复跑全绿**；首跑 13/14——`--save-scene` 早退路径触发 UiSubsystem 析构断言崩溃，改防御性收尾修复，见 [DevLog](../../DevLog/2026-09-28-m6a-b3a-rmlui-renderer.md)）。
 4. ✅ `--smoke-uirml --screenshot` 目检（**真人验收 ✅ 2026-09-28**：首轮抓到纵向翻转 → 热修 `025c221` → 二次目检通过"看着正常了"；上半幅集中断言机器化防复发，详见 [DevLog 追记](../../DevLog/2026-09-28-m6a-b3a-rmlui-renderer.md)）。
+5. ✅ T7 文本输入微 spike（2026-09-28 收尾）：`lemon-spike-rmlui` 一次过，VERDICT `doc=OK font=OK click=3 text=OK(ime=OK route=OK) => PASS` + exit 0；全量构建零波及（spike 目标隔离，其余目标 no work to do）；真人 IME 视觉确认余用户（见 T7 节）。
 
 ### 实现期发现（偏离批文件预设计的落账）
 
@@ -104,4 +111,4 @@ Status: in-progress
 - [ADR-014](../../ADR/ADR-014-Game-UI-RmlUi-Integration.md)（D1 ③a 定义 / D2 契约 / D3 落位）
 - [ADR-008](../../ADR/ADR-008-Runtime-UI-Strategy.md)（D2 接入形态原文 + spike 三判据 + 回退条件）
 - spike 参考：`spike/04-rmlui/backends/`（改造①-⑫注释）+ [DevLog 2026-09-22](../../DevLog/2026-09-22-m5-clear-4-rmlui-spike.md)
-- 后续：③b 字体资产 → ③c C# API（本批 T7 微 spike 前置）→ ③d 模板迁移 → ③e 图鉴
+- 后续：③b 字体资产（done 同日）→ ③c C# API（T7 门槛已清 2026-09-28）→ ③d 模板迁移 → ③e 图鉴

@@ -171,6 +171,21 @@ void Backend::RequestScreenshot(const Rml::String& path)
 	data->render_interface.RequestScreenshot(path);
 }
 
+// [Lemon spike 改造⑬] T7 文本输入微 spike：窗口句柄（自定义 SystemInterface 构造用）
+SDL_Window* Backend::GetWindow()
+{
+	RMLUI_ASSERT(data);
+	return data->window;
+}
+
+// [Lemon spike 改造⑭] T7 文本输入微 spike：IME 预编辑 handler（事件循环已喂
+// SDL_EVENT_TEXT_EDITING，注册给上下文后 OnActivate/OnDeactivate 才会触发）
+Rml::TextInputHandler* Backend::GetTextInputHandler()
+{
+	RMLUI_ASSERT(data);
+	return &data->text_input_method_editor;
+}
+
 static bool WaitForValidSwapchain()
 {
 #if SDL_MAJOR_VERSION >= 3

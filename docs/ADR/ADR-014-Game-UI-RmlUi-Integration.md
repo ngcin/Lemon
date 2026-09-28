@@ -60,6 +60,7 @@
 - v1 = **提交制**：SDL3 文本输入 API → `Context::ProcessTextInput` → RmlUi `<input>`（核心自带最小表单控件：光标/选中/maxlength）；起名/改名级够用；事件 = `UiEvent{type=change/submit, payload=值}`。
 - 行内预编辑（preedit overlay，SDL text-editing 事件画在光标旁）与 IME 富编辑 = **后置打磨项**。
 - RmlUi 表单控件质量三判据微 spike 在 ③a 验证；不过关 → M8 自定义元素兜底（成本自"白送"升"一个子批"的升级路径预先声明）。
+- **2026-09-28 注记（T7 三判据全过，③a 收尾）**：spike-04 扩展一次过——中文提交零乱码（IME 真实事件序注入 + 逐字节断言）/ 候选窗贴光标（`<input>` 聚焦自动 `ActivateKeyboard(光标, 行高)` → SDL `SetTextInputArea`，核心自带、光标逐移随发）/ 事件不串（KEY_DOWN 不插字、单行吞 `\n`、退格恰一字）→ **定案吃 RmlUi 自带 `<input>`，M8 兜底不触发**；附带发现 change 在每个提交边界派发（③c M3 映射底座，注意区分逐键 change 与提交制口径）。证据：[DevLog 2026-09-28](../DevLog/2026-09-28-m6a-b3a-t7-text-input-spike.md)；真人 IME 视觉确认余用户（机制面已机器化，不阻塞 ③c）。
 
 ### D5 存量通道处置
 

@@ -24,6 +24,16 @@
             margin-bottom: 12px;
         }
         p { font-size: 16px; color: #b8bcc4; }
+        label { display: block; margin-top: 20px; font-size: 14px; color: #8a94a6; }
+        input {
+            display: block; width: 320px; margin-top: 6px;
+            padding: 8px 10px;
+            background: #1b1e26; color: #e8e8e8;
+            border: 2px #4a90d9; border-radius: 4px;
+            font-size: 16px;
+            caret-color: #7fd17f;
+        }
+        input:focus { border-color: #7fd17f; }
         button {
             display: block; width: 200px; margin-top: 24px;
             padding: 10px;
@@ -41,6 +51,8 @@
         <h1>柠檬引擎 · RmlUi Spike</h1>
         <p>官方 SDL3 + Vulkan 后端整体接入验证。此文字含中文与标点——若正常显示即字体判据通过。</p>
         <p>点击下方按钮，终端应打印 CLICK 日志（事件判据）。</p>
+        <label for="name">角色起名（文本输入判据：中文零乱码 / 候选窗贴光标 / 事件不串）</label>
+        <input type="text" id="name" maxlength="12" />
         <button id="start">开始游戏</button>
         <button id="quit">退出演示</button>
     </div>
