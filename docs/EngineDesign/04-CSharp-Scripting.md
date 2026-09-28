@@ -257,6 +257,19 @@ public readonly struct Transform               // 视图结构：逐属性访问
   mode)` + Position/Scale(+uniform)/Rotation/Color/Alpha 糖 + Alive/Kill/KillAll；
   字段名 = Inspector/序列化同名，白名单 Float/Vec2/UInt32 颜色）；事件侧
   GameEvent 尾加 `TweenFinished`（Once 完成恰一次，userArg = 句柄）。
+  **M6a 批②（内容生产批）追加**——T2 配置表 3 项（`tableRows/tableCols/
+  tableCell` → World.Tables 全字符串格网格；ADR-012 D1）；T3c 动画集 1 项
+  （`clipByName`：集内按名 → clipId）；T3d 状态机 1 项（`animParamSlot`：
+  controller 参数名 → 槽位）；T4 数值曲线 2 项（`get/setXpCurveK` → World 单参，
+  ADR-012 D3，SDK `Lemon.Balance.XpCurveK`）；**T5 存档分档 3 项**——
+  `saveSetEx/saveGetLenEx/saveGetEx`（尾参 `uint8 ch` → `World::Saves(ch)` 三
+  通道；越界 ch 红字 + 落 slot；旧宿主判空回落单档四指针）。
+  SDK 新面：`Lemon.Table`（Rows/Cols/Str/Has/Int/Float，guidHex 16 位 → 低 32
+  查表，Int/Float Invariant 容错 warn-once/格）、`Lemon.Anim` 按名重载
+  （`Play(g, "attack1")` 集内解析）、**`Lemon.Save` 扩参**（Set/Get/HasKey/
+  SetString/GetString 加可选 `Chan chan = Chan.Slot`（enum Slot/Settings/Meta
+  ↔ 06 §10 三档三文件；Flush 全档；键约定见 06 §10 修订注——settings 版本化
+  KV、meta 收集条目 `col.<id>.*`））。
   **字符串跨界一律 UTF-8**（SDK `CopyUtf8`：ASCII 快路径零分配 + 多字节不切断——
   批④ 前逐 char 截字节只对 ASCII 正确，中文 HUD 会乱码）。
 

@@ -340,7 +340,11 @@ RingQueue<EventPacket> gEvents;          // 系统只入队，帧末 ScriptEvent
 
 - **场景文件**与**存档**同构（ECS 全量序列化器，组件注册表驱动），存档 = 场景快照 + 用户数据段（双通道接口见 06 §10）。
 - 版本迁移：schema 带 `version`，逐版本迁移函数链（老档自动升级，借鉴 duality gzip 版本化思想，压缩用 gzip）。**M6a 批⓪ 首例（v1→v2）**：`scripts[]` 多脚本格式——迁移 = 单数 `script` 对象包成单元素数组 + 版本号回写；`.prefab` 不走迁移链（高频 spawn 工厂零额外 pass），靠 ReadEntity 双读（复数优先/单数兼容）隐式升级、下次保存自然改写复数。
-- **M5 批④ 落地注**：用户数据段已落地为 **World 级 `SaveChannel`**（`ECS/SaveChannel.h`，内存 KV key→bytes；C# `Lemon.Save` 写读，IO 归宿主钩子——编辑器 = `.lemon/saves/game.sav` 定长头二进制 + 原子写 + .bak；06 §10 口径修订见彼处）。**不入 StateHash**（用户数据非模拟态）。场景快照入档（整场景存档）M6+；Game RT UI 通道（`World::RtUi` 槽 + `World::Cards` 三选一卡片）同为 World 级非 ECS 通道（呈现层，不入哈希）——**本通道族新增机制一律走"World 持有 + vtable 尾追"，不动组件注册表**（批②勘误的哈希漂移教训）。
+- **M5 批④ 落地注**：用户数据段已落地为 **World 级 `SaveChannel`**（`ECS/SaveChannel.h`，内存 KV key→bytes；C# `Lemon.Save` 写读，IO 归宿主钩子——编辑器 = `.lemon/saves/` 定长头二进制 + 原子写 + .bak；06 §10 口径修订见彼处）。**不入 StateHash**（用户数据非模拟态）。场景快照入档（整场景存档）M6+；Game RT UI 通道（`World::RtUi` 槽 + `World::Cards` 三选一卡片）同为 World 级非 ECS 通道（呈现层，不入哈希）——**本通道族新增机制一律走"World 持有 + vtable 尾追"，不动组件注册表**（批②勘误的哈希漂移教训）。
+- **M6a 批② 落地注**：①配置表 `World::Tables()`（`ECS/TableStore.h`——.tab 全
+  字符串格网格，C# `Lemon.Table` 读；同族零哈希通道，ADR-012 D1）；②存档分档
+  `saves_[3]`（slot/settings/meta 三通道，`Saves()` 默认 slot + `Saves(ch)` 重载；
+  档名/键约定/旧 game.sav 惰性迁移见 06 §10 修订注——通道语义零哈希面不变）。
 
 ## 14. 性能预算分解（压测 A 模拟侧 ≤ 10 ms）
 

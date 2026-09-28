@@ -95,7 +95,7 @@ public sealed class PlayerCombat : LemonBehaviour
     {
         LoadTables();
         GameMain.Run.Best =
-            int.TryParse(Save.GetString("vs.best"), out var b) ? b : 0; // 上一局纪录
+            int.TryParse(Save.GetString("vs.best", Save.Chan.Meta), out var b) ? b : 0; // 上一局纪录（跨局归 meta 档）
     }
 
     // ---- 批② T4 表载（ADR-012 D1 全字符串格；坏行跳过 + warn、缺表保底——
@@ -313,8 +313,8 @@ public sealed class PlayerCombat : LemonBehaviour
         bool newBest = score > GameMain.Run.Best;
         if (newBest) {
             GameMain.Run.Best = score;
-            Save.SetString("vs.best", score.ToString());
-            Save.Flush(); // 立即落盘（ExitPlay 兜底之外的显式路径）
+            Save.SetString("vs.best", score.ToString(), Save.Chan.Meta);
+            Save.Flush(); // 立即落盘（ExitPlay 兜底之外的显式路径；全档）
         }
         string title = newBest ? $"★ 新纪录 {score} 分！"
                                : $"本局 {score} 分（最高 {GameMain.Run.Best}）";

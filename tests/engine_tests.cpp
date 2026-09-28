@@ -1805,6 +1805,7 @@ void TestSaveChannelHardening() {
     }
 }
 
+
 // ---- F-08.2（2026-09-24）：销毁提交点通知接线——C++ 路径入队的销毁也走
 // IScriptBackend::NotifyPendingDestroys（真链路 C# OnDestroy 在 script-tests 对拍）----
 void TestDestroyNotifyWiring() {
@@ -4049,7 +4050,120 @@ void TestAssetPathContainment() {
     fs::remove(outside, ec);
 }
 
+// ---- M6a 批② T5：存档分档——三档三文件路径 + 三档落盘/回读独立 + 空通道跳过 +
+// 旧 game.sav 惰性迁移（写恒写新名）+ 坏档兜底按档隔离 + 16 MiB 上限按档 ----
+void TestSaveChannelSplits() {
+    namespace fs = std::filesystem;
+    using lemon::editor::EditorContext;
+    using ecs::SaveChannel;
+    using namespace lemon::ecs;
+
+    const std::string tag = std::to_string(::getpid());
+    const fs::path root = fs::temp_directory_path() / ("lemon-test-savesplit-" + tag);
+    std::error_code ec;
+    fs::remove_all(root, ec);
+
+    EditorContext ctx;
+    Expect(ctx.Assets().OpenProject(root.string(), 100), "open project");
+
+    // ① 三档路径独立；越界 ch 钳 slot_0（防御面——编辑器循环只传常量不触发）
+    Expect(ctx.SaveFilePath(kSaveSlot).ends_with("slot_0.sav") &&
+               ctx.SaveFilePath(kSaveSettings).ends_with("settings.sav") &&
+               ctx.SaveFilePath(kSaveMeta).ends_with("meta.sav"),
+           "three channel file paths");
+    Expect(ctx.SaveFilePath(77).ends_with("slot_0.sav"), "oob ch clamps to slot_0");
+
+    // ② 三档落盘互不覆盖 + 空通道跳过 + 回读独立
+    {
+        SaveChannel slot;
+        slot.Set("run.kills", "5", 1);
+        SaveChannel meta;
+        meta.Set("vs.best", "77", 2);
+        Expect(ctx.WriteSaveFile(kSaveSlot, slot), "slot written");
+        Expect(ctx.WriteSaveFile(kSaveMeta, meta), "meta written");
+        Expect(!ctx.WriteSaveFile(kSaveSettings, SaveChannel{}), "empty channel skipped");
+        Expect(fs::exists(root / ".lemon/saves/slot_0.sav", ec), "slot file exists");
+        Expect(fs::exists(root / ".lemon/saves/meta.sav", ec), "meta file exists");
+        Expect(!fs::exists(root / ".lemon/saves/settings.sav", ec), "settings not written");
+        SaveChannel back;
+        ctx.LoadSaveFile(kSaveMeta, back);
+        Expect(back.Count() == 1 && back.GetLen("vs.best") == 2, "meta roundtrip");
+    }
+
+    // ③ 旧 game.sav 惰性迁移：删新档留旧名 → 载入走旧路径；写恒写新名、旧文件保留
+    {
+        fs::remove(root / ".lemon/saves/slot_0.sav", ec);
+        SaveChannel legacy;
+        legacy.Set("old.key", "v1", 2);
+        {
+            std::ofstream f(root / ".lemon/saves/game.sav", std::ios::binary | std::ios::trunc);
+            const std::vector<uint8_t> b = legacy.Encode();
+            f.write((const char*)b.data(), (std::streamsize)b.size());
+        }
+        EditorContext ctx2;
+        Expect(ctx2.Assets().OpenProject(root.string(), 100), "reopen project");
+        SaveChannel back;
+        ctx2.LoadSaveFile(kSaveSlot, back);
+        Expect(back.Count() == 1 && back.GetLen("old.key") == 2, "legacy game.sav lazy-migrated");
+        Expect(ctx2.WriteSaveFile(kSaveSlot, back), "migrated slot written to new name");
+        Expect(fs::exists(root / ".lemon/saves/slot_0.sav", ec), "new name file back");
+        Expect(fs::exists(root / ".lemon/saves/game.sav", ec), "legacy file untouched");
+        SaveChannel st; // settings 无旧名对应 → 不受迁移影响
+        ctx2.LoadSaveFile(kSaveSettings, st);
+        Expect(st.Count() == 0, "settings independent of legacy");
+    }
+
+    // ④ 坏档兜底按档隔离：settings 主档垃圾 + .bak 好档 → 走 bak；meta 垃圾无
+    //    bak → 空通道开局；slot 既有好档不受邻居损坏影响
+    {
+        SaveChannel good;
+        good.Set("bak.key", "1", 1);
+        {
+            std::ofstream f(root / ".lemon/saves/settings.sav", std::ios::binary | std::ios::trunc);
+            f << "garbage-not-lemonsav";
+        }
+        {
+            std::ofstream f(root / ".lemon/saves/settings.sav.bak",
+                            std::ios::binary | std::ios::trunc);
+            const std::vector<uint8_t> b = good.Encode();
+            f.write((const char*)b.data(), (std::streamsize)b.size());
+        }
+        {
+            std::ofstream f(root / ".lemon/saves/meta.sav", std::ios::binary | std::ios::trunc);
+            f << "garbage-too";
+        }
+        EditorContext ctx3;
+        Expect(ctx3.Assets().OpenProject(root.string(), 100), "reopen project 3");
+        SaveChannel st, mt, sl;
+        ctx3.LoadSaveFile(kSaveSettings, st);
+        ctx3.LoadSaveFile(kSaveMeta, mt);
+        ctx3.LoadSaveFile(kSaveSlot, sl);
+        Expect(st.Count() == 1 && st.GetLen("bak.key") == 1, "settings bad main -> bak fallback");
+        Expect(mt.Count() == 0, "meta corrupt no bak -> empty start");
+        Expect(sl.GetLen("old.key") == 2, "slot unaffected by other channels' corruption");
+    }
+
+    // ⑤ 16 MiB 上限按档：slot_0.sav 超限 → 跳过不 slurp；主档视为不存在 → 旧名
+    //    惰性迁移接力（game.sav 仍在，链式兜底语义钉板）
+    {
+        {
+            std::ofstream f(root / ".lemon/saves/slot_0.sav",
+                            std::ios::binary | std::ios::trunc);
+            const std::vector<char> big((16u << 20) + 1, 'x');
+            f.write(big.data(), (std::streamsize)big.size());
+        }
+        EditorContext ctx4;
+        Expect(ctx4.Assets().OpenProject(root.string(), 100), "reopen project 4");
+        SaveChannel sl;
+        ctx4.LoadSaveFile(kSaveSlot, sl);
+        Expect(sl.GetLen("old.key") == 2, "oversize slot skipped, legacy migration takes over");
+    }
+
+    fs::remove_all(root, ec);
+}
+
 // ---- M6a 批② T1：CSV 解析 + .tab 表格资产序列化（ADR-012 D1）----
+
 void TestCsvTable() {
     using lemon::editor::ParseCsv;
     using lemon::editor::ParseTableJson;
@@ -5170,6 +5284,7 @@ int main() {
     TestConcurrentDestroy();
     TestDestroyQueueTagLifecycle();
     TestSaveChannelHardening();
+    TestSaveChannelSplits(); // M6a 批② T5：三档三文件 + 惰性迁移 + 坏档按档隔离
     TestDestroyNotifyWiring();
     TestWorldStepWithoutScene();
     TestVerifyEntityRecycleAndVersion();

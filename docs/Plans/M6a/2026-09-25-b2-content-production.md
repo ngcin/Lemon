@@ -1,6 +1,6 @@
 # M6a 批②：内容生产 —— 配置表资产 + AnimationEditor 最小版 + 技能数据化 + 存档分档
 
-Status: active（2026-09-25 开工分解；T0 ADR-012 已落）
+Status: done（2026-09-28 T0→T6 全勾；T5/T6 收口记录见 §5 尾）
 
 > 拆分自 [M6a 总览](./M6a.md)（08 §2 M6a WBS 第 3 条）。四条腿：**A 线 = 数值配置外置**
 > （ADR-012 双轨——[ADR-012](../../ADR/ADR-012-Config-Table-Dual-Track.md)）；
@@ -82,9 +82,12 @@ Status: active（2026-09-25 开工分解；T0 ADR-012 已落）
    表行 + prefab + C#，运行时零改动（对照 git diff 验证口径见 §8）；
 4. **存档三档**：EnterPlay/ExitPlay/Flush 三档独立落盘、坏档兜底按档隔离、旧
    game.sav 惰性迁移可读、模板 vs.best 归 meta（engine-tests + script-tests +
-   smoke-template 断言集只增不减）；
+   smoke-template 断言集只增不减）——**✅ T5**（TestSaveChannelSplits +22 /
+   TestSaveChannels +13 / smoke `saves(slot_0/meta/legacy/skipEmpty)` 四断言；
+   键约定：settings 版本化 KV + meta 收集条目，见 06 §10 修订注）；
 5. **零重录**：m5b2 三档金回放 mismatches=0（依据 = 先例二/三：World 级通道零哈希 +
-   xpCurveK 默认值不变；基准场禁播新组件实例）；
+   xpCurveK 默认值不变；基准场禁播新组件实例）——**✅ T5 后复证**（sim-st/
+   sim-mt/script 现录现放 mismatches=0；09 §6.8 通道族扩员落账）；
 6. **回归与性能**：editor-regression full 全绿（步数按实际登记 09：svr-test
    验证若入回归则增步、否则维持现 14 步——2026-09-28 随 T4 落点修订，原
    "增步后 ≥15 步"预估作废）+ bench-survivor ≥ 45fps（表查找 O(1) 哈希读，
@@ -348,33 +351,59 @@ T3-UX 同日第二轮实测反馈十项：新建入口归 AssetBrowser **空白�
     核对已过：Engine/+Editor/ diff 仅 xpCurveK 本体 + vs_template 生成器段
     （273 行），演示内容全落 demo/svr-test（gitignore 区）。
 
-### T5 引擎+SDK：存档分档 slot_0/settings/meta —— 约 0.75 天（独立，可提前）
+### T5 引擎+SDK：存档分档 slot_0/settings/meta —— ✅ 2026-09-28 完工
 
 - `World.h/.cpp`：`saves_` 单成员 → `SaveChannel saves_[3]`（Q 项）；`Saves()`
   默认返 [Slot]（全调用点零改兼容）+ `Saves(uint8 ch)` 重载；枚举常量
-  `kSaveSlot=0/kSaveSettings=1/kSaveMeta=2`；
-- `EditorContext.h/.cpp`：`SaveFilePath()` → `SaveFilePath(uint8 ch)`（slot_0.sav/
-  settings.sav/meta.sav）；`WriteSaveFile(ch, channel)` / `LoadSaveFile(ch, channel)`
-  参数化（.bak 兜底逻辑随档走）；**旧档惰性迁移**：slot_0 载入时若新档不存在且
-  game.sav 存在 → 读旧路径（写恒写新名）；EnterPlay（:784）三档循环载入、
-  ExitPlay（:812）三档循环落盘、`HookSaveFlush`（`EditorApp.cpp:87-89`）flush
-  三档（空档跳过落盘语义保留）；
-- `ScriptHost.h/.cpp`：vtable 尾加 3 项 `saveSetEx/saveGetLenEx/saveGetEx`（尾参
-  `uint8 ch`，越界 ch 红 warn + 落 slot）；`saveFlush` 复用全档语义；
-- SDK `Save.cs`：六方法加可选参数 `Save.Chan chan = Save.Chan.Slot`（enum
-  Slot/Settings/Meta；Ex 路由）——源码兼容，模板零改；
-- 模板 `PlayerCombat.cs`：vs.best 读写改 `Chan.Meta`（:77, :184-185 两点）；
-- 测试：engine-tests（三档编解码独立 + 旧档惰性迁移 + 每档坏档兜底隔离 + 16MiB
-  上限按档）；script-tests（Ex 三通道往返 + 越界 ch 降级）；smoke-template 增
-  meta.sav 落盘断言（现断言 game.sav 存在 → 改 slot_0.sav + meta.sav 双断言）。
+  `kSaveSlot=0/kSaveSettings=1/kSaveMeta=2` 落 SaveChannel.h（含键约定头注）；
+- `EditorContext.h/.cpp`：`SaveFilePath(ch)` → slot_0.sav/settings.sav/meta.sav；
+  `WriteSaveFile(ch, chn)` / `LoadSaveFile(ch, dst)` 参数化（.bak 兜底逻辑随档
+  走）；**旧档惰性迁移**：slot_0 载入链 = 新档 → 新档.bak → game.sav →
+  game.sav.bak（新档不存在才读旧名，写恒写新名，旧文件保留）；EnterPlay 三档
+  循环载入、ExitPlay 三档循环落盘（空档跳过 + 逐档独立不因一档失败断链）、
+  `HookSaveFlush` flush 三档（空档跳过语义保留）；
+- `ScriptHost.h/.cpp`：vtable 尾加 3 项 `saveSetEx/saveGetLenEx/saveGetEx`
+  （尾参 `uint8 ch`，越界 ch 红 warn + 落 slot）；`saveFlush` 复用全档语义；
+- SDK `Save.cs`：`Save.Chan` 枚举 + 五方法可选参数 `Chan chan = Chan.Slot`
+  （Ex 路由；旧宿主无 Ex 表项 = chan 忽略走唯一档）——源码兼容，模板零改；
+- **档内键约定（2026-09-28 用户口径，防后续里程碑撞僵 schema）**：settings =
+  版本化 KV（首键 `version` = 键集结构版本，设置项键自由增长——M6b 音量/
+  手柄键位/画质档位直接加键，不定死字段）；meta = 收集条目
+  `col.<条目id>.state` / `col.<条目id>.count`（条目 id → 状态/计数映射）+
+  全局统计平键。落 SaveChannel.h / Save.cs 头注 + 06 §10 修订注；
+- 模板 `PlayerCombat.cs`：vs.best 读写改 `Chan.Meta`（Start 读 + 死亡新纪录
+  写 + Flush 全档）；`--gen-vs-template` 重生成入库；
+- 测试：engine-tests `TestSaveChannelSplits` +22（三档路径/独立落盘/空通道
+  跳过/回读独立/惰性迁移全链（写恒写新名 + 旧文件保留）/坏档兜底按档隔离
+  ×3 形态/16 MiB 上限按档 + 迁移接力）；script-tests `TestSaveChannels` +13
+  （SaveChanProbeBehaviour typeId 16 表尾：三档写入含约定键 + 越界回落 +
+  九项隔离回读 + C++ 原生通道对拍 + RtUi 双证；热重载名单 16→17）；
+  smoke-template 断言升级：种子双载体（meta.sav = Chan.Meta 载入回显 +
+  game.sav = 旧名迁移链）→ 裁决行 `saves(slot_0/meta/legacy/skipEmpty)`
+  四断言（迁移内容解码回读 + 空档 settings 不落文件）。
+- 验证记录（2026-09-28）：mac/mac-debug 双 preset ctest 3/3；engine-tests
+  **33541 checks**（双档同数）、script-tests **1679 checks**（双档同数）；
+  `editor-regression.sh full` **14/14 首跑全绿**；smoke-template
+  `saves(slot_0=YES meta=YES legacy=YES skipEmpty=YES) => OK`；金回放三档
+  现录现放 **mismatches=0**（sim-st/sim-mt/script——通道族零哈希面的结构性
+  自证）。用户项目零强制：svr-test key 前缀在 slot 档照旧工作（vs.best 自迁
+  Chan.Meta 属可选，DevLog 注记）。
 
-### T6 全量验证 + 文档回写 + 勾销 —— 约 0.5 天
+### T6 全量验证 + 文档回写 + 勾销 —— ✅ 2026-09-28 完工
 
-- 全量：mac + mac-debug 双 preset ctest 3/3；engine-tests/script-tests 新增计数
-  入账；`editor-regression.sh full` 全绿（新步登记）；m5b2 三档金回放
-  mismatches=0；bench-survivor 跑一遍 ≥45fps 记账 09 §6.10；
-- 文档回写（§3 判据 7 清单）+ DevLog 新条目（`2026-09-XX-m6a-b2-content-production.md`）
-  + M6a.md 批次表勾销 + 本页 Status: done。
+- 全量：mac + mac-debug 双 preset ctest 3/3；engine-tests/script-tests 计数
+  入账（33541/1679，双档同数）；`editor-regression.sh full` **14/14**（首跑
+  全绿，无复跑）；m5b2 三档金回放 mismatches=0；bench-survivor **fps=82**
+  PASS（playerHp=275793 逐位一致第六次，09 §6.10 台账行）；
+- 文档回写（§3 判据 7 清单全落）：06 §10 分档修订注（含键约定）/ 03 落地注
+  （Tables + saves_[3] 通道族）/ 04 vtable 批② 全量流水（T2 表 3 项 + T3c
+  clipByName + T3d animParamSlot + A 档 tween 4 项补记 + T4 xpCurveK + T5 Ex
+  3 项；SDK 新面 Lemon.Table/Balance/Anim 按名/Save 扩参）/ 05（§2 面板集
+  解冻注记 + §5 资产→专用面板双击先例 + §7 AnimationEditor 落地口径）/
+  09（§6.8 先例二通道族扩员 + §6.10 台账行 + 回归 14 步订正 + smoke-template
+  断言注记）/ 08（M6a 批② 勾销）/ DevLog
+  [2026-09-28-m6a-b2-t5-save-channels.md](../../DevLog/2026-09-28-m6a-b2-t5-save-channels.md)
+  / M6a.md 批次表勾销 / 本页 Status: done。
 
 ## 6. 风险与对策
 
@@ -398,18 +427,18 @@ T3-UX 同日第二轮实测反馈十项：新建入口归 AssetBrowser **空白�
 - 存档语义变化（vs.best → meta）对用户项目零强制（key 前缀在 slot 档照旧工作）；
   自迁建议随 DevLog 注记。
 
-## 8. 验证命令（批②完工口径）
+## 8. 验证命令（批②完工口径；2026-09-28 实测数字）
 
 ```bash
 cmake --preset mac && cmake --build --preset mac
-ctest --test-dir build/mac --preset mac          # 3/3
-./build/mac/tests/lemon-engine-tests             # 新增计数入账
-./build/mac/tests/lemon-script-tests             # Ex/Table 断言
-./Tools/regression/editor-regression.sh full     # ≥15 步全绿（新步登记 09）
-./build/mac/editor/lemon-editor --bench-survivor # ≥45fps 记账
-# 金回放：m5b2 三档 mismatches=0（回归脚本内含/单独跑，口径同批①）
-git -C Lemon diff --stat Engine/ Editor/         # 验收② 演示核对：运行时 diff 仅
-                                                 # 表通道/AnimationEditor/存档分档/xpCurveK
-                                                 # 本体 + vs_template 生成器段（模板工程面），
-                                                 # 演示内容零运行时 diff（全落 demo/svr-test）
+ctest --test-dir build/mac --output-on-failure      # 3/3（mac-debug 同）
+./build/mac/tests/lemon-tests                       # 33541 checks（双 preset 同数）
+./build/mac/tests/script/lemon-script-tests         # 1679 checks（Ex/Table/Chan 断言）
+./tools/editor-regression.sh full                   # 14/14（首跑全绿）
+./build/mac/Editor/lemon-editor --bench-survivor    # fps=82 PASS（09 §6.10 台账）
+# 金回放：sim-st/sim-mt/script 三档现录现放 mismatches=0（T5 后复证）
+git -C Lemon diff --stat Engine/ Editor/            # 验收② 演示核对：运行时 diff 仅
+                                                     # 表通道/AnimationEditor/存档分档/xpCurveK
+                                                     # 本体 + vs_template 生成器段（模板工程面），
+                                                     # 演示内容零运行时 diff（全落 demo/svr-test）
 ```

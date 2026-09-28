@@ -135,6 +135,28 @@ int32_t NativeSaveGetLen(const char* key) {
 int32_t NativeSaveGet(const char* key, void* out, uint32_t cap) {
     return g_world ? g_world->Saves().Get(key, out, cap) : -1;
 }
+// M6a 批② T5：分档三指针（ch 越界红字 + 落 slot——ClampSaveChannel 钳位）
+static uint8_t ClampSaveCh(const char* who, uint8_t ch) {
+    if (ch >= ecs::kSaveChannelCount) {
+        LEMON_WARN("%s：存档通道号 %u 越界（合法 0..%u），已回落 slot_0", who, ch,
+                   (unsigned)ecs::kSaveChannelCount - 1);
+        return ecs::kSaveSlot;
+    }
+    return ch;
+}
+int32_t NativeSaveSetEx(const char* key, const void* bytes, uint32_t len, uint8_t ch) {
+    if (!g_world) return -1;
+    ch = ClampSaveCh("Save.Set", ch);
+    return g_world->Saves(ch).Set(key, bytes, len) ? (int32_t)len : -1;
+}
+int32_t NativeSaveGetLenEx(const char* key, uint8_t ch) {
+    if (!g_world) return -1;
+    return g_world->Saves(ClampSaveCh("Save.Get", ch)).GetLen(key);
+}
+int32_t NativeSaveGetEx(const char* key, void* out, uint32_t cap, uint8_t ch) {
+    if (!g_world) return -1;
+    return g_world->Saves(ClampSaveCh("Save.Get", ch)).Get(key, out, cap);
+}
 void NativeSaveFlush() {
     if (!g_world) return;
     if (g_scriptIo.saveFlush) {
@@ -329,7 +351,10 @@ const NativeApiVtable kNativeApi{NativeIsAlive,
                                  NativeTweenKillEntity,
                                  NativeTweenAlive,
                                  NativeGetXpCurveK,
-                                 NativeSetXpCurveK};
+                                 NativeSetXpCurveK,
+                                 NativeSaveSetEx,
+                                 NativeSaveGetLenEx,
+                                 NativeSaveGetEx};
 } // namespace
 
 void SetScriptIoHooks(const ScriptIoHooks& hooks) { g_scriptIo = hooks; }

@@ -314,11 +314,11 @@ void TestDomainManager() {
         Expect(d2 == (double)0.1f, "hot-reload new domain fresh state");
         Expect(leaks >= 0 && leaksFn && leaksFn() == leaks, "leak count visible + consistent");
         Expect(reloadsFn && reloadsFn() >= 1, "reload count visible");
-        // 换装后新域 GameMain.Configure 已跑：behaviours 列表可拉（16 个类型）
+        // 换装后新域 GameMain.Configure 已跑：behaviours 列表可拉（17 个类型）
         auto listFn = (int (*)(char*, int))GetExport("lemon_behaviours_list");
         char buf[4096];
         int n = listFn ? listFn(buf, (int)sizeof buf) : -1;
-        Expect(n == 16, "behaviours list after hot reload (+M11/M15/F-08.2/T3/b1/b2/T3c/T3d/A档tween probes)");
+        Expect(n == 17, "behaviours list after hot reload (+M11/M15/F-08.2/T3/b1/b2/T3c/T3d/A档tween/T5存档档 probes)");
         // M4.6 回归（用户实测闪退根因）：相对路径进 dm_reload 曾抛 ArgumentException
         // 逃逸 UnmanagedCallersOnly → coreclr abort。拦截层必须转 0 返回且进程存活
         // （本断言能跑到 = 进程没死）。换装失败后旧域已弃——再换一次真路径恢复。
@@ -1439,6 +1439,92 @@ void TestTableChannel() {
     g_sh.ResetPlayDomain(); // 收尾自清（同上）
 }
 
+// M6a 批② T5：存档分档端到端（World 三通道 → vtable 尾加 Ex 3 项 → C#
+// Lemon.Save × Chan 全 API 面 + 档间隔离 + 越界 chan 回落 slot → 原生通道对拍；
+// SaveChanProbeBehaviour typeId 16 表尾注册）
+void TestSaveChannels() {
+    using namespace lemon::ecs;
+    auto opsSubmit = (void (*)(unsigned char, unsigned char, uint64_t))GetExport("lemon_ops_submit");
+    auto timeResetFn = (void (*)())GetExport("lemon_time_reset");
+    Expect(opsSubmit && timeResetFn, "ops/time exports resolved");
+    timeResetFn(); // 探针按 FrameCount 分段——本测试 = 新一局
+
+    WorldDesc d;
+    d.threadCount = 1;
+    World w(d);
+    Scene& s = w.CreateScene("Sav");
+    w.SetActiveScene(&s);
+    w.SetScriptBackend(&g_sh);
+    w.Pipeline().AddSystem(std::make_unique<DestroyCommitSystem>());
+    w.Pipeline().AddSystem(std::make_unique<CSharpBatchSystem>());
+    w.Pipeline().AddSystem(std::make_unique<ScriptEventDispatchSystem>());
+    w.Pipeline().ResolveOrder();
+
+    // ---- 引擎侧单元：三通道隔离 + Saves() 默认 = slot + 越界钳位 + 新 World 自清 ----
+    {
+        Expect(&w.Saves() == &w.Saves(kSaveSlot), "saves() default param = slot");
+        w.Saves(kSaveSlot).Set("a", "1", 1);
+        w.Saves(kSaveSettings).Set("a", "2", 1);
+        w.Saves(kSaveMeta).Set("a", "3", 1);
+        char buf[2] = {};
+        Expect(w.Saves(kSaveSlot).Get("a", buf, 1) == 1 && buf[0] == '1', "slot isolation");
+        Expect(w.Saves(kSaveSettings).Get("a", buf, 1) == 1 && buf[0] == '2',
+               "settings isolation");
+        Expect(w.Saves(kSaveMeta).Get("a", buf, 1) == 1 && buf[0] == '3', "meta isolation");
+        Expect(&w.Saves(99) == &w.Saves(kSaveSlot), "oob ch clamps to slot");
+        World w2(d); // 新 World 三通道全空（EnterPlay 每局新建 playWorld 同语义）
+        Expect(w2.Saves(kSaveSlot).Count() == 0 && w2.Saves(kSaveSettings).Count() == 0 &&
+                   w2.Saves(kSaveMeta).Count() == 0,
+               "fresh world three channels clear");
+    }
+
+    int sawMark = 0, sawOk = 0;
+    w.SetEventSink([&](World&, const EventPacket& p) {
+        if (p.type != GameEvent::Custom) return;
+        if (p.user == 1281) ++sawMark;
+        else if (p.user == 1291) ++sawOk; // 1290+ok：C# 侧九项回读全过才回报 1291
+    });
+
+    opsSubmit(0, 0, 0x8000000000000010ull); // Create + Attach SaveChanProbeBehaviour（typeId 16 表尾）
+    opsSubmit(4, 16, 0x8000000000000010ull);
+
+    w.Step(0.25f); // 帧1：三档写入（settings 版本键/meta 收集键约定）+ 越界回落
+    w.Step(0.25f); // 帧2：档间隔离回读 + Ui.Set("svch")
+    w.Step(0.25f); // 帧3：自毁
+    w.Step(0.25f); // 应用销毁
+    Expect(sawMark == 1 && sawOk == 1, "save-chan: probe marks (1281/1291)");
+
+    // C++ 侧原生通道对拍（探针写入落点——Ex vtable 真到了 World 三通道）
+    {
+        char buf[16] = {};
+        auto str = [&](uint8_t ch, const char* k) {
+            std::string out;
+            const int len = w.Saves(ch).GetLen(k);
+            if (len > 0 && len < 15 && w.Saves(ch).Get(k, buf, 14) == len)
+                out.assign(buf, (size_t)len);
+            return out;
+        };
+        Expect(str(kSaveSettings, "version") == "1" && str(kSaveSettings, "volume") == "0.8",
+               "save-chan: settings versioned kv lands");
+        Expect(str(kSaveMeta, "vs.best") == "77" && str(kSaveMeta, "col.sword.count") == "3" &&
+                   str(kSaveMeta, "col.sword.state") == "owned",
+               "save-chan: meta collection keys land");
+        Expect(str(kSaveSlot, "run.kills") == "5" && str(kSaveSlot, "bad.chan") == "x",
+               "save-chan: slot default param + oob fallback");
+        Expect(w.Saves(kSaveSlot).GetLen("volume") < 0 &&
+                   w.Saves(kSaveMeta).GetLen("run.kills") < 0,
+               "save-chan: no cross-channel leak");
+    }
+    bool uiOk = w.RtUi().Count() == 1;
+    if (uiOk) {
+        const RtUiSlot& slot = w.RtUi().At(0);
+        uiOk = std::strcmp(slot.key, "svch") == 0 && std::strcmp(slot.text, "ok") == 0;
+    }
+    Expect(uiOk, "save-chan: C# readback verdict via RtUi");
+
+    g_sh.ResetPlayDomain(); // 收尾自清（同上）
+}
+
 } // namespace
 
 int main() {
@@ -1495,6 +1581,7 @@ int main() {
     TestClipByName();   // M6a 批② T3c：动画集按名解析通道端到端
     TestAnimGraphProbe(); // M6a 批② T3d：状态机通道（绑定/参数/trigger/exitTime/帧事件）
     TestTweenSdk();     // A 档补间（2026-09-28 用户插入项）：Lemon.Tween 通道端到端
+    TestSaveChannels(); // M6a 批② T5：Lemon.Save × Chan 分档通道端到端
 
     // M4.6 探针（编辑器切项目场景）：同进程二次 ScriptHost 生命周期。CoreCLR 运行时
     // 进程单例——第二次 Initialize 的真实行为必须钉板（成功/失败都合法，崩 = 缺陷）。

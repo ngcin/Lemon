@@ -863,23 +863,32 @@ void EditorContext::PruneSelection() {
 }
 
 // ------------------------------------------------------------- Play 沙盒 ----
-// ---- 游戏存档 IO（M5 批④ D1；06 §10 防损坏三件套：版本头 + 原子改名 + .bak）----
-std::string EditorContext::SaveFilePath() const {
-    const std::string& root = assets_.ProjectRoot();
-    return root.empty() ? std::string() : root + "/.lemon/saves/game.sav";
+// ---- 游戏存档 IO（M5 批④ D1；M6a 批② T5 分档参数化。06 §10 防损坏三件套：
+// 版本头 + 原子改名 + .bak；三档三文件，坏档兜底按档隔离）----
+static const char* SaveFileName(uint8_t ch) {
+    switch (ecs::ClampSaveChannel(ch)) {
+    case ecs::kSaveSettings: return "settings.sav";
+    case ecs::kSaveMeta: return "meta.sav";
+    default: return "slot_0.sav";
+    }
 }
 
-bool EditorContext::WriteSaveFile(const ecs::SaveChannel& ch) {
+std::string EditorContext::SaveFilePath(uint8_t ch) const {
+    const std::string& root = assets_.ProjectRoot();
+    return root.empty() ? std::string() : root + "/.lemon/saves/" + SaveFileName(ch);
+}
+
+bool EditorContext::WriteSaveFile(uint8_t ch, const ecs::SaveChannel& chn) {
     namespace fs = std::filesystem;
-    const std::string path = SaveFilePath();
-    if (path.empty() || ch.Count() == 0) return false;
+    const std::string path = SaveFilePath(ch);
+    if (path.empty() || chn.Count() == 0) return false;
     std::error_code ec;
     const fs::path p(path);
     fs::create_directories(p.parent_path(), ec);
     // 上一代转备份（首次落盘无 .bak 属正常）
     if (fs::exists(p, ec))
         fs::copy_file(p, fs::path(path + ".bak"), fs::copy_options::overwrite_existing, ec);
-    const std::vector<uint8_t> bytes = ch.Encode();
+    const std::vector<uint8_t> bytes = chn.Encode();
     if (!WriteFileAtomic(path, bytes.data(), bytes.size())) { // F-04：统一原子写（含 flush 检查）
         LEMON_WARN("存档写入失败（临时写入/改名）：%s", path.c_str());
         return false;
@@ -887,12 +896,12 @@ bool EditorContext::WriteSaveFile(const ecs::SaveChannel& ch) {
     return true;
 }
 
-void EditorContext::LoadSaveFile(ecs::SaveChannel& dst) {
+void EditorContext::LoadSaveFile(uint8_t ch, ecs::SaveChannel& dst) {
     namespace fs = std::filesystem;
     // 坏档防线（2026-09-24 审查 F-03）：整档上限 16 MiB，超限不 slurp——
     // 现用途 KB 级；超大文件多为损坏/误指，Decode 侧另有条目/单值上限。
     constexpr uint64_t kMaxSaveFileBytes = 16ull << 20;
-    const std::string path = SaveFilePath();
+    const std::string path = SaveFilePath(ch);
     if (path.empty()) return; // 无项目（bench/smoke tempdir 外的裸会话）= 空通道开局
     auto tryDecode = [&](const std::string& p) {
         std::error_code ec;
@@ -911,7 +920,14 @@ void EditorContext::LoadSaveFile(ecs::SaveChannel& dst) {
         }
         return true;
     };
-    if (!tryDecode(path)) tryDecode(path + ".bak"); // 主档坏 → 备份兜底
+    if (tryDecode(path) || tryDecode(path + ".bak")) return; // 主档坏 → 备份兜底
+    // 旧 game.sav 惰性迁移（M6a 批② T5，仅 slot 档）：新档不存在 → 读旧名，写恒
+    // 写新名（免 rename 竞态；旧文件保留，游戏侧无感）
+    if (ch == ecs::kSaveSlot) {
+        const std::string& root = assets_.ProjectRoot();
+        const std::string legacy = root + "/.lemon/saves/game.sav";
+        if (!tryDecode(legacy)) tryDecode(legacy + ".bak");
+    }
 }
 
 bool EditorContext::EnterPlay() {
@@ -942,8 +958,10 @@ bool EditorContext::EnterPlay() {
     BuildPlayControllerCache();
     // M6a 批② T2：配置表（.tab 资产 → 全字符串格网格；C# Lemon.Table 读）
     BuildPlayTableCache();
-    // M5 批④：存档载入（进 Play 快照语义：上一局数据进通道，C# Save.Get 即读）
-    LoadSaveFile(playWorld_->Saves());
+    // M5 批④：存档载入（进 Play 快照语义：上一局数据进通道，C# Save.Get 即读）；
+    // M6a 批② T5：三档全载（slot 含旧 game.sav 惰性迁移）
+    for (uint8_t ch = 0; ch < ecs::kSaveChannelCount; ++ch)
+        LoadSaveFile(ch, playWorld_->Saves(ch));
     // M4.4 装配通路（#7）：脚本后端接入 + 场景 ScriptBox 按 className 解析挂载
     if (scripts_) {
         playWorld_->SetScriptBackend(scripts_);
@@ -970,8 +988,10 @@ bool EditorContext::EnterPlay() {
 bool EditorContext::ExitPlay() {
     if (!Playing()) return false;
     const auto t0 = std::chrono::steady_clock::now();
-    // M5 批④：存档兜底落盘（脚本显式 Flush 之外的保险——中断退 Play 不丢局）
-    WriteSaveFile(playWorld_->Saves());
+    // M5 批④：存档兜底落盘（脚本显式 Flush 之外的保险——中断退 Play 不丢局）；
+    // M6a 批② T5：三档逐档独立落盘（空档跳过；一档失败不断链）
+    for (uint8_t ch = 0; ch < ecs::kSaveChannelCount; ++ch)
+        WriteSaveFile(ch, playWorld_->Saves(ch));
     // §3.4-1：弃 playWorld（两阶段销毁随 World 析构；renderable 由视口提取差集释放）
     playWorld_.reset();
     playScene_ = nullptr;

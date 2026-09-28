@@ -86,9 +86,12 @@ uint64_t HookInstantiate(const char* hex, float x, float y) {
                                                         Vec2{x, y});
     return e.IsNull() ? 0 : e.id;
 }
-// M5 批④：C# Save.Flush → 编辑器域落盘（项目 .lemon/saves/；无项目 = no-op）
+// M5 批④：C# Save.Flush → 编辑器域落盘（项目 .lemon/saves/；无项目 = no-op）；
+// M6a 批② T5：三档全落（空档跳过语义保留——Count 0 不写文件）
 void HookSaveFlush(ecs::World& w) {
-    if (g_app) g_app->Ctx().WriteSaveFile(w.Saves());
+    if (!g_app) return;
+    for (uint8_t ch = 0; ch < ecs::kSaveChannelCount; ++ch)
+        g_app->Ctx().WriteSaveFile(ch, w.Saves(ch));
 }
 
 // ---- M5 批③：--smoke-anim 固定 guid（程序化 4 帧表 + clip；yami 包同段命名）----
@@ -472,7 +475,7 @@ public static class GameMain
     {
         public static float Time;  // 本局秒（死亡冻结）
         public static int Kills;   // 本局击杀
-        public static int Best;    // 历史最高（Save "vs.best" 持久）
+        public static int Best;    // 历史最高（Save "vs.best" @ Chan.Meta 持久）
         public static bool Dead;   // 死亡结算相位（三脚本共用的闸）
     }
 
@@ -611,7 +614,7 @@ public sealed class PlayerCombat : LemonBehaviour
     {
         LoadTables();
         GameMain.Run.Best =
-            int.TryParse(Save.GetString("vs.best"), out var b) ? b : 0; // 上一局纪录
+            int.TryParse(Save.GetString("vs.best", Save.Chan.Meta), out var b) ? b : 0; // 上一局纪录（跨局归 meta 档）
     }
 
     // ---- 批② T4 表载（ADR-012 D1 全字符串格；坏行跳过 + warn、缺表保底——
@@ -829,8 +832,8 @@ public sealed class PlayerCombat : LemonBehaviour
         bool newBest = score > GameMain.Run.Best;
         if (newBest) {
             GameMain.Run.Best = score;
-            Save.SetString("vs.best", score.ToString());
-            Save.Flush(); // 立即落盘（ExitPlay 兜底之外的显式路径）
+            Save.SetString("vs.best", score.ToString(), Save.Chan.Meta);
+            Save.Flush(); // 立即落盘（ExitPlay 兜底之外的显式路径；全档）
         }
         string title = newBest ? $"★ 新纪录 {score} 分！"
                                : $"本局 {score} 分（最高 {GameMain.Run.Best}）";
@@ -2981,7 +2984,9 @@ int EditorApp::Run(const EditorLaunch& launch) {
         smokeSeeded_ = ctx_.ActiveScene().AliveCount();
     } else if (launch.smokeTemplate) {
         // M5 批④：模板链冒烟——Main.scene（玩家/导演已由生成器播种）；进 Play 前
-        // 预置存档（vs.best=123）= EnterPlay 载入路径的机械验证
+        // 预置存档 = EnterPlay 载入路径的机械验证。M6a 批② T5 双载体：meta.sav
+        // （vs.best=123，新名——模板 Chan.Meta 读点）+ game.sav（旧名——slot 档
+        // 惰性迁移链载体；出 Play 断言迁移落新名）
         if (!ctx_.OpenScene(launch_->projectDir + "/Scenes/Main.scene")) return 1;
         {
             namespace fs = std::filesystem;
@@ -2991,8 +2996,10 @@ int EditorApp::Run(const EditorLaunch& launch) {
             lemon::ecs::SaveChannel pre;
             pre.Set("vs.best", "123", 3);
             const std::vector<uint8_t> bytes = pre.Encode();
-            std::ofstream f(saves / "game.sav", std::ios::binary | std::ios::trunc);
-            f.write((const char*)bytes.data(), (std::streamsize)bytes.size());
+            std::ofstream(saves / "meta.sav", std::ios::binary | std::ios::trunc)
+                .write((const char*)bytes.data(), (std::streamsize)bytes.size());
+            std::ofstream(saves / "game.sav", std::ios::binary | std::ios::trunc)
+                .write((const char*)bytes.data(), (std::streamsize)bytes.size());
         }
         smokeSeeded_ = ctx_.ActiveScene().AliveCount();
         forceDefaultLayout_ = true; // overlay 断言依赖 Scene 面板前台（同 smoke-drag 语义）
@@ -5236,13 +5243,38 @@ int EditorApp::Run(const EditorLaunch& launch) {
             std::printf("[lemon] smoke-template: diag %s gems(peak)=%d mobs(peak)=%d\n",
                         g_tplHudRows, g_tplGems, g_tplMobs);
             if (!tplOk) exitCode = 1;
-            // ExitPlay 兜底落盘（写路径）：Stop 后 .lemon/saves/game.sav 在且含模板档
-            const std::string sav = ctx_.Assets().ProjectRoot() + "/.lemon/saves/game.sav";
-            std::error_code ec;
-            const bool savOk = std::filesystem::file_size(sav, ec) > 16 && !ec;
-            std::printf("[lemon] smoke-template: saveFile=%s => %s\n",
-                        savOk ? "YES" : "NO", savOk ? "OK" : "FAIL");
-            if (!savOk) exitCode = 1;
+            // ExitPlay 兜底落盘（写路径）：Stop 后 .lemon/saves/ 三档——slot_0 =
+            // 旧 game.sav 惰性迁移后落新名（迁移链闭环：内容含种子键）；meta =
+            // vs.best（模板 Chan.Meta）；settings 空档跳过不落文件（Count 0 语义）
+            {
+                namespace fs = std::filesystem;
+                const fs::path savesDir =
+                    fs::path(ctx_.Assets().ProjectRoot()) / ".lemon/saves";
+                std::error_code ec;
+                auto fileOk = [&](const char* name) {
+                    return fs::file_size(savesDir / name, ec) > 16 && !ec;
+                };
+                const bool slotOk = fileOk("slot_0.sav"), metaOk = fileOk("meta.sav");
+                const bool skipOk = !fs::exists(savesDir / "settings.sav", ec);
+                bool migrateOk = false; // slot_0.sav 解码含种子键 vs.best=123
+                if (slotOk) {
+                    std::ifstream f(savesDir / "slot_0.sav", std::ios::binary);
+                    std::vector<uint8_t> b((std::istreambuf_iterator<char>(f)),
+                                           std::istreambuf_iterator<char>());
+                    lemon::ecs::SaveChannel ch;
+                    char buf[8] = {};
+                    migrateOk = ch.Decode(b.data(), b.size()) &&
+                                ch.GetLen("vs.best") == 3 && ch.Get("vs.best", buf, 7) == 3 &&
+                                std::memcmp(buf, "123", 3) == 0;
+                }
+                const bool savOk = slotOk && metaOk && skipOk && migrateOk;
+                std::printf("[lemon] smoke-template: saves(slot_0=%s meta=%s legacy=%s "
+                            "skipEmpty=%s) => %s\n",
+                            slotOk ? "YES" : "NO", metaOk ? "YES" : "NO",
+                            migrateOk ? "YES" : "NO", skipOk ? "YES" : "NO",
+                            savOk ? "OK" : "FAIL");
+                if (!savOk) exitCode = 1;
+            }
             // 批④后修②回归防线：同进程再开第二个模板拷贝 → spriteId 记账必须与
             // 第一个逐项一致（换项目注册表复位）。修复前第二个项目整体后移上个
             // 项目的精灵数 → 场景烘焙引用悬空、玩家/怪物全不渲染（demo/svr-test

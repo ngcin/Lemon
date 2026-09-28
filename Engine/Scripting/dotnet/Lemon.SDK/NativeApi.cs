@@ -44,6 +44,9 @@ public unsafe struct NativeApi
     public delegate* unmanaged<ulong, int> TweenAlive;                         // A 档：句柄存活 0/1
     public delegate* unmanaged<float> GetXpCurveK;                             // M6a 批② T4：World.XpCurveK（旧宿主默认 1.25）
     public delegate* unmanaged<float, void> SetXpCurveK;                       // M6a 批② T4：World.SetXpCurveK（ADR-012 D3）
+    public delegate* unmanaged<byte*, void*, uint, byte, int> SaveSetEx;       // M6a 批② T5：分档 Set（ch 见 Save.Chan；旧宿主 = null 走单档）
+    public delegate* unmanaged<byte*, byte, int> SaveGetLenEx;                 // M6a 批② T5：分档长度；-1 = 无此键
+    public delegate* unmanaged<byte*, void*, uint, byte, int> SaveGetEx;       // M6a 批② T5：分档读；返回拷贝数（-2 = cap 不足）
 }
 
 internal static unsafe class Native
@@ -213,33 +216,41 @@ internal static unsafe class Native
         dst[m] = 0;
     }
 
-    internal static unsafe int SaveSet(string key, ReadOnlySpan<byte> bytes)
+    internal static unsafe int SaveSet(string key, ReadOnlySpan<byte> bytes, byte chan = 0)
     {
-        if (Api.SaveSet == null || key == null) return -1;
+        if (key == null) return -1;
         byte* k = stackalloc byte[256];
         CopyUtf8(key, k, 255);
-        fixed (byte* p = bytes)
+        if (Api.SaveSetEx != null) {
+            fixed (byte* p = bytes)
+                return Api.SaveSetEx(k, p, (uint)bytes.Length, chan);
+        }
+        if (Api.SaveSet == null) return -1;
+        fixed (byte* p = bytes) // 旧宿主：唯一档（chan 忽略，尽力而为）
             return Api.SaveSet(k, p, (uint)bytes.Length);
     }
 
-    internal static unsafe int SaveGetLen(string key)
+    internal static unsafe int SaveGetLen(string key, byte chan = 0)
     {
-        if (Api.SaveGetLen == null || key == null) return -1;
+        if (key == null) return -1;
         byte* k = stackalloc byte[256];
         CopyUtf8(key, k, 255);
-        return Api.SaveGetLen(k);
+        if (Api.SaveGetLenEx != null) return Api.SaveGetLenEx(k, chan);
+        return Api.SaveGetLen != null ? Api.SaveGetLen(k) : -1; // 旧宿主：单档
     }
 
-    internal static unsafe byte[]? SaveGet(string key)
+    internal static unsafe byte[]? SaveGet(string key, byte chan = 0)
     {
-        int len = SaveGetLen(key);
+        int len = SaveGetLen(key, chan);
         if (len < 0) return null;
         var buf = new byte[len];
         if (len == 0) return buf;
         byte* k = stackalloc byte[256];
         CopyUtf8(key, k, 255);
-        fixed (byte* p = buf)
-            Api.SaveGet(k, p, (uint)len);
+        fixed (byte* p = buf) {
+            if (Api.SaveGetEx != null) Api.SaveGetEx(k, p, (uint)len, chan);
+            else if (Api.SaveGet != null) Api.SaveGet(k, p, (uint)len); // 旧宿主：单档
+        }
         return buf;
     }
 

@@ -97,6 +97,14 @@ struct NativeApiVtable {
     // 同上约定。ADR-012 D3：默认 1.25 不变 = 基准场零漂移；空宿主读默认写丢弃）----
     float (*getXpCurveK)();                      // World::XpCurveK
     void (*setXpCurveK)(float);                  // World::SetXpCurveK（不 clamp）
+    // ---- M6a 批② T5（存档分档：Lemon.Save × Chan → World::Saves(ch)；表尾追加
+    // 同上约定。ch 越界红字一次 + 落 slot；空宿主与既有四指针同款降级。旧宿主无
+    // Ex = SDK 判空回落单档语义（chan 忽略）。saveFlush 不加 Ex——语义 = 全档落盘 ----
+    int32_t (*saveSetEx)(const char* key, const void* bytes, uint32_t len,
+                         uint8_t ch); // Lemon.Save.Set(…, Chan) → World::Saves(ch)
+    int32_t (*saveGetLenEx)(const char* key, uint8_t ch); // -1 = 无此键
+    int32_t (*saveGetEx)(const char* key, void* out, uint32_t cap,
+                         uint8_t ch); // 返回拷贝数（-2 = cap 不足）
 };
 
 /// 编辑器资产钩子（M4.4：编辑器宿主装配期经 SetEditorAssetHooks 注入；

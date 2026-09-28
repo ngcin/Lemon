@@ -250,6 +250,18 @@ public static class Save
 > 上一代备份（坏档自动回退）。EnterPlay 自动载入 / ExitPlay 兜底落盘 / Flush 显式
 > 立即落盘（幂等）。
 
+> **M6a 批② T5 分档落地（2026-09-28 修订，①收口）**：三档三文件
+> `.lemon/saves/{slot_0,settings,meta}.sav`——格式复用零版本变（LEMONSAV v1），
+> 每档独立 SaveChannel + 独立坏档兜底（主→bak 按档隔离）；World 持三通道，
+> C# 五方法可选参 `Save.Chan`（Slot/Settings/Meta，默认 Slot = 既有源码零改；
+> Flush 全档）；vtable 尾加 Ex 三项（旧宿主判空回落单档）。旧 `game.sav`
+> **惰性迁移**：slot_0 载入时新档不存在 → 读旧名（写恒写新名，免 rename 竞态）。
+> 多档切换 API 仍裁（v1 固定 slot_0，v1.1 候补）。**档内结构 = 纯 KV 引擎不
+> 解析**，键约定防后续撞僵 schema（2026-09-28 用户口径）：settings = 版本化 KV
+> （首键 `version` = 键集结构版本，设置项键自由增长——M6b 音量/手柄键位/画质
+> 直接加键）；meta = 收集条目 `col.<条目id>.state` / `col.<条目id>.count`（条目
+> id → 状态/计数映射）+ 全局统计平键（模板 `vs.best` 已迁 Chan.Meta）。
+
 ## 11. 可视化事件系统（schema 冻结，编辑器后评估）
 
 - 数据格式**预留并冻结**（借鉴 yami `.event` 指令树 schema，非代码移植）：

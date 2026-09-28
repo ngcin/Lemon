@@ -212,6 +212,14 @@ RESULT 行判读：`sim avg ≤ 8ms`（08 §3 判据）；`alive` 稳定在 n �
 > mismatches=0（实测落账）。同批 ScriptBox 布局重构零回放影响 = 不入注册表的老
 > 口径。先例二的推论族补全：**加组件必重录；加字段看实例——基准场零实例即零重录**
 >（给基准场播新字段组件实例 = 全帧漂移，规划红线）。
+>
+> **先例二通道族扩员（M6a 批②，2026-09-28 落账）**：批② 全程零重录的三处
+> 结构性依据——①T2 `TableStore`（World 持有 + 非 ECS，同族第六通道：Clips/
+> Controllers/Saves/RtUi/Fx/Tweens/Tables 全家同款）；②T5 存档分档 `saves_[3]`
+> （单成员 → 数组化，通道语义零哈希面 = 先例二原例复用）；③T4 `xpCurveK`
+> World 级单参数（**默认值 = 原 StatSystem 硬编码 1.25** → 换读点后哈希流逐位
+> 不变；TimeScale 同款先例）。三金档（sim-st/mt/script）现录现放 mismatches=0
+> 两轮复证（T1/T4 各一轮，T5 后随 T6 全量再证）。
 
 > **先例三第二次应用（M6a 批①，2026-09-24）**：Animator2D 16→28B 尾加换段队列
 > 三字段（FIELD_RT）——三金档零 Animator2D 实例 → m5b2 三档原样 replay
@@ -287,6 +295,7 @@ Chase 目标；**批⓪（M5.md T4）起兼弹幕源**：Shooter 20 发/s + 弹�
 | 方案 A 查询快路径（09-24，三跑） | sim 9.90~10.05（**Hitbox 1.08** / Rebuild 0.57）/ scene ~1.4 / ui 0.26 | frameAvg 12.17~12.59ms fps 79~82 **PASS** |
 | M6a 批① fx 饱和（09-24） | sim 10.30 / scene 1.51 / ui 0.28（fx 渲染并入 scene 段：飘字 256 逐字包 + 血条 128×2 四边形） | frameAvg 12.76ms fps=78 **PASS** |
 | 性能批②后复验（09-26） | sim 10.01 / scene ~1.4 / ui 0.28 | frameAvg 12.26ms fps=82 **PASS**（playerHp=275793 逐位一致，第五次） |
+| M6a 批② T5 后复验（09-28） | sim 10.29 / scene ~1.0 / ui 0.27 | frameAvg 12.26ms fps=82 **PASS**（playerHp=275793 逐位一致，第六次——表通道/存档分档零热路径开销再证） |
 
 批② 导演化口径变更：Spawner 闸 10000→8000 让 2000 头寸给 BenchDirector（3 波 ×
 4 条目 180/s/波，t=1/6/11s）——判据在原两条（alive≥10000、frameAvg≤22.2ms）外加
@@ -421,11 +430,15 @@ Hierarchy 面板）。回归口径 = 本命令三跑稳定。
 - Windows 平台（CMake 预设 `win` 待加，见 README）。
 - 编辑器交互覆盖边界（M4.md §6 提案已落地）：无头冒烟 `--smoke`（含 overlay
   可见性像素断言）/ `--smoke-close`（关闭状态机）/ `--smoke-drag`（视口注入五段）/
-  `--smoke-anim`（切片 + clip + Animator 帧映射链，M5 批③起）/ `--smoke-template`
+  `--smoke-anim`（切片 + clip + Animator 帧映射链，M5 批③起；批② T3 加 clip
+  编辑链 roundtrip + 集按名断言）/ `--smoke-template`
   （向导复制模板 → build → Play → HUD/存档/波次/击杀/升级卡片断言，M5 批④起；
   批④后修④加**死亡链**：2100 帧起压血停火站桩致死 → 断言脚本实体未销毁/未被
-  异常禁用 → 对话框复活，帧下限 3000）/
-  `--final`（终验链）经 `tools/editor-regression.sh` 一键 13 步；**未脚本化**的纯观感路径
+  异常禁用 → 对话框复活，帧下限 3000；批② T4 加**数值表**断言 tables=YES；T5 加
+  **三档存档**断言——种子 meta.sav（vs.best 载入回显）+ 旧 game.sav（惰性迁移
+  链）→ Stop 后 slot_0/meta 落盘 + 迁移内容回读 + 空档 settings 不落文件）/
+  `--final`（终验链）经 `tools/editor-regression.sh` 一键 **14 步**（批⓪ smoke-guid
+  起）；**未脚本化**的纯观感路径
   （Inspector 控件手感、面板排版）仍靠 [Editor-Manual-Test-Guide.md](./Editor-Manual-Test-Guide.md) 真人清单。
 - M2：bench-sim 早期怪群聚拢阶段存在 max ~145ms 单步尖峰（avg 判据不受影响；哈希重建
   并行化是已预留路径，触发 M5 压测 B 再做）；投射物穿透去重用全量 iFrames 策略（M5 细化）；

@@ -46,6 +46,8 @@ public static class GameMain
         // A 档补间（2026-09-28 用户插入项）：Lemon.Tween 全 API 面（typeId 15，
         // 表尾注册同上约定）
         Lemon.Behaviours.Register<TweenProbeBehaviour>();
+        // M6a 批② T5：存档分档（typeId 16，表尾注册同上约定）
+        Lemon.Behaviours.Register<SaveChanProbeBehaviour>();
     }
 }
 
@@ -532,6 +534,49 @@ public sealed class TweenProbeBehaviour : Lemon.LemonBehaviour
             Mark((ushort)(1650 + (Lemon.Tween.Alive(_h) ? 10 : 0)
                         + (Lemon.Tween.Alive(_h2) ? 1 : 0))); // 1651
             Mark((ushort)(1660 + Lemon.Tween.KillAll(gameObject))); // 1661
+            gameObject.Destroy();
+        }
+    }
+}
+
+/// <summary>M6a 批② T5 验收（typeId 16）：存档分档全 API 面。帧1 三档写入（含
+/// settings 版本键 + meta 收集条目键约定示范 + 越界 chan 落 slot）→ 1281；帧2
+/// 档间隔离回读（同键不串/默认参 = Slot/越界写入落 slot 可见）→ 1290+ok；
+/// 帧自毁。C++ 侧对拍 w.Saves(ch) 原生通道内容。</summary>
+public sealed class SaveChanProbeBehaviour : Lemon.LemonBehaviour
+{
+    private void Mark(ushort id)
+        => Lemon.Events.Push(Lemon.Interop.GameEvent.Custom, id, default, default);
+
+    protected override void Update()
+    {
+        var fc = Lemon.Time.FrameCount;
+        if (fc == 1) {
+            // settings：版本化 KV（首键 version = 键集结构版本，其余键自由增长）
+            Lemon.Save.SetString("version", "1", Lemon.Save.Chan.Settings);
+            Lemon.Save.SetString("volume", "0.8", Lemon.Save.Chan.Settings);
+            // meta：收集条目约定（col.<条目id>.state / .count）+ 全局统计平键
+            Lemon.Save.SetString("vs.best", "77", Lemon.Save.Chan.Meta);
+            Lemon.Save.SetString("col.sword.count", "3", Lemon.Save.Chan.Meta);
+            Lemon.Save.SetString("col.sword.state", "owned", Lemon.Save.Chan.Meta);
+            // slot：局内进度（默认参同型）
+            Lemon.Save.SetString("run.kills", "5");
+            // 越界 chan：引擎红字一次 + 落 slot（ClampSaveChannel 钳位）
+            Lemon.Save.SetString("bad.chan", "x", (Lemon.Save.Chan)99);
+            Mark(1281);
+        } else if (fc == 2) {
+            bool ok = Lemon.Save.GetString("volume", Lemon.Save.Chan.Settings) == "0.8"
+                   && Lemon.Save.GetString("version", Lemon.Save.Chan.Settings) == "1"
+                   && Lemon.Save.GetString("vs.best", Lemon.Save.Chan.Meta) == "77"
+                   && Lemon.Save.GetString("col.sword.count", Lemon.Save.Chan.Meta) == "3"
+                   && Lemon.Save.GetString("run.kills") == "5" // 默认参 = Slot
+                   && Lemon.Save.HasKey("bad.chan")           // 越界回落 slot 后可见
+                   && !Lemon.Save.HasKey("volume")            // settings 键不漏进 slot
+                   && !Lemon.Save.HasKey("volume", Lemon.Save.Chan.Meta)
+                   && !Lemon.Save.HasKey("run.kills", Lemon.Save.Chan.Meta);
+            Mark((ushort)(1290 + (ok ? 1 : 0)));
+            Lemon.Ui.Set("svch", ok ? "ok" : "bad"); // RtUi 回读（C++ 侧第二证）
+        } else if (fc == 3) {
             gameObject.Destroy();
         }
     }

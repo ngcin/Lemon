@@ -169,10 +169,13 @@ public:
     RtUiCards& Cards() { return cards_; }
     const RtUiCards& Cards() const { return cards_; }
 
-    // ---- 游戏存档通道（M5 批④ D1；SaveChannel 头说明）----
-    // C# Lemon.Save 写读；IO 归宿主（编辑器钩子/打包运行时 M8）。不入 StateHash。
-    SaveChannel& Saves() { return saves_; }
-    const SaveChannel& Saves() const { return saves_; }
+    // ---- 游戏存档通道（M5 批④ D1；M6a 批② T5 分档三通道——SaveChannel 头说明）----
+    // C# Lemon.Save 写读（Chan 参数 → Saves(ch)）；IO 归宿主（编辑器钩子/打包
+    // 运行时 M8）。不入 StateHash。默认无参 = slot（既有调用点零改兼容）。
+    SaveChannel& Saves() { return saves_[kSaveSlot]; }
+    const SaveChannel& Saves() const { return saves_[kSaveSlot]; }
+    SaveChannel& Saves(uint8_t ch) { return saves_[ClampSaveChannel(ch)]; }
+    const SaveChannel& Saves(uint8_t ch) const { return saves_[ClampSaveChannel(ch)]; }
 
     // ---- 输入（InputSnapshot 系统消费的快照通道；录制/回放共用）----
     const InputState& Input() const { return input_; }
@@ -234,7 +237,8 @@ private:
     ClipTable clips_;
     ControllerTable controllers_; // T3d：.controller 状态机（Controllers()；非 ECS 通道，零重录）
     FxChannel fx_;
-    SaveChannel saves_;
+    SaveChannel saves_[kSaveChannelCount]; // M6a 批② T5：slot/settings/meta 三档
+                                           // （档常量与键约定见 SaveChannel.h）
     TableStore tables_; // M6a 批②：.tab 配置表（Tables()；非 ECS 通道，零重录）
     TweenTable tweens_; // A 档补间（Tweens()；指令态通道，零重录）
     uint64_t tick_ = 0;

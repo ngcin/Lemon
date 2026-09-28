@@ -9,7 +9,7 @@ public static class GameMain
     {
         public static float Time;  // 本局秒（死亡冻结）
         public static int Kills;   // 本局击杀
-        public static int Best;    // 历史最高（Save "vs.best" 持久）
+        public static int Best;    // 历史最高（Save "vs.best" @ Chan.Meta 持久）
         public static bool Dead;   // 死亡结算相位（三脚本共用的闸）
     }
 

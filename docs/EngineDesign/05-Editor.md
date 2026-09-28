@@ -64,6 +64,13 @@ v1 面板清单：
 > csproj HintPath 重锚，06 §7）；**Inspector Play 横幅**（"改动随 Stop 丢弃"，
 > ADR-011）；**存档 IO**（EnterPlay 载入 / ExitPlay 兜底落盘 `.lemon/saves/`，
 > C# `Save.Flush` 走 ScriptIoHooks）。
+> M6a 批②（2026-09-26）**面板集解冻一件**：AnimationEditor 最小版（T3）+
+> T3b/T3c/T3-UX/T3-UX2 四轮交互迭代成 v3.1 动画工作台（Godot SpriteFrames 式
+> 主从布局；.ani 集容器 + 段文件，ADR-013）。TilePalette 仍归 M6c、
+> ParticleEditor 后评估——冻结决议其余不动。浮动放大编辑器（.tab 表格）与
+> 按需工具窗（集内建段对话框等）**不进面板注册表** = 冻结不破的旁路形态。
+> M6a 批② T5（2026-09-28）：存档 IO 分档三文件 `{slot_0,settings,meta}.sav`
+> （EnterPlay 三档载 / ExitPlay 三档落；06 §10 修订注）。
 
 ## 3. 交互内核三件套（直接拷贝 Editor-RPG2D，注明出处）
 
@@ -147,6 +154,10 @@ struct Chase { LEMON_FIELD(speed, Range{0,500}); LEMON_FIELD(aggroRange); LEMON_
 - **C# 脚本组件的 Inspector**：SDK 侧 `[ShowInInspector]` + 字段特性经元数据通道导出，编辑器绘制同样走注册表路径（C# 组件与 C++ 组件在 Inspector 里体验一致）。
 - **Prefab 覆盖与头栏（ADR-009，PrefabLink 驱动，03 §2）**：改过字段蓝标 + 逐字段 Revert；组件头 Prefab 栏 Apply / Revert / Break / Select（Prowl2D PrefabUtility 模式）——v1 核心（M4）。
   > M4 范围修订（2026-09-19）：M4 做最小集（实例化/Apply/Break/整体 Revert）；**逐字段 override 蓝标列 M4 砍单候补首位**（富余则做，否则移 M5 记 ADR）。见 M4.md §3.9。
+- **资产 → 专用编辑面板双击通道（M6a 批② T3 先例，2026-09-26）**：AssetBrowser
+  `DrawItem` 按类型分派——clip 双击 `EditorApp::OpenAnimationEditor(guid)` /
+  .tab 双击浮动放大编辑器。首个"资产打开专用编辑面"机制，后续内容编辑器
+  （TilePalette M6c 等）复用同一入口形态；非编辑型资产维持双击 = 无操作。
 
 ## 6. SceneView 视口工具
 
@@ -162,6 +173,14 @@ struct Chase { LEMON_FIELD(speed, Range{0,500}); LEMON_FIELD(aggroRange); LEMON_
 | **Tilemap** | TilePalette（含自动瓦片 47 变体预览）、笔刷/矩形/椭圆/洪水/取色/擦除、碰撞标志层编辑、depth 视角检查 | 自动瓦片 Group+friends 数据结构（Editor-RPG2D `Tileset.hpp`，拷贝改造）；dirty-rect 协议（duality，MIT 拷贝）；渲染走运行时 chunk 烘焙（02 §3.3）——编辑器不另做预览路径 |
 | **AnimationEditor** | 帧序列拖拽、每帧时长、Loop 模式（Once/Loop/PingPong/Random/Queue，duality SpriteAnimator 设计）、实时预览、帧事件打点 | duality 思想 + 自研 |
 | **ParticleEditor** | 发射器全参数 + 曲线（颜色/尺寸/速率）实时预览、预设保存为资产 | Luma 思想；模拟即运行时粒子系统 |
+
+> **M6a 批② 落地口径（2026-09-26，AnimationEditor 最小版 → v3.1 工作台）**：
+> 已交付 = `.ani` 动画集工作台（左列动画清单工具条化 + 右区帧网格/大预览/
+> 胶片带；键盘化帧操作 ←/→/Del/Ctrl+D/Space；加帧四通道含从精灵表选帧
+> 对话框；统一保存段+集）+ clip 编辑链 roundtrip（`Editor/Assets/ClipEdit`
+> 可单测数据面）。裁剪 = per-frame 时长（schema 冻结全片 fps）、LoopMode 五
+> 模式（bool loop）、帧事件打点、Play 中热改——登记 v1.1 候补（上表"每帧
+> 时长/Loop 模式/帧事件打点"为候补全量形态）。ADR-013 集容器口径。
 
 ## 8. 编辑器扩展性
 
