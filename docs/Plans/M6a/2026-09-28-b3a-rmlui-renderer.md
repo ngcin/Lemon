@@ -81,7 +81,7 @@ Status: in-progress
 1. ✅ `cmake --preset mac && cmake --build --preset mac` 全绿（新增 Engine/Ui + RmlUi 链入 lemon-engine；RMLUI_SHELL OFF 瘦身——spike 用本地后端拷贝不受影响）。
 2. ✅ `./build/mac/Editor/lemon-editor --smoke-uirml --frames 180 --validate`：VERDICT OK（panel=102652(>3000) title=791(>20) body=374(>20)，font=Hiragino Sans GB）+ **验证层零错误** + exit 0。
 3. ✅ 既有回归 `tools/editor-regression.sh` 14/14 不回归（**复跑全绿**；首跑 13/14——`--save-scene` 早退路径触发 UiSubsystem 析构断言崩溃，改防御性收尾修复，见 [DevLog](../../DevLog/2026-09-28-m6a-b3a-rmlui-renderer.md)）。
-4. ⏳ `--smoke-uirml --screenshot` 目检一张（真人验收项：GameView 上面板/文字位置合理；截图已出 1600×900）。
+4. ⏳ `--smoke-uirml --screenshot` 目检一张（真人验收项：GameView 上面板/文字位置合理；**首轮目检抓到纵向翻转热修**——Vulkan NDC y=-1 为顶部，投影误用 GL 约定；已修 + 新增上半幅集中断言机器化，截图重出待二次目检，见 [DevLog 追记](../../DevLog/2026-09-28-m6a-b3a-rmlui-renderer.md)）。
 
 ### 实现期发现（偏离批文件预设计的落账）
 

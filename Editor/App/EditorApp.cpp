@@ -5463,7 +5463,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
     // 的 RT 不同：本模式读 gameRT）
     if (launchCopy_.smokeUirml) {
         bool uiOk = false;
-        int panelN = 0, titleN = 0, bodyN = 0;
+        int panelN = 0, titleN = 0, bodyN = 0, titleTopN = 0;
         std::vector<uint8_t> rt;
         uint32_t rw = 0, rh = 0;
         const bool fetched = device_->DebugFetchTextureCapture(rt, rw, rh);
@@ -5472,12 +5472,25 @@ int EditorApp::Run(const EditorLaunch& launch) {
             panelN = CountPixelsNear(rt, rw, rh, 32, 64, 96, 14);   // #204060 面板底
             titleN = CountPixelsNear(rt, rw, rh, 255, 208, 96, 30); // #ffd060 标题（抗锯齿容忍）
             bodyN = CountPixelsNear(rt, rw, rh, 224, 224, 224, 44); // #e0e0e0 正文
-            uiOk = panelN > 3000 && titleN > 20 && bodyN > 20;
+            // 位置断言（2026-09-28 真人目检抓纵向翻转后的机器化：颜色计数对翻转无感，
+            // 标题色像素必须集中上半幅——翻转即下半幅超限）
+            int titleBotN = 0;
+            const uint32_t halfY = rh / 2;
+            for (uint32_t y = 0; y < rh; ++y)
+                for (uint32_t x = 0; x < rw; ++x) {
+                    const uint8_t* p = &rt[((size_t)y * rw + x) * 4];
+                    const int dr = (int)p[0] - 255, dg = (int)p[1] - 208, db = (int)p[2] - 96;
+                    if ((uint32_t)(dr * dr + dg * dg + db * db) <= 30u * 30u) {
+                        if (y < halfY) ++titleTopN;
+                        else ++titleBotN;
+                    }
+                }
+            uiOk = panelN > 3000 && titleN > 20 && bodyN > 20 && titleTopN >= titleN * 3 / 4;
         }
         std::printf("[lemon] smoke-uirml: doc=%d font=%s panel=%d(>3000) title=%d(>20) "
-                    "body=%d(>20) => %s\n",
+                    "body=%d(>20) titleTop=%d/%d(≥3/4) => %s\n",
                     hasDoc ? 1 : 0, gameUi_ ? gameUi_->LoadedFontFamily() : "-",
-                    panelN, titleN, bodyN, uiOk ? "OK" : "FAIL");
+                    panelN, titleN, bodyN, titleTopN, titleN, uiOk ? "OK" : "FAIL");
         if (!uiOk) exitCode = 1;
     }
 

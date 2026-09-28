@@ -74,13 +74,14 @@ void MatMul(float* out, const float* a, const float* b) {
         }
 }
 
-// 像素坐标（左上原点、y 向下）→ NDC
+// 像素坐标（左上原点、y 向下）→ NDC。注意 Vulkan 与 GL 相反：**y=-1 是屏幕顶部**
+// （真人目检 2026-09-28 抓到的纵向翻转根因：误用 GL 约定 y=0→+1）
 void MakeOrtho(float* m, uint32_t w, uint32_t h) {
     std::memset(m, 0, sizeof(float) * 16);
     m[0] = 2.0f / (float)w;
-    m[5] = -2.0f / (float)h;
+    m[5] = 2.0f / (float)h;
     m[12] = -1.0f;
-    m[13] = 1.0f;
+    m[13] = -1.0f;
     m[15] = 1.0f;
 }
 
