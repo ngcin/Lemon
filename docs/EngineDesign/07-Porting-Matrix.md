@@ -126,7 +126,7 @@
 | **M2 ECS** | MoteurJV 组件目录（C ✅ 27 组件+注册表）、yami Team schema（C ✅ 内联默认表）/RLE codec（M6c）/分区自适应（M6c）、Luma JobSystem（B ✅ 值语义修正）+ 系统调度（C ✅）、F3 清单（C ✅ 统计层+--stats 文本）；新增第三方 nlohmann/json v3.11.3（.scene 序列化，THIRD_PARTY 已登记） |
 | **M3 脚本** | Luma CoreCLRHost 全量 + ScriptLoadContext（B）、yami 生命周期形状（C）、Prowl2D SceneDispatcher 调度 / 命名级 API 面 / MainThreadContext（C）、Prowl Roslyn（C，后期） |
 | **M4 编辑器** | Luma 面板框架与面板集（B）、MoteurJV Play 快照（C）、Prowl2D Undo 双轨 / PrefabLink + Inspector override（C）、Editor-RPG2D 模式栈/焦点仲裁/放行约定（A）、yami GUID+manifest（C）；新增第三方 Dear ImGui v1.92.9b-docking（MIT，编辑器 UI，THIRD_PARTY 已登记，M4.0）+ stb（公有领域，PNG 导入/截屏，M4.0） |
-| **M5 VS 模板** | duality SpriteAnimator 思想（C）、yami 存档接口（C）、yami 默认素材底包（MIT 直用）；新增第三方 **RmlUi 6.3**（MIT，v1.x 富 UI 首选，spike-04 三判据验收通过，ADR-008；CPM 锁 tag，THIRD_PARTY 已登记）+ **rbfx**（MIT fork，RmlUi↔引擎渲染层适配 D 级对照，ADR-008 接入形态依据）；FreeType 走系统 brew 2.14.3（RmlUi 字体引擎，暂不 vendored） |
+| **M5 VS 模板** | duality SpriteAnimator 思想（C）、yami 存档接口（C）、yami 默认素材底包（MIT 直用）；新增第三方 **RmlUi 6.3**（MIT，v1.x 富 UI 首选，spike-04 三判据验收通过，ADR-008；CPM 锁 tag，THIRD_PARTY 已登记；**2026-09-28 批③a 转正式**——ADR-014，`Engine/Ui` + 自研 RenderInterface over RHI）+ **rbfx**（MIT fork，RmlUi↔引擎渲染层适配 D 级对照，ADR-008 接入形态依据）；FreeType 走系统 brew 2.14.3（RmlUi 字体引擎，暂不 vendored） |
 | **M6c TD 模板** | duality Tilemaps（B）、Editor-RPG2D 放置状态机/自动瓦片/chunk 烘焙（B） |
 | **M7 发布** | yami Deployment 清单（C）、Editor-RPG2D 序列化骨架（C） |
 | **M8 光照** | Luma 延迟光照裁剪版（B，含 WGSL→GLSL 直译） |
