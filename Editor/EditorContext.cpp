@@ -235,6 +235,17 @@ bool EditorContext::OpenSceneRecovery(const std::string& autosavePath) {
     return true;
 }
 
+bool EditorContext::DiscardAutosave(const std::string& autosavePath) {
+    // 只删 autosave 目录内的路径（弹窗路径由 DetectAutosaveRecovery 产出，但
+    // 防御性收口：外部传入任意路径不得成为删除原语）
+    const std::string dir = assets_.ProjectRoot() + "/.lemon/autosave/";
+    if (autosavePath.rfind(dir, 0) != 0) return false;
+    std::error_code ec;
+    const bool removed = std::filesystem::remove(std::filesystem::path(autosavePath), ec);
+    if (removed) LEMON_LOG("已丢弃自动备份（不再提示）：%s", autosavePath.c_str());
+    return removed;
+}
+
 std::string EditorContext::SceneName() const {
     if (scenePath_.empty()) return "untitled.scene";
     size_t slash = scenePath_.find_last_of("/\\");

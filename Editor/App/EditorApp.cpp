@@ -2585,7 +2585,9 @@ void EditorApp::DrawRecoveryModal() {
     if (!ImGui::IsPopupOpen("崩溃恢复") && !recoveryAnswered_) ImGui::OpenPopup("崩溃恢复");
     if (!ImGui::BeginPopupModal("崩溃恢复", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
     ImGui::Text("检测到较新的自动备份：\n%s", recoveryPath_.c_str());
-    ImGui::TextUnformatted("（上次会话可能未正常保存。恢复 = 打开备份内容并保持未保存状态）");
+    ImGui::TextUnformatted(
+        "（上次会话可能未正常保存。恢复 = 打开备份内容并保持未保存状态；\n"
+        "忽略 = 本次不处理，下次启动仍会提示；忽略并删除 = 丢弃备份，不再提示）");
     ImGui::Separator();
     if (ImGui::Button("恢复", ImVec2(120, 0))) {
         if (ctx_.OpenSceneRecovery(recoveryPath_))
@@ -2596,7 +2598,14 @@ void EditorApp::DrawRecoveryModal() {
         ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
-    if (ImGui::Button("忽略", ImVec2(120, 0))) {
+    if (ImGui::Button("忽略", ImVec2(120, 0))) { // 只关本会话弹窗，文件保留（热修④）
+        recoveryPath_.clear();
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("忽略并删除", ImVec2(120, 0))) { // 丢弃备份——否则 untitled 永弹
+        if (!ctx_.DiscardAutosave(recoveryPath_))
+            LEMON_WARN("丢弃自动备份失败（文件已在/权限？）——下次启动可能仍会提示");
         recoveryPath_.clear();
         ImGui::CloseCurrentPopup();
     }
@@ -2808,8 +2817,10 @@ int EditorApp::Run(const EditorLaunch& launch) {
         LEMON_LOG("编辑器就绪（新建场景；Ctrl+O 打开 .scene）");
     }
 
-    // 启动恢复检测（§3.8）：场景打开后 autosave 新于盘档 → 提示（交互模态/终验自动恢复）
-    if (!launch.finalTest && !ctx_.Assets().ProjectRoot().empty())
+    // 启动恢复检测（§3.8）：场景打开后 autosave 新于盘档 → 提示（交互模态/终验自动恢复）。
+    // 只在交互会话做（热修④）：冒烟/终验/压测等 --frames 有限会话跳过——恢复模态
+    // 每帧重开抢占模态栈，曾把 animset.create 等注入链整链憋死（"环境抖动"真身）
+    if (!launch.finalTest && launch.frames <= 0 && !ctx_.Assets().ProjectRoot().empty())
         recoveryPath_ = ctx_.DetectAutosaveRecovery();
 
     // M6a 批② T3：--smoke-anim 扩 clip 编辑链（验收②）。专档 anim-edit.anim
@@ -2832,6 +2843,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
     bool smokeAddCountOk = false, smokeAddOrderOk = false, smokeAddFlowDone = false;
     size_t smokeAddBase = 0; // 帧序事故回归：多图追加前编辑态帧数基数
     bool smokeFolderCreateOk = false, smokeDblClipOk = false; // T3-UX7：极简创建/断路
+    bool smokeDragItemOk = false; // T3-UX9：帧格交互件回归位（项 ID 非零）
     bool smokeLeftColOk = false, smokeLeftColDone = false; // 三图优化点①：左列段行元信息
     Vec2 smokeCreatePt{-1.0e9f, -1.0e9f};
     Vec2 smokePickPt{-1.0e9f, -1.0e9f};
@@ -2964,6 +2976,18 @@ int EditorApp::Run(const EditorLaunch& launch) {
         // 照渲染上一个集——真人实测报告）。须在下方归并重开之前断言：归并路径
         // 会重置 setGuid_，后置断言会假通过（与 open 同理）；归并照旧保住面板
         // 本体 OnGui 覆盖（LoadFrom 重入）。模态不点创建 = 零落盘副作用。
+        // 冒烟自清（热修④续）：目标名 player = 冒烟专属产物——工程里已有同名集
+        //（用户真人验收建过）会让模态创建撞路拒 → 集不开 → 后续 FilePicker/
+        // 选帧/建 clip 模态链全被卡（2026-09-27 真人报告"player.override 已存在"）
+        {
+            namespace fs = std::filesystem;
+            std::error_code ec;
+            const fs::path root = fs::path(ctx_.Assets().ProjectRoot());
+            const bool removed =
+                fs::remove(root / "Assets/player.override", ec) ||
+                fs::remove(root / "Assets/player.override.meta", ec);
+            if (removed) RescanAssets(); // DB 不留幻影（墓碑复活留给模态创建路径）
+        }
         OpenAnimationCreateSet("");
         if (PanelRegistry::Entry* en = panels_.FindEntry("Animation"))
             smokeSetCreateOk =
@@ -3914,6 +3938,23 @@ int EditorApp::Run(const EditorLaunch& launch) {
                                  p->TargetGuidForTest() == nc->guid;
                 if (!smokeDblClipOk)
                     LEMON_ERROR("smoke-anim：双击裸 clip 未切换（集态残留 = 断路回归）");
+            }
+            // ---- T3-UX9：胶片带拖拽通道回归锁（语义断言，非注入）。事故：
+            // 帧格曾用裸 ImGui::Image（无 ID）→ 拖源永假 + 拖靶只认图矩形 =
+            // 拖拽重排/入格换图/带尾加帧自出生即死（用户实测报告）。修 = 帧格
+            // 改 InvisibleButton + drawlist 直贴。回归位 = 帧格项 ID 非零。
+            // 为何不注入真拖：注入点击在普通窗口会被 ImGui 窗口兜底路由吃掉
+            //（悬停瞬移 → 点击绑 MoveId；既有注入链全在模态窗不受此限——模态
+            // 路由不同）。真人鼠标有真实事件流不受影响；拖拽手感归真人验收。
+            else if (frame == 118) {
+                AnimationPanel* p = nullptr;
+                if (PanelRegistry::Entry* en = panels_.FindEntry("Animation"))
+                    p = static_cast<AnimationPanel*>(en->panel);
+                smokeDragItemOk = p && p->StripCellItemForTest() != 0;
+                if (!smokeDragItemOk)
+                    LEMON_ERROR("smoke-anim：帧格非交互件（p=%p frames=%zu id=%u）",
+                                (void*)p, p ? p->EditFrameCountForTest() : (size_t)0,
+                                p ? p->StripCellItemForTest() : 0u);
             }
         }
 
@@ -4923,6 +4964,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
                      smokeSheetAllOk && smokeSheetClearOk && smokeSheetCloseOk &&
                      smokeAddCountOk && smokeAddOrderOk &&
                      smokeFolderCreateOk && smokeDblClipOk &&
+                     smokeDragItemOk &&
                      smokeLeftColOk;
             std::printf("[lemon] smoke-anim: prog(maxFrame=%u slice=%s booked=%u)%s "
                         "queue(hitClip=%s hit=%s back=%s) fx(text/bar=%s) "
@@ -4930,7 +4972,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
                         "create=%s flow=%s) graph(rt=%s cache=%s switch=%s) "
                         "pick(click=%s shift=%s all=%s sheet(all=%s clear=%s close=%s)) "
                         "multiadd(count=%s order=%s) create(folder=%s dblclip=%s) "
-                        "leftcol(meta=%s) => %s\n",
+                        "drag(item=%s) leftcol(meta=%s) => %s\n",
                         (unsigned)smokeAnimMax[0], smokeAnimSlice[0] ? "YES" : "NO",
                         sh ? sh->sliceCount : 0, yami, hitBooked ? "booked" : "MISSING",
                         smokeQueueHit ? "YES" : "NO", smokeQueueBack ? "YES" : "NO",
@@ -4946,6 +4988,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
                         smokeSheetClearOk ? "YES" : "NO", smokeSheetCloseOk ? "YES" : "NO",
                         smokeAddCountOk ? "YES" : "NO", smokeAddOrderOk ? "YES" : "NO",
                         smokeFolderCreateOk ? "YES" : "NO", smokeDblClipOk ? "YES" : "NO",
+                        smokeDragItemOk ? "YES" : "NO",
                         smokeLeftColOk ? "YES" : "NO",
                         animOk ? "OK" : "FAIL");
             if (!animOk) exitCode = 1;

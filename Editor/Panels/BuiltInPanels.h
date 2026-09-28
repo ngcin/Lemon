@@ -211,8 +211,8 @@ private:
 /// Animation（M6a 批② T3/T3b/T3c + 工作台 v3 交互重设计）：.anim 帧动画编辑
 /// ——05 §7 内容编辑器三件套之一。Godot SpriteFrames 式主从工作台（用户实测
 /// 三轮反馈收敛）：左列段清单（inline 新建/改名、搜索、复制段——建段只输入
-/// 名字，选帧回到右区做）+ 右区三层（帧操作/播放工具条 · 大预览自适应 ·
-/// 胶片带+属性行）。帧操作键盘化（←/→ 移选 · Ctrl+←/→ 换序 · Del 删 ·
+/// 名字，选帧回到右区做）+ 右区（帧操作/播放工具条 · 大预览自适应 ·
+/// 胶片带——底部属性行 T3-UX8 退役）。帧操作键盘化（←/→ 移选 · Ctrl+←/→ 换序 · Del 删 ·
 /// Ctrl+D 复制 · Space 播放，面板持焦点时经 CapturesGlobalKeys 仲裁吃键）；
 /// 拖 Assets 精灵入胶片带格=换图、入带尾/预览=加帧；从精灵表对话框 =
 /// 全选/点选序/缩放（Godot Select Frames 式）。数据模型（.anim/.override schema）
@@ -264,6 +264,10 @@ public:
     uint64_t EditFrameSheetForTest(size_t idx) const {
         return idx < edit_.frames.size() ? edit_.frames[idx].sheetGuid : 0;
     }
+    /// 冒烟（T3-UX9 拖拽通道回归锁）：本帧渲染的帧格 ImGui 项 ID——非零 = 帧格
+    /// 是真交互件（InvisibleButton），拖源/拖靶挂得上；0 = 退化成裸 Image =
+    /// 拖拽重排/入格换图整链死（出生即死事故的回归位）
+    unsigned StripCellItemForTest() const { return stripCellItem_; }
     /// 冒烟：左列段行元信息缓存（三图优化点①回归位）——返回该段 .anim 帧数；
     /// -1 = 面板尚未画过该行 / 越界 / 集未开（缓存由左列绘制侧填充）
     int SegRowFramesForTest(size_t idx) const;
@@ -271,7 +275,8 @@ public:
 private:
     void LoadFrom(const AssetDatabase& db, const AssetEntry& e); // 缓存键失效 → 重读
     void DrawCellImage(EditorApp& app, const AssetEntry* sheet, uint32_t cell,
-                       float edge); // 切片号/整图 → 页缩略图直染（未切片 = 全幅 UV）
+                       float edge, const char* idStr = nullptr); // idStr 非空 = 交互帧格
+    //（InvisibleButton + drawlist 直贴——拖源/拖靶挂得上；裸 Image 无 ID 拖不动）
     bool TrySave(EditorApp& app, const AssetEntry& e); // 校验 + 原子写 + 主动 Rescan
     /// 统一保存（v3）：段 TrySave 成功 → 集模式连存集（一个按钮，替代双保存位）
     bool SaveAll(EditorApp& app);
@@ -287,7 +292,6 @@ private:
     void DrawFrameToolbar(EditorApp& app, bool ro); // 帧操作+播放传输+fps/循环+保存
     void DrawPreview(EditorApp& app, bool ro, int shown); // 大预览（fit ≤512）+拖入加帧+信息角标
     void DrawFilmstrip(EditorApp& app, bool ro, int playFrame); // 胶片带（v3）
-    void DrawSelectedFrameRow(EditorApp& app); // 属性行（多选批量/单帧 sheet+cell）
     void HandleKeys(bool ro); // 键盘帧操作（焦点/WantTextInput/弹窗守卫）
     /// 极简文件夹创建框（T3-UX7：三 tab 向导退役——单页无 tab，保存位置只读）
     void DrawFolderCreate(EditorApp& app);
@@ -322,7 +326,8 @@ private:
     /// width/height <0 = 该向填满（宽窗 = 竖列全高 230px；窄窗 = 顶部横条 38% 高）；
     /// sameLineAfter = 画完回右侧同行（宽窗并排；窄窗堆叠传 false）
     void DrawLeftColumn(EditorApp& app, float width, float height, bool sameLineAfter);
-    /// 右区 v3.2：ro 横幅 → 工具条 → 预览条 → 帧网格 → 属性行（时钟推进在内）。
+    /// 右区 v3.2：ro 横幅 → 工具条 → 预览条 → 帧网格（时钟推进在内；底部属性行
+    /// T3-UX8 退役）。
     /// 宿主为 ##right child——窄窗内容超宽出滚动条（v3.1 前直接裁切 = "右侧
     /// 空白不可编辑"的窄窗根因）
     void DrawRightArea(EditorApp& app, bool ro);
@@ -372,6 +377,8 @@ private:
     int pickOrderMode_ = 0;      // 0 = 拖框选（行优先）/ 1 = 点选（按点击序 = Godot As Selected）
     std::vector<uint32_t> pickSelCells_; // 点选序收集的 cell（有序去重）
     int pickCountLast_ = -1;     // 冒烟探针：本帧渲染的已选帧数（右栏计数渲染侧缓存）
+    unsigned stripCellItem_ = 0; // 冒烟探针：本帧渲染的帧格 ImGui 项 ID（0 = 非交互件 =
+                                 // 拖拽通道死，T3-UX9 回归锁）
     int pickFlow_ = 0;           // 0 无 / 1 精灵表单图（编辑态）/ 2 多图整图入帧
     FilePicker picker_;          // 面板私有文件选择器（v3.1：选图入口）
     bool clipPickOpen_ = false, clipPickPending_ = false; // 从 .anim 复制列表弹窗

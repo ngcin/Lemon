@@ -3,8 +3,8 @@
 // v3（用户三轮实测反馈收敛，Godot SpriteFrames 参照——截图 docs/animation/）：
 //   主从布局——左列段清单（集名 + [新动作/改名/复制/移除] 工具条 + 搜索 +
 //   inline 新建输入：**建段只输入名字**（如 idle），选帧回右区做——旧版大表单
-//   把选图塞在下方、与段编辑割离，是主痛点）+ 右区三层（帧操作/播放工具条 ·
-//   大预览 fit≤512 · 胶片带+属性行）。
+//   把选图塞在下方、与段编辑割离，是主痛点）+ 右区（帧操作/播放工具条 ·
+//   大预览 fit≤512 · 胶片带——底部属性行 T3-UX8 退役）。
 //   帧操作键盘化：←/→ 移选 · Ctrl+←/→ 换序 · Del 删 · Ctrl+D 复制 · Space 播放
 //   （窗口持焦点经 CapturesGlobalKeys 仲裁，EditorApp 跳过实体级同名键——防
 //   "删帧顺手删实体"双触发）。拖 Assets 精灵：入胶片带格 = 换图 / 入带尾或
@@ -43,7 +43,6 @@ namespace lemon::editor {
 namespace {
 constexpr float kStripEdgeMin = 40.0f, kStripEdgeMax = 128.0f; // 胶片带缩放域
 constexpr float kSegListWidth = 230.0f;   // 左列宽（v3：容纳搜索框）
-constexpr float kRowPreview = 28.0f;      // 属性行缩略图边长
 
 /// 帧引用可解析？（判据与 BuildPlayClipCache 同源——面板拦在保存前）
 bool FrameResolvable(const AssetDatabase& db, const ClipFrame& f, const AssetEntry*& out) {
@@ -129,11 +128,33 @@ bool CellImageParams(EditorApp& app, const AssetEntry* sheet, uint32_t cell,
 }
 
 void AnimationPanel::DrawCellImage(EditorApp& app, const AssetEntry* sheet, uint32_t cell,
-                                   float edge) {
+                                   float edge, const char* idStr) {
     void* tex = nullptr;
     ImVec2 uv0, uv1;
     float aspect = 1.0f;
-    if (CellImageParams(app, sheet, cell, tex, uv0, uv1, aspect)) {
+    const bool ok = CellImageParams(app, sheet, cell, tex, uv0, uv1, aspect);
+    if (idStr) {
+        // T3-UX9b 交互帧格：InvisibleButton + drawlist 直贴。裸 ImGui::Image 无
+        // ID——拖源（重排）永假（无 ID 项需 SourceAllowNullID）、拖靶/右键只认
+        // 图矩形（胶片带拖拽三通道自出生即死的根因，用户实测报告）。
+        ImGui::InvisibleButton(idStr, ImVec2(edge, edge * aspect));
+        const ImVec2 rmin = ImGui::GetItemRectMin(), rmax = ImGui::GetItemRectMax();
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        if (ok) {
+            dl->AddImage(tex, rmin, rmax, uv0, uv1);
+            return;
+        }
+        const bool valid = sheet && !sheet->missing && sheet->type == AssetType::Sprite &&
+                           (sheet->Sliced() ? cell < sheet->sliceCount : cell == 0);
+        dl->AddRectFilled(rmin, rmax, ImGui::GetColorU32(theme::kBgMid));
+        dl->AddRect(rmin, rmax, ImGui::GetColorU32(theme::kTextDim));
+        const char* glyph = valid ? "?" : "×";
+        const ImVec2 ts = ImGui::CalcTextSize(glyph);
+        dl->AddText(ImVec2((rmin.x + rmax.x - ts.x) * 0.5f, (rmin.y + rmax.y - ts.y) * 0.5f),
+                    ImGui::GetColorU32(theme::kTextDim), glyph);
+        return;
+    }
+    if (ok) {
         ImGui::Image(tex, ImVec2(edge, edge * aspect), uv0, uv1);
         return;
     }
@@ -359,7 +380,10 @@ void AnimationPanel::DrawFilmstrip(EditorApp& app, bool ro, int playFrame) {
     }
     const float avail = ImGui::GetContentRegionAvail().x;
     const ImGuiStyle& st = ImGui::GetStyle();
-    const float step = stripEdge_ + st.FramePadding.x * 2.0f + st.ItemSpacing.x;
+    // T3-UX9a：每格真实占宽 = 图宽 + 行距（帧格是 InvisibleButton 直贴，无
+    // FramePadding——旧公式多算 2×FramePadding/格 → 列数低估 → 提前换行 +
+    // 右侧累计空档，用户截图取证）
+    const float step = stripEdge_ + st.ItemSpacing.x;
     const int cols = std::max(1, (int)((avail + st.ItemSpacing.x) / step));
     int col = 0;
     for (int i = 0; i < n; ++i) {
@@ -370,7 +394,9 @@ void AnimationPanel::DrawFilmstrip(EditorApp& app, bool ro, int playFrame) {
         const bool ok = FrameResolvable(db, edit_.frames[(size_t)i], sheet);
         const bool selected =
             i == selFrame_ || std::find(selSet_.begin(), selSet_.end(), i) != selSet_.end();
-        DrawCellImage(app, ok ? sheet : nullptr, edit_.frames[(size_t)i].cell, stripEdge_);
+        DrawCellImage(app, ok ? sheet : nullptr, edit_.frames[(size_t)i].cell, stripEdge_,
+                      "##cell"); // T3-UX9b：交互帧格（拖源/拖靶/右键/点击挂得上）
+        stripCellItem_ = (unsigned)ImGui::GetItemID(); // 冒烟：帧格必须是有 ID 交互件
         const ImVec2 rmin = ImGui::GetItemRectMin(), rmax = ImGui::GetItemRectMax();
         if (selected) // 选中描边（当前帧 = 亮色加粗，多选 = 暗色细框）
             ImGui::GetWindowDrawList()->AddRect(
@@ -402,7 +428,7 @@ void AnimationPanel::DrawFilmstrip(EditorApp& app, bool ro, int playFrame) {
             previewFrame_ = i; // v3：选中即预览（取代旧"双击跳帧"）
             previewing_ = false;
         }
-        // 右键帧菜单：插入/删除（旧版删除要挪到属性行点按钮）
+        // 右键帧菜单：插入/删除（删除主入口之一——属性行退役后此处在位）
         if (ImGui::BeginPopupContextItem("##framectx")) {
             if (ImGui::MenuItem("在之前插入副本")) InsertFrameAfter(i - 1, edit_.frames[(size_t)i]);
             if (ImGui::MenuItem("在之后插入副本")) InsertFrameAfter(i, edit_.frames[(size_t)i]);
@@ -472,98 +498,6 @@ void AnimationPanel::DrawFilmstrip(EditorApp& app, bool ro, int playFrame) {
         ImGui::EndDragDropTarget();
     }
     ImGui::PopID();
-}
-
-void AnimationPanel::DrawSelectedFrameRow(EditorApp& app) {
-    // v3 属性行：单选 = sheet 槽（combo 项带缩略图——纯路径列表翻找是旧版选图
-    // 麻烦的主因）+ cell + 删除；多选 = 批量删除；右缘 = 保存状态/未保存标记。
-    // 拖 Assets 精灵进 combo = 换 sheet（入格换图走胶片带）。
-    AssetDatabase& db = app.Ctx().Assets();
-    const int n = (int)edit_.frames.size();
-    if (selSet_.size() > 1) { // 多选：批量行
-        ImGui::TextDisabled("已选 %zu 帧", selSet_.size());
-        ImGui::SameLine();
-        if (ImGui::SmallButton("删除选中 (Del)")) DeleteSelectedFrames();
-        ImGui::SameLine();
-        if (ImGui::SmallButton("全不选##selclear")) {
-            selSet_.clear();
-            selFrame_ = -1;
-            selAnchor_ = -1;
-        }
-    } else if (selFrame_ >= 0 && selFrame_ < n) {
-        ClipFrame& fr = edit_.frames[(size_t)selFrame_];
-        const AssetEntry* sheet = nullptr;
-        const bool ok = FrameResolvable(db, fr, sheet);
-
-        ImGui::TextDisabled("帧 %d/%d", selFrame_ + 1, n);
-        ImGui::SameLine();
-        DrawCellImage(app, ok ? sheet : nullptr, fr.cell, kRowPreview);
-        ImGui::SameLine();
-
-        char lab[176];
-        if (sheet && !sheet->missing) {
-            if (sheet->Sliced())
-                std::snprintf(lab, sizeof(lab), "%s（%u 帧）", sheet->relPath.c_str(),
-                              sheet->sliceCount);
-            else
-                std::snprintf(lab, sizeof(lab), "%s（整图）", sheet->relPath.c_str());
-        } else if (fr.sheetGuid != 0) {
-            std::snprintf(lab, sizeof(lab), "悬空 %016llx", (unsigned long long)fr.sheetGuid);
-        } else {
-            std::snprintf(lab, sizeof(lab), "(无 sheet)");
-        }
-        ImGui::SetNextItemWidth(240);
-        if (ImGui::BeginCombo("##sheet", lab)) {
-            for (const auto& e : db.Entries()) {
-                if (e.type != AssetType::Sprite || e.missing) continue;
-                ImGui::PushID(e.relPath.c_str());
-                if (ImGui::Selectable("##srow", e.guid == fr.sheetGuid)) {
-                    fr.sheetGuid = e.guid;
-                    fr.cell = e.Sliced() ? std::min(fr.cell, e.sliceCount - 1) : 0;
-                    dirty_ = true;
-                    saveMsg_.clear();
-                }
-                ImGui::SameLine();
-                DrawCellImage(app, &e, 0, 18.0f); // v3：项带缩略图
-                ImGui::SameLine();
-                char item[192];
-                std::snprintf(item, sizeof(item), "%s%s", e.relPath.c_str(),
-                              e.Sliced() ? "" : "（整图）");
-                ImGui::TextUnformatted(item);
-                ImGui::PopID();
-            }
-            ImGui::EndCombo();
-        }
-        if (ImGui::BeginDragDropTarget()) {
-            if (const ImGuiPayload* pay = ImGui::AcceptDragDropPayload("LemonAsset")) {
-                AssetDragPayload d{};
-                std::memcpy(&d, pay->Data, sizeof(d));
-                if (d.kind == 0) { // sprite（AssetBrowser KindOf）
-                    fr.sheetGuid = d.guid;
-                    fr.cell = 0;
-                    dirty_ = true;
-                    saveMsg_.clear();
-                }
-            }
-            ImGui::EndDragDropTarget();
-        }
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(64);
-        int cell = (int)fr.cell;
-        const int cellMax = sheet && sheet->Sliced() ? (int)sheet->sliceCount - 1 : 0;
-        if (ImGui::DragInt("##cell", &cell, 1.0f, 0, cellMax)) {
-            fr.cell = (uint32_t)std::clamp(cell, 0, cellMax);
-            dirty_ = true;
-            saveMsg_.clear();
-        }
-        if (ImGui::IsItemHovered() && cellMax == 0)
-            ImGui::SetTooltip("整图 sheet：cell 锁 0（一帧一图）");
-        ImGui::SameLine();
-        if (ImGui::SmallButton("删除此帧 (Del)")) DeleteSelectedFrames();
-    } else {
-        ImGui::TextDisabled("单击帧选中编辑（←/→ 移选 · Ctrl+←/→ 换序 · Del 删除 · "
-                            "Ctrl+D 复制 · Space 播放）");
-    }
 }
 
 // ------------------------------------------------ 从精灵表加帧（内嵌体）----
@@ -1836,7 +1770,7 @@ bool AnimationPanel::SaveAll(EditorApp& app) {
     if (setGuid_ != 0) {
         if (AssetEntry* se = db.FindByGuid(setGuid_)) {
             if (!TrySaveSet(app, *se)) {
-                saveMsg_ = setMsg_; // 集失败也上属性行状态（旧版只在集头行）
+                saveMsg_ = setMsg_; // 集失败状态也上面板（预览条右缘，旧版只在集头行）
                 saveOk_ = setOk_;
                 return false;
             }
@@ -1885,8 +1819,10 @@ void AnimationPanel::DrawFrameToolbar(EditorApp& app, bool ro) {
                           setGuid_ != 0 ? "——集模式连存动画+集" : "");
     ImGui::SameLine();
     if (ImGui::Button("复制帧")) DuplicateSelectedFrames();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("复制选中帧 (Ctrl+D)");
     ImGui::SameLine();
     if (ImGui::Button("删除帧")) DeleteSelectedFrames();
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("删除选中帧 (Del/Backspace)");
     if (ro) ImGui::EndDisabled();
 
     ImGui::SameLine();
@@ -1966,7 +1902,8 @@ void AnimationPanel::DrawPreview(EditorApp& app, bool ro, int shown) {
         aspect = (float)cwp / (float)chp;
     }
     const float edge = std::clamp(72.0f * aspect, 28.0f, 160.0f);
-    DrawCellImage(app, sheet, n ? edit_.frames[(size_t)shown].cell : 0, edge);
+    DrawCellImage(app, sheet, n ? edit_.frames[(size_t)shown].cell : 0, edge,
+                  "##pvimg"); // T3-UX9b：交互化——拖入加帧目标挂真实交互件
     if (!ro && ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* pay = ImGui::AcceptDragDropPayload("LemonAsset")) {
             AssetDragPayload d{};
@@ -1996,8 +1933,8 @@ void AnimationPanel::DrawPreview(EditorApp& app, bool ro, int shown) {
 }
 
 void AnimationPanel::DrawRightArea(EditorApp& app, bool ro) {
-    // v3.2 右区（宿主 = ##right child）：ro 横幅 → 工具条 → 预览条 → 帧网格 →
-    // 属性行。时钟推进在内（shown 供预览与播放游标共用）。
+    // v3.2 右区（宿主 = ##right child）：ro 横幅 → 工具条 → 预览条 → 帧网格
+    // （属性行 T3-UX8 退役）。时钟推进在内（shown 供预览与播放游标共用）。
     if (ro)
         ImGui::TextColored(theme::kTextWarn,
                            "Play 进行中：面板只读（当前局用进 Play 时刻快照，改动下一局生效）");
@@ -2023,16 +1960,16 @@ void AnimationPanel::DrawRightArea(EditorApp& app, bool ro) {
     shown = n ? std::clamp(shown, 0, n - 1) : 0;
     DrawPreview(app, ro, shown);
 
-    // 帧网格（主体，flex 高度 = 剩余全取；属性行自底部预留一行）
+    // 帧网格（主体，flex 高度 = 剩余全取——属性行已退役，底部不再预留一行）
     if (ImGui::SmallButton("-##zoomout")) stripEdge_ = std::max(kStripEdgeMin, stripEdge_ - 8.0f);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("缩小帧缩略图");
     ImGui::SameLine();
     if (ImGui::SmallButton("+##zoomin")) stripEdge_ = std::min(kStripEdgeMax, stripEdge_ + 8.0f);
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("放大帧缩略图（网格 Ctrl+滚轮）");
     ImGui::SameLine();
-    ImGui::TextDisabled("帧列表（单击选中并预览 · Ctrl/Shift 多选 · 拖拽重排 · 拖图入格换图/入尾加帧）");
-    ImGui::BeginChild("strip", ImVec2(0, -ImGui::GetFrameHeightWithSpacing()),
-                      ImGuiChildFlags_Borders);
+    ImGui::TextDisabled("帧列表（单击选中 · Ctrl/Shift+点击多选 · ←/→ 移动选择 · "
+                        "拖拽重排 · 拖图入格换图/入尾加帧 · Del 删 · Ctrl+D 复制）");
+    ImGui::BeginChild("strip", ImVec2(0, 0), ImGuiChildFlags_Borders);
     if (ImGui::IsWindowHovered() && ImGui::GetIO().KeyCtrl &&
         ImGui::GetIO().MouseWheel != 0.0f)
         stripEdge_ = std::clamp(stripEdge_ + ImGui::GetIO().MouseWheel * 6.0f, kStripEdgeMin,
@@ -2041,11 +1978,6 @@ void AnimationPanel::DrawRightArea(EditorApp& app, bool ro) {
     DrawFilmstrip(app, ro, previewing_ ? shown : -1);
     if (ro) ImGui::EndDisabled();
     ImGui::EndChild();
-
-    // 属性行（sheet/cell/删除——ro 禁；保存状态已上移预览条）
-    if (ro) ImGui::BeginDisabled();
-    DrawSelectedFrameRow(app);
-    if (ro) ImGui::EndDisabled();
 }
 
 void AnimationPanel::OnGui(EditorApp& app) {

@@ -82,6 +82,9 @@ public:
     std::string DetectAutosaveRecovery() const;
     /// 恢复 = 载入 autosave 内容但 scenePath 指向原 .scene、dirty 置位（用户决定落盘）
     bool OpenSceneRecovery(const std::string& autosavePath);
+    /// 忽略并删除 = 丢弃该备份（只删 autosave 目录内的路径——防误删任意文件）。
+    /// 普通忽略只关本会话弹窗不动文件：untitled 无盘档永新，下次启动仍会提示
+    bool DiscardAutosave(const std::string& autosavePath);
 
     // ---- 实体操作（编辑器创建的实体恒带 guid + Meta + Transform2D）----
     ecs::Entity CreateEntity(const char* tag);
