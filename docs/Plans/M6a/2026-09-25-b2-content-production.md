@@ -22,8 +22,8 @@ Status: active（2026-09-25 开工分解；T0 ADR-012 已落）
 | B | JSON 解析用 nlohmann（clip/场景/prefab 全走它），原子写统一 `WriteFileAtomic` | `EditorContext.cpp:11`、`AssetDatabase.h:21-24` | 表资产零新依赖，红线（新增库登记）不触碰；CSV 解析自写 mini（~100 行：引号/逗号/换行/BOM） |
 | C | C# 零文件 IO；资产 API 仅 SpriteOf/Instantiate.Prefab/Anim.ClipId；vtable 五轮表尾追加先例（M4.4→M6a①） | `Lemon.SDK/Assets.cs:10-42`、`ScriptHost.h:36-64` | 读表 = vtable 尾加 3 项 + SDK 包装；空宿主降级先例（SpriteOfGuid 返 0） |
 | D | World 级"持有 + 非 ECS"通道先例 ×4（Clips/Saves/RtUi/Fx）——全部零重录（09 §6.8 先例二） | `World.h:131-150`、`ClipTable.h:16-34` | TableStore 第五通道同款；EnterPlay 快照语义（BuildPlayClipCache `EditorContext.cpp:530-576` 同位置加 BuildPlayTableCache） |
-| E | 升级池 = 硬编码数组 + switch；环绕刃 = 纯 C# 轨道 + prefab 常量；穿透 = 切 projectileId | `PlayerCombat.cs:20-22, 94-112, 136-172` | C 线模板侧落点：池/武器参数进表，ApplyOption → kind 派发 |
-| F | 用户游戏已是"复制 behaviour + 手填常量"作者路径（≈19 常量 + 复制池 + 第二份常量表） | `svr-test/PlayerBehaviour.cs:17-41`、`AllyBehaviour.cs:20-46, 63-140` | ADR-012 需求证据；svr-test 不做代码侵入，交付通道 + 模板示范 + README 注记由用户自迁 |
+| E | 升级池 = 硬编码数组 + switch；环绕刃 = 纯 C# 轨道 + prefab 常量；穿透 = 切 projectileId | `PlayerCombat.cs:20-22, 94-112, 136-172` | C 线模板侧落点：池/武器参数进表，ApplyOption → kind 派发（2026-09-28 落点二稿：模板面保留 + svr-test 同步面，见 §5 T4） |
+| F | 用户游戏已是"复制 behaviour + 手填常量"作者路径（≈19 常量 + 复制池 + 第二份常量表） | `svr-test/PlayerBehaviour.cs:17-41`、`AllyBehaviour.cs:20-46, 63-140` | ADR-012 需求证据；原"不做代码侵入、注记自迁"口径 **2026-09-28 修订（二稿）**：T4 同步落地 svr-test 并承验收② 演示（用户拍板，见 §5 T4 / ADR-012 修订注记） |
 | G | xpCurveK 引擎硬编码常量，消费于 xpToNext 组件字段演化 | `Systems.cpp:791-795`、`GameplayComponents.h:56` | 曲线可配 = World 级单参数（TimeScale 同款），默认值不变即零重录（ADR-012 D3） |
 | H | 波次已数据化（WaveDirector waves[16] 组件数组段，Inspector 可编辑，入哈希） | `BehaviorComponents.h:126-152`、`Systems.cpp:85-161` | ADR-012 D2：不外置，波次留组件面 |
 
@@ -64,10 +64,12 @@ Status: active（2026-09-25 开工分解；T0 ADR-012 已落）
    Slot——源码兼容，模板/用户项目零改即编译）；v1 固定 slot_0，**多档切换 API 裁剪**
    （游戏无多档刚需，登记 v1.1；06 §10 桌面路径 %USERPROFILE% 归 M7/M8）；
    EnterPlay 载全档、ExitPlay/Flush 落全档；坏档兜底每档独立（主→bak 逻辑参数化）。
-4. **验收② 演示口径**：交付物 = weapons.tab/upgrades.tab 新行 + 新 prefab
-   （散射武器）+ 新敌人变体 prefab（fast-mob）+ Main.scene 波次条目替换——运行时
-   （Engine/ + Editor/ 非生成器部分）零 diff；模板生成器 vs_template 同步扩展属
-   模板工程面（`--gen-vs-template` 重生成口径，不算"引擎改动"）。
+4. **验收② 演示口径**（2026-09-28 二稿：演示落点 svr-test——资源现成、贴真实
+   开发；模板生成器照常扩展作开箱示范）：交付物 = svr-test weapons.tab/
+   upgrades.tab 新行 + 新 prefab（散射武器）+ 新敌人变体 prefab（fast-mob）+
+   waves.tab 波次条目替换——运行时（Engine/ + Editor/ 非生成器部分）零 diff；
+   模板生成器 vs_template 同步扩展属模板工程面（`--gen-vs-template` 重生成口径，
+   不算"引擎改动"）；先例 = ADR-012 D2 用户项目例外延伸。
 
 ## 3. 验收判据（全部满足才勾销）
 
@@ -76,15 +78,17 @@ Status: active（2026-09-25 开工分解；T0 ADR-012 已落）
    （script-tests + smoke 断言）；
 2. **AnimationEditor**：打开 yami `hero-walk.clip` → 改 fps/增删帧 → 保存 → 重进
    Play 帧率/帧数生效（smoke-anim 或回归新步断言 clip 文件 roundtrip）；
-3. **验收② 演示**（M6a 出口判据②）：模板新增"散射武器 + fast-mob 变体" = 表行 +
-   prefab + C#，运行时零改动（对照 git diff 验证口径见 §8）；
+3. **验收② 演示**（M6a 出口判据②）：svr-test 新增"散射武器 + fast-mob 变体" =
+   表行 + prefab + C#，运行时零改动（对照 git diff 验证口径见 §8）；
 4. **存档三档**：EnterPlay/ExitPlay/Flush 三档独立落盘、坏档兜底按档隔离、旧
    game.sav 惰性迁移可读、模板 vs.best 归 meta（engine-tests + script-tests +
    smoke-template 断言集只增不减）；
 5. **零重录**：m5b2 三档金回放 mismatches=0（依据 = 先例二/三：World 级通道零哈希 +
    xpCurveK 默认值不变；基准场禁播新组件实例）；
-6. **回归与性能**：editor-regression full 全绿（增步后 ≥15 步口径登记 09）+
-   bench-survivor ≥ 45fps（表查找 O(1) 哈希读，不预期变化，跑一遍记账 09 §6.10）；
+6. **回归与性能**：editor-regression full 全绿（步数按实际登记 09：svr-test
+   验证若入回归则增步、否则维持现 14 步——2026-09-28 随 T4 落点修订，原
+   "增步后 ≥15 步"预估作废）+ bench-survivor ≥ 45fps（表查找 O(1) 哈希读，
+   不预期变化，跑一遍记账 09 §6.10）；
 7. **文档回写**：06（§2.2 表资产行 + §10 分档注记）/ 05（§3 解冻注记 + §7）/ 03
    （World::Tables 一句）/ 04（vtable 尾加 + Lemon.Table/Lemon.Save 扩参）/ 09
    （§6.8 先例、回归步数、§6.10 台账）/ 08（批②勾销）/ DevLog 新条目 / 本页勾销。
@@ -102,8 +106,9 @@ Status: active（2026-09-25 开工分解；T0 ADR-012 已落）
 - **AnimationEditor 只写资产文件**（clip JSON），不动 ECS/哈希；写回 → Rescan →
   下次 EnterPlay 快照——Play 中打开面板只读（编辑禁用或编辑即弃，取实现简单者，
   面板提示行交代）。
-- **模板 PlayerCombat 读表**：行为等价变换（池内容/效果数值与现硬编码一致），
-  smoke-template 升级链断言不回归；取卡轮换序（_pickRotation）不动。
+- **模板 PlayerCombat 与 svr-test PlayerBehaviour 双面读表**：各自行为等价变换
+  （池内容/效果数值与现硬编码一致），取卡轮换序（`_pickRotation`）与 StateBag
+  恢复口径不动；smoke-template 升级链断言只增不减。
 
 ## 5. 任务分解（T0→T6 依序；D 线（T5）独立可提前/并行，A/C 线（T1→T2→T4）是主线）
 
@@ -257,51 +262,91 @@ T3-UX 同日第二轮实测反馈十项：新建入口归 AssetBrowser **空白�
 **全录见 [T3-UX2 批文件](./2026-09-27-b2-t3-ux2-anim-workbench-round2.md)**
 （回归 14/14、smoke-anim errors=0；遗留 auto-slice 与多选拖批量加帧）。
 
-### T4 模板：数值表落地 + 验收② 演示（散射武器 + fast-mob）—— 约 1 天
+### T4 模板 + svr-test 双面：数值表落地 + 验收② 演示（散射武器 + fast-mob）—— ✅ 2026-09-28 完工
 
-- `Editor/Panels/BuiltInPanels.h`：`AnimationPanel` 声明（成员：targetGuid_、
-  编辑态 fps/loop/frames 副本、dirty 标记、`SetTarget(guid)`）；
-- 新 `Editor/Panels/AnimationPanel.cpp`（~300 行，ConsolePanel 骨架起手）：
-  - 目标选择：AssetType::Clip 下拉（AssetDatabase 遍历）+ "从 AssetBrowser 双击
-    进入"（见下）；
-  - 编辑面：name/fps（DragInt 1..60）/loop（Checkbox）；帧列表（每行 = sheet guid
-    槽（缩略图 + hex 文本，DrawSpriteSlot 式样）+ cell DragInt + 删行；底部
-    加帧（默认承接上行 sheet）+ 上移/下移）；
-  - 预览：当前帧 thumbnail 直染（AssetGpu().Thumbnail(sheet guid) + cell 偏移
-    UV——与切片号换算同 BuildPlayClipCache :547-560 的算法提公用或复刻）+
-    播放预览（▶ = 编辑器渲染帧推进帧步进，非确定无妨——纯预览）；
-  - 保存：组 clip JSON（schema 不动）→ WriteFileAtomic → 主动 RescanAssets →
-    提示行"已保存，Enter Play 后生效"（快照语义显式化）；Play 中面板只读；
-- `AssetBrowserPanel.cpp DrawItem`（:308-317）双击分支：clip → `EditorApp::
-  OpenAnimationEditor(guid)`（实现：FindEntry(AnimationPanel) open=true +
-  SetTarget）——**首个"资产→专用编辑面板"通道**，05 §5 注记先例；
-- `Panels.cpp CreateAllPanels`（:133-143）push_back + `Editor/CMakeLists.txt` 源
-  文件 + `EditorApp.cpp` DockBuilder（:1173-1189）追加中央区默认位；
-- 验证：yami hero-walk.clip 打开→改 fps→保存→文件 diff 仅预期字段；回归新步
-  （smoke-anim 扩 clip roundtrip 断言或独立 smoke-animedit——实现时按回归脚本
-  结构取简，步数变化登记 09）。
+> **落点修订（2026-09-28 用户拍板，二稿）**：先完善模板（生成器扩展 +
+> PlayerCombat 读表化——开箱示范与 smoke-template 回归面），再同步到
+> demo/svr-test 落地测试，**验收② 演示落 svr-test**（先例 = T2 波次表 ADR-012
+> D2 用户项目例外延伸；svr-test 有现成玩家/怪物资源，演示更贴真实开发）。
+> 首稿"模板零改动、全落 svr-test"作废；更早的"仅模板 + svr-test 注记自迁"
+> 亦作废。
 
-### T4 模板：数值表落地 + 验收② 演示（散射武器 + fast-mob）—— 约 1 天
+**模板面（vs_template 生成器扩展——模板工程面，`--gen-vs-template` 重生成）**：
 
-- 模板生成器 `vs_template`（`EditorApp.cpp:282-330` 段）增资产：`Assets/tables/
-  weapons.tab`（列：id/label/prefabGuid/interval/speed/pierce/count——直射/穿透/
-  环绕参数三行起步）+ `Assets/tables/upgrades.tab`（列：id/label/kind/value——
-  现六选项逐行对应，数值与现硬编码一致）；`--gen-vs-template` 重生成；
-- `PlayerCombat.cs`：`Start` 读两表（Table.Rows/Str/Int 载内存 List，缺表/坏行
-  warn + 空池保底——模板永不因表缺炸 Play）；`kOptions` 数组与 `ApplyOption`
+- `EditorApp.cpp:282-330` 段增资产：`Assets/tables/weapons.tab`（列：id/label/
+  prefabGuid/interval/speed/pierce/count——直射/穿透/环绕参数三行起步）+
+  `Assets/tables/upgrades.tab`（列：id/label/kind/value——模板现六选项逐行对应，
+  数值与现硬编码一致）；
+- 模板 `PlayerCombat.cs`：`Start` 读两表（Table.Rows/Str/Int 载内存 List，缺表/
+  坏行 warn + 空池保底——模板永不因表缺炸 Play）；`kOptions` 数组与 `ApplyOption`
   switch → kind 派发（kind: 0 移速/1 磁力/2 射速/3 换弹种/4 生命/5 环绕+1），
   `_pickRotation` 轮换序不动；环绕刃参数（半径/角速/上限）改表读；
+- 模板 `GameMain.Start` 写 xpCurveK（从表读值，缺省不写 = 引擎默认）；
+- smoke-template 断言增：表载入行数（现有步内扩展，不加步）。
+
+**svr-test 面（同款路径同步 + 演示落点）**：
+
+- 同步：`Assets/tables/` 增两表（guid `7e57…` 段顺延，按 README 口径登记进
+  GameMain；upgrades 七行——池多"飞剑 +1"一项）+ `Game/PlayerBehaviour.cs`
+  读表化（同款容错：缺表/坏行 warn + 空池保底；kind 0–6 含 6 飞剑+1；
+  `_pickRotation` 与 StateBag 恢复口径不动；环绕刃参数改表读）；
+- **验收② 演示**：weapons.tab 加"散射"行（prefab = 新 ScatterBullet.prefab，
+  `7e57…` 段顺延）+ upgrades.tab 加"散射弹"行（kind 3 换弹种变体）；
+  fast-mob = Mob.prefab 拷贝改 speed/hp + **waves.tab** 条目 prefab 列替换两波
+  （svr-test 波次已表化——T2；非 Main.scene 组件面）；
+  验证 = `--bench-scene` 跑 svr-test Main.scene（T2 同款口径）+ 断言三件：
+  表快照行数、散射弹发射证据（弹体计数/teamAlive 口径实现时定）、fast-mob
+  出场；入回归自动化与否实现时按脚本结构取简，若入则步数登记 09；
+- svr-test `README.md` 玩法锚点补"武器/升级池表数据化"段（T2 波次表锚点同款
+  先例：编辑路径二选一 + 列契约指向脚本头注释 + 新表 guid 登记口径）。
+
+**引擎侧（双面共用，ADR-012 D3）**：
+
 - xpCurveK：`World` 加 `xpCurveK_`（默认 = Systems.cpp 现值）+ getter/setter；
   `Systems.cpp:795` 换读点；vtable 尾加 2 项（getXpCurveK/setXpCurveK，TimeScale
-  同款 clamp 无需）；模板 GameMain.Start 从 weapons/balance 列写值（缺省不写 =
-  引擎默认）；
-- **验收② 演示**：weapons.tab 加"散射"行（prefab = 新 ScatterBullet.prefab，
-  生成器固定 guid 段顺延）+ upgrades.tab 加"散射弹"行（kind 3 换弹种变体）；
-  fast-mob = Mob.prefab 拷贝改 speed/hp + Main.scene 波次条目 e2 槽替换两波；
-  smoke-template 断言增：表载入行数、散射弹发射证据（teamAlive/弹体计数口径
-  实现时定）、fast-mob 出场；
-- `svr-test` 不侵入：引擎批 README/DevLog 注记"用户项目按模板升级路径自迁
-  （升级池/武器参数表化）"，迁移动作归用户。
+  同款 clamp 无需）；模板与 svr-test 两侧 Start 均从表写值（缺省不写 = 引擎默认）；
+- 演示内容零运行时 diff：散射武器/fast-mob 的全部改动落 demo/svr-test（表行 +
+  prefab + C# + waves.tab 条目），Engine/ + Editor/ 不涉；模板生成器扩展属模板
+  工程面（不算"引擎改动"），xpCurveK 参数化属引擎本体（ADR-012 D3），均不属
+  演示内容。
+
+- **完工记录（2026-09-28）**：
+  - 引擎侧：`World::XpCurveK/SetXpCurveK`（默认 1.25 = 原 StatSystem 硬编码，
+    不 clamp——消费侧 `max(1,ceil)` 兜底）；`Systems.h:204` 成员删除、
+    `Systems.cpp` 换读 `world.XpCurveK()`；vtable 尾加 `getXpCurveK/setXpCurveK`
+    （空宿主读 1.25 写丢弃）；SDK 尾加 2 委托 + 新 `Lemon.SDK/Balance.cs`
+    （`Balance.XpCurveK`）。
+  - 模板面：生成器 `WriteTableAssets`（三表落 `Assets/tables/`，独立
+    `7e572000…` guid 段）+ PlayerCombat 内嵌串读表化（表载缓存/kind 派发/
+    环绕三参表读/balance 写值；`%6` → `%_upgrades.Count`，空池不弹不冻结）+
+    README 数值表锚点；`--gen-vs-template` 重生成入库。weapons 列定
+    id/label/prefabGuid/interval/speed/pierce/count/radius/angle（**弹体参数归
+    prefab、发射参数归表**——pierce/angle 列供散射行，基础行留空）。
+  - svr-test 面：三表（guid `7e57100000100002/3/4` 段顺延）+
+    PlayerBehaviour 同款读表化（kind 0–6 含飞剑）；**散射 = 表 scatter 行 +
+    ScatterBullet.prefab（Bullet 拷贝洋红染色 dmg5/speed300——同图染色免新图
+    免 spriteId 漂移）+ `Subscribe(GameEvent.Spawn)` 补发**（主弹事件方向
+    ±angle/2 均布 count-1 枚，C# Instantiate 无 Spawn 事件 = 无递归；补发计数
+    落存档键 `svr.scatter` 供无 GUI 断言）；fast-mob = FastMob.prefab（Mob
+    拷贝天蓝染色 speed150/hp10）+ waves.tab 第 3/7 波 e0 槽替换；README 锚点
+    （表契约 + 演示内容 + 新表 guid 段口径）。
+  - 实现注记：空串格免 warn（`F()` 先 `Table.Str` 判空再 Float——宽表留空是
+    常态，不触 Table.Float 的坏值 warn-once）；`Convert`/`Console` 需
+    `using System`（PlayerCombat 内嵌串补）。
+  - 验证记录：mac preset ctest 3/3；engine-tests **33519 checks**、
+    script-tests **1666 checks** 全绿；`editor-regression.sh full` **14/14
+    PASS**（smoke-template 裁决行增 `tables=YES`——三表快照 4/7/2 行断言）；
+    金回放三档现录现放 **mismatches=0**（sim-st/sim-mt/script——xpCurveK
+    默认值不变的结构性自证）；bench-survivor **fps=70** ≥45 PASS（fx 饱和
+    口径）；svr-test `--bench-scene`：四表快照（weapons 5×9/upgrades 9×4/
+    waves 17×19/balance 2×3）+ 16 波载入 + fps=447 + 零 warn；fast-mob 长跑
+    验证（临时 balance xpCurveK=99999 免首升冻结 → 8400 帧跑过 wave3 t=110s，
+    零 prefab 解析 warn + alive 69 正常增长，跑后还原）。
+  - **真人验收余项**：散射端到端（升级选"散射弹"卡 → 主弹+2 补发扇形 +
+    `svr.scatter` 计数）与 fast-mob 手感/辨识（天蓝快怪）——无输入跑法升级卡
+    冻结挡波次，机器断言不可达（批口径"实现时取简"落此）；验收② git diff
+    核对已过：Engine/+Editor/ diff 仅 xpCurveK 本体 + vs_template 生成器段
+    （273 行），演示内容全落 demo/svr-test（gitignore 区）。
 
 ### T5 引擎+SDK：存档分档 slot_0/settings/meta —— 约 0.75 天（独立，可提前）
 
@@ -339,16 +384,17 @@ T3-UX 同日第二轮实测反馈十项：新建入口归 AssetBrowser **空白�
 | CSV 中文/Excel 兼容（BOM/GBK） | 解析器剥 UTF-8 BOM；GBK 不支持（v1 中文单语 + 明示"Excel 导出选 UTF-8 CSV"，坏编码拒入红字） |
 | 表微调写回与 FileWatcher/Rescan 竞态（双扫描/抖动） | 写回走 WriteFileAtomic + 同帧主动 Rescan；FileWatcher 防抖已修（F-15 DebounceGate），重复脏合并为一次 |
 | AnimationEditor 写 clip 破坏 yami 既有资产 | 保存前留 `.bak`？**不留**——资产在 git（模板/样例入库），编辑器不做版本系统；yami 样例区只读红线不涉（Samples 可改，THIRD_PARTY 只约束许可登记） |
-| ApplyOption kind 派发 vs 原 switch 行为漂移 | 数值等价变换 + smoke-template 升级链断言只增不减；取卡轮换序/池容量不动 |
-| 升级池空表/坏行炸模板 Play | PlayerCombat 载表全容错：缺表 = 空池 + warn（三选一不弹 = 与"无升级"语义一致）；坏行跳过 |
+| ApplyOption kind 派发 vs 原 switch 行为漂移 | 数值等价变换 + smoke-template 升级链断言只增不减（模板面）+ bench-scene 手测升级链（svr-test 面）；取卡轮换序/池容量不动 |
+| 升级池空表/坏行炸游戏 Play | PlayerBehaviour 载表全容错：缺表 = 空池 + warn（三选一不弹 = 与"无升级"语义一致）；坏行跳过 |
 | 三档落盘部分失败（盘满） | 每档独立 try/原子写失败红字；ExitPlay 兜底逐档独立，不因一档失败断链 |
 | 表查找进 Play 热路径开销 | TableStore 一次性快照（EnterPlay 建，Play 中只读哈希查）——零逐帧解析；bench 记账验证 |
 
 ## 7. 与并行游戏线的接口
 
-- svr-test 卡点回灌预期：升级池/武器参数/伙伴（AllyBehaviour 常量组）表化后，
-  用户加第 8 项升级/第 3 伙伴 = 表行 + prefab；引擎侧不再接受"帮加个武器"类
-  C++ 改动请求（验收② 口径）。
+- T4 双面（2026-09-28 用户拍板二稿）：模板先完善表化示范（生成器 + PlayerCombat
+  读表化），svr-test 同步落地 + 承验收② 演示；后续用户加第 8 项升级/新武器 =
+  表行 + prefab；伙伴（AllyBehaviour 常量组）表化不在 T4 必做面（表通道已通，
+  游戏侧卡点再启）；引擎侧不接受"帮加个武器"类 C++ 改动请求（验收② 口径）。
 - 存档语义变化（vs.best → meta）对用户项目零强制（key 前缀在 slot 档照旧工作）；
   自迁建议随 DevLog 注记。
 
@@ -363,6 +409,7 @@ ctest --test-dir build/mac --preset mac          # 3/3
 ./build/mac/editor/lemon-editor --bench-survivor # ≥45fps 记账
 # 金回放：m5b2 三档 mismatches=0（回归脚本内含/单独跑，口径同批①）
 git -C Lemon diff --stat Engine/ Editor/         # 验收② 演示核对：运行时 diff 仅
-                                                 # 表通道/AnimationEditor/存档分档本体，
-                                                 # 演示内容零运行时 diff
+                                                 # 表通道/AnimationEditor/存档分档/xpCurveK
+                                                 # 本体 + vs_template 生成器段（模板工程面），
+                                                 # 演示内容零运行时 diff（全落 demo/svr-test）
 ```

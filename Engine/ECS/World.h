@@ -189,6 +189,12 @@ public:
     void SetTimeScale(float s) { timeScale_ = s < 0.0f ? 0.0f : (s > 8.0f ? 8.0f : s); }
     float TimeScale() const { return timeScale_; }
 
+    // ---- XP 曲线系数（M6a 批② T4；ADR-012 D3：原 StatSystem 硬编码 1.25 提
+    // World 级单参数，TimeScale 同款）。默认值不变 = 三金档哈希流逐位不变零重录；
+    // 不 clamp（消费侧 max(1,ceil) 兜底，0/负不卡死升级环）。C# Lemon.Balance.XpCurveK ----
+    void SetXpCurveK(float k) { xpCurveK_ = k; }
+    float XpCurveK() const { return xpCurveK_; }
+
     // ---- 外部挂钩 ----
     void SetSpawnFn(SpawnFn fn) { spawnFn_ = std::move(fn); }
     void SetEventSink(EventSink sink) { eventSink_ = std::move(sink); }
@@ -233,6 +239,7 @@ private:
     TweenTable tweens_; // A 档补间（Tweens()；指令态通道，零重录）
     uint64_t tick_ = 0;
     float timeScale_ = 1.0f;
+    float xpCurveK_ = 1.25f; // ADR-012 D3：默认 = 原 StatSystem 硬编码值（零重录）
 };
 
 } // namespace lemon::ecs

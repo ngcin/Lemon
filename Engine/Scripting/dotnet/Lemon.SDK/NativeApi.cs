@@ -42,6 +42,8 @@ public unsafe struct NativeApi
     public delegate* unmanaged<ulong, byte, byte*, int> TweenKill;             // A 档：删同实体同字段（field 空 = 该组件全部）；返回移除数
     public delegate* unmanaged<ulong, int> TweenKillEntity;                    // A 档：删该实体全部；返回移除数
     public delegate* unmanaged<ulong, int> TweenAlive;                         // A 档：句柄存活 0/1
+    public delegate* unmanaged<float> GetXpCurveK;                             // M6a 批② T4：World.XpCurveK（旧宿主默认 1.25）
+    public delegate* unmanaged<float, void> SetXpCurveK;                       // M6a 批② T4：World.SetXpCurveK（ADR-012 D3）
 }
 
 internal static unsafe class Native
@@ -321,4 +323,13 @@ internal static unsafe class Native
 
     internal static int TweenAlive(ulong handle)
         => Api.TweenAlive != null ? Api.TweenAlive(handle) : 0;
+
+    // ---- M6a 批② T4（XP 曲线 ↔ Lemon.Balance.XpCurveK；旧宿主未注册时：读 1.25 / 写丢弃）----
+
+    internal static float XpCurveK() => Api.GetXpCurveK != null ? Api.GetXpCurveK() : 1.25f;
+
+    internal static void SetXpCurveK(float k)
+    {
+        if (Api.SetXpCurveK != null) Api.SetXpCurveK(k);
+    }
 }

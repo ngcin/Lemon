@@ -290,6 +290,13 @@ int32_t NativeTweenAlive(uint64_t handle) {
     return g_world->Tweens().Alive(handle) ? 1 : 0;
 }
 
+// M6a 批② T4：XP 曲线参数（Lemon.Balance.XpCurveK → World；ADR-012 D3）。
+// 空宿主读默认 1.25（TimeScale 读 1 同款降级）；写不 clamp（消费侧 max 兜底）
+float NativeGetXpCurveK() { return g_world ? g_world->XpCurveK() : 1.25f; }
+void NativeSetXpCurveK(float k) {
+    if (g_world) g_world->SetXpCurveK(k);
+}
+
 const NativeApiVtable kNativeApi{NativeIsAlive,
                                  NativeHas,
                                  NativeRead,
@@ -320,7 +327,9 @@ const NativeApiVtable kNativeApi{NativeIsAlive,
                                  NativeTweenTo,
                                  NativeTweenKill,
                                  NativeTweenKillEntity,
-                                 NativeTweenAlive};
+                                 NativeTweenAlive,
+                                 NativeGetXpCurveK,
+                                 NativeSetXpCurveK};
 } // namespace
 
 void SetScriptIoHooks(const ScriptIoHooks& hooks) { g_scriptIo = hooks; }

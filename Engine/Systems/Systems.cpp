@@ -1013,7 +1013,8 @@ void StatSystem::Tick(World& world, Scene& scene, float dt) {
                 xp.xp -= xp.xpToNext;
                 ++xp.level;
                 // 下限 1：xpToNext 若被资产配成 0/极小，ceil 收敛会卡死升级环
-                xp.xpToNext = std::max(1.0f, std::ceil(xp.xpToNext * xpCurveK));
+                // （系数 = World::XpCurveK，M6a 批② T4 提参；默认 1.25 = 原硬编码）
+                xp.xpToNext = std::max(1.0f, std::ceil(xp.xpToNext * world.XpCurveK()));
                 EventPacket ev{};
                 ev.type = GameEvent::LevelUp;
                 ev.src = Scene::FromEntt(ent);

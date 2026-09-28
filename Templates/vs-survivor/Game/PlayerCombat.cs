@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Lemon;
 using Lemon.Interop;
@@ -5,21 +6,40 @@ using Lemon.Interop;
 /// <summary>战斗（M6a 批⓪ T4 拆分）：击杀/宝石掉落 + 环绕刃自愈 + 升级三选一
 ///（固定序轮换，零 RNG）+ 死亡结算/复活（死亡对话框点击）+ 受击表现（批①：
 /// Anim 受击段 Play+Queue 回行走 + Fx 飘字/世界血条）。一局共享态写
-/// GameMain.Run（HUD 读）。</summary>
+/// GameMain.Run（HUD 读）。
+/// 批② T4 数值表化（ADR-012）：升级池/武器参数读 Assets/tables/upgrades.tab +
+/// weapons.tab（列头即列契约；缺表 = 空池 + warn——三选一不弹 = 与"无升级"
+/// 语义一致，模板永不因表缺炸 Play）；XP 曲线系数读 balance.tab 写
+/// Lemon.Balance（World 级，缺省 = 引擎默认 1.25）。</summary>
 public sealed class PlayerCombat : LemonBehaviour
 {
     // 模板资产 GUID（Templates/vs-survivor 生成期固定——引用锚点，勿改）
     private const string kGemPrefab = "7e57100000000005";
-    private const string kBladePrefab = "7e57100000000006";
-    private const uint kPiercePrefabLow = 0x00000004; // PierceBullet.prefab 低 32 位
+    // 数值表 GUID（Assets/tables/；生成期固定，PlayerCombat 读）
+    private const string kWeaponsTable = "7e57200000100001";
+    private const string kUpgradesTable = "7e57200000100002";
+    private const string kBalanceTable = "7e57200000100003";
 
     // 批①受击段 clip（Anim.ClipId = GUID 低 32 位自算；Assets/monster-hit.anim）
     private static readonly uint kMobWalk = Anim.ClipId("5bd31a7c20000002");
     private static readonly uint kMobHit = Anim.ClipId("5bd31a7c20000004");
 
-    private static readonly string[] kOptions = {
-        "移速 +10%", "磁力 +25%", "射速 +15%", "穿透弹", "生命上限 +25", "环绕之刃 +1",
-    };
+    // ---- 批② T4 表载缓存（Start 一次载入；Play 中改表下一局生效——快照语义）----
+    private sealed class WeaponRow
+    {
+        public string Id = "", Prefab = "";
+        public float Interval, Speed, Count, Radius;
+    }
+    private sealed class UpgradeRow
+    {
+        public string Id = "", Label = "", Value = "";
+        public int Kind;
+    }
+    private readonly List<WeaponRow> _weapons = new();   // weapons.tab 行缓存
+    private readonly List<UpgradeRow> _upgrades = new(); // 升级池（空 = 三选一不弹）
+    private string _bladePrefab = "7e57100000000006"; // Blade.prefab（blade.prefabGuid）
+    private float _bladeSpeed = 2.2f; // 环绕角速 rad/s（blade.speed；缺表 = 原硬编码值）
+    private float _bladeRadius = 90f; // 环绕轨道半径 px（blade.radius）
 
     private int _pendingLevels; // LevelUp 事件累计的待选次数
     private bool _cardsShown;
@@ -73,9 +93,108 @@ public sealed class PlayerCombat : LemonBehaviour
 
     protected override void Start()
     {
+        LoadTables();
         GameMain.Run.Best =
             int.TryParse(Save.GetString("vs.best"), out var b) ? b : 0; // 上一局纪录
     }
+
+    // ---- 批② T4 表载（ADR-012 D1 全字符串格；坏行跳过 + warn、缺表保底——
+    // 数值与生成器写表前硬编码一致 = 行为等价变换）----
+
+    private void LoadTables()
+    {
+        if (Table.Has(kWeaponsTable)) {
+            int cId = ColOf(kWeaponsTable, "id"), cGuid = ColOf(kWeaponsTable, "prefabGuid"),
+                cInt = ColOf(kWeaponsTable, "interval"), cSpd = ColOf(kWeaponsTable, "speed"),
+                cCnt = ColOf(kWeaponsTable, "count"), cRad = ColOf(kWeaponsTable, "radius");
+            for (int r = 1; r < Table.Rows(kWeaponsTable); ++r) {
+                string? id = At(kWeaponsTable, r, cId);
+                if (string.IsNullOrEmpty(id)) { WarnBadRow(kWeaponsTable, r); continue; }
+                _weapons.Add(new WeaponRow {
+                    Id = id!, Prefab = At(kWeaponsTable, r, cGuid) ?? "",
+                    Interval = F(kWeaponsTable, r, cInt), Speed = F(kWeaponsTable, r, cSpd),
+                    Count = F(kWeaponsTable, r, cCnt), Radius = F(kWeaponsTable, r, cRad),
+                });
+            }
+            if (ById(_weapons, "blade") is { } blade) { // 环绕参数行
+                if (blade.Prefab.Length == 16) _bladePrefab = blade.Prefab;
+                if (blade.Speed > 0f) _bladeSpeed = blade.Speed;
+                if (blade.Radius > 0f) _bladeRadius = blade.Radius;
+                if (blade.Count > 0f) _bladeCount = (int)blade.Count;
+            }
+            if (ById(_weapons, "shoot") is { Interval: > 0f } shoot) { // 初始射速写 Shooter
+                var sh = gameObject.GetComponent<Shooter>();
+                sh.Interval = shoot.Interval;
+                gameObject.SetComponent(sh);
+            }
+        } else {
+            Console.Error.WriteLine("[lemon][warn] PlayerCombat：weapons.tab 缺失"
+                                    + "——环绕刃用保底参数（90px / 2.2rad/s），换弹种无效");
+        }
+        if (Table.Has(kUpgradesTable)) {
+            int cId = ColOf(kUpgradesTable, "id"), cLabel = ColOf(kUpgradesTable, "label"),
+                cKind = ColOf(kUpgradesTable, "kind"), cVal = ColOf(kUpgradesTable, "value");
+            for (int r = 1; r < Table.Rows(kUpgradesTable); ++r) {
+                string? label = At(kUpgradesTable, r, cLabel);
+                if (string.IsNullOrEmpty(label) || cKind < 0) {
+                    WarnBadRow(kUpgradesTable, r);
+                    continue;
+                }
+                _upgrades.Add(new UpgradeRow {
+                    Id = At(kUpgradesTable, r, cId) ?? "", Label = label!,
+                    Kind = Table.Int(kUpgradesTable, r, cKind),
+                    Value = At(kUpgradesTable, r, cVal) ?? "",
+                });
+            }
+        } else {
+            Console.Error.WriteLine("[lemon][warn] PlayerCombat：upgrades.tab 缺失"
+                                    + "——升级池为空（三选一不弹 = 与\"无升级\"语义一致）");
+        }
+        if (Table.Has(kBalanceTable)) { // XP 曲线（缺表/缺行/坏值 = 引擎默认 1.25，静默）
+            int cId = ColOf(kBalanceTable, "id"), cVal = ColOf(kBalanceTable, "value");
+            if (cId >= 0 && cVal >= 0)
+                for (int r = 1; r < Table.Rows(kBalanceTable); ++r)
+                    if (At(kBalanceTable, r, cId) == "xpCurveK") {
+                        float v = Table.Float(kBalanceTable, r, cVal);
+                        if (v > 0f) Balance.XpCurveK = v;
+                        break;
+                    }
+        }
+    }
+
+    private static int ColOf(string table, string name) // 列头名 → 索引（-1 = 无此列）
+    {
+        for (int c = 0; c < Table.Cols(table); ++c)
+            if (Table.Str(table, 0, c) == name) return c;
+        return -1;
+    }
+    private static string? At(string table, int row, int col)
+        => col >= 0 ? Table.Str(table, row, col) : null;
+    private static float F(string table, int row, int col)
+    {
+        if (col < 0) return 0f;
+        string? s = Table.Str(table, row, col);
+        if (string.IsNullOrEmpty(s)) return 0f; // 空格 = 未配置（宽表留空常态），免 warn
+        return Table.Float(table, row, col);
+    }
+    private static void WarnBadRow(string table, int row)
+        => Console.Error.WriteLine($"[lemon][warn] PlayerCombat：{table} 第 {row} 行坏——跳过");
+    private static WeaponRow? ById(List<WeaponRow> list, string id)
+    {
+        foreach (var w in list)
+            if (w.Id == id) return w;
+        return null;
+    }
+    /// 倍率容错：非正值/坏格式 = 保底原值（表值写坏不把数值清零）。
+    private static float MulVal(string s, float fallback)
+        => float.TryParse(s, System.Globalization.CultureInfo.InvariantCulture,
+                          out var v) && v > 0f ? v : fallback;
+    private static float AddVal(string s, float fallback)
+        => float.TryParse(s, System.Globalization.CultureInfo.InvariantCulture,
+                          out var v) && v != 0f ? v : fallback;
+    /// 16 位 GUID hex → 低 32 位（引擎 prefabId 口径；WaveTableLoader 同款）。
+    private static uint GuidLow32(string hex)
+        => hex.Length == 16 ? (uint)Convert.ToUInt64(hex, 16) : 0u;
 
     protected override void Update()
     {
@@ -93,9 +212,9 @@ public sealed class PlayerCombat : LemonBehaviour
 
     private void UpdateBlades(Transform2D playerTf)
     {
-        _bladeAngle += 2.2f * Time.DeltaTime;
+        _bladeAngle += _bladeSpeed * Time.DeltaTime;
         while (_blades.Count < _bladeCount) { // 自愈：热重装/丢失即补（挂玩家当前位置）
-            var g = Instantiate.Prefab(kBladePrefab,
+            var g = Instantiate.Prefab(_bladePrefab,
                                        new Vec2(playerTf.Pos.X, playerTf.Pos.Y));
             _blades.Add(g.Entity.Id);
         }
@@ -104,8 +223,8 @@ public sealed class PlayerCombat : LemonBehaviour
             var b = GameObject.From(new EntityHandle { Id = _blades[i] });
             if (!b.TryGetComponent<Transform2D>(out var bt)) continue;
             float a = _bladeAngle + i * (6.2831853f / _blades.Count);
-            bt.Pos = new Vec2(playerTf.Pos.X + 90f * System.MathF.Cos(a),
-                              playerTf.Pos.Y + 90f * System.MathF.Sin(a));
+            bt.Pos = new Vec2(playerTf.Pos.X + _bladeRadius * System.MathF.Cos(a),
+                              playerTf.Pos.Y + _bladeRadius * System.MathF.Sin(a));
             bt.Rot = a;
             b.SetComponent(bt);
         }
@@ -117,53 +236,66 @@ public sealed class PlayerCombat : LemonBehaviour
             int pick = Ui.CardPick();
             if (pick < 0) return;
             int n = _pickRotation - 1; // ShowCards 时已自增
-            ApplyOption((n + pick * 2) % 6);
+            ApplyOption((n + pick * 2) % _upgrades.Count);
             --_pendingLevels;
             _cardsShown = false;
             Ui.HideCards();
             if (_pendingLevels <= 0) Time.Scale = 1f; // 选完恢复（多级连选继续冻结）
             return;
         }
-        if (_pendingLevels > 0) {
+        if (_pendingLevels > 0 && _upgrades.Count > 0) { // 空池不弹也不冻结（缺表语义）
             Time.Scale = 0f; // 卡片期间冻结（RNG 不消耗，批① D5 语义）
             int n = _pickRotation++;
-            Ui.ShowCards("升级！三选一", kOptions[n % 6], kOptions[(n + 2) % 6],
-                         kOptions[(n + 4) % 6]);
+            int m = _upgrades.Count;
+            Ui.ShowCards("升级！三选一", _upgrades[n % m].Label,
+                         _upgrades[(n + 2) % m].Label, _upgrades[(n + 4) % m].Label);
             _cardsShown = true;
         }
     }
 
+    /// 升级应用（批② T4：switch → upgrades.tab kind 派发；数值/弹种全表读，
+    /// 语义与原硬编码逐项等价）。kind：0 移速 / 1 磁力 / 2 射速 / 3 换弹种
+    /// （value = weapons 行 id）/ 4 生命上限 / 5 环绕+1。
     private void ApplyOption(int o)
     {
-        switch (o) {
-        case 0: { // 移速
+        if (o < 0 || o >= _upgrades.Count) return;
+        var up = _upgrades[o];
+        switch (up.Kind) {
+        case 0: { // 移速（value = 倍率）
             var st = gameObject.GetComponent<Stats>();
-            st.MoveSpeed *= 1.10f;
+            st.MoveSpeed *= MulVal(up.Value, 1.10f);
             gameObject.SetComponent(st);
             break;
         }
-        case 1: { // 磁力
+        case 1: { // 磁力（value = 倍率）
             var st = gameObject.GetComponent<Stats>();
-            st.PickupRadius *= 1.25f;
+            st.PickupRadius *= MulVal(up.Value, 1.25f);
             gameObject.SetComponent(st);
             break;
         }
-        case 2: { // 射速
+        case 2: { // 射速（value = 倍率，Interval ×）
             var sh = gameObject.GetComponent<Shooter>();
-            sh.Interval = System.Math.Max(0.05f, sh.Interval * 0.85f);
+            sh.Interval = System.Math.Max(0.05f, sh.Interval * MulVal(up.Value, 0.85f));
             gameObject.SetComponent(sh);
             break;
         }
-        case 3: { // 穿透弹（切弹种）
+        case 3: { // 换弹种（value = weapons 行 id → ProjectileId）
+            var w = ById(_weapons, up.Value);
             var sh = gameObject.GetComponent<Shooter>();
-            sh.ProjectileId = kPiercePrefabLow;
-            gameObject.SetComponent(sh);
+            if (w != null && w.Prefab.Length == 16) {
+                sh.ProjectileId = GuidLow32(w.Prefab);
+                gameObject.SetComponent(sh);
+            } else {
+                Console.Error.WriteLine("[lemon][warn] PlayerCombat：换弹种 '" + up.Value
+                                        + "' 无 weapons 行/prefab guid——保底不改");
+            }
             break;
         }
-        case 4: { // 生命上限
+        case 4: { // 生命上限（value = 点数）
             var hp = gameObject.GetComponent<Health>();
-            hp.Max += 25f;
-            hp.Cur += 25f;
+            float add = AddVal(up.Value, 25f);
+            hp.Max += add;
+            hp.Cur += add;
             gameObject.SetComponent(hp);
             break;
         }

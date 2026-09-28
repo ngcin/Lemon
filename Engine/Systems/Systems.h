@@ -201,7 +201,8 @@ class StatSystem final : public ISystem {
 public:
     const char* Name() const override { return "Stat"; }
     void Tick(World& world, Scene& scene, float dt) override;
-    float xpCurveK = 1.25f; // xpToNext 增长系数
+    // xpCurveK（xpToNext 增长系数）M6a 批② T4 提 World 级（ADR-012 D3；
+    // World::XpCurveK()，默认 1.25 与原硬编码一致 = 金档零漂移）
 };
 
 /// #13 动画推进（M5 批③：ClipTable 帧映射 → curFrame/spriteId；clipId=0 或

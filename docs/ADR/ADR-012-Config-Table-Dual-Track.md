@@ -4,6 +4,10 @@
 - 状态：已采纳（M6a 批② T0 定形；08 §2 M6a 批② "开工时 ADR 定形" 条款闭合）
 - **修订 2026-09-26**（用户定名）：表资产后缀 `.table` → **`.tab`**（实施 T1 时定）。
   本文及各文档历史行中 `.table` 字样按此映射读取；schema 与其余决策不变。
+- **修订 2026-09-28**（用户拍板）：表消费落点 = **模板 + demo/svr-test 双面**——
+  模板照常完善（生成器扩展两表 + PlayerCombat 读表化，开箱示范），svr-test 同步
+  落地并承验收② 演示（原方案 = 仅模板 + svr-test 注记自迁；首稿"模板零改动、
+  全落 svr-test"同日作废）。先例 = D2 用户项目例外延伸。批② T4 按此口径实施。
 - 影响：`06-Asset-Pipeline-Out-of-Box.md`（§2.2 表资产行落地、§10 分档另议）、`05-Editor.md`（§3 面板集注记、§7）、`08-Development-Roadmap.md` M6a 批②、`Editor/Assets/AssetDatabase.*`、`Engine/ECS/`（新 TableStore）、`Engine/Scripting/`（vtable 尾加 + `Lemon.Table`）
 
 ## 背景
@@ -81,6 +85,10 @@ json 数据资产行未实现。
 = 现硬编码值**（三金档哈希流逐位不变，零重录）；模板 Start 时从表读值覆盖。
 逐级查表曲线（level→xp 表）登记 v1.1（升级连升循环在引擎系统内，逐级注入动系统
 消费链，超本批）。
+
+- > **D3 落点修订（2026-09-28，用户拍板）**：表写值双面——模板 GameMain.Start
+  > 与 svr-test 侧 Start 均从表读值覆盖（缺省不写 = 引擎默认，零重录口径
+  > 不变）；批② T4 双面口径见头部修订行。
 
 ## 后果
 

@@ -1,0 +1,16 @@
+{
+  "name": "balance",
+  "rows": [
+    [
+      "id",
+      "label",
+      "value"
+    ],
+    [
+      "xpCurveK",
+      "XP 曲线系数",
+      "1.25"
+    ]
+  ],
+  "schemaVersion": 1
+}

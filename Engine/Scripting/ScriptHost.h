@@ -93,6 +93,10 @@ struct NativeApiVtable {
                          const char* field); // 删同实体同字段（field 空 = 该组件全部）；返回移除数
     int32_t (*tweenKillEntity)(uint64_t entity); // 删该实体全部；返回移除数
     int32_t (*tweenAlive)(uint64_t handle);      // 0/1（低频轮询）
+    // ---- M6a 批② T4（XP 曲线参数：Lemon.Balance.XpCurveK → World；表尾追加
+    // 同上约定。ADR-012 D3：默认 1.25 不变 = 基准场零漂移；空宿主读默认写丢弃）----
+    float (*getXpCurveK)();                      // World::XpCurveK
+    void (*setXpCurveK)(float);                  // World::SetXpCurveK（不 clamp）
 };
 
 /// 编辑器资产钩子（M4.4：编辑器宿主装配期经 SetEditorAssetHooks 注入；
