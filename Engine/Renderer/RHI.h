@@ -143,7 +143,8 @@ public:
     /// M4.7-P0：冒烟像素断言扫场景 RT（线性空间，无 UI 合成/sRGB 干扰）
     void DebugRecordTextureCapture(Texture tex);
     /// 本帧原始命令缓冲（void* = VkCommandBuffer）。与 VulkanInteropHandles 同一豁免口：
-    /// 仅编辑器后端 glue（在外部渲染块内追加录制）使用，引擎语义层不得调用。
+    /// 仅编辑器后端 glue 与 Renderer 内兄弟后端（RmlUiBackend，gameRT 渲染块内追加
+    /// 录制）使用，引擎语义层不得调用。
     void* NativeCommandBuffer() const;
 
 private:
@@ -211,6 +212,21 @@ public:
     VulkanInteropHandles GetVulkanInterop() const;
     /// 纹理原生视图（void* = VkImageView；ImGui_ImplVulkan_AddTexture 用，同一豁免口）
     void* GetVulkanTextureViewInterop(Texture t);
+
+    // --- 内部桥（M6a 批③a，ADR-014）：Engine/Renderer 内兄弟后端 .cpp 专用（当前
+    //     唯一消费者 RmlUiBackend.cpp）。与 VulkanInteropHandles 同一零泄漏豁免逻辑，
+    //     但消费者是 Renderer 内部而非编辑器 glue；编辑器/游戏语义层禁用。 ---
+    struct InternalBridge {
+        void* device = nullptr;          // VkDevice
+        void* physicalDevice = nullptr;  // VkPhysicalDevice
+        void* allocator = nullptr;       // VmaAllocator
+        void* queue = nullptr;           // VkQueue（图形/呈现）
+        uint32_t queueFamily = 0;
+    };
+    const InternalBridge& GetInternalBridge();
+    /// 一次性独占提交（record(commandBuffer = VkCommandBuffer, userData)；纹理上传用）
+    using ImmediateRecordFn = void (*)(void* commandBuffer, void* userData);
+    void InternalImmediateSubmit(ImmediateRecordFn record, void* userData);
 
     // --- 调试截屏（编辑器冒烟/CI 视觉回归用；非热路径）---
     // CommandList::DebugRecordCapture()（EndPass 后调用）录制"交换链图像 → 中转缓冲"拷贝；

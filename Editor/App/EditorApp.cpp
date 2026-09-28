@@ -38,6 +38,7 @@
 #include "Panels/BuiltInPanels.h"
 #include "Platform/Window.h"
 #include "Renderer/RHI.h"
+#include "Ui/UiSubsystem.h" // 批③a（ADR-014）：游戏 UI 层（RmlUi）
 #include "Scripting/ScriptHost.h"
 #include "Serialization/SceneArchive.h"
 #include "imgui.h"
@@ -2819,6 +2820,8 @@ int EditorApp::HotReloadCount() const {
 int EditorApp::Run(const EditorLaunch& launch) {
     launchCopy_ = launch;
     launch_ = &launchCopy_;
+    if (launchCopy_.smokeUirml && launchCopy_.frames == 0)
+        launchCopy_.frames = 180; // 批③a：UI 冒烟默认跑 180 帧（够字体图集生成 + 稳定渲染）
     const auto tStart = std::chrono::steady_clock::now();
 
     SetLogSink(&EditorLogRing::SinkThunk, &log_);
@@ -2854,6 +2857,18 @@ int EditorApp::Run(const EditorLaunch& launch) {
 
     viewport_ = std::make_unique<ViewportRenderer>();
     viewport_->Init(*device_, *ui_);
+
+    // 批③a（ADR-014）：游戏 UI 层（RmlUi over RHI）。初始化失败不阻断编辑器
+    // （红字 + 层不挂——UI 缺席是可运行的降级态）；Play 中由 ViewportRenderer
+    // 在 gameRT 动态渲染块内叠画（sprite 之后、EndPass 之前）
+    gameUi_ = std::make_unique<::lemon::ui::UiSubsystem>();
+    if (gameUi_->Init(*device_, rhi::Format::RGBA8Unorm)) {
+        viewport_->SetGameUiLayer(
+            [this](rhi::CommandList& cl, uint32_t w, uint32_t h) { gameUi_->Render(cl, w, h); });
+        if (launch.smokeUirml) SeedSmokeUiDocument();
+    } else {
+        gameUi_.reset();
+    }
 
     // M5 批④：--gen-vs-template <dir>（开发工具：产出模板项目文件后退出——
     // 不进渲染主循环；产物入库 Templates/vs-survivor 随仓库管理）。须在 viewport
@@ -3213,6 +3228,16 @@ int EditorApp::Run(const EditorLaunch& launch) {
         if (PlayBlockedByScripts()) {
             LEMON_ERROR("已阻止进入 Play：Game/ 编译失败（脚本宿主未装配）——"
                         "修复编译错误后重跑（本次 exit 1）");
+            return 1;
+        }
+        if (!ctx_.EnterPlay()) return 1;
+    }
+    // 批③a（ADR-014）：--smoke-uirml 独立进 Play——playTest 的"进/出往返"语义与
+    // smoke 门绑定（上方块），本模式只需"Play 中持续渲染 UI"一态（Stop 由循环后
+    // --play 收尾块统一处理，见下方 ctx_.ExitPlay）
+    if (launchCopy_.smokeUirml && !ctx_.Playing()) {
+        if (PlayBlockedByScripts()) {
+            LEMON_ERROR("smoke-uirml 已阻止进入 Play：Game/ 编译失败（脚本宿主未装配）");
             return 1;
         }
         if (!ctx_.EnterPlay()) return 1;
@@ -3582,6 +3607,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
             bSim = BenchClock::now();  // 段界：sim（世界步进）结束 = glue 开始
             singleStep_ = false;
             UpdateGameCameraFollow();
+            if (gameUi_) gameUi_->Update(); // 批③a：UI 帧逻辑（World 步进后、渲染前）
             if (playDiag_ && frame >= 2 && frame < 220) {
                 // 逐帧：墙钟帧耗时（pacing）/ 相机中心 / 跟随目标 / gameRT 尺寸（重建
                 // 翻转即 churn）。f60-120 走、121+ 停——抖动段应能在 dt 或 cam 序列现形
@@ -4620,14 +4646,20 @@ int EditorApp::Run(const EditorLaunch& launch) {
             LEMON_WARN("ImGui：可见控件 ID 冲突（悬停扫掠命中；循环内控件需 PushID 或 ##xx 唯一化）");
         }
 
-        const bool wantCapture = !launch.screenshot.empty() || launch.smoke;
+        const bool wantCapture =
+            !launch.screenshot.empty() || launch.smoke || launchCopy_.smokeUirml;
         const bool lastFrame =
             launch.frames > 0 && (int)frame == launch.frames - 1 && wantCapture;
         if (lastFrame) {
             cl.DebugRecordCapture();
-            // 场景 RT 回读（冒烟像素断言源：线性空间、无 UI 合成/sRGB 干扰）
-            if (launch.smoke && viewport_->SceneRenderTarget().IsValid())
+            // 场景 RT 回读（冒烟像素断言源：线性空间、无 UI 合成/sRGB 干扰）；
+            // 批③a smoke-uirml 改读 gameRT（RmlUi 面板像素断言源，同线性空间）
+            if (launchCopy_.smokeUirml) {
+                if (viewport_->GameRenderTarget().IsValid())
+                    cl.DebugRecordTextureCapture(viewport_->GameRenderTarget());
+            } else if (launch.smoke && viewport_->SceneRenderTarget().IsValid()) {
                 cl.DebugRecordTextureCapture(viewport_->SceneRenderTarget());
+            }
         }
 
         bool needRe = false, lost = false;
@@ -5426,6 +5458,29 @@ int EditorApp::Run(const EditorLaunch& launch) {
                     (unsigned long long)frame, firstFrameMs);
     }
 
+    // 批③a（ADR-014）：RmlUi 呈现地基冒烟——gameRT 像素断言（面板底/标题/正文特征
+    // 色过阈）+ 文档/字体探针。独立轻量裁决链（不并 editor-smoke 门——两模式捕获
+    // 的 RT 不同：本模式读 gameRT）
+    if (launchCopy_.smokeUirml) {
+        bool uiOk = false;
+        int panelN = 0, titleN = 0, bodyN = 0;
+        std::vector<uint8_t> rt;
+        uint32_t rw = 0, rh = 0;
+        const bool fetched = device_->DebugFetchTextureCapture(rt, rw, rh);
+        const bool hasDoc = gameUi_ && gameUi_->HasDocument("uirml");
+        if (fetched && hasDoc) {
+            panelN = CountPixelsNear(rt, rw, rh, 32, 64, 96, 14);   // #204060 面板底
+            titleN = CountPixelsNear(rt, rw, rh, 255, 208, 96, 30); // #ffd060 标题（抗锯齿容忍）
+            bodyN = CountPixelsNear(rt, rw, rh, 224, 224, 224, 44); // #e0e0e0 正文
+            uiOk = panelN > 3000 && titleN > 20 && bodyN > 20;
+        }
+        std::printf("[lemon] smoke-uirml: doc=%d font=%s panel=%d(>3000) title=%d(>20) "
+                    "body=%d(>20) => %s\n",
+                    hasDoc ? 1 : 0, gameUi_ ? gameUi_->LoadedFontFamily() : "-",
+                    panelN, titleN, bodyN, uiOk ? "OK" : "FAIL");
+        if (!uiOk) exitCode = 1;
+    }
+
     watcher_.Stop();          // 先停 watcher 线程（此后无资产重扫）
     scriptWatcher_.Stop();    // 与 Game/ 源监视同批收尾
     host_.reset();            // C# 宿主卸载（无脚本时为空操作）
@@ -5433,11 +5488,53 @@ int EditorApp::Run(const EditorLaunch& launch) {
     ui_->Shutdown();
     SetLogSink(nullptr, nullptr);
     device_->SavePipelineCache();
+    if (gameUi_) { // 批③a：UI 子系统先于 viewport/device 收尾（Rml 收尾仍回调后端 + WaitIdle + 反注册）
+        gameUi_->Shutdown();
+        gameUi_.reset();
+    }
     viewport_.reset(); // 视口（含合批器）须先于设备拆毁：SpriteBatcher 析构反注册
                        // 设备丢失回调（M9），设备已亡 = 解引用死指针（实测 SIGSEGV）
     device_.reset();
     window_.reset();
     return exitCode;
+}
+
+// 批③a（ADR-014）：--smoke-uirml 播种——内存文档三要素（面板底/标题/正文特征色供
+// gameRT 像素断言；③b 起换 .rml 资产加载链 + Noto 字体）。font-family 用实际载入
+// 的族名单值注入——RmlUi 6.3 RCSS 不支持逗号回退列表（整串当一个族名，实测）；
+// ③b 起 Noto Sans CJK 为引擎唯一正字，此耦合自然消失。
+void EditorApp::SeedSmokeUiDocument() {
+    char style[256];
+    std::snprintf(style, sizeof style,
+                  "body { font-family: %s; color: #e0e0e0; }", gameUi_->LoadedFontFamily());
+    char rml[2048];
+    std::snprintf(rml, sizeof rml, R"RML(
+<rml>
+<head>
+<title>lemon ui smoke</title>
+<style>
+%s
+#panel {
+    position: absolute;
+    left: 80px; top: 80px;
+    width: 480px; height: 220px;
+    background: #204060;
+    border: 3px #60a0ff;
+}
+#title { font-size: 28px; color: #ffd060; margin: 24px 0 8px 28px; }
+#body  { font-size: 16px; margin-left: 28px; }
+</style>
+</head>
+<body>
+<div id="panel">
+    <div id="title">Lemon 游戏 UI ③a</div>
+    <div id="body">RmlUi over Lemon RHI 冒烟</div>
+</div>
+</body>
+</rml>
+)RML",
+                  style);
+    if (gameUi_->LoadDocumentFromMemory("uirml", rml)) gameUi_->ShowDocument("uirml", true);
 }
 
 namespace {

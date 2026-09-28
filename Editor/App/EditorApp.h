@@ -23,6 +23,9 @@ class CommandList;
 namespace scripting {
 class ScriptHost;
 }
+namespace ui {
+class UiSubsystem;
+}
 }
 
 namespace lemon::editor {
@@ -62,6 +65,8 @@ struct EditorLaunch {
                                 // build → Play → HUD/波次/击杀/升级/卡片断言）
     bool smokeGuid = false;     // --smoke-guid：M6a 批⓪ T5 sprite 引用稳定性链冒烟
                                 //（导入插队 + 资产改名 + 删 manifest → 重开逐实体归一断言）
+    bool smokeUirml = false;    // --smoke-uirml：M6a 批③a RmlUi 呈现地基冒烟（隐含
+                                // --play；gameRT 像素断言 + 独立裁决链，不并 editor-smoke 门）
 };
 
 /// 工具标识（Q 选择 / W 移动 / E 旋转 / R 缩放；Godot 式 Select 模式 = 8 向手柄）
@@ -164,6 +169,7 @@ private:
     void SetupDefaultLayout();
     void SeedSmokeScene();   // 冒烟播种：父子链 + 常用组件（面板验收有内容）
     void SeedSmokeProject(); // 冒烟播种：临时项目 + 预置 PNG（固定 guid，M4.4 资产链验收）
+    void SeedSmokeUiDocument(); // 批③a：--smoke-uirml 内存文档播种（面板/标题/正文三要素）
     /// M4.5 终验判据场景（向导项目上零代码搭"走地图+刷怪"）：地图/角色/刷怪器
     void SeedJudgementScene(uint64_t spawnGuid);
     /// 换装判定辅助：Game/*.csproj 路径 + 输出 dll（项目根/.lemon/bin/<名>.dll）
@@ -205,6 +211,7 @@ private:
     std::unique_ptr<rhi::Device> device_;
     std::unique_ptr<ImGuiBackend> ui_;
     std::unique_ptr<class ViewportRenderer> viewport_;
+    std::unique_ptr<::lemon::ui::UiSubsystem> gameUi_; // 游戏 UI 层（批③a ADR-014；null = 初始化失败降级）
     std::unique_ptr<scripting::ScriptHost> host_; // C# 宿主（--script/项目 Game；null = 无）
     AssetGpuCache gpuAssets_;
     FileWatcher watcher_;

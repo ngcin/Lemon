@@ -78,10 +78,18 @@ Status: in-progress
 
 ## 验收判据（全过才勾销）
 
-1. `cmake --preset mac && cmake --build --preset mac` 全绿（新增 Engine/Ui + RmlUi 链入 lemon-engine）。
-2. `./build/mac/.../lemon-editor --smoke-uirml --frames 180 --validate`：VERDICT OK + **验证层零错误**（--validate 是 Vulkan 改动自测纪律）。
-3. 既有回归 `tools/editor-regression.sh` 14/14 不回归（UI 层只在 Play 中叠加，编辑态零路径）。
-4. `--smoke-uirml --screenshot` 目检一张（真人验收项：GameView 上面板/文字位置合理）。
+1. ✅ `cmake --preset mac && cmake --build --preset mac` 全绿（新增 Engine/Ui + RmlUi 链入 lemon-engine；RMLUI_SHELL OFF 瘦身——spike 用本地后端拷贝不受影响）。
+2. ✅ `./build/mac/Editor/lemon-editor --smoke-uirml --frames 180 --validate`：VERDICT OK（panel=102652(>3000) title=791(>20) body=374(>20)，font=Hiragino Sans GB）+ **验证层零错误** + exit 0。
+3. ✅ 既有回归 `tools/editor-regression.sh` 14/14 不回归（**复跑全绿**；首跑 13/14——`--save-scene` 早退路径触发 UiSubsystem 析构断言崩溃，改防御性收尾修复，见 [DevLog](../../DevLog/2026-09-28-m6a-b3a-rmlui-renderer.md)）。
+4. ⏳ `--smoke-uirml --screenshot` 目检一张（真人验收项：GameView 上面板/文字位置合理；截图已出 1600×900）。
+
+### 实现期发现（偏离批文件预设计的落账）
+
+- **着色器 3 变体 → 2 变体**：RmlUi 6.3 `GenerateTexture` 像素契约恒 RGBA 预乘（字体图集同路），无 ALPHAMAP 需求——ADR-008 D2"3 shader 变体"按 6.3 实测收敛为 vert+color+texture 三件。
+- **RCSS font-family 不支持逗号回退列表**：整串被当作单一族名（实测日志实锤）——冒烟文档按 `LoadedFontFamily()` 单值注入；③b Noto 唯一正字后此耦合自然消失。
+- **Pimpl 纪律补一条**：`= default` 内联构造/析构会在使用方 TU 实例化 `~unique_ptr<Impl>`（构造异常路径析构已构成员）——Pimpl 类五件套全部声明在头、定义（哪怕 `= default`）在 cpp。
+- **进 Play 门**：`playTest` 的进/出往返与 `smoke` 门绑定（`EditorApp.cpp` 3224 块）；smoke-uirml 独立裁决链补独立进 Play 分支（同判据 PlayBlockedByScripts）。
+- **描述符池**须 `FREE_DESCRIPTOR_SET_BIT`（纹理逐集释放；验证层 VUID-00312 实抓）。
 
 ## 风险与既知边界
 

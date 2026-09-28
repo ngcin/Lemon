@@ -10,6 +10,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <span>
 #include <vector>
 
@@ -61,6 +62,11 @@ using renderer::Camera2D;
 using renderer::RenderableManager;
 using renderer::SpriteBatcher;
 using renderer::SpritePacket;
+
+/// 游戏 UI 层回调（M6a 批③a，ADR-014）：gameRT 动态渲染块内、sprite Record 之后
+/// EndPass 之前调用（Play 中独占）。std::function——编辑器侧把 UiSubsystem::Render
+/// 接进来（引擎 UI 模块不反依赖编辑器；ImGui 层同款"块内追加录制"豁免语义）。
+using GameUiLayerFn = std::function<void(rhi::CommandList&, uint32_t, uint32_t)>;
 
 /// 程序化测试图集：8×64px 调色板（0=白 overlay 染色底纹，1..7 彩色）+ ASCII 字体页
 /// + 16×32px 图标形状页（M4.7b；白形状 → UI 染色）
@@ -136,6 +142,10 @@ public:
     ProceduralAtlas& Assets() { return assets_; }
     /// 场景视口 RT（冒烟像素断言回读用；无效 = 面板折叠/未建）
     rhi::Texture SceneRenderTarget() const { return rts_[0].tex; }
+    /// 游戏视口 RT（批③a smoke-uirml 像素断言回读用；对照 SceneRenderTarget）
+    rhi::Texture GameRenderTarget() const { return rts_[1].tex; }
+    /// 游戏 UI 层挂接（批③a：null = 无 UI；EditorApp 在 UiSubsystem Init 成功后挂入）
+    void SetGameUiLayer(GameUiLayerFn fn) { gameUi_ = std::move(fn); }
     /// 调色板页的 ImGui 纹理（AssetBrowser 非资产图标：色块 uv 子区）。null = 未注册
     void* PaletteIconTex() const { return paletteIconTex_; }
     /// 图标形状页的 ImGui 纹理（M4.7b 工具栏/Hierarchy/AssetBrowser 图标源）
@@ -172,6 +182,7 @@ private:
     std::vector<SpritePacket> overlay_;                         // SceneView 专属（面板注入）
     std::vector<SpritePacket> textBuf_, fxBarBuf_; // 视口包复用缓冲（提取段零分配；
                                                    // Bake 消费完即弃，串行双视口单缓冲）
+    GameUiLayerFn gameUi_; // 游戏 UI 层（批③a；Play 中 gameRT 块内调用）
 
     struct RT {
         uint32_t w = 0, h = 0;

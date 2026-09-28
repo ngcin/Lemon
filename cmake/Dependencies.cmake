@@ -75,10 +75,11 @@ CPMAddPackage(
 )
 
 # ---------------------------------------------------------------------------
-# RmlUi — 运行时 UI（M5 ADR-008 spike；锁 tag 6.3）
-# 纪律（AGENTS）：已登记 THIRD_PARTY.md + 07 移植矩阵。spike/04-rmlui 消费
-# rmlui_backend_SDL_VK（官方 SDL3+Vulkan 后端，MIT 头须保留版权声明）。
-# FreeType 用系统 brew 件（2.14.3）。spike 未过验收前不进 Engine/ 正式依赖。
+# RmlUi — 运行时 UI（M6a 批③a 正式依赖，ADR-014；锁 tag 6.3）
+# 纪律（AGENTS）：已登记 THIRD_PARTY.md + 07 移植矩阵。正式消费者 =
+# Engine/Renderer/RmlUiBackend.cpp（自研 RenderInterface over RHI）+ Engine/Ui/
+# UiSubsystem.cpp；spike/04-rmlui 保留为验收壳（本地后端拷贝直接编入，不用官方
+# Backends 目标——SHELL OFF 不拉 rmlui_backend_*）。FreeType 用系统 brew 件（2.14.3）。
 CPMAddPackage(
   NAME RmlUi
   GITHUB_REPOSITORY mikke89/RmlUi
@@ -87,8 +88,7 @@ CPMAddPackage(
     "BUILD_SHARED_LIBS OFF"
     "RMLUI_SAMPLES OFF"
     "RMLUI_TESTS OFF"
-    "RMLUI_SHELL ON"           # 拉入 Backends/ 目标（rmlui_backend_SDL_VK）
-    "RMLUI_BACKEND SDL_VK"     # 后端自动选择（auto→GL3 会要 SDL3_image）
+    "RMLUI_SHELL OFF"          # 官方 Backends 目标不建（spike 用本地改造拷贝）
     "RMLUI_PRECOMPILED_HEADERS OFF"
     "RMLUI_COMPILER_OPTIONS OFF"
     "RMLUI_THIRDPARTY_CONTAINERS ON"

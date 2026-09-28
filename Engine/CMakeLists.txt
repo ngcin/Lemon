@@ -23,11 +23,13 @@ add_library(lemon-engine STATIC
   Scripting/ScriptHost.cpp
   Platform/Window.cpp
   Renderer/RHI.cpp
+  Renderer/RmlUiBackend.cpp
   Renderer/Atlas.cpp
   Renderer/Renderable.cpp
   Renderer/SpriteBatcher.cpp
   Renderer/Particles.cpp
   Renderer/BitmapFont.cpp
+  Ui/UiSubsystem.cpp
 )
 
 target_include_directories(lemon-engine
@@ -35,7 +37,8 @@ target_include_directories(lemon-engine
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Scripting/host) # hostfxr 头只供 CoreCLRHost.cpp
 target_compile_features(lemon-engine PUBLIC cxx_std_20)
 target_link_libraries(lemon-engine
-  PRIVATE SDL3::SDL3 Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator nlohmann_json::nlohmann_json ${CMAKE_DL_LIBS}
+  PRIVATE SDL3::SDL3 Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator nlohmann_json::nlohmann_json
+          RmlUi::RmlUi ${CMAKE_DL_LIBS}
   PUBLIC EnTT::EnTT)
 
 # M3 脚本层（dotnet 程序集构建 + lemon-csharp 接口目标；ADR-010）
@@ -46,6 +49,10 @@ endif()
 include(${LEMON_CMAKE_DIR}/CompileShaders.cmake)
 lemon_embed_shader(lemon-engine Renderer/Shaders/sprite.vert)
 lemon_embed_shader(lemon-engine Renderer/Shaders/sprite.frag)
+# RmlUi 呈现后端三变体（M6a 批③a，ADR-014）
+lemon_embed_shader(lemon-engine Renderer/Shaders/rmlui.vert)
+lemon_embed_shader(lemon-engine Renderer/Shaders/rmlui_color.frag)
+lemon_embed_shader(lemon-engine Renderer/Shaders/rmlui_texture.frag)
 
 if(MSVC)
   target_compile_options(lemon-engine PRIVATE /utf-8 /permissive-)

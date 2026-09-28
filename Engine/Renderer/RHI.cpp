@@ -133,6 +133,10 @@ struct Device::Impl {
     std::vector<VkImageView> swapViews;
     std::vector<VkSemaphore> presentSemaphores; // 按交换链图像持有（spike-01 验证方案）
     SDL_Window* window = nullptr;
+
+    // 内部桥缓存（批③a：GetInternalBridge 懒填充——见 RHI.h InternalBridge 注释）
+    Device::InternalBridge bridgeCache{};
+    bool bridgeFilled = false;
     uint32_t imageIndex = 0;
 
     // 帧同步
@@ -1366,6 +1370,23 @@ VulkanInteropHandles Device::GetVulkanInterop() const {
 void* Device::GetVulkanTextureViewInterop(Texture t) {
     LEMON_ASSERT(t.IsValid(), "invalid texture for view interop");
     return (void*)m->textures[t.id - 1].view;
+}
+
+// ---- 内部桥（批③a ADR-014）：Renderer 兄弟后端（RmlUiBackend）专用 ----
+const Device::InternalBridge& Device::GetInternalBridge() {
+    if (!m->bridgeFilled) {
+        m->bridgeCache.device = (void*)m->device;
+        m->bridgeCache.physicalDevice = (void*)m->physical;
+        m->bridgeCache.allocator = (void*)m->allocator;
+        m->bridgeCache.queue = (void*)m->queue;
+        m->bridgeCache.queueFamily = m->graphicsFamily;
+        m->bridgeFilled = true;
+    }
+    return m->bridgeCache;
+}
+
+void Device::InternalImmediateSubmit(ImmediateRecordFn record, void* userData) {
+    m->ImmediateSubmit([record, userData](VkCommandBuffer cmd) { record((void*)cmd, userData); });
 }
 
 // ------------------------------------------------------------- 调试截屏 --

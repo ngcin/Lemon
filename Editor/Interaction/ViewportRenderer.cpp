@@ -575,6 +575,9 @@ void ViewportRenderer::RenderViewport(rhi::CommandList& cl, uint32_t idx, Sprite
     cl.BeginOffscreenPass(rt.tex, clear); // RT 显式声明（#11）；EndPass 转 SHADER_READ
     cl.SetViewportScissor(rt.w, rt.h);
     batcher.Record(cl, cam.ViewProj(aspect));
+    // 批③a（ADR-014）：游戏 UI（RmlUi）叠画于 sprite 之上——同一动态渲染块内、
+    // EndPass 之前（离屏块 loadOp 恒 CLEAR，块后另开块会清内容；此为唯一合法插入点）
+    if (idx == 1 && gameUi_ && ctx.Playing()) gameUi_(cl, rt.w, rt.h);
     cl.EndPass();
 }
 
