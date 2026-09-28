@@ -1,7 +1,7 @@
 # ADR-008：运行时 UI 方案——v1 ImGui HUD 不变，RmlUi 过 spike 验收为 v1.x 富 UI 首选
 
 - 日期：2026-09-22
-- 状态：D1 已采纳（执行中）；D2/D3 提前定形（spike-04 验收通过，正式接入时按回退条件复决）
+- 状态：D1 已采纳（执行中）；D2/D3 提前定形（spike-04 验收通过，正式接入时按回退条件复决）。**2026-09-28 修订**：v1.x 触发条件成立——D2 转正式执行（接入形态与回退条件不变），D3 窄 API 清单由 [ADR-014](./ADR-014-Game-UI-RmlUi-Integration.md) 的 L1 机制契约（M1–M8）重写；本 ADR 其余结论（datamodel 不依赖、字体策略、spike 验收资产）继续有效
 - 影响：`06-Asset-Pipeline-Out-of-Box.md` §8、`07-Porting-Matrix.md`（RmlUi/rbfx/FreeType 行）、`08-Development-Roadmap.md` M5、`THIRD_PARTY.md`
 
 ## 背景

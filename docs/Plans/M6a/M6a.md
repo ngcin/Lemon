@@ -15,7 +15,7 @@ Status: planned
 | ⓪ | [2026-09-24-b0-multiscript-guid](./2026-09-24-b0-multiscript-guid.md) | 架构地基：`scripts[]` 多脚本 + sprite 引用 GUID 化 | **done**（2026-09-24；出口判据 5/6/7 本批落账 ✅） |
 | ① | [2026-09-24-b1-combat-feel](./2026-09-24-b1-combat-feel.md) | 表现打击感：Animator `Play`/`Queue`/`CrossFade` + 位图数字/飘字/世界血条 | **done**（2026-09-24；回归 14/14、金回放零重录、bench fx 饱和 fps=78） |
 | ② | [2026-09-25-b2-content-production](./2026-09-25-b2-content-production.md) | 内容生产：配置表外置（[ADR-012](../../ADR/ADR-012-Config-Table-Dual-Track.md) 双轨）+ AnimationEditor 最小版 + 技能路径数据化 + 存档分档 | **done**（2026-09-28；T0→T6 全勾——配置表双轨/动画工作台 v3.1（ADR-013）/验收② 双面演示（散射+fast-mob）/存档三档；回归 14/14、金回放三档零重录、bench fps=82） |
-| ③ | （开批新建） | 产品壳：通用模态面板通道 + 流程状态机（档1 单场景零引擎改动）+ LoadScene 评估（档2 ADR） | planned |
+| ③ | （开批新建，五子批 ③a–③e） | 产品壳 = RmlUi 地基 + 屏幕层（[ADR-014](../../ADR/ADR-014-Game-UI-RmlUi-Integration.md)：③a 渲染地基 → ③b 字体资产 → ③c C# API 机制 → ③d 模板迁移 → ③e 图鉴）+ 流程状态机（档1 单场景零引擎改动）+ LoadScene 评估（档2 ADR） | planned |
 
 批次顺序理由：批⓪ 先行（多脚本与 GUID 晚做返工面最大）；批①–③ 可按游戏侧卡点紧迫度微调次序（如游戏先需要配置表可提前批②）。
 

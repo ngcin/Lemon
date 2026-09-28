@@ -207,6 +207,8 @@ MyGame/                                   # 用户项目（升级永不触碰）
 | v1.x 评估 | **RmlUi 6.3 首选（ADR-008 D2，spike-04 三判据已验收）**：自研 RenderInterface over Lemon RHI；备选自研轻量保留模式 UI（回退条件见 ADR-008） | 需要复杂列表/富文本/本地化排版（ARPG 对话）时升级 |
 | 恒定原则 | 世界空间 HUD（血条/飘字）永远走 sprite 渲染管线（合批零额外成本），不进 UI 框架 | yami printer/ui 分工教训 |
 
+> **2026-09-28 触发注记（[ADR-014](../ADR/ADR-014-Game-UI-RmlUi-Integration.md)）**：v1.x 升级触发条件成立（用户游戏富排版需求：菜单/图鉴/品级卡片/富文本 + 文本输入），RmlUi 正式接入排期 M6a 批③（五子批 ③a–③e）；脚本 API 由 ADR-008 D3 窄清单重写为 L1 机制契约 M1–M8（设计冻结、三波实现随消费者）；恒定原则不变。
+
 > **v1 落地注（M5 批①/批④）**：HUD 通道 = World 级 `RtUi`（8 槽：key/text/frac/
 > **color**——批④ 着色）+ `Cards`（三选一：ShowCards/CardPick 消费式回读），
 > GameView Play 时叠加画（着色文本/进度条 + 居中卡片面板 + 数字键 1/2/3）；
