@@ -196,6 +196,20 @@ rhi::Texture ProceduralAtlas::BuildIconPage(rhi::Device& device) {
         c.StrokeRect(7, 4, 25, 28, 2.0f);
         c.StrokeLine({11, 10}, {21, 10}, 2.0f);
     }
+    { // AssetRml ▭⌒（UI 文档 = 窗口页：框 + 标题栏 + 圆点钮；批③b）
+        IconCanvas& c = cv[(int)IconKind::AssetRml];
+        c.StrokeRect(5, 6, 27, 26, 2.2f);
+        c.StrokeLine({5, 12.5f}, {27, 12.5f}, 2.2f); // 标题栏分隔
+        c.FillCircle({9.5f, 9.2f}, 1.7f);            // 窗口钮
+    }
+    { // AssetRcss ▭≡（样式表 = 文档 + 阶梯行 + 尾点；批③b）
+        IconCanvas& c = cv[(int)IconKind::AssetRcss];
+        c.StrokeRect(7, 4, 25, 28, 2.0f);
+        c.StrokeLine({11, 12}, {21, 12}, 2.0f);
+        c.StrokeLine({11, 17.5f}, {17, 17.5f}, 2.0f);
+        c.StrokeLine({11, 23}, {13.5f, 23}, 2.0f);
+        c.FillCircle({19, 23}, 1.6f); // 行尾选点
+    }
     { // Cursor ↖（Select 工具 = 经典箭头光标 + 尾翼）
         IconCanvas& c = cv[(int)IconKind::Cursor];
         c.FillTri({9, 4}, {9, 25}, {15.5f, 18.5f});

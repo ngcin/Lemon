@@ -1883,8 +1883,20 @@ void EditorApp::BuildUI() {
     playing_ = ctx_.Playing(); // 冗余显示态每帧对齐真值（菜单/快捷键/横幅守卫共用；
                                // 失同步曾致 Play 中 Ctrl+S 把 Play 世界存进编辑场景）
     if (tabFocusPending_ != 0) { // Play 进出自动切 Game/Scene 标签页（Unity 心智；F1 手测）
-        ImGui::SetWindowFocus(tabFocusPending_ > 0 ? "Game" : "Scene");
-        tabFocusPending_ = 0;
+        // 目标窗口未建（冒烟首帧：默认布局在本帧更晚的 DockBuilderGetNode 分支才
+        // 建）→ 标志留到下帧再翻，不清零
+        const char* want = tabFocusPending_ > 0 ? "Game" : "Scene";
+        ImGuiWindow* w = ImGui::FindWindowByName(want);
+        if (w && (!w->DockNode || !w->DockNode->TabBar)) w = nullptr; // tab 栏未建同理等
+        if (w) {
+            ImGui::SetWindowFocus(want);
+            // 批③b：FocusWindow 的 dock tab 选择段被上游注释（imgui #2304——
+            // "avoid applying focus immediately before the tabbar is visible"），
+            // 无头会话里 SetWindowFocus 只改 nav 不翻标签页（真人点击走交互路径
+            // 才翻）。此处补上被注释逻辑的等价操作：显式选中目标 tab
+            w->DockNode->TabBar->NextSelectedTabId = w->TabId;
+            tabFocusPending_ = 0;
+        }
     }
     // 性能批②：仅注入会话登记矩形（smoke-ui 全面板；smoke-anim 只为热修③的
     // 新建集模态点击位——登记面 = 面板侧 Stash 调用点，无面板登记则零成本）
@@ -2307,6 +2319,29 @@ void EditorApp::RescanAssets() {
         if (const AssetEntry* e = db.FindByGuid(g); e && e->type == AssetType::Sprite)
             gpuAssets_.ImportSprite(*e);
     for (uint64_t g : cs.removed) gpuAssets_.Evict(g); // 幽灵页（号保留；M6 图集回收）
+    // 批③b UI 文档/样式热重载（ADR-014 M2 DocumentReloaded 的编辑器侧半边；
+    // C# 重灌数据事件归 ③c）。文档名 = 资产 relPath；.rcss 变更 = 逐文档
+    // ReloadStyleSheet（保 DOM/状态 + 清 Factory 样式缓存——按路径缓存的解析
+    // 结果不清则样式仍旧档，实测 2026-09-28）
+    if (gameUi_ && !cs.Empty()) {
+        bool anyRcss = false;
+        auto uiHandle = [&](uint64_t g, bool removed) {
+            const AssetEntry* e = db.FindByGuid(g);
+            if (!e) return;
+            if (e->type == AssetType::Rcss) {
+                anyRcss = true;
+                return;
+            }
+            if (e->type != AssetType::Rml) return;
+            if (removed) gameUi_->UnloadDocument(e->relPath.c_str());
+            else if (gameUi_->HasDocument(e->relPath.c_str()))
+                gameUi_->ReloadDocument(e->relPath.c_str());
+        };
+        for (uint64_t g : cs.added) uiHandle(g, false);
+        for (uint64_t g : cs.modified) uiHandle(g, false);
+        for (uint64_t g : cs.removed) uiHandle(g, true);
+        if (anyRcss) gameUi_->ReloadStyleSheets();
+    }
     db.SaveManifest();
     if (!cs.Empty())
         LEMON_LOG("资产重扫：+%zu ~%zu -%zu", cs.added.size(), cs.modified.size(),
@@ -2568,6 +2603,14 @@ bool EditorApp::OpenProjectPipeline(const std::string& projectRoot) {
     gpuAssets_.Init(*device_, ui_.get(), &viewport_->Assets().Registry(),
                     ctx_.Assets(), /*firstSlot=*/3); // 0=调色板 1=字体页 2=图标形状页(M4.7b)
     thumbcache::Init(device_.get(), ui_.get(), &ctx_.Assets(), &gpuAssets_); // T3-UX4 选择器缩略图
+    if (gameUi_) { // 批③b UI 资产通道：切项目 = 旧文档全卸（旧贴图引用随旧图集死）
+        gameUi_->UnloadAllDocuments();
+        gameUi_->SetTextureResolver(
+            [this](const std::string& s, rhi::Texture& t, uint32_t& w, uint32_t& h) {
+                return ResolveUiTexture(s, t, w, h);
+            });
+        LoadProjectFonts();
+    }
     {
         // 按 DB 记账号升序导入（与设备重建回调同约定）：bindless 槽位分配确定性，
         // 与文件系统扫描序无关（2026-09-21：扫描序曾致注册表号与记账交叉）
@@ -2619,7 +2662,8 @@ bool EditorApp::OpenProjectPipeline(const std::string& projectRoot) {
     // 注入/冒烟会话不记（2026-09-22 测试报告复验时发现：smoke-ui 不带 --smoke
     // 标志，回归曾把 ${TMP}/ui 推成首条；trap 删目录后成死条目并挤掉真实项目）
     const bool injectionSession = launch_->smoke || launch_->smokeUi || launch_->smokeDrag ||
-                                  launch_->finalTest || !launch_->smokeClose.empty();
+                                  launch_->smokeUirml || launch_->finalTest ||
+                                  !launch_->smokeClose.empty();
     if (!injectionSession)
         PushRecentProject(ctx_.Assets().ProjectRoot(), recentProjects_);
     ctx_.LoadRecentScenes(); // M4.8-b：项目内最近场景随项目装载
@@ -2820,8 +2864,14 @@ int EditorApp::HotReloadCount() const {
 int EditorApp::Run(const EditorLaunch& launch) {
     launchCopy_ = launch;
     launch_ = &launchCopy_;
-    if (launchCopy_.smokeUirml && launchCopy_.frames == 0)
-        launchCopy_.frames = 180; // 批③a：UI 冒烟默认跑 180 帧（够字体图集生成 + 稳定渲染）
+    // 批③b：冒烟钩子（热重载中点 100/140）与末帧捕获都锚定帧号——参数门禁对齐
+    // smoke-template 先例（③a 的"缺省 180"只写 launchCopy_ 而主循环判 launch.frames，
+    // 无 --frames 实际 = 无限跑 + 零捕获；显式要求根除该歧义）
+    if (launchCopy_.smokeUirml && launch.frames < 240) {
+        LEMON_ERROR("--smoke-uirml 需要 --frames N（N>=240：两段热重载中点 100/140 + "
+                    "稳定渲染余量）");
+        return 2;
+    }
     const auto tStart = std::chrono::steady_clock::now();
 
     SetLogSink(&EditorLogRing::SinkThunk, &log_);
@@ -2865,7 +2915,17 @@ int EditorApp::Run(const EditorLaunch& launch) {
     if (gameUi_->Init(*device_, rhi::Format::RGBA8Unorm)) {
         viewport_->SetGameUiLayer(
             [this](rhi::CommandList& cl, uint32_t w, uint32_t h) { gameUi_->Render(cl, w, h); });
-        if (launch.smokeUirml) SeedSmokeUiDocument();
+        // 批③b：引擎正字 Noto Sans SC（OFL，随仓库 Engine/Ui/Fonts；LEMON_TEMPLATE_DIR
+        // 同款编译期路径）。fallback=true——RCSS 未命中的族名也有字可渲（③a 发现
+        // RCSS 无逗号回退列表）。装载失败红字不阻断（Init 内系统链仍兜底）
+#ifdef LEMON_ENGINE_FONT_DIR
+        gameUi_->LoadFontFace(LEMON_ENGINE_FONT_DIR "/NotoSansSC-Regular.otf",
+                              "Noto Sans SC", /*fallback=*/true);
+#else
+        LEMON_WARN("ui-subsystem: 未定义 LEMON_ENGINE_FONT_DIR——引擎 Noto 未装载，"
+                   "沿用系统字体链");
+#endif
+        // --smoke-uirml 播种延后到项目打开后（批③b 起文档/样式/贴图均来自夹具资产）
     } else {
         gameUi_.reset();
     }
@@ -2959,6 +3019,9 @@ int EditorApp::Run(const EditorLaunch& launch) {
         LEMON_LOG("smoke-template: 向导复制 OK %s", root.c_str());
 #endif
     }
+    // 批③b：--smoke-uirml 资产夹具（temp 项目：.rml + .rcss + 贴图，标准管线打开）
+    // ——文档/样式/贴图/热重载四通道全走真实资产路径（③a 的内存文档退役）
+    if (launch.smokeUirml) SeedSmokeUiRmlProject();
     // 最近项目（M4.6 §4-4）：--project 缺省时自动重开上次（--no-reopen 跳过；
     // 冒烟/终验不适用——确定性优先）。菜单最近列表同源本 vector。
     recentProjects_ = LoadRecentProjects();
@@ -2979,6 +3042,8 @@ int EditorApp::Run(const EditorLaunch& launch) {
     }
     if (!launch_->projectDir.empty()) {
         if (!OpenProjectPipeline(launch_->projectDir)) return 1;
+        // 批③b：夹具文档装载（项目已开 → 贴图桥 resolver/字体已就位）
+        if (launch.smokeUirml && gameUi_) SeedSmokeUiDocument();
     }
 
     // ---- 脚本宿主（--script <dll> 显式指定；项目 Game/ 已在管线内装配）----
@@ -3241,6 +3306,10 @@ int EditorApp::Run(const EditorLaunch& launch) {
             return 1;
         }
         if (!ctx_.EnterPlay()) return 1;
+        // 批③b 补：Play 按钮/菜单路径都设的翻页标志——③a 独立进 Play 分支漏了它，
+        // 中央区标签页停在 Scene，--screenshot（交换链）只见 Scene 不见 UI（用户
+        // 走查 2026-09-28 报；gameRT 本身有 UI，像素断言不受影响）
+        tabFocusPending_ = 1;
     }
     // M6a 批② T3：编辑后的 clip 进 Play 快照生效（BuildPlayClipCache 吃到 13fps×2 帧
     // ——验收②"保存 → 重进 Play 帧率/帧数生效"的程序化侧）。T3b-1：整图引用
@@ -3542,6 +3611,34 @@ int EditorApp::Run(const EditorLaunch& launch) {
                 std::filesystem::path(launch.projectDir) / "Assets" / "smoke.png";
             stbi_write_png(png.string().c_str(), 96, 48, 4, px.data(), 96 * 4);
             LEMON_LOG("asset-smoke: PNG 落盘改写（96×48 蓝）→ 等 watcher 重导入");
+        }
+        // 批③b：UI 文档/样式热重载两段——中点①改 .rml（标题色金→绿）、②改 .rcss
+        // （正文色灰→蓝），落盘后直接 RescanAssets（确定性触发；watcher 亦会到但
+        // 二次重扫 hash 未变 = no-op）。终态像素断言见 Run 尾裁决段
+        if (launchCopy_.smokeUirml && !launchCopy_.projectDir.empty()) {
+            namespace fs = std::filesystem;
+            const fs::path uiDir = fs::path(launchCopy_.projectDir) / "Assets" / "UI";
+            auto rewriteFile = [](const fs::path& p, const std::string& from, const std::string& to) {
+                std::ifstream in(p, std::ios::binary);
+                std::string t((std::istreambuf_iterator<char>(in)),
+                              std::istreambuf_iterator<char>());
+                const size_t at = t.find(from);
+                if (at == std::string::npos) return false;
+                t.replace(at, from.size(), to);
+                std::ofstream out(p, std::ios::trunc);
+                out << t;
+                return true;
+            };
+            if (frame == 100) {
+                if (rewriteFile(uiDir / "uirml.rml", "#ffd060", "#40ff90"))
+                    LEMON_LOG("uirml-smoke: .rml 热重载播种（标题金→绿）");
+                RescanAssets();
+            }
+            if (frame == 140) {
+                if (rewriteFile(uiDir / "uirml.rcss", "color: #e0e0e0", "color: #80c0ff"))
+                    LEMON_LOG("uirml-smoke: .rcss 热重载播种（正文灰→蓝，经 ReloadStyleSheets）");
+                RescanAssets();
+            }
         }
         // 终验（§6 #1/#2/#6/#7）：Play 中热重载——改 .cs 落盘 → 编译换装 → 新逻辑 +
         // StateBag 续跑（刷怪窗口 40→70；续跑总刷怪 66 = 换装前 16 + 换装后 50）
@@ -5458,39 +5555,57 @@ int EditorApp::Run(const EditorLaunch& launch) {
                     (unsigned long long)frame, firstFrameMs);
     }
 
-    // 批③a（ADR-014）：RmlUi 呈现地基冒烟——gameRT 像素断言（面板底/标题/正文特征
-    // 色过阈）+ 文档/字体探针。独立轻量裁决链（不并 editor-smoke 门——两模式捕获
-    // 的 RT 不同：本模式读 gameRT）
+    // 批③b（ADR-014）：UI 资产通道冒烟——③a 像素断言（面板/标题位置）+ 本批四通道：
+    // 字体（font 必须是引擎正字 Noto Sans SC）/ 文档（夹具 .rml 经文件通道装载）/
+    // 贴图桥（<img> → 图集页 → #d04080 像素过阈）/ 热重载（终态 = 中点两段改写后的
+    // 绿标题 + 蓝正文，旧色残留 < 5 证明确实重载）。独立裁决链（读 gameRT）
     if (launchCopy_.smokeUirml) {
         bool uiOk = false;
-        int panelN = 0, titleN = 0, bodyN = 0, titleTopN = 0;
+        int panelN = 0, titleGN = 0, bodyBN = 0, texN = 0, titleTopN = 0;
+        int oldGoldN = 0, oldGrayN = 0;
         std::vector<uint8_t> rt;
         uint32_t rw = 0, rh = 0;
         const bool fetched = device_->DebugFetchTextureCapture(rt, rw, rh);
-        const bool hasDoc = gameUi_ && gameUi_->HasDocument("uirml");
+        // gameRT 落盘：--screenshot 请求时自动出第二张（<名>-gamert.png，无编辑器
+        // 铬的纯游戏画面 = 像素断言同源图）；LEMON_UIRML_DUMP 排障路径保留
+        if (fetched && !launch.screenshot.empty()) {
+            namespace fs = std::filesystem;
+            const fs::path sp(launch.screenshot);
+            stbi_write_png(
+                (sp.parent_path() / (sp.stem().string() + "-gamert.png")).generic_string().c_str(),
+                (int)rw, (int)rh, 4, rt.data(), (int)rw * 4);
+        }
+        if (std::getenv("LEMON_UIRML_DUMP") && fetched)
+            stbi_write_png("/tmp/uirml-rt.png", (int)rw, (int)rh, 4, rt.data(), (int)rw * 4);
+        const bool hasDoc = gameUi_ && gameUi_->HasDocument("Assets/UI/uirml.rml");
+        const bool notoFont = gameUi_ &&
+                              std::strcmp(gameUi_->LoadedFontFamily(), "Noto Sans SC") == 0;
         if (fetched && hasDoc) {
-            panelN = CountPixelsNear(rt, rw, rh, 32, 64, 96, 14);   // #204060 面板底
-            titleN = CountPixelsNear(rt, rw, rh, 255, 208, 96, 30); // #ffd060 标题（抗锯齿容忍）
-            bodyN = CountPixelsNear(rt, rw, rh, 224, 224, 224, 44); // #e0e0e0 正文
-            // 位置断言（2026-09-28 真人目检抓纵向翻转后的机器化：颜色计数对翻转无感，
-            // 标题色像素必须集中上半幅——翻转即下半幅超限）
-            int titleBotN = 0;
+            panelN = CountPixelsNear(rt, rw, rh, 32, 64, 96, 14);    // #204060 面板底
+            titleGN = CountPixelsNear(rt, rw, rh, 64, 255, 144, 30); // #40ff90 热重载后标题
+            // 正文蓝 tol=24：边框 #60a0ff 与正文 #80c0ff 逐通道差 32——tol 44 时边框
+            // 混入计数（实测 4476 ≈ 边框周长像素，文字仍旧灰的假阳性来源）
+            bodyBN = CountPixelsNear(rt, rw, rh, 128, 192, 255, 24); // #80c0ff 热重载后正文
+            texN = CountPixelsNear(rt, rw, rh, 208, 64, 128, 30);    // #d04080 贴图（桥）
+            oldGoldN = CountPixelsNear(rt, rw, rh, 255, 208, 96, 20); // 旧标题色残留
+            oldGrayN = CountPixelsNear(rt, rw, rh, 224, 224, 224, 30); // 旧正文色残留
+            // 位置断言（③a 真人目检抓纵向翻转后的机器化：标题色像素须集中上半幅）
             const uint32_t halfY = rh / 2;
             for (uint32_t y = 0; y < rh; ++y)
                 for (uint32_t x = 0; x < rw; ++x) {
                     const uint8_t* p = &rt[((size_t)y * rw + x) * 4];
-                    const int dr = (int)p[0] - 255, dg = (int)p[1] - 208, db = (int)p[2] - 96;
-                    if ((uint32_t)(dr * dr + dg * dg + db * db) <= 30u * 30u) {
-                        if (y < halfY) ++titleTopN;
-                        else ++titleBotN;
-                    }
+                    const int dr = (int)p[0] - 64, dg = (int)p[1] - 255, db = (int)p[2] - 144;
+                    if ((uint32_t)(dr * dr + dg * dg + db * db) <= 30u * 30u && y < halfY)
+                        ++titleTopN;
                 }
-            uiOk = panelN > 3000 && titleN > 20 && bodyN > 20 && titleTopN >= titleN * 3 / 4;
+            uiOk = notoFont && panelN > 3000 && titleGN > 20 && bodyBN > 20 && texN > 500 &&
+                   oldGoldN < 5 && oldGrayN < 5 && titleTopN >= titleGN * 3 / 4;
         }
-        std::printf("[lemon] smoke-uirml: doc=%d font=%s panel=%d(>3000) title=%d(>20) "
-                    "body=%d(>20) titleTop=%d/%d(≥3/4) => %s\n",
+        std::printf("[lemon] smoke-uirml: doc=%d font=%s panel=%d(>3000) titleG=%d(>20) "
+                    "bodyB=%d(>20) tex=%d(>500) old=%d/%d(<5) titleTop=%d/%d(≥3/4) => %s\n",
                     hasDoc ? 1 : 0, gameUi_ ? gameUi_->LoadedFontFamily() : "-",
-                    panelN, titleN, bodyN, titleTopN, titleN, uiOk ? "OK" : "FAIL");
+                    panelN, titleGN, bodyBN, texN, oldGoldN, oldGrayN, titleTopN, titleGN,
+                    uiOk ? "OK" : "FAIL");
         if (!uiOk) exitCode = 1;
     }
 
@@ -5512,42 +5627,130 @@ int EditorApp::Run(const EditorLaunch& launch) {
     return exitCode;
 }
 
-// 批③a（ADR-014）：--smoke-uirml 播种——内存文档三要素（面板底/标题/正文特征色供
-// gameRT 像素断言；③b 起换 .rml 资产加载链 + Noto 字体）。font-family 用实际载入
-// 的族名单值注入——RmlUi 6.3 RCSS 不支持逗号回退列表（整串当一个族名，实测）；
-// ③b 起 Noto Sans CJK 为引擎唯一正字，此耦合自然消失。
-void EditorApp::SeedSmokeUiDocument() {
-    char style[256];
-    std::snprintf(style, sizeof style,
-                  "body { font-family: %s; color: #e0e0e0; }", gameUi_->LoadedFontFamily());
-    char rml[2048];
-    std::snprintf(rml, sizeof rml, R"RML(
-<rml>
-<head>
-<title>lemon ui smoke</title>
-<style>
-%s
-#panel {
-    position: absolute;
-    left: 80px; top: 80px;
-    width: 480px; height: 220px;
-    background: #204060;
-    border: 3px #60a0ff;
+// 批③b（ADR-014）：双击 .rml → 装载到游戏 UI。文档名 = relPath（RescanAssets
+// 热重载对账键）；Show 无条件置位（渲染层只在 Play 中被调用——非 Play 装载即
+// 备好，进 Play 即显）。③c C# 装载通道落地前的手动通道。
+void EditorApp::LoadUiDocument(uint64_t guid) {
+    if (!gameUi_) {
+        LEMON_WARN("UI 装载失败：游戏 UI 层不可用（初始化失败/字体缺失，见启动红字）");
+        return;
+    }
+    const AssetEntry* e = ctx_.Assets().FindByGuid(guid);
+    if (!e || e->missing || e->type != AssetType::Rml) return;
+    const std::string abs = ctx_.Assets().AbsolutePath(*e);
+    if (!gameUi_->LoadDocumentFromFile(e->relPath.c_str(), abs.c_str())) return;
+    gameUi_->ShowDocument(e->relPath.c_str(), true);
+    LEMON_LOG("UI 文档已装载%s：%s（改动落盘经 watcher/重扫热重载）",
+              ctx_.Playing() ? "" : "（进 Play 后 GameView 显示）", e->relPath.c_str());
 }
-#title { font-size: 28px; color: #ffd060; margin: 24px 0 8px 28px; }
-#body  { font-size: 16px; margin-left: 28px; }
-</style>
-</head>
-<body>
-<div id="panel">
-    <div id="title">Lemon 游戏 UI ③a</div>
-    <div id="body">RmlUi over Lemon RHI 冒烟</div>
-</div>
-</body>
-</rml>
-)RML",
-                  style);
-    if (gameUi_->LoadDocumentFromMemory("uirml", rml)) gameUi_->ShowDocument("uirml", true);
+
+// 批③b 贴图桥解析器（RmlUi JoinPath 解析后的绝对路径 → 项目精灵资产 → 图集页）。
+// 切片子图由 RmlUi 原生 <img rect="x y w h"> 表达，引擎零机制（M6 波2 扩 GUID/RT 源）
+bool EditorApp::ResolveUiTexture(const std::string& source, rhi::Texture& tex, uint32_t& w,
+                                 uint32_t& h) {
+    namespace fs = std::filesystem;
+    const AssetDatabase& db = ctx_.Assets();
+    if (db.ProjectRoot().empty()) return false;
+    std::error_code ec;
+    const fs::path rel = fs::relative(fs::path(source), fs::path(db.ProjectRoot()), ec);
+    if (ec) return false;
+    const std::string relStr = rel.generic_string();
+    if (relStr.empty() || relStr == "." || relStr.front() == '.') return false; // 越出项目根
+    const AssetEntry* e = db.FindByPath(relStr);
+    if (!e || e->missing || e->type != AssetType::Sprite) return false;
+    renderer::AtlasRegistry& reg = viewport_->Assets().Registry();
+    if (!reg.IsValidSprite(e->spriteId)) return false; // 未导入/空洞
+    const renderer::SpriteInfo& si = reg.GetSprite(e->spriteId);
+    const rhi::Texture t = reg.AtlasTexture(si.atlasIndex, w, h);
+    if (!t.IsValid()) return false;
+    tex = t;
+    return true;
+}
+
+// 批③b：项目字体注册（Assets/ 下 otf/ttf/ttc → RmlUi fallback）。RmlUi 无
+// UnloadFontFace——切项目旧族名共存（无害）；族名以字体文件为准（报告名传文件名）
+void EditorApp::LoadProjectFonts() {
+    if (!gameUi_) return;
+    namespace fs = std::filesystem;
+    uint32_t n = 0;
+    for (const AssetEntry& e : ctx_.Assets().Entries()) {
+        if (e.missing) continue;
+        std::string ext = fs::path(e.relPath).extension().string();
+        for (char& c : ext) c = (char)std::tolower((unsigned char)c);
+        if (ext != ".otf" && ext != ".ttf" && ext != ".ttc") continue;
+        if (gameUi_->LoadFontFace(ctx_.Assets().AbsolutePath(e).c_str(), e.FileName().c_str(),
+                                  /*fallback=*/true))
+            ++n;
+    }
+    if (n) LEMON_LOG("项目字体：%u 个已注册为 fallback（RCSS 按 font-family 命中）", n);
+}
+
+// 批③b：--smoke-uirml 资产夹具（temp 项目，幂等清残留；夹具纪律 = 空目录自播种）。
+// 三件套：uirml.rml（面板/标题/正文 + <img>）/ uirml.rcss（<link> 样式）/ tex.png
+// （96×96 特征色贴图——贴图桥像素断言源）。热重载中点改写 .rml/.rcss（帧循环钩子）
+void EditorApp::SeedSmokeUiRmlProject() {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path tmp =
+        fs::temp_directory_path() / ("lemon-uirml-" + std::to_string(::getpid()));
+    fs::remove_all(tmp, ec);
+    const fs::path assets = tmp / "Assets" / "UI";
+    fs::create_directories(assets, ec);
+    {
+        std::ofstream f(tmp / "project.lemon", std::ios::trunc);
+        f << "{\n  \"schemaVersion\": 1,\n  \"name\": \"uirml\",\n"
+             "  \"engineVersion\": \"0.6.0-m6a\"\n}\n";
+    }
+    { // 贴图：#d04080 纯色（角标会落进旧灰断言的逐通道 ±30 带内——白色 ≠ 免责色）
+        std::vector<uint8_t> px(96 * 96 * 4);
+        for (int y = 0; y < 96; ++y)
+            for (int x = 0; x < 96; ++x) {
+                uint8_t* q = &px[((size_t)y * 96 + x) * 4];
+                q[0] = 208;
+                q[1] = 64;
+                q[2] = 128;
+                q[3] = 255;
+            }
+        stbi_write_png((assets / "tex.png").string().c_str(), 96, 96, 4, px.data(), 96 * 4);
+    }
+    { // 样式表：正字 Noto + 面板/正文/贴图规则（热重载中点正文色 → #80c0ff 蓝）。
+        // #title 规则留在 .rml 文档级 <style>——两段热重载各自改自己的文件：
+        // frame100 改 .rml（文档级样式，ReloadDocument 单文档路径）、frame140 改
+        // .rcss（<link> 表，ReloadStyleSheets 保 DOM 路径）
+        std::ofstream f(assets / "uirml.rcss", std::ios::trunc);
+        f << "body { font-family: Noto Sans SC; color: #e0e0e0; }\n"
+             "#panel { position: absolute; left: 80px; top: 80px; width: 480px; height: 260px;\n"
+             "    background: #204060; border: 3px #60a0ff; }\n"
+             "#body  { font-size: 16px; margin-left: 28px; }\n"
+             "#teximg { position: absolute; left: 320px; top: 120px; width: 96px; height: 96px; }\n";
+    }
+    { // 文档：<link> 引样式 + 三要素 + <img>（热重载中点标题色 → #40ff90 绿）
+        std::ofstream f(assets / "uirml.rml", std::ios::trunc);
+        f << "<rml>\n<head><title>lemon ui smoke</title>\n"
+             "<link type=\"text/rcss\" rel=\"stylesheet\" href=\"uirml.rcss\"/>\n"
+             "<style>#title { font-size: 28px; color: #ffd060; margin: 24px 0 8px 28px; }\n"
+             "</style>\n</head>\n"
+             "<body>\n<div id=\"panel\">\n"
+             "  <div id=\"title\">Lemon 游戏 UI ③b</div>\n"
+             "  <div id=\"body\">资产通道冒烟：字体/样式/贴图/热重载</div>\n"
+             "  <img id=\"teximg\" src=\"tex.png\"/>\n"
+             "</div>\n</body>\n</rml>\n";
+    }
+    launchCopy_.projectDir = tmp.string();
+    launch_ = &launchCopy_;
+    LEMON_LOG("uirml 夹具：%s", tmp.string().c_str());
+}
+
+// 批③b：--smoke-uirml 文档装载（从夹具资产走文件通道——③a 内存文档退役）
+void EditorApp::SeedSmokeUiDocument() {
+    const std::string rel = "Assets/UI/uirml.rml";
+    const AssetEntry* e = ctx_.Assets().FindByPath(rel);
+    if (!e || e->missing) {
+        LEMON_ERROR("uirml 播种失败：夹具缺 %s", rel.c_str());
+        return;
+    }
+    if (gameUi_->LoadDocumentFromFile(rel.c_str(), ctx_.Assets().AbsolutePath(*e).c_str()))
+        gameUi_->ShowDocument(rel.c_str(), true);
 }
 
 namespace {

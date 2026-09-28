@@ -67,6 +67,7 @@ MyGame/                                   # 用户项目（升级永不触碰）
 | clip2d | json | 帧动画资产（**.anim**，T3d 批④前 .clip） | AnimationEditor 产出 |
 | animset | json | 动画集/每角色绑定（**.override**，批④前 .ani；段名→clip 引用清单） | AnimationEditor 产出 |
 | controller | json | 动画状态机（**.controller**：状态词表/参数/过渡；ADR-013） | 手写 JSON（图编辑器挂起） |
+| rml/rcss | rml/rcss | UI 文档/样式表原档（**.rml**/**.rcss**，ADR-014 一屏一文档） | M6a 批③b：DB/GUID/.meta/浏览器识别 + 双击装载 + 热重载（rcss = ReloadStyleSheet 保 DOM）；`<img>` 经贴图桥吃项目精灵（`AtlasTexture` 页借用，`rect` 属性切子图） |
 | particles | json | 发射器资产 | ParticleEditor 产出 |
 | tileset | png + json | 图集 + 碰撞标志 + 自动瓦片变体表 | 05 §7 |
 | curve/data | json | 曲线、Team 表、波次表 | 数据资产 |

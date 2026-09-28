@@ -51,7 +51,10 @@ struct TextureRes {
     VkImageView view = VK_NULL_HANDLE;
     VkDescriptorSet set = VK_NULL_HANDLE;
     uint32_t w = 0, h = 0;
-    std::vector<uint8_t> pixels; // 设备丢失重上传备份（GenerateTexture 契约 RGBA 预乘）
+    // 批③b 外部纹理（贴图桥）：image/view 归图集/调用方——本结构只持描述符集，
+    // 释放/设备丢失仅还 set；无像素备份（文档重载时会按新解析重建）
+    bool external = false;
+    std::vector<uint8_t> pixels; // 自有纹理：设备丢失重上传备份（RGBA 预乘）
 };
 
 VkFormat ToVkFormat(rhi::Format f) {
@@ -146,6 +149,7 @@ struct RmlUiBackend::Impl final : public Rml::RenderInterface {
         pendingGeo;
     std::array<std::vector<TextureRes*>, kDeferFrames> pendingTex;
     std::unordered_set<TextureRes*> liveTex;
+    UiTextureResolver textureResolver; // 批③b 贴图桥（LoadTexture 先问）
 
     // 帧态（BeginFrame/EndFrame 之间有效）
     VkCommandBuffer cmd = VK_NULL_HANDLE;
@@ -170,8 +174,10 @@ struct RmlUiBackend::Impl final : public Rml::RenderInterface {
         CreatePipelines();
         CreatePool();
         CreateDescPoolAndSampler();
-        // 设备丢失路径：活纹理按像素备份重传（RmlUi 不感知设备丢失）
-        for (TextureRes* t : liveTex) CreateTextureObjects(*t);
+        // 设备丢失路径：自有纹理按像素备份重传（RmlUi 不感知设备丢失）；外部纹理
+        // 不重建——view 随图集死，待 UiSubsystem 翌帧重载文档重新解析（批③b）
+        for (TextureRes* t : liveTex)
+            if (!t->external) CreateTextureObjects(*t);
     }
 
     void CreatePipelines() {
@@ -376,6 +382,11 @@ struct RmlUiBackend::Impl final : public Rml::RenderInterface {
         device->InternalImmediateSubmit(&RecordTextureUpload, &ctx);
         vmaDestroyBuffer(vma, staging, stagingAlloc);
 
+        AllocSetForView(t, t.view);
+    }
+
+    // 描述符集分配 + 写入（自有/外部纹理共用；批③b 抽出）
+    void AllocSetForView(TextureRes& t, VkImageView view) {
         VkDescriptorSetAllocateInfo dsi{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
         dsi.descriptorPool = descPool;
         dsi.descriptorSetCount = 1;
@@ -388,7 +399,7 @@ struct RmlUiBackend::Impl final : public Rml::RenderInterface {
         }
         VkDescriptorImageInfo dii{};
         dii.sampler = sampler;
-        dii.imageView = t.view;
+        dii.imageView = view;
         dii.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
         w.dstSet = t.set;
@@ -398,8 +409,20 @@ struct RmlUiBackend::Impl final : public Rml::RenderInterface {
         vkUpdateDescriptorSets(vkdev, 1, &w, 0, nullptr);
     }
 
+    // 批③b 贴图桥：外部纹理 = 借用引擎纹理自带 view（RHI 缓存，零新建）+ 只持
+    // 描述符集。image 生命周期归图集——本结构释放/设备丢失均不动它
+    void CreateExternalTexture(TextureRes& t, rhi::Texture src) {
+        t.external = true;
+        t.view = (VkImageView)device->GetVulkanTextureViewInterop(src);
+        AllocSetForView(t, t.view);
+    }
+
     void DestroyTextureObjects(TextureRes& t) {
         if (t.set) vkFreeDescriptorSets(vkdev, descPool, 1, &t.set);
+        if (t.external) { // view/image 非本结构所有
+            t.set = VK_NULL_HANDLE;
+            return;
+        }
         if (t.view) vkDestroyImageView(vkdev, t.view, nullptr);
         if (t.image || t.alloc) vmaDestroyImage(vma, t.image, t.alloc);
         t.set = VK_NULL_HANDLE;
@@ -409,14 +432,20 @@ struct RmlUiBackend::Impl final : public Rml::RenderInterface {
     }
 
     void DestroyAll() {
-        for (TextureRes* t : liveTex) DestroyTextureObjects(*t);
-        for (auto& v : pendingTex)
+        // 释放路径统一（批③b 修）：pendingTex 的句柄仍登记在 liveTex（DrainDeferred
+        // 未及跑）——先摘除再销毁，杜绝 Shutdown 的 liveTex 循环二次 delete。
+        // ③a 隐患实锤：文档带 <img> 时 Rml::Shutdown 释放的贴图刚进延迟环，
+        // malloc double-free abort（崩溃报告 2026-09-28-204243）
+        for (auto& v : pendingTex) {
             for (TextureRes* t : v) {
+                liveTex.erase(t);
                 DestroyTextureObjects(*t);
                 delete t;
             }
+            v.clear();
+        }
+        for (TextureRes* t : liveTex) DestroyTextureObjects(*t);
         for (auto& v : pendingGeo) v.clear();
-        for (auto& v : pendingTex) v.clear();
         if (vblock) vmaDestroyVirtualBlock(vblock);
         if (poolBuf || poolAlloc) vmaDestroyBuffer(vma, poolBuf, poolAlloc);
         if (descPool) vkDestroyDescriptorPool(vkdev, descPool, nullptr);
@@ -438,9 +467,15 @@ struct RmlUiBackend::Impl final : public Rml::RenderInterface {
     }    /// 设备丢失路径：句柄已随设备销毁（不得再 vkDestroy）——清空后原位重建；
     /// 活纹理按像素备份重传；几何由 UiSubsystem 重载文档重编译（其回调注册在后必随后跑）
     void RecreateAfterLoss() {
-        for (auto& v : pendingTex)
-            for (TextureRes* t : v) delete t;
-        for (auto& v : pendingTex) v.clear();
+        // pendingTex 句柄先从 liveTex 摘除（DestroyAll 同款防双删——直接 delete
+        // 会给下方 liveTex 清句柄循环留悬垂）
+        for (auto& v : pendingTex) {
+            for (TextureRes* t : v) {
+                liveTex.erase(t);
+                delete t;
+            }
+            v.clear();
+        }
         for (auto& v : pendingGeo) v.clear();
         for (TextureRes* t : liveTex) {
             t->set = VK_NULL_HANDLE;
@@ -543,11 +578,27 @@ struct RmlUiBackend::Impl final : public Rml::RenderInterface {
 
     Rml::TextureHandle LoadTexture(Rml::Vector2i& texture_dimensions,
                                    const Rml::String& source) override {
-        (void)texture_dimensions;
+        // 批③b 贴图桥：先问解析器（编辑器 = 路径 → AssetDatabase → AtlasRegistry
+        // 图集页；M6 波2 扩 GUID/RT/帧序源）。命中 = 外部纹理（借用 view + 只持集）
+        if (textureResolver) {
+            rhi::Texture tex{};
+            uint32_t w = 0, h = 0;
+            if (textureResolver(std::string(source.c_str()), tex, w, h) && tex.IsValid() &&
+                w > 0 && h > 0) {
+                auto* t = new TextureRes{};
+                t->w = w;
+                t->h = h;
+                CreateExternalTexture(*t, tex);
+                liveTex.insert(t);
+                texture_dimensions = Rml::Vector2i((int)w, (int)h);
+                return (Rml::TextureHandle)t;
+            }
+        }
         if (!warnedLoadTexture) {
             warnedLoadTexture = true;
-            LEMON_WARN("rmlui-backend: 图片纹理暂不支持（'%s'）——③b 资产桥接上"
-                       "（CSS 底色/边框/文字不受影响）", source.c_str());
+            LEMON_WARN("rmlui-backend: 图片纹理无法解析（'%s'）——需为项目内精灵资产"
+                       "（路径经 JoinPath 相对文档解析；CSS 底色/边框/文字不受影响）",
+                       source.c_str());
         }
         return 0;
     }
@@ -665,5 +716,9 @@ void RmlUiBackend::EndFrame() {
 }
 
 void* RmlUiBackend::RenderInterfacePtr() { return impl_.get(); }
+
+void RmlUiBackend::SetTextureResolver(UiTextureResolver fn) {
+    if (impl_) impl_->textureResolver = std::move(fn);
+}
 
 } // namespace lemon::renderer

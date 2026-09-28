@@ -6,11 +6,19 @@
 // 着色器：rmlui.vert / rmlui_color.frag / rmlui_texture.frag（构建期嵌入）。
 #pragma once
 
+#include <functional>
 #include <memory>
+#include <string>
 
 #include "Renderer/RHI.h"
 
 namespace lemon::renderer {
+
+/// 贴图桥解析器（批③b，ADR-014 M6 资产源）：source = RmlUi JoinPath 解析后的路径。
+/// 命中则回填引擎纹理句柄 + 尺寸——后端按"外部纹理"包装（只持描述符集借用其
+/// view；image 生命周期归调用方/图集，释放只还描述符集）。
+using UiTextureResolver =
+    std::function<bool(const std::string& source, rhi::Texture& tex, uint32_t& w, uint32_t& h)>;
 
 class RmlUiBackend {
 public:
@@ -32,6 +40,9 @@ public:
     /// Rml::RenderInterface 实现裸指针（void* = Rml::RenderInterface*；仅 Engine/Ui
     /// 的 .cpp 转型后交 Rml::SetRenderInterface——RmlUi 类型不出本模块 .cpp 的边界）
     void* RenderInterfacePtr();
+
+    /// 贴图桥解析器（批③b）：LoadTexture 先问它，未命中走 ③a 告警语义。
+    void SetTextureResolver(UiTextureResolver fn);
 
 private:
     struct Impl;

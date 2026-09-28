@@ -16,6 +16,7 @@
 | RmlUi | 6.3 | MIT | CPM 锁 tag（`lemon-engine` 经 `Engine/Renderer/RmlUiBackend.cpp` + `Engine/Ui/UiSubsystem.cpp` 正式消费；spike/04-rmlui 保留为验收壳） | 运行时 UI（M5 ADR-008 spike 三判据验收 → **M6a 批③a 转正式依赖**，ADR-014；自研 RenderInterface over RHI） | M5→M6a③a |
 | FreeType | 2.14.3（系统 brew） | FreeType License (MIT 兼容) | find_package(Freetype)（RmlUi 依赖） | 字体光栅（RmlUi FreeType 引擎） | M5 |
 | yami-rpg-editor 默认素材（第一批） | arpg-ts-chinese 模板（源树拷贝） | MIT（资产随模板再分发） | `Samples/Assets/yami-dungeon/`（5 精灵表 + 3 clip；06 §7） | 素材包底包（M5 批③起；模板/压测共用） | M5 |
+| Noto Sans SC（Regular，SubsetOTF 8.3MB） | notofonts/noto-cjk main（2026-09-28 取） | SIL OFL 1.1 | `Engine/Ui/Fonts/NotoSansSC-Regular.otf` + 同目录 `OFL.txt`（随仓库版本管理） | 引擎 UI 正字（M6a 批③b，ADR-014：RmlUi 主/fallback 字体，系统字体链降级兜底） | M6a③b |
 
 ## 保留的第三方版权声明
 
@@ -37,6 +38,9 @@
 - **yami-rpg-editor 素材（MIT）**：Copyright (c) 2025 Yami & Xuran & Contributors ——
   `Samples/Assets/yami-dungeon/`（arpg-ts-chinese 模板 Dungeon Assets 拷贝，文件名去
   yami 哈希缀）；发布物致谢页保留。
+- **Noto Sans SC（SIL OFL 1.1）**：Copyright 2014-2021 Adobe，Noto 是 Google Inc. 商标 ——
+  `Engine/Ui/Fonts/`（OFL 全文同目录 `OFL.txt`；OFL 要求随字体再分发许可证文本，
+  打包线归 M8 落）。
 - **Luma (MIT)**：JobSystem 队列/窃取结构移植自 `Event/JobSystem.{h,cpp}`，源文件头
   保留来源标注；发布物致谢页保留。
 

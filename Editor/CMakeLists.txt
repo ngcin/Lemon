@@ -87,6 +87,11 @@ endif()
 target_compile_definitions(lemon-editor PRIVATE
   LEMON_TEMPLATE_DIR="${CMAKE_SOURCE_DIR}/Templates")
 
+# M6a 批③b（ADR-014）：引擎 UI 正字随仓库（Noto Sans SC，OFL——Engine/Ui/Fonts；
+# EditorApp 经此宏装载为 RmlUi fallback 字体；打包 runtime 的字体分发形态归 M8）
+target_compile_definitions(lemon-editor PRIVATE
+  LEMON_ENGINE_FONT_DIR="${CMAKE_SOURCE_DIR}/Engine/Ui/Fonts")
+
 if(APPLE)
   # 开窗口目标必带（同 anim-smoke；DevLog P1）：brew 验证层 JSON 裸名 dlopen 靠此命中
   set_target_properties(lemon-editor PROPERTIES

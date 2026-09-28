@@ -120,6 +120,9 @@ public:
     /// 空白区右键"新建动画集…"（M6a 批② T3c）：开新建集弹窗（源目录非空 =
     /// 显示"并建首段"勾选）；落点 = AssetBrowser 当前浏览目录
     void OpenAnimationCreateSet(const std::string& relDir);
+    /// 双击 .rml → 装载到游戏 UI（M6a 批③b，ADR-014）：文档名 = relPath（热重载
+    /// 对账键）；Play 中 GameView 即显，非 Play 提示。③c C# 装载通道落地前的手动通道
+    void LoadUiDocument(uint64_t guid);
     /// 面板 × 关闭按钮的落点（T3b-8）：同步 PanelRegistry 开关（Window 菜单可重开）
     void ClosePanel(const char* name);
     /// AssetBrowser 当前浏览目录（"" = 根 → 归一 "Assets"；向导落点默认值用）
@@ -169,7 +172,12 @@ private:
     void SetupDefaultLayout();
     void SeedSmokeScene();   // 冒烟播种：父子链 + 常用组件（面板验收有内容）
     void SeedSmokeProject(); // 冒烟播种：临时项目 + 预置 PNG（固定 guid，M4.4 资产链验收）
-    void SeedSmokeUiDocument(); // 批③a：--smoke-uirml 内存文档播种（面板/标题/正文三要素）
+    void SeedSmokeUiRmlProject(); // 批③b：--smoke-uirml 资产夹具（temp 项目 + .rml/.rcss/贴图）
+    void SeedSmokeUiDocument(); // 批③b：--smoke-uirml 文档装载（从夹具资产走 LoadDocumentFromFile）
+    /// 批③b 贴图桥解析器（安装给 gameUi_）：RmlUi JoinPath 后的路径 → 项目精灵
+    /// 资产 → 图集页纹理 + 尺寸（未命中 = false → ③a 告警语义）
+    bool ResolveUiTexture(const std::string& source, rhi::Texture& tex, uint32_t& w, uint32_t& h);
+    void LoadProjectFonts(); // 批③b：Assets/ 下字体文件 → RmlUi fallback 注册
     /// M4.5 终验判据场景（向导项目上零代码搭"走地图+刷怪"）：地图/角色/刷怪器
     void SeedJudgementScene(uint64_t spawnGuid);
     /// 换装判定辅助：Game/*.csproj 路径 + 输出 dll（项目根/.lemon/bin/<名>.dll）

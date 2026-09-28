@@ -121,6 +121,17 @@ const SpriteInfo& AtlasRegistry::GetSprite(uint32_t spriteId) const {
     return sprites_[spriteId - 1];
 }
 
+rhi::Texture AtlasRegistry::AtlasTexture(uint32_t atlasIndex, uint32_t& w, uint32_t& h) const {
+    for (const auto& a : atlases_) {
+        if (a.atlasIndex != atlasIndex) continue;
+        w = a.width;
+        h = a.height;
+        return a.tex;
+    }
+    w = h = 0;
+    return {}; // 未知页（页已注销/越界）——调用方按无效纹理处理
+}
+
 // ------------------------------------------------------------ 默认图集 ----
 namespace {
 constexpr uint32_t kDefaultAtlasSize = 512;

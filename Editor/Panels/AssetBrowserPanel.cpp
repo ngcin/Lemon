@@ -38,6 +38,8 @@ uint8_t KindOf(AssetType t) {
         case AssetType::Table: return 5; // M6a 批②（暂无拖拽消费者）
         case AssetType::AnimSet: return 6; // M6a 批② T3c（Inspector AnimGraph 集槽）
         case AssetType::Controller: return 7; // T3d（Inspector AnimGraph 状态机槽）
+        case AssetType::Rml: return 8;   // M6a 批③b（暂无拖拽消费者，③c 起 C# 装载）
+        case AssetType::Rcss: return 9;  // M6a 批③b（文档 <link> 引用）
         default: return 3;
     }
 }
@@ -120,9 +122,10 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
     // 状态先取快照：按钮点击当帧改 typeFilter_，前后两次判定会失衡 →
     // 只有 Pop 没有配对 Push（"PopStyleColor too many times" 实测报错）
     {
-        static const char* kLabels[8] = {"全部", "图",   "动画", "集",
-                                         "Prefab", "表", "脚本", "状态机"};
-        for (int i = 0; i < 8; ++i) {
+        static const char* kLabels[10] = {"全部", "图",   "动画", "集",
+                                          "Prefab", "表", "脚本", "状态机",
+                                          "UI 文档", "UI 样式"}; // 批③b 加末两位
+        for (int i = 0; i < 10; ++i) {
             if (i) ImGui::SameLine();
             const bool on = typeFilter_ == i;
             if (on) ImGui::PushStyleColor(ImGuiCol_Button, theme::kAccentDim);
@@ -241,6 +244,8 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
             case 5: return t == AssetType::Table;
             case 6: return t == AssetType::Script;
             case 7: return t == AssetType::Controller; // T3d（.controller）
+            case 8: return t == AssetType::Rml;   // 批③b（.rml）
+            case 9: return t == AssetType::Rcss;  // 批③b（.rcss）
             default: return true;
         }
     };
@@ -326,14 +331,21 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
         float u0, v0, u1, v1;
         const IconKind k = e.type == AssetType::Prefab ? IconKind::AssetPrefab
                           : e.type == AssetType::Script ? IconKind::AssetScript
+                          : e.type == AssetType::Rml ? IconKind::AssetRml       // 批③b
+                          : e.type == AssetType::Rcss ? IconKind::AssetRcss     // 批③b
                                                         : IconKind::AssetGeneric;
         app.Viewport().Assets().IconUV(k, u0, v0, u1, v1);
         uv0 = ImVec2(u0, v0);
         uv1 = ImVec2(u1, v1);
+        // 批③b UI 文档/样式 = 紫罗兰/品红（既有色板外新调，与 Prefab 蓝区分）
+        const ImVec4 kRmlTint{0.616f, 0.533f, 0.902f, 1.0f};
+        const ImVec4 kRcssTint{0.839f, 0.522f, 0.757f, 1.0f};
         tint = e.type == AssetType::Prefab ? theme::kAccent
                : e.type == AssetType::Script ? theme::kTextOk
                : e.type == AssetType::Table ? theme::kTextWarn // 琥珀 = 数据表（M6a 批②）
                : e.type == AssetType::AnimSet ? theme::kAccentDim // 亮蓝灰 = 动画集（T3c）
+               : e.type == AssetType::Rml ? kRmlTint
+               : e.type == AssetType::Rcss ? kRcssTint
                                             : theme::kTextDim;
     }
     const bool selected = e.guid == selectedGuid_; // 单击选中（M6a 批②：表格区锚点）
@@ -372,6 +384,8 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
         if (e.type == AssetType::Table) dims += "\n双击：放大编辑";
         if (e.type == AssetType::Clip)  dims += "\n双击：动画编辑"; // M6a 批② T3
         if (e.type == AssetType::AnimSet) dims += "\n双击：动画工作台"; // M6a 批② T3c
+        if (e.type == AssetType::Rml) dims += "\n双击：装载到游戏 UI（Play 中显示）"; // 批③b
+        if (e.type == AssetType::Rcss) dims += "\n经文档 <link> 引用；改动热重载生效"; // 批③b
         ImGui::SetTooltip("%s\n%s  guid %s\n%s", e.FileName().c_str(), AssetTypeName(e.type),
                           AssetDatabase::GuidToHex(e.guid).c_str(), dims.c_str());
     }
@@ -405,6 +419,10 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
     // 通道（EditorApp 汇聚：.anim 归属集解析 → 集工作台选中该段；.override 直接开集）
     if (doubleClicked && e.type == AssetType::Clip) app.OpenAnimationEditor(e.guid);
     if (doubleClicked && e.type == AssetType::AnimSet) app.OpenAnimationEditor(e.guid);
+
+    // 双击 .rml = 装载到游戏 UI（批③b：③c C# 装载通道落地前的手动通道；
+    // 文档热重载对账键 = relPath）。.rcss 无独立操作（<link> 消费 + 热重载）。
+    if (doubleClicked && e.type == AssetType::Rml) app.LoadUiDocument(e.guid);
 
     // 文件名（截断 12 字符；钉到按钮宽换行——单元格宽确定，网格列距公式才精确；
     // 右键菜单已上移绑缩略图）
