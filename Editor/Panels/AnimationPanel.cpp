@@ -592,6 +592,7 @@ void AnimationPanel::HandlePickerResult(EditorApp& app) {
         }
         pickHasRect_ = false;
         pickSelCells_.clear();
+        pickCountLast_ = 0; // 参数条计数读上一帧缓存——开窗即 0，不吃上一次会话残值
         pickZoom_ = 1.0f;
         pickOpen_ = true; // 边沿触发：第二段模态（选帧对话框）
         pickPending_ = true;
@@ -626,23 +627,26 @@ void AnimationPanel::OpenSheetPickForTest(EditorApp& app, uint64_t guid) {
     }
     pickHasRect_ = false;
     pickSelCells_.clear();
+    pickCountLast_ = 0; // 与真实流同款：开窗计数即 0
     pickZoom_ = 1.0f;
     pickOpen_ = true;
     pickPending_ = true;
 }
 
 void AnimationPanel::DrawSheetPicker(EditorApp& app) {
-    // 第二段：选帧对话框 v3.1（Godot Select Frames 式，截图 docs/animation/）。
-    // 左图区（网格实时重绘 + InvisibleButton 覆盖捕获——修复"图上拖动变成拖
-    // 走整个对话框"）+ 右参数栏（按块数/按像素，改动即清选区——格变了选集无
-    // 意义）+ 底行动态按钮。**添加时**才写 .meta：SetGridSlice → Rescan（连号
-    // 块分配）→ guid 重查。1×1 且未切片 = 整图引用（不写 meta）。
+    // 第二段：选帧对话框 v3.2（Godot Select Frames 式，截图 docs/animation/）。
+    // 上下结构（2026-09-28 用户定案：长条精灵表横向是稀缺项，原右参数栏 252px
+    // 挤宽）：顶部参数条两行（分割/选择/视图横排，改动即清选区——格变了选集无
+    // 意义）+ 图区吃满全宽（网格实时重绘 + InvisibleButton 覆盖捕获——修复"图
+    // 上拖动变成拖走整个对话框"）+ 底行动态按钮（左侧空档放 meta 状态提示）。
+    // **添加时**才写 .meta：SetGridSlice → Rescan（连号块分配）→ guid 重查。
+    // 1×1 且未切片 = 整图引用（不写 meta）。
     if (!pickOpen_) return;
     if (pickPending_) {
         ImGui::OpenPopup("从精灵表添加帧");
         pickPending_ = false;
     }
-    ImGui::SetNextWindowSize(ImVec2(780.0f, 560.0f), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize(ImVec2(780.0f, 600.0f), ImGuiCond_Appearing);
     if (!ImGui::BeginPopupModal("从精灵表添加帧", nullptr, ImGuiWindowFlags_NoSavedSettings)) {
         pickOpen_ = false; // 被外力关——复位，下次入口重开（防僵尸开态）
         return;
@@ -681,18 +685,93 @@ void AnimationPanel::DrawSheetPicker(EditorApp& app) {
     };
     auto [cols, rows, cw, ch] = deriveGrid();
 
-    // ---- 左：图区（缩放可滚；InvisibleButton 覆盖捕获交互）----
-    const float paramW = 252.0f;
+    // ---- 上：参数条两行横排。上下结构（2026-09-28 用户定案）：长条精灵表横向
+    // 是稀缺项，右栏 252px 挤宽 → 参数上移横条、图区吃满全宽 ----
     const float footH = ImGui::GetFrameHeightWithSpacing();
-    ImGui::BeginChild("##pickarea", ImVec2(-paramW, -footH), ImGuiChildFlags_Borders);
+    const float paramH = ImGui::GetFrameHeight() * 2.0f + ImGui::GetStyle().ItemSpacing.y +
+                         ImGui::GetStyle().WindowPadding.y * 2.0f + 2.0f;
+    ImGui::BeginChild("##pickparams", ImVec2(0.0f, paramH), ImGuiChildFlags_Borders);
+    bool changed = false;
+    if (ImGui::RadioButton("按块数", &pickInput_, 0)) changed = true;
+    ImGui::SameLine();
+    if (ImGui::RadioButton("按像素", &pickInput_, 1)) changed = true;
+    ImGui::SameLine();
+    if (pickInput_ == 0) {
+        ImGui::SetNextItemWidth(110.0f);
+        if (ImGui::DragInt("横向块数", &pickCols_, 1.0f, 1, 512)) changed = true;
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(110.0f);
+        if (ImGui::DragInt("纵向块数", &pickRows_, 1.0f, 1, 512)) changed = true;
+    } else {
+        ImGui::SetNextItemWidth(110.0f);
+        if (ImGui::DragInt("cell 宽", &pickCellW_, 1.0f, 1, 4096)) changed = true;
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(110.0f);
+        if (ImGui::DragInt("cell 高", &pickCellH_, 1.0f, 1, 4096)) changed = true;
+    }
+    if (changed) {
+        pickHasRect_ = false;
+        pickSelCells_.clear();
+    }
+    auto [c2, r2, w2, h2] = deriveGrid();
+    ImGui::SameLine();
+    ImGui::TextDisabled("cell %u × %u · 共 %u × %u 块", w2, h2, c2, r2);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("添加时写入图片 .meta（全项目生效）");
+    // 行 2：选择（主操作，Godot 参照常规钮）+ 模式 + 视图
+    if (ImGui::Button("全选##pickall")) {
+        if (pickOrderMode_ == 0) {
+            pickHasRect_ = true;
+            pickR0_ = pickC0_ = 0;
+            pickR1_ = (int)rows - 1;
+            pickC1_ = (int)cols - 1;
+        } else {
+            pickSelCells_.clear();
+            pickSelCells_.reserve((size_t)rows * cols);
+            for (uint32_t r = 0; r < rows; ++r)
+                for (uint32_t c = 0; c < cols; ++c) pickSelCells_.push_back(r * cols + c);
+        }
+    }
+    testhooks::Stash("sheetpick.all", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+    ImGui::SameLine();
+    if (ImGui::Button("清空##picknone")) {
+        pickHasRect_ = false;
+        pickSelCells_.clear();
+    }
+    testhooks::Stash("sheetpick.none", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+    ImGui::SameLine();
+    // 计数画在选择操作处（三图优化点③）；本子窗先于图区画，读上一帧的
+    // pickCountLast_（图区子窗末尾更新，探针同值——滞后一帧无感）
+    ImGui::Text("已选 %d 帧", pickCountLast_);
+    testhooks::Stash("sheetpick.count", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(132.0f);
+    if (ImGui::Combo("##pickorder", &pickOrderMode_, "框选（行优先）\0点选（按点击序）\0")) {
+        pickHasRect_ = false;
+        pickSelCells_.clear();
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("框选 = 拖矩形按行优先入帧\n点选 = 逐格点选，按点击顺序入帧（Godot As Selected）");
+    ImGui::SameLine();
+    ImGui::TextDisabled("│");
+    ImGui::SameLine();
+    if (ImGui::SmallButton("-##pickzoomout")) pickZoom_ = std::max(0.25f, pickZoom_ / 1.25f);
+    ImGui::SameLine();
+    ImGui::TextDisabled("%d%%", (int)(pickZoom_ * 100.0f));
+    ImGui::SameLine();
+    if (ImGui::SmallButton("+##pickzoomin")) pickZoom_ = std::min(8.0f, pickZoom_ * 1.25f);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("图区 Ctrl+滚轮缩放");
+    ImGui::EndChild();
+
+    // ---- 下：图区（余量全吃；缩放可滚；InvisibleButton 覆盖捕获交互）----
+    ImGui::BeginChild("##pickarea", ImVec2(0.0f, -footH), ImGuiChildFlags_Borders);
     if (ImGui::IsWindowHovered() && ImGui::GetIO().KeyCtrl &&
         ImGui::GetIO().MouseWheel != 0.0f)
         pickZoom_ = std::clamp(pickZoom_ * (1.0f + ImGui::GetIO().MouseWheel * 0.1f), 0.25f,
                                8.0f);
     const float availW = ImGui::GetContentRegionAvail().x;
     const float availH = ImGui::GetContentRegionAvail().y;
-    const float fitW = std::min(std::max(availW, 160.0f), 640.0f);
-    const float fitH = std::min(std::max(availH, 120.0f), 440.0f);
+    const float fitW = std::max(availW, 160.0f);
+    const float fitH = std::max(availH, 120.0f);
     float dispW = fitW * pickZoom_;
     const float dispH0 = dispW * (float)h / (float)w;
     if (dispH0 > fitH * pickZoom_) dispW = fitH * pickZoom_ * (float)w / (float)h; // 双向 fit
@@ -778,73 +857,8 @@ void AnimationPanel::DrawSheetPicker(EditorApp& app) {
         }
     }
     ImGui::EndChild();
-    ImGui::SameLine();
 
-    // ---- 右：参数栏（改动即清选区——格变了选集无意义）----
-    ImGui::BeginChild("##pickparams", ImVec2(paramW, -footH), ImGuiChildFlags_Borders);
-    ImGui::SeparatorText("分割（实时预览）");
-    bool changed = false;
-    if (ImGui::RadioButton("按块数", &pickInput_, 0)) changed = true;
-    ImGui::SameLine();
-    if (ImGui::RadioButton("按像素", &pickInput_, 1)) changed = true;
-    if (pickInput_ == 0) {
-        if (ImGui::DragInt("横向块数", &pickCols_, 1.0f, 1, 512)) changed = true;
-        if (ImGui::DragInt("纵向块数", &pickRows_, 1.0f, 1, 512)) changed = true;
-    } else {
-        if (ImGui::DragInt("cell 宽", &pickCellW_, 1.0f, 1, 4096)) changed = true;
-        if (ImGui::DragInt("cell 高", &pickCellH_, 1.0f, 1, 4096)) changed = true;
-    }
-    if (changed) {
-        pickHasRect_ = false;
-        pickSelCells_.clear();
-    }
-    auto [c2, r2, w2, h2] = deriveGrid();
-    ImGui::TextDisabled("cell %u × %u · 共 %u × %u 块", w2, h2, c2, r2);
-    ImGui::TextDisabled("添加时写入图片 .meta（全项目生效）");
-
-    ImGui::SeparatorText("选择");
-    // 常规按钮（原 SmallButton——选择是本对话框主操作，Godot 参照同为常规钮）
-    if (ImGui::Button("全选##pickall")) {
-        if (pickOrderMode_ == 0) {
-            pickHasRect_ = true;
-            pickR0_ = pickC0_ = 0;
-            pickR1_ = (int)rows - 1;
-            pickC1_ = (int)cols - 1;
-        } else {
-            pickSelCells_.clear();
-            pickSelCells_.reserve((size_t)rows * cols);
-            for (uint32_t r = 0; r < rows; ++r)
-                for (uint32_t c = 0; c < cols; ++c) pickSelCells_.push_back(r * cols + c);
-        }
-    }
-    testhooks::Stash("sheetpick.all", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
-    ImGui::SameLine();
-    if (ImGui::Button("清空##picknone")) {
-        pickHasRect_ = false;
-        pickSelCells_.clear();
-    }
-    testhooks::Stash("sheetpick.none", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
-    // 已选计数画在选择操作处（三图优化点③：调格/点选/全选时不必看底行——
-    // 底行动态按钮文案仍带计数，Godot Add N Frame(s) 同款）
-    ImGui::Text("已选 %d 帧", cnt);
-    testhooks::Stash("sheetpick.count", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
-    if (ImGui::Combo("##pickorder", &pickOrderMode_, "框选（行优先）\0点选（按点击序）\0")) {
-        pickHasRect_ = false;
-        pickSelCells_.clear();
-    }
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("框选 = 拖矩形按行优先入帧\n点选 = 逐格点选，按点击顺序入帧（Godot As Selected）");
-
-    ImGui::SeparatorText("视图");
-    if (ImGui::SmallButton("-##pickzoomout")) pickZoom_ = std::max(0.25f, pickZoom_ / 1.25f);
-    ImGui::SameLine();
-    ImGui::TextDisabled("%d%%", (int)(pickZoom_ * 100.0f));
-    ImGui::SameLine();
-    if (ImGui::SmallButton("+##pickzoomin")) pickZoom_ = std::min(8.0f, pickZoom_ * 1.25f);
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("图区 Ctrl+滚轮缩放");
-    ImGui::EndChild();
-
-    // ---- 底行：取消/产出（计数本体在右栏「选择」区；底行动态按钮文案仍带
+    // ---- 底行：取消/产出（计数本体在参数条「选择」处；底行动态按钮文案仍带
     // 计数——按钮即反馈，Godot Add N Frame(s) 同款）----
     const auto buildFrames = [&]() {
         std::vector<ClipFrame> out;
@@ -857,10 +871,15 @@ void AnimationPanel::DrawSheetPicker(EditorApp& app) {
         }
         return out;
     };
+    // meta 状态提示放底行左侧空档（上下结构批自右栏移来；悬停 cell 信息另有
+    // 同文 tooltip）——末行固定高（-footH 预留），SameLine 防提示顶出第二行
+    ImGui::TextDisabled("添加时写入图片 .meta（全项目生效）");
+    ImGui::SameLine();
+    // 底行三钮（取消/添加/替换为）：右对齐按整行宽让位（按两钮算 = 整行右溢出窗）
     const float bw = 150.0f;
-    ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(),
-                                  ImGui::GetContentRegionAvail().x - bw * 2.0f -
-                                      ImGui::GetStyle().ItemSpacing.x));
+    const float rowW = bw * 3.0f + ImGui::GetStyle().ItemSpacing.x * 2.0f;
+    const float rightX = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - rowW;
+    ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), rightX));
     if (ImGui::Button("取消", ImVec2(bw, 0)) ||
         (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !ImGui::IsAnyItemActive())) {
         pickOpen_ = false;
@@ -920,6 +939,11 @@ void AnimationPanel::DrawSheetPicker(EditorApp& app) {
         }
     }
     ImGui::EndDisabled();
+    // 越窗锁探针：替换为 = 底行最右钮，与模态窗矩形同帧登记（smoke f80 断言右缘
+    // 在窗内——cnt=0 时按钮禁用但照常渲染）
+    testhooks::Stash("sheetpick.win", ImGui::GetWindowPos(),
+                     ImGui::GetWindowPos() + ImGui::GetWindowSize());
+    testhooks::Stash("sheetpick.replace", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
     ImGui::EndPopup();
 }
 

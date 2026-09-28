@@ -2838,7 +2838,8 @@ int EditorApp::Run(const EditorLaunch& launch) {
     bool smokeSetModalQueuedPrev = false; // 诊断：模态 queued 探针的帧间沿
     bool smokePickClickOk = false, smokePickShiftOk = false, smokePickAllOk = false;
     bool smokePickFlowDone = false;
-    bool smokeSheetAllOk = false, smokeSheetClearOk = false, smokeSheetCloseOk = false;
+    bool smokeSheetAllOk = false, smokeSheetClearOk = false, smokeSheetCloseOk = false,
+         smokeSheetRowOk = false;
     bool smokeSheetFlowDone = false; // 三图优化点③：选帧对话框计数/清空/关窗
     bool smokeAddCountOk = false, smokeAddOrderOk = false, smokeAddFlowDone = false;
     size_t smokeAddBase = 0; // 帧序事故回归：多图追加前编辑态帧数基数
@@ -3815,6 +3816,16 @@ int EditorApp::Run(const EditorLaunch& launch) {
                         static_cast<AnimationPanel*>(en->panel)->SheetPickCountForTest() == 4;
                 if (!smokeSheetAllOk)
                     LEMON_ERROR("smoke-anim：选帧对话框全选后已选计数 != 4");
+            } else if (frame == 80) {
+                // 底行越窗锁（2026-09-28 用户截图报：右对齐公式按两钮算，「替换为」
+                // 整钮出窗、「添加」右缘贴边被裁）：对话框开着的帧取替换钮与模态窗
+                // 矩形（TestHooks 每帧清空，只能在开窗帧断），右缘须在窗内。
+                ImVec2 rmn, rmx, wmn, wmx;
+                smokeSheetRowOk = testhooks::Find("sheetpick.replace", rmn, rmx) &&
+                                  testhooks::Find("sheetpick.win", wmn, wmx) &&
+                                  rmx.x <= wmx.x - 2.0f;
+                if (!smokeSheetRowOk)
+                    LEMON_ERROR("smoke-anim：底行「替换为」按钮越出选帧对话框窗界");
             } else if (frame == 82) {
                 ImVec2 mn, mx;
                 const bool cntRect = testhooks::Find("sheetpick.count", mn, mx);
@@ -4962,6 +4973,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
                      smokeGraphCacheOk && smokeGraphSwitchOk &&
                      smokePickClickOk && smokePickShiftOk && smokePickAllOk &&
                      smokeSheetAllOk && smokeSheetClearOk && smokeSheetCloseOk &&
+                     smokeSheetRowOk &&
                      smokeAddCountOk && smokeAddOrderOk &&
                      smokeFolderCreateOk && smokeDblClipOk &&
                      smokeDragItemOk &&
@@ -4970,7 +4982,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
                         "queue(hitClip=%s hit=%s back=%s) fx(text/bar=%s) "
                         "edit(rt=%s cache=%s whole=%s) set(rt=%s cache=%s open=%s "
                         "create=%s flow=%s) graph(rt=%s cache=%s switch=%s) "
-                        "pick(click=%s shift=%s all=%s sheet(all=%s clear=%s close=%s)) "
+                        "pick(click=%s shift=%s all=%s sheet(all=%s clear=%s close=%s row=%s)) "
                         "multiadd(count=%s order=%s) create(folder=%s dblclip=%s) "
                         "drag(item=%s) leftcol(meta=%s) => %s\n",
                         (unsigned)smokeAnimMax[0], smokeAnimSlice[0] ? "YES" : "NO",
@@ -4986,6 +4998,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
                         smokePickClickOk ? "YES" : "NO", smokePickShiftOk ? "YES" : "NO",
                         smokePickAllOk ? "YES" : "NO", smokeSheetAllOk ? "YES" : "NO",
                         smokeSheetClearOk ? "YES" : "NO", smokeSheetCloseOk ? "YES" : "NO",
+                        smokeSheetRowOk ? "YES" : "NO",
                         smokeAddCountOk ? "YES" : "NO", smokeAddOrderOk ? "YES" : "NO",
                         smokeFolderCreateOk ? "YES" : "NO", smokeDblClipOk ? "YES" : "NO",
                         smokeDragItemOk ? "YES" : "NO",
