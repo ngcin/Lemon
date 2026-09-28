@@ -262,6 +262,43 @@ clipId = `.clip` 资产 GUID 低 32 位（prefabId 同款映射约定）；编�
 段收尾边沿（an.ended；loop 段 exitTime 不触发，挂起）。缺绑目标状态 = warn-once
 保持当前状态（词表不对称的正当形态，ADR-013 D4）。不消费 RNG（不占子流）。
 
+### 8.3 属性补间（A 档 tween；2026-09-28 用户插入项）
+
+> 立项口径：三档评估（当日会话）拆开「运行时补间 API（A 档）」与「关键帧属性
+> 动画 + dope sheet 编辑器（B 档）」，用户拍板 **只做 A 档**——无新资产格式、
+> 无编辑器面、无新 ECS 组件；B 档明确不列入计划（缓动纯函数与 FieldMeta 字段
+> 寻址是将来可直接复用的地皮）。
+
+**表（`ECS/TweenTable.h`，World 持有）**：补间条目 {单调句柄（u64 不回收）、
+实体、compId、字段偏移、值形、缓动、模式、from/to[4]、elapsed、duration}。
+World 级指令通道（§13 纪律：**不入 StateHash**——效果经组件字段本就入哈希，
+基准场零调用 = 金回放零漂移（空表系统早退，结构性保证）；EnterPlay 新建
+World 自清零）。
+
+**#16.5 TweenSystem（插 AnimGraph 后、事件派发前；注册序尾插不占 RNG 子流）**：
+
+- 脚本（CSharpBatch）当 tick 发起的补间**本 tick 即首写**；完成事件当帧派发；
+- **存活补间拥有字段**：同帧脚本后写被覆写（与 Animator「脚本可覆写」相反且
+  同族自洽——帧动画是持久档面数据、补间是瞬时指令，最近指令终审，打架可见
+  而非静默失效）；同实体同字段新建 = 顶替旧补间（DOTween 同款）；Kill/Once
+  完成后归还脚本；
+- 字段寻址 = **FieldMeta 按名**（Inspector/序列化同一元数据，零新反射）：建时
+  一次解析存偏移，逐 tick `getFn` 可写取址直写；类型白名单 Float / Vec2 /
+  UInt32（按四字节颜色通道 0..255 插值——现目录唯一值得补间的 UInt32 =
+  colorRGBA；spriteId 等语义外用法作者自慎，建链白名单外拒建返 0）；
+- 推进 = elapsed 累计 + **缓动纯函数**（9 种：Linear/In·Out·InOutQuad/
+  Out·InOutCubic/OutBack/OutElastic/OutBounce——Back/Elastic 过冲是手感来源）；
+  Mode **Once**（完成发 `TweenFinished` 事件，src=实体、userArg=句柄，恰一次）/
+  **Yoyo**（三角波永续往返，无完成事件——待机呼吸/悬浮用，Kill 停）；dt 缩放
+  先于系统 → timeScale=0 冻结；duration≤0 = 建立当 tick 即完成；
+- 实体亡 / 组件被摘 = 条目静默自清（正常路径不告警）。
+
+**SDK 面（`Lemon.Tween` 静态类 + C ABI 4 桥表尾追加，04 §3 native 表注记）**：
+通用 `To<T>(g, 字段名, float/Vec2/uint, dur, ease, mode)` + 常用糖
+Position/Scale(+uniform)/Rotation/Color/Alpha（保 RGB 换 A）+ `Alive(handle)`
+轮询 + `Kill<T>`/`KillAll`。典型用法：受击闪白 `Tween.Color(g, 白, 0.1f)`、
+拾取弹跳 `Tween.Scale(g, 1.4f, 0.25f, Ease.OutBack)`、待机呼吸 Yoyo。
+
 ## 9. Team 势力系统（照搬 yami `Data/teams.json` schema）
 
 ```json

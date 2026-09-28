@@ -351,6 +351,7 @@ public enum GameEvent : ushort
     TimerFire, Custom, // 用户自定义区起点（Custom + 用户资产注册 id）
     AnimFrame,    // T3d 批③：帧事件（user = 事件 id；userArg = clipId；payload[0] = 帧号）
     AnimFinished, // T3d 批③：非 loop 段播完（userArg = clipId；补 IsPlaying 判不了播完的缺口）
+    TweenFinished, // A 档补间（2026-09-28）：Once 完成恰一次（src = 实体；userArg = tween 句柄）
 }
 
 [StructLayout(LayoutKind.Sequential)]

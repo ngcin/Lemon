@@ -247,6 +247,18 @@ private:
     bool warnedStateMiss_ = false;   // 当前段反查词表失败告警一次
 };
 
+/// #16.5 属性补间推进（A 档 tween，2026-09-28）：World.Tweens 表消费——推进 +
+/// 经 FieldMeta 偏移直写组件字段 + Once 完成入队 TweenFinished。插 AnimGraph 后、
+/// 事件派发前：脚本（CSharpBatch）当 tick 发起的补间**本 tick 即首写**；存活
+/// tween 拥有字段（同帧脚本写被覆写——瞬时指令最近者终审，与 Animator 的
+/// "持久档面脚本终审"相反但同族自洽，语义见 03 §8.3）；完成事件当帧派发。
+/// 不消费 RNG（不占子流，尾插不移位既有 id）。空表早退 = 基准场零成本零漂移。
+class TweenSystem final : public ISystem {
+public:
+    const char* Name() const override { return "Tween"; }
+    void Tick(World& world, Scene& scene, float dt) override;
+};
+
 /// #17 事件派发：帧末批量派发给事件汇后清空（M3 换 C# 桥端）
 class ScriptEventDispatchSystem final : public ISystem {
 public:

@@ -82,6 +82,17 @@ struct NativeApiVtable {
     // 实体所绑 .controller 参数表定序槽位；表尾追加同上约定。空宿主/未绑
     // controller/表未登记/参数表无名 = -1。低频桥，基准场零调用 = 零漂移）----
     int32_t (*animParamSlot)(uint64_t entity, const char* name);     // 槽位 0..7；-1 = 解析失败
+    // ---- A 档运行时补间（2026-09-28：Lemon.Tween → World.Tweens；表尾追加同上
+    // 约定。tweenTo 失败（空宿主/实体亡/组件缺/字段名未命中/类型不可插值）= 0
+    // 句柄 + warn-once；基准场零调用 = 零漂移。ease/mode 取值 = TweenEase/
+    // TweenMode 枚举（引擎侧防御钳）----
+    uint64_t (*tweenTo)(uint64_t entity, uint8_t compId, const char* field,
+                        const float* to4, float duration, uint8_t ease,
+                        uint8_t mode); // 补间句柄（0 = 失败；Alive/TweenFinished userArg 用）
+    int32_t (*tweenKill)(uint64_t entity, uint8_t compId,
+                         const char* field); // 删同实体同字段（field 空 = 该组件全部）；返回移除数
+    int32_t (*tweenKillEntity)(uint64_t entity); // 删该实体全部；返回移除数
+    int32_t (*tweenAlive)(uint64_t handle);      // 0/1（低频轮询）
 };
 
 /// 编辑器资产钩子（M4.4：编辑器宿主装配期经 SetEditorAssetHooks 注入；

@@ -1271,6 +1271,11 @@ void AnimGraphSystem::Tick(World& world, Scene& scene, float dt) {
     }
 }
 
+// ------------------------------------------- #16.5 属性补间推进（A 档 tween）----
+void TweenSystem::Tick(World& world, Scene& scene, float dt) {
+    world.Tweens().Advance(world, scene, dt); // 空表内部早退（基准场零成本零漂移）
+}
+
 // ---------------------------------------------------- #16 事件派发 --------
 void ScriptEventDispatchSystem::Tick(World& world, Scene& scene, float dt) {
     (void)scene; (void)dt;
@@ -1332,6 +1337,9 @@ void World::InstallDefaultSystems() {
     // T3d 批②：图评估尾插在 C# 批量之后（读当 tick 脚本参数）、事件派发之前。
     // 不消费 RNG——不占子流；其后系统（事件派发/销毁提交）本就不消费，id 语义零影响。
     p.AddSystem(std::make_unique<AnimGraphSystem>());
+    // A 档补间（2026-09-28）：同位置尾插——脚本当 tick 发起的补间本 tick 即首写、
+    // 完成事件当帧派发；不消费 RNG，其后系统（事件派发/销毁提交）不消费，零影响。
+    p.AddSystem(std::make_unique<TweenSystem>());
     p.AddSystem(std::make_unique<ScriptEventDispatchSystem>());
     p.AddSystem(std::make_unique<DestroyCommitSystem>()); // Essential 阶段
     p.ResolveOrder();

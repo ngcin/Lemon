@@ -314,11 +314,11 @@ void TestDomainManager() {
         Expect(d2 == (double)0.1f, "hot-reload new domain fresh state");
         Expect(leaks >= 0 && leaksFn && leaksFn() == leaks, "leak count visible + consistent");
         Expect(reloadsFn && reloadsFn() >= 1, "reload count visible");
-        // 换装后新域 GameMain.Configure 已跑：behaviours 列表可拉（15 个类型）
+        // 换装后新域 GameMain.Configure 已跑：behaviours 列表可拉（16 个类型）
         auto listFn = (int (*)(char*, int))GetExport("lemon_behaviours_list");
         char buf[4096];
         int n = listFn ? listFn(buf, (int)sizeof buf) : -1;
-        Expect(n == 15, "behaviours list after hot reload (+M11/M15/F-08.2/T3/b1/b2/T3c/T3d probes)");
+        Expect(n == 16, "behaviours list after hot reload (+M11/M15/F-08.2/T3/b1/b2/T3c/T3d/A档tween probes)");
         // M4.6 回归（用户实测闪退根因）：相对路径进 dm_reload 曾抛 ArgumentException
         // 逃逸 UnmanagedCallersOnly → coreclr abort。拦截层必须转 0 返回且进程存活
         // （本断言能跑到 = 进程没死）。换装失败后旧域已弃——再换一次真路径恢复。
@@ -1256,6 +1256,112 @@ void TestAnimGraphProbe() {
     }
 }
 
+// A 档补间通道端到端（2026-09-28 用户插入项；vtable 尾加 4 项 → C# Lemon.Tween
+// 全 API 面 → TweenSystem 推进 → 组件字段精确值/事件/所有权语义）。管线：
+// 脚本批 → Tween（脚本后跑 = 存活补间拥有字段、当 tick 首写）→ 事件派发 →
+// 销毁提交。TweenProbeBehaviour typeId 15 表尾注册。
+void TestTweenSdk() {
+    using namespace lemon::ecs;
+    auto timeResetFn = (void (*)())GetExport("lemon_time_reset");
+    Expect(timeResetFn, "tween: time reset export resolved");
+    timeResetFn(); // 探针按 FrameCount 分段——本测试 = 新一局
+
+    WorldDesc d;
+    d.threadCount = 1;
+    World w(d);
+    Scene& s = w.CreateScene("Tween");
+    w.SetActiveScene(&s);
+    w.SetScriptBackend(&g_sh);
+    // 注册序 = 执行序：脚本批 → 补间推进 → 事件派发（完成事件当帧可见）→ 销毁提交
+    w.Pipeline().AddSystem(std::make_unique<CSharpBatchSystem>());
+    w.Pipeline().AddSystem(std::make_unique<TweenSystem>());
+    w.Pipeline().AddSystem(std::make_unique<ScriptEventDispatchSystem>());
+    w.Pipeline().AddSystem(std::make_unique<DestroyCommitSystem>());
+    w.Pipeline().ResolveOrder();
+
+    // 标记位：1601=建 1611=拒建双探 1701=句柄活 1620=Yoko 起 1631=Kill(pos)
+    // 1640=冲突起 1651=轮询(亡/活) 1661=KillAll
+    int saw[8] = {0};
+    int finished = 0;
+    w.SetEventSink([&](World&, const EventPacket& p) {
+        if (p.type == GameEvent::Custom) {
+            int idx = p.user == 1601 ? 0 : p.user == 1611 ? 1 : p.user == 1701 ? 2
+                     : p.user == 1620   ? 3 : p.user == 1631 ? 4 : p.user == 1640 ? 5
+                     : p.user == 1651   ? 6 : p.user == 1661 ? 7 : -1;
+            if (idx >= 0) ++saw[idx];
+        } else if (p.type == GameEvent::TweenFinished) {
+            ++finished;
+        }
+    });
+
+    Entity e = s.Create();
+    s.Emplace<Transform2D>(e); // scale=(1,1)、pos=(0,0) 默认
+    SpriteRenderer& sr = s.Emplace<SpriteRenderer>(e);
+    sr.colorRGBA = 0xFF0000FFu; // 不透明红（r=255,g=b=0）
+    g_sh.AttachBehaviour(w, s, e, 15); // TweenProbe（表尾 typeId 15）
+
+    const float dt = 0.25f;
+    w.Step(dt); // 帧1：建 Scale(1→3,1s,Linear) + 拒建双探 + 存活轮询
+    Expect(saw[0] == 1 && saw[1] == 1 && saw[2] == 1, "tween: 帧标记齐（建/拒建双探/活）");
+    {
+        const Transform2D& t = s.Get<Transform2D>(e);
+        Expect(t.scale.x == 1.5f && t.scale.y == 1.5f, "tween: 当 tick 首写（0.25 → 1.5）");
+    }
+    Expect(w.Tweens().Count() == 1, "tween: 单条存活");
+
+    w.Step(dt); // 帧2-3：线性中值
+    Expect(s.Get<Transform2D>(e).scale.x == 2.0f, "tween: 线性 0.5 → 2.0");
+    w.Step(dt);
+    Expect(s.Get<Transform2D>(e).scale.x == 2.5f, "tween: 线性 0.75 → 2.5");
+
+    w.Step(dt); // 帧4：Once 完成
+    {
+        const Transform2D& t = s.Get<Transform2D>(e);
+        Expect(t.scale.x == 3.0f && t.scale.y == 3.0f, "tween: 终值精确 3.0");
+    }
+    Expect(finished == 1, "tween: TweenFinished 恰一次");
+    Expect(w.Tweens().Count() == 0, "tween: 完成即移除");
+
+    w.Step(dt); // 帧5：Yoyo pos 0→10（1s）
+    Expect(saw[3] == 1, "tween: Yoyo 起标");
+    Expect(s.Get<Transform2D>(e).pos.x == 2.5f, "tween: Yoyo 上行 0.25 → 2.5");
+    w.Step(dt);
+    w.Step(dt);
+    Expect(s.Get<Transform2D>(e).pos.x == 7.5f, "tween: Yoyo 上行 0.75 → 7.5");
+    w.Step(dt); // 帧8：峰
+    Expect(s.Get<Transform2D>(e).pos.x == 10.0f, "tween: Yoyo 峰值 10");
+
+    w.Step(dt); // 帧9：Kill(pos) + Color(白,0.5s)
+    Expect(saw[4] == 1, "tween: Kill(pos) 移除 1");
+    {
+        const Transform2D& t = s.Get<Transform2D>(e);
+        Expect(t.pos.x == 10.0f && t.pos.y == 0.0f, "tween: Kill 后字段冻结峰值");
+    }
+    Expect(s.Get<SpriteRenderer>(e).colorRGBA == 0xFF8080FFu, "tween: 颜色字节中值 0x80");
+    Expect(w.Tweens().Count() == 1, "tween: 颜色补间存活");
+
+    w.Step(dt); // 帧10：颜色完成
+    Expect(s.Get<SpriteRenderer>(e).colorRGBA == 0xFFFFFFFFu, "tween: 颜色终值白");
+    Expect(finished == 2, "tween: 第二次完成事件");
+    Expect(w.Tweens().Count() == 0, "tween: 表清空");
+
+    w.Step(dt); // 帧11：字段所有权（脚本写 99 从下帧起，本帧 tween 独写）
+    Expect(saw[5] == 1, "tween: 冲突起标");
+    Expect(s.Get<Transform2D>(e).pos.x == 15.0f, "tween: 脚本后建 tween 当帧生效（10→30 的 0.25 → 15）");
+
+    w.Step(dt); // 帧12：轮询 + KillAll + 自毁
+    Expect(saw[6] == 1, "tween: 轮询（scale 句柄亡/pos 句柄活）");
+    Expect(saw[7] == 1, "tween: KillAll 移除 1");
+    Expect(s.Get<Transform2D>(e).pos.x == 99.0f, "tween: Kill 归还字段（脚本 99 站住）");
+    Expect(w.Tweens().Count() == 0, "tween: KillAll 后清空");
+    w.Step(dt); // 应用销毁
+    Expect(!s.Alive(e), "tween: probe self-destroyed");
+
+    // 新 World 自清零（EnterPlay 同语义）
+    World w2(d);
+    Expect(w2.Tweens().Count() == 0, "tween: fresh world table clear");
+}
+
 // M6a 批② T2：配置表通道端到端（TableStore 登记 → vtable 尾加 3 项 →
 // C# Lemon.Table 全 API 面 + 无表降级 + 越界格 + 容错数值 → RtUi 回读断言；
 // TableProbeBehaviour typeId 12 表尾注册）
@@ -1388,6 +1494,7 @@ int main() {
     TestTableChannel(); // M6a 批② T2：Lemon.Table 配置表通道端到端
     TestClipByName();   // M6a 批② T3c：动画集按名解析通道端到端
     TestAnimGraphProbe(); // M6a 批② T3d：状态机通道（绑定/参数/trigger/exitTime/帧事件）
+    TestTweenSdk();     // A 档补间（2026-09-28 用户插入项）：Lemon.Tween 通道端到端
 
     // M4.6 探针（编辑器切项目场景）：同进程二次 ScriptHost 生命周期。CoreCLR 运行时
     // 进程单例——第二次 Initialize 的真实行为必须钉板（成功/失败都合法，崩 = 缺陷）。

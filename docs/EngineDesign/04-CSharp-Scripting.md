@@ -248,6 +248,15 @@ public readonly struct Transform               // 视图结构：逐属性访问
   ClipId——纯 Animator2D 字段读写，clipId = clip 资产 GUID 低 32 位客户端自算，
   换段语义见 03 §8.1）、`Lemon.Fx`（Text 飘字/数字 + Bar 世界血条——呈现层专用
   不入 StateHash，池化上限飘字 256/血条 128 最老者淘汰）。
+  **A 档补间（2026-09-28 用户插入项）追加 4 项**——`tweenTo`（建补间 → 单调
+  句柄；0 = 失败：实体亡/组件缺/字段名未命中/类型白名单外，warn-once）/
+  `tweenKill`（同实体同字段，field 空 = 该组件全部）/`tweenKillEntity`/
+  `tweenAlive`（低频轮询）→ World.Tweens，TweenSystem 推进（语义见 03 §8.3：
+  **存活补间拥有字段**——同帧脚本写被覆写、同字段新建顶替、Kill/完成后归还）。
+  SDK 新面：`Lemon.Tween`（通用 `To<T>(g, 字段名, float/Vec2/uint, dur, ease,
+  mode)` + Position/Scale(+uniform)/Rotation/Color/Alpha 糖 + Alive/Kill/KillAll；
+  字段名 = Inspector/序列化同名，白名单 Float/Vec2/UInt32 颜色）；事件侧
+  GameEvent 尾加 `TweenFinished`（Once 完成恰一次，userArg = 句柄）。
   **字符串跨界一律 UTF-8**（SDK `CopyUtf8`：ASCII 快路径零分配 + 多字节不切断——
   批④ 前逐 char 截字节只对 ASCII 正确，中文 HUD 会乱码）。
 

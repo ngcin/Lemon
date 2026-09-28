@@ -22,6 +22,7 @@
 #include "ECS/SystemPipeline.h"
 #include "ECS/TableStore.h"
 #include "ECS/TeamTable.h"
+#include "ECS/TweenTable.h"
 
 namespace lemon::ecs {
 
@@ -158,6 +159,12 @@ public:
     FxChannel& Fx() { return fx_; }
     const FxChannel& Fx() const { return fx_; }
 
+    // ---- 运行时属性补间表（A 档 tween，2026-09-28；TweenTable 头说明——C#
+    // Lemon.Tween 建/Kill，TweenSystem 推进；指令态不入 StateHash，效果经组件
+    // 字段入哈希；基准场零调用 = 零漂移，EnterPlay 新建 World 自清零）----
+    TweenTable& Tweens() { return tweens_; }
+    const TweenTable& Tweens() const { return tweens_; }
+
     // ---- HUD 三选一卡片（上方 RtUiCards 说明）----
     RtUiCards& Cards() { return cards_; }
     const RtUiCards& Cards() const { return cards_; }
@@ -223,6 +230,7 @@ private:
     FxChannel fx_;
     SaveChannel saves_;
     TableStore tables_; // M6a 批②：.tab 配置表（Tables()；非 ECS 通道，零重录）
+    TweenTable tweens_; // A 档补间（Tweens()；指令态通道，零重录）
     uint64_t tick_ = 0;
     float timeScale_ = 1.0f;
 };

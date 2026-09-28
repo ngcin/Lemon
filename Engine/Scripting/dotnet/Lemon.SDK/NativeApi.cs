@@ -38,6 +38,10 @@ public unsafe struct NativeApi
     public delegate* unmanaged<byte*, int, int, byte*, uint, int> TableCell;   // M6a 批②：-1 越界/无表 -2 cap 不足；返回拷贝数
     public delegate* unmanaged<ulong, byte*, long> ClipByName;                 // M6a 批② T3c：集内按名 → clipId；-1 = 失败（T3d 起优先 AnimGraph 绑定集）
     public delegate* unmanaged<ulong, byte*, int> AnimParamSlot;               // T3d 批②：实体所绑 controller 参数名 → 槽位 0..7；-1 = 失败
+    public delegate* unmanaged<ulong, byte, byte*, float*, float, byte, byte, ulong> TweenTo; // A 档：建补间 → 句柄（0 = 失败）
+    public delegate* unmanaged<ulong, byte, byte*, int> TweenKill;             // A 档：删同实体同字段（field 空 = 该组件全部）；返回移除数
+    public delegate* unmanaged<ulong, int> TweenKillEntity;                    // A 档：删该实体全部；返回移除数
+    public delegate* unmanaged<ulong, int> TweenAlive;                         // A 档：句柄存活 0/1
 }
 
 internal static unsafe class Native
@@ -291,4 +295,30 @@ internal static unsafe class Native
         CopyUtf8(name, p, 63);
         return Api.AnimParamSlot(entity, p);
     }
+
+    // ---- A 档补间（Lemon.Tween；旧宿主未注册 = 句柄 0 / 移除数 0 降级）----
+
+    internal static unsafe ulong TweenTo(ulong entity, byte compId, string field, float* to4,
+                                         float duration, byte ease, byte mode)
+    {
+        if (Api.TweenTo == null || field == null) return 0;
+        byte* f = stackalloc byte[64];
+        CopyUtf8(field, f, 63);
+        return Api.TweenTo(entity, compId, f, to4, duration, ease, mode);
+    }
+
+    internal static unsafe int TweenKill(ulong entity, byte compId, string? field)
+    {
+        if (Api.TweenKill == null) return 0;
+        if (field == null) return Api.TweenKill(entity, compId, null);
+        byte* f = stackalloc byte[64];
+        CopyUtf8(field, f, 63);
+        return Api.TweenKill(entity, compId, f);
+    }
+
+    internal static int TweenKillEntity(ulong entity)
+        => Api.TweenKillEntity != null ? Api.TweenKillEntity(entity) : 0;
+
+    internal static int TweenAlive(ulong handle)
+        => Api.TweenAlive != null ? Api.TweenAlive(handle) : 0;
 }

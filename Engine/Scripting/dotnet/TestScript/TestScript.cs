@@ -43,6 +43,9 @@ public static class GameMain
         // M6a 批② T3d：状态机通道（AnimGraph 绑定 + SetParam/Trigger + exitTime，
         // typeId 14，表尾注册同上约定）
         Lemon.Behaviours.Register<AnimGraphProbeBehaviour>();
+        // A 档补间（2026-09-28 用户插入项）：Lemon.Tween 全 API 面（typeId 15，
+        // 表尾注册同上约定）
+        Lemon.Behaviours.Register<TweenProbeBehaviour>();
     }
 }
 
@@ -475,6 +478,60 @@ public sealed class AnimGraphProbeBehaviour : Lemon.LemonBehaviour
         } else if (fc == 20) {
             var an = gameObject.GetComponent<Lemon.Interop.Animator2D>();
             Mark(an.ClipId == 0x11 ? (ushort)1420 : (ushort)1490);
+            gameObject.Destroy();
+        }
+    }
+}
+
+/// <summary>A 档补间验收（typeId 15，表尾注册同上约定；2026-09-28 用户插入项）。
+/// C++ 侧（script-tests TestTweenSdk）：管线含 TweenSystem（脚本批后推进）。
+/// 实体初值：scale=(1,1)、pos=(0,0)、colorRGBA=红 0xFF0000FF。帧序（Custom user）：
+/// 帧1 拒建双探（字段名未命中 / 类型白名单外 → 1611）+ 建 Scale(3f,1s,Linear) →
+/// 1601 + 句柄存活 → 1701；帧5 Position Yoyo(10,0,1s) → 1620；帧9 Kill(pos)
+/// （移除数 1 → 1631，pos 冻结在 Yoyo 峰值 10）+ Color(白,0.5s)；帧11 字段所有权
+/// 反面：脚本每帧直写 pos=99（存活 tween 覆写）→ 1640；帧12 轮询（scale 句柄亡 /
+/// pos 句柄活 → 1651）+ KillAll（移除数 1 → 1661）后自毁——Kill 后脚本终值 99 站住。</summary>
+public sealed class TweenProbeBehaviour : Lemon.LemonBehaviour
+{
+    private long _h, _h2;
+    private bool _conflict;
+
+    private void Mark(ushort id)
+        => Lemon.Events.Push(Lemon.Interop.GameEvent.Custom, id, default, default);
+
+    protected override void Update()
+    {
+        if (_conflict) {
+            // 字段所有权反面：脚本持续直写 pos=99——存活 tween 每帧覆写（引擎侧后跑）
+            var t = gameObject.GetComponent<Lemon.Interop.Transform2D>();
+            t.Pos = new Lemon.Vec2(99f, 99f);
+            gameObject.SetComponent(t);
+        }
+        var fc = Lemon.Time.FrameCount;
+        if (fc == 1) {
+            long badName = Lemon.Tween.To<Lemon.Interop.Transform2D>(gameObject, "nope", 1f, 1f);
+            long badType = Lemon.Tween.To<Lemon.Interop.SpriteRenderer>(gameObject, "spriteGuid", 5u, 1f);
+            Mark((ushort)(1600 + (badName == 0 ? 10 : 0) + (badType == 0 ? 1 : 0))); // 1611
+            _h = Lemon.Tween.Scale(gameObject, 3f, 1.0f, Lemon.Tween.Ease.Linear);
+            Mark(1601);
+            Mark((ushort)(1700 + (Lemon.Tween.Alive(_h) ? 1 : 0))); // 1701
+        } else if (fc == 5) {
+            _h2 = Lemon.Tween.Position(gameObject, new Lemon.Vec2(10f, 0f), 1.0f,
+                                       Lemon.Tween.Ease.Linear, Lemon.Tween.Mode.Yoyo);
+            Mark(1620);
+        } else if (fc == 9) {
+            int killed = Lemon.Tween.Kill<Lemon.Interop.Transform2D>(gameObject, "pos");
+            Mark((ushort)(1630 + killed)); // 1631
+            Lemon.Tween.Color(gameObject, 0xFFFFFFFFu, 0.5f, Lemon.Tween.Ease.Linear);
+        } else if (fc == 11) {
+            _conflict = true; // 下一帧起脚本每帧写 99（本帧先让 tween 独写，断言 15）
+            _h2 = Lemon.Tween.Position(gameObject, new Lemon.Vec2(30f, 0f), 1.0f,
+                                       Lemon.Tween.Ease.Linear);
+            Mark(1640);
+        } else if (fc == 12) {
+            Mark((ushort)(1650 + (Lemon.Tween.Alive(_h) ? 10 : 0)
+                        + (Lemon.Tween.Alive(_h2) ? 1 : 0))); // 1651
+            Mark((ushort)(1660 + Lemon.Tween.KillAll(gameObject))); // 1661
             gameObject.Destroy();
         }
     }

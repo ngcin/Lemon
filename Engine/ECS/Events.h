@@ -24,6 +24,10 @@ enum class GameEvent : uint16_t {
     // 帧内数据不入档不入哈希，两侧同编译即安全）：
     AnimFrame,    // 帧事件（user = 事件 id；userArg = clipId；payload[0] = 帧号）
     AnimFinished, // 非 loop 段播完（userArg = clipId；补 SDK IsPlaying 判不了播完的缺口）
+    // A 档补间（2026-09-28，表尾追加同上约定）：Once 完成恰一次（Yoyo 无完成）。
+    // src = 补间实体，userArg = tween 句柄（Lemon.Tween 返回值；Events.Subscribe
+    // (GameEvent.TweenFinished) 消费，与 AnimFinished 同款）。
+    TweenFinished,
 };
 
 struct EventPacket {

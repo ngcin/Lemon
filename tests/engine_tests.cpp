@@ -1029,28 +1029,30 @@ void TestSystemPipelineOrder() {
     world.InstallDefaultSystems();
     auto& p = world.Pipeline();
 
-    Expect(p.Systems().size() == 18, "18 systems installed（T3d 批② +AnimGraphSystem）");
+    Expect(p.Systems().size() == 19, "19 systems installed（T3d 批② +AnimGraphSystem；A 档 +TweenSystem）");
     // Essential 阶段只有 DestroyCommit；FixedTick 按表序
     // （#9 Pickup = M5 批①；T3d 批② AnimGraph 插在 CSharpBatch 后——图评估读当
-    // tick 脚本参数，写段由下一 tick Animator 消费，与脚本直写 Play 同拍）
+    // tick 脚本参数，写段由下一 tick Animator 消费，与脚本直写 Play 同拍；
+    // A 档补间 Tween 插在 AnimGraph 后、事件派发前——脚本当 tick 发起即首写、
+    // 存活补间拥有字段、完成事件当帧派发）
     const char* expected[] = {"InputSnapshot", "Director",    "Spawn",
                               "AI",            "Navigation",  "Separation",
                               "Movement",      "SpatialHashRebuild", "Pickup",
                               "Hitbox",        "Trigger",     "Stat",
                               "Animator",      "ProjectileLifetime", "CSharpBatch",
-                              "AnimGraph",     "ScriptEventDispatch"};
+                              "AnimGraph",     "Tween",       "ScriptEventDispatch"};
     uint32_t fi = 0;
     for (const auto& s : p.Systems()) {
         if (s->Stage() == SystemStage::Essential) {
             Expect(std::string_view(s->Name()) == "DestroyCommit", "essential is destroy");
         } else {
-            Expect(fi < 17 && std::string_view(s->Name()) == expected[fi],
+            Expect(fi < 18 && std::string_view(s->Name()) == expected[fi],
                    "fixedtick order");
             ++fi;
         }
     }
-    Expect(fi == 17, "17 fixedtick systems");
-    Expect(p.Profiles().size() == 18, "profiles allocated");
+    Expect(fi == 18, "18 fixedtick systems");
+    Expect(p.Profiles().size() == 19, "profiles allocated");
 }
 
 void TestSimulationEndToEnd() {
@@ -3129,6 +3131,87 @@ void TestVerifyAnimatorPingPong() {
     Expect(a.curFrame == 0 && sr.spriteId == 30u, "clip: single-frame pingpong stays 0");
 }
 
+// ---- A 档补间单元（2026-09-28 用户插入项）：TweenTable 建链校验/缓动精确值/
+// Yoyo 折返/Once 完成恰一事件/同字段顶替/颜色字节插值/Kill 三通道/销毁自清。
+// C# ABI 端到端在 script-tests TestTweenSdk（探针 typeId 15）。----
+void TestTweenTable() {
+    WorldDesc d;
+    d.threadCount = 1;
+    World w(d);
+    Scene& s = w.CreateScene("tween");
+    w.SetActiveScene(&s);
+    TweenTable& tt = w.Tweens();
+
+    Entity e = s.Create();
+    s.Emplace<Transform2D>(e); // scale=(1,1)、pos=(0,0) 默认
+    const float to[4] = {2.0f, 2.0f, 0.0f, 0.0f};
+
+    // 拒建：字段名未命中 / 白名单外类型（Meta.tag = Blob24）/ 组件缺
+    Expect(tt.Create(s, e, 0, "nope", to, 1.0f, TweenEase::Linear, TweenMode::Once) == 0,
+           "tween: unknown field rejected");
+    Expect(tt.Create(s, e, 3, "tag", to, 1.0f, TweenEase::Linear, TweenMode::Once) == 0,
+           "tween: non-animatable type rejected");
+    {
+        Entity bare = s.Create();
+        Expect(tt.Create(s, bare, 0, "scale", to, 1.0f, TweenEase::Linear, TweenMode::Once) == 0,
+               "tween: missing component rejected");
+    }
+
+    // 建立与顶替（同实体同字段 = 新句柄接掌，旧句柄亡）
+    const uint64_t h1 = tt.Create(s, e, 0, "scale", to, 1.0f, TweenEase::OutCubic, TweenMode::Once);
+    Expect(h1 != 0 && tt.Alive(h1) && tt.Count() == 1, "tween: created");
+    const uint64_t h2 = tt.Create(s, e, 0, "scale", to, 1.0f, TweenEase::OutCubic, TweenMode::Once);
+    Expect(h2 != 0 && h2 != h1 && !tt.Alive(h1) && tt.Count() == 1, "tween: same field replaced");
+
+    // OutCubic 精确中值：e(0.5) = 1+(-0.5)³ = 0.875 → scale 1→2 = 1.875
+    tt.Advance(w, s, 0.5f);
+    Expect(s.Get<Transform2D>(e).scale.x == 1.875f, "tween: OutCubic(0.5) exact 1.875");
+
+    // Once 完成：终值精确 + 事件恰一次 + 条目移除
+    tt.Advance(w, s, 0.6f); // elapsed 1.1 ≥ 1
+    Expect(!tt.Alive(h2) && tt.Count() == 0, "tween: once removed");
+    Expect(s.Get<Transform2D>(e).scale.x == 2.0f, "tween: final exact");
+    Expect(w.Events().Size() == 1, "tween: one TweenFinished queued");
+
+    // Yoyo 折返：pos 0→10（1s），1.25 → 三角 0.75 → 7.5；永续无完成事件
+    const float toPos[4] = {10.0f, 0.0f, 0.0f, 0.0f};
+    const uint64_t hy = tt.Create(s, e, 0, "pos", toPos, 1.0f, TweenEase::Linear, TweenMode::Yoyo);
+    tt.Advance(w, s, 1.25f);
+    Expect(s.Get<Transform2D>(e).pos.x == 7.5f, "tween: yoyo fold 7.5");
+    Expect(tt.Alive(hy), "tween: yoyo stays alive");
+    Expect(w.Events().Size() == 1, "tween: yoyo fires no finish");
+
+    // 颜色字节插值：0xFF0000FF → 0xFFFFFFFF，t=0.5 → g/b = 127.5 四舍五入 128
+    {
+        Entity c = s.Create();
+        SpriteRenderer& sr = s.Emplace<SpriteRenderer>(c);
+        sr.colorRGBA = 0xFF0000FFu;
+        const float toCol[4] = {255.0f, 255.0f, 255.0f, 255.0f};
+        tt.Create(s, c, 5, "colorRGBA", toCol, 1.0f, TweenEase::Linear, TweenMode::Once);
+        tt.Advance(w, s, 0.5f);
+        Expect(s.Get<SpriteRenderer>(c).colorRGBA == 0xFF8080FFu, "tween: color bytes 0x80");
+    }
+
+    // Kill 三通道 + 陈旧句柄
+    Expect(tt.KillField(e, 0, "pos") == 1 && !tt.Alive(hy), "tween: kill field");
+    Expect(tt.KillField(e, 0, "pos") == 0, "tween: kill idempotent");
+    Expect(!tt.Alive(hy + 12345), "tween: stale handle dead");
+
+    // 实体销毁自清（两阶段：提交后随 Advance 消失）
+    {
+        Entity v = s.Create();
+        s.Emplace<Transform2D>(v);
+        tt.Create(s, v, 0, "scale", to, 1.0f, TweenEase::Linear, TweenMode::Once);
+        s.Destroy(v);
+        s.CommitDestroys();
+        tt.Advance(w, s, 0.5f);
+        Expect(tt.Count() == 0, "tween: destroyed entity swept");
+    }
+
+    tt.Clear();
+    Expect(tt.Count() == 0, "tween: clear");
+}
+
 // ---- 批①：FxChannel（飘字池淘汰/上浮淡出、血条覆写/sticky、产包数学）----
 void TestVerifyFxChannel() {
     // ① 飘字环形池：满 256 后最老者淘汰（第 257 条覆写第 1 条槽位）
@@ -5106,6 +5189,7 @@ int main() {
     TestVerifyAnimatorFrameMapping();
     TestVerifyAnimatorQueue();
     TestVerifyAnimatorPingPong(); // M6a 批② T3b-2
+    TestTweenTable(); // A 档补间（2026-09-28 用户插入项）
     TestVerifyFxChannel();
     TestVerifyStatEffectsAndXp();
     TestVerifyMovementKnockbackAndClamp();

@@ -254,6 +254,42 @@ int32_t NativeAnimParamSlot(uint64_t entity, const char* name) {
     return slot >= 0 && slot < 8 ? slot : -1;
 }
 
+// A 档补间（2026-09-28）：Lemon.Tween → World.Tweens。建链失败 = 作者错误
+// （字段名拼错/类型不可插值），区别于实体亡的静默丢弃——warn-once 按首个
+// 失败现场报（复刻换段队列 warn-once 口径）。
+uint64_t NativeTweenTo(uint64_t entity, uint8_t compId, const char* field,
+                       const float* to4, float duration, uint8_t ease, uint8_t mode) {
+    if (!g_world || !g_scene || !to4) return 0;
+    const uint64_t h = g_world->Tweens().Create(
+        *g_scene, ecs::Entity{entity}, compId, field, to4, duration,
+        (ecs::TweenEase)ease, (ecs::TweenMode)mode);
+    if (h == 0) {
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            LEMON_WARN("Tween.To：实体 %llu 组件 %u 字段 '%s' 不可建（未命中/类型不可"
+                       "插值——白名单 Float/Vec2/UInt32 颜色）→ no-op",
+                       (unsigned long long)entity, compId, field ? field : "(null)");
+        }
+    }
+    return h;
+}
+
+int32_t NativeTweenKill(uint64_t entity, uint8_t compId, const char* field) {
+    if (!g_world) return 0;
+    return g_world->Tweens().KillField(ecs::Entity{entity}, compId, field);
+}
+
+int32_t NativeTweenKillEntity(uint64_t entity) {
+    if (!g_world) return 0;
+    return g_world->Tweens().KillEntity(ecs::Entity{entity});
+}
+
+int32_t NativeTweenAlive(uint64_t handle) {
+    if (!g_world) return 0;
+    return g_world->Tweens().Alive(handle) ? 1 : 0;
+}
+
 const NativeApiVtable kNativeApi{NativeIsAlive,
                                  NativeHas,
                                  NativeRead,
@@ -280,7 +316,11 @@ const NativeApiVtable kNativeApi{NativeIsAlive,
                                  NativeTableCols,
                                  NativeTableCell,
                                  NativeClipByName,
-                                 NativeAnimParamSlot};
+                                 NativeAnimParamSlot,
+                                 NativeTweenTo,
+                                 NativeTweenKill,
+                                 NativeTweenKillEntity,
+                                 NativeTweenAlive};
 } // namespace
 
 void SetScriptIoHooks(const ScriptIoHooks& hooks) { g_scriptIo = hooks; }
