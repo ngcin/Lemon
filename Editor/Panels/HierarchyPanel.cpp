@@ -9,6 +9,7 @@
 
 #include "App/EditorApp.h"
 #include "Components/CoreComponents.h"
+#include "Components/UiComponents.h"
 #include "Core/Log.h"
 #include "ECS/Hierarchy.h"
 #include "Components/RenderComponents.h"
@@ -140,6 +141,42 @@ void HierarchyPanel::OnGui(EditorApp& app) {
             ctx.Select(ne, false);
             if (!ctx.Playing()) ctx.PushStructuralUndo("创建实体", before);
         }
+        if (ImGui::MenuItem("UI 文档 (UI Document)")) // 批③d 前置 T4
+            uiDocPickOpen_ = true; // 先选 .rml 再建实体（取消 = 不建）
+        ImGui::EndPopup();
+    }
+
+    // 批③d 前置 T4：UI Document 创建弹窗——列项目内 .rml 资产，选中即建实体挂
+    // UIDocument（guid 真源）；取消/空列表 = 不建实体（防"空 UI 实体"堆积）。
+    if (uiDocPickOpen_) {
+        uiDocPickOpen_ = false;
+        ImGui::OpenPopup("选择 UI 文档");
+    }
+    if (ImGui::BeginPopupModal("选择 UI 文档", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted("选择要挂载的 .rml 文档资产：");
+        ImGui::Separator();
+        bool any = false;
+        for (const auto& en : ctx.Assets().Entries()) {
+            if (en.type != AssetType::Rml || en.missing) continue;
+            any = true;
+            if (ImGui::Selectable(en.relPath.c_str())) {
+                const std::string before = ctx.SnapshotSceneJson();
+                ecs::Entity ne = ctx.CreateEntity("UIDocument");
+                ecs::UIDocument& ud = ctx.ActiveScene().Emplace<ecs::UIDocument>(ne);
+                ud.sourceAssetGuid = en.guid;
+                ctx.Select(ne, false);
+                ctx.dirty = true;
+                if (!ctx.Playing()) ctx.PushStructuralUndo("创建 UI Document", before);
+                LEMON_LOG("创建 UIDocument 实体（%s）——进 Play 声明式装载",
+                          en.relPath.c_str());
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        if (!any)
+            ImGui::TextDisabled("项目内没有 .rml 资产——先在 Assets/UI/ 放入文档");
+        ImGui::Separator();
+        if (ImGui::Button("取消")) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
 
@@ -198,6 +235,8 @@ void HierarchyPanel::OnGui(EditorApp& app) {
             ctx.Select(ne, false);
             if (!ctx.Playing()) ctx.PushStructuralUndo("创建实体", before);
         }
+        if (ImGui::MenuItem("创建 UI 文档")) // 批③d 前置 T4（空区右键同 "+ 创建"）
+            uiDocPickOpen_ = true;
         ImGui::EndPopup();
     }
     // C2：点空白清选（干净左击 = 非拖拽收尾、不落在任何条目上；与 SceneView

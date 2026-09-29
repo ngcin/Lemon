@@ -56,6 +56,7 @@ private:
     ecs::Entity renaming_{};    // 重命名中的实体（Null = 无）
     bool renameFocus_ = false; // 重命名输入框首帧聚焦
     std::string renameBuf_;
+    bool uiDocPickOpen_ = false; // 批③d 前置 T4：Create → UI Document 的 .rml 选择弹窗待开
 };
 
 class InspectorPanel final : public IEditorPanel {
