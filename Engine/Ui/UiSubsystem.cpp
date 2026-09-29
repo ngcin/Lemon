@@ -221,8 +221,16 @@ struct UiSubsystem::Impl {
         Rml::ElementDocument* doc = nullptr;
         bool shown = false;
         bool modal = false;             // M1 模态标记（事件携带 + 让出面）
+        bool shownDuringPlay = false;   // 批③d 前置 stale 位：只在 ApplyOps 的 Show
+                                        // op 置位（C# 动态 Show 来源）——EnterPlay 归位
+                                        // 判据；ShowDocument（③b 双击预览/通道 A 声明
+                                        // 装载）不置位（§3 口径，消歧 C5）
     };
     std::unordered_map<std::string, Doc> docs;
+
+    // 批③d 前置（通道 B）：Show 落空兜底解析器（编辑器装配：relPath→absPath）
+    UiDocumentResolver docResolver;
+    uint32_t docLoads = 0;              // 装载调用累计（冒烟探针；基准护栏断言源）
 
     // ---- 文档级事件监听（M3：无回调跨边界——监听器是引擎内部件）----
     struct DocListener final : Rml::EventListener {
@@ -332,13 +340,15 @@ struct UiSubsystem::Impl {
         return arena + off; // NUL 终止契约（UiBridge.h）
     }
 
-    Doc* FindDoc(const char* name) {
+    Doc* LookupDoc(const char* name) {
         auto it = docs.find(name);
-        if (it == docs.end() || !it->second.doc) {
-            ContractFail("document '%s' 未装载（ops 目标缺）", name);
-            return nullptr;
-        }
-        return &it->second;
+        return (it == docs.end() || !it->second.doc) ? nullptr : &it->second;
+    }
+
+    Doc* FindDoc(const char* name) {
+        Doc* d = LookupDoc(name);
+        if (!d) ContractFail("document '%s' 未装载（ops 目标缺）", name);
+        return d;
     }
 
     // key 双形解析：文档内元素 id ∥ "容器id/条目key"（SetItems 稳定 key 寻址）
@@ -639,6 +649,10 @@ void UiSubsystem::SetTextureResolver(UiTextureResolver fn) {
     if (impl_) impl_->backend->SetTextureResolver(std::move(fn));
 }
 
+void UiSubsystem::SetDocumentResolver(UiDocumentResolver fn) {
+    if (impl_) impl_->docResolver = std::move(fn);
+}
+
 // ---------------------------------------------------------------- 文档 ----
 bool UiSubsystem::LoadDocumentFromMemory(const char* name, const char* rmlText) {
     if (!impl_ || !impl_->ctx) return false;
@@ -657,8 +671,10 @@ bool UiSubsystem::LoadDocumentFromMemory(const char* name, const char* rmlText) 
     entry.doc = doc;
     entry.shown = false;
     entry.modal = false;
+    entry.shownDuringPlay = false; // 新装载 = 新鲜态（stale 归零）
     i.AttachListener(entry);
     i.InvalidateContainers(name);
+    ++i.docLoads;
     return true;
 }
 
@@ -680,8 +696,10 @@ bool UiSubsystem::LoadDocumentFromFile(const char* name, const char* absPath) {
     entry.doc = doc;
     entry.shown = false;
     entry.modal = false;
+    entry.shownDuringPlay = false; // 新装载 = 新鲜态（stale 归零）
     i.AttachListener(entry);
     i.InvalidateContainers(name);
+    ++i.docLoads;
     return true;
 }
 
@@ -765,11 +783,24 @@ void UiSubsystem::ApplyOps(const UiOpC* ops, uint32_t count, const char* arena,
         const std::string docName =
             i.ArenaStr(arena, arenaBytes, op.s0, "doc");
         Impl::Doc* d = i.FindDoc(docName.c_str());
-        if (!d) continue;
+        if (!d) {
+            // 批③d 前置（通道 B）：Show 落空兜底——解析器现载后重试；同批后续
+            // SetText/SetItems 直接可达（装载在此完成，③c 顺序契约）。未装/未命中
+            // = 维持 FindDoc 已记的响亮失败（M8 前裸运行时同口径）
+            if ((UiOpType)op.type == UiOpType::Show && i.docResolver) {
+                std::string abs;
+                if (i.docResolver(docName, abs) &&
+                    LoadDocumentFromFile(docName.c_str(), abs.c_str()))
+                    d = i.LookupDoc(docName.c_str());
+            }
+            if (!d) continue;
+        }
         switch ((UiOpType)op.type) {
         case UiOpType::Show:
             d->modal = (op.flags & 1) != 0; // M1 模态标记（让出面/事件携带）
+            d->shownDuringPlay = true;      // stale：EnterPlay 归位判据（C# 动态 Show）
             d->doc->Show();
+            d->doc->PullToFront(); // D1 甲-轻量：层级序 = 最近 Show 序（装载序为初值）
             d->shown = true;
             break;
         case UiOpType::Hide:
@@ -839,6 +870,10 @@ uint32_t UiSubsystem::DrainEvents(UiEventC* dst, uint32_t cap) {
 
 uint32_t UiSubsystem::ContractErrorCount() const {
     return impl_ ? impl_->contractErrors : 0;
+}
+
+uint32_t UiSubsystem::DocumentLoadCount() const {
+    return impl_ ? impl_->docLoads : 0;
 }
 
 bool UiSubsystem::WantsKeyboard() const {

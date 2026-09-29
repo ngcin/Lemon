@@ -2955,6 +2955,12 @@ int EditorApp::Run(const EditorLaunch& launch) {
              [](::lemon::ui::UiEventC* dst, uint32_t cap) -> uint32_t {
                  return s_gameUiForHooks ? s_gameUiForHooks->DrainEvents(dst, cap) : 0;
              }});
+        // 批③d 前置（通道 B）：文档解析器——C# UI.Show 未装载文档名 → 项目内
+        // .rml 资产现载。闭包经 ctx_ 活引用，切项目免重装（贴图 resolver 同理）
+        gameUi_->SetDocumentResolver(
+            [this](const std::string& rel, std::string& abs) {
+                return ResolveUiDocument(rel, abs);
+            });
     } else {
         gameUi_.reset();
     }
@@ -5861,6 +5867,17 @@ bool EditorApp::ResolveUiTexture(const std::string& source, rhi::Texture& tex, u
     const rhi::Texture t = reg.AtlasTexture(si.atlasIndex, w, h);
     if (!t.IsValid()) return false;
     tex = t;
+    return true;
+}
+
+// 批③d 前置（通道 B）：文档解析器（C# UI.Show 的 relPath → 项目 .rml 资产绝对
+// 路径）。未开项目/查无/非 Rml 类型/墓碑 = false → ApplyOps 维持响亮失败。
+bool EditorApp::ResolveUiDocument(const std::string& relPath, std::string& absPath) {
+    const AssetDatabase& db = ctx_.Assets();
+    if (db.ProjectRoot().empty()) return false;
+    const AssetEntry* e = db.FindByPath(relPath);
+    if (!e || e->missing || e->type != AssetType::Rml) return false;
+    absPath = db.AbsolutePath(*e);
     return true;
 }
 

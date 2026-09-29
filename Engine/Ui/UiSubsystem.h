@@ -23,6 +23,13 @@ namespace lemon::ui {
 using UiTextureResolver =
     std::function<bool(const std::string& source, rhi::Texture& tex, uint32_t& w, uint32_t& h)>;
 
+/// 文档解析器（批③d 前置，通道 B / ADR-014 M1）：C# UI.Show 的文档名（relPath
+/// 惯例）未装载时现场解析（relPath → absPath）供 ApplyOps 兜底装载——治时序与
+/// 场景未声明的动态屏。安装方 = 编辑器（AssetDatabase FindByPath）；未安装的
+/// 宿主（M8 前裸运行时）维持响亮失败（EditorAssetHooks 先例形态）。
+using UiDocumentResolver =
+    std::function<bool(const std::string& relPath, std::string& absPath)>;
+
 /// M7 键盘喂入的引擎侧键位（自有枚举——头文件零 RmlUi；映射 RmlUi KI 在 .cpp）。
 /// 波1 集合 = 焦点导航 + 单行文本编辑所需（字母/数字/方向/编辑键）。
 enum class UiKey : uint8_t {
@@ -52,6 +59,8 @@ public:
 
     /// 安装贴图桥解析器（须在文档加载前；文档重载即按新解析器重解）。
     void SetTextureResolver(UiTextureResolver fn);
+    /// 安装文档解析器（通道 B 兜底装载；ApplyOps 的 Show op 未命中时消费）。
+    void SetDocumentResolver(UiDocumentResolver fn);
 
     /// 内存文档（③a 冒烟通道）。同名覆盖旧文档。
     bool LoadDocumentFromMemory(const char* name, const char* rmlText);
@@ -83,6 +92,9 @@ public:
     uint32_t DrainEvents(UiEventC* dst, uint32_t cap);
     /// 契约错误累计（id/容器/模板/字段不命中；smoke 断言"零契约错误"源）
     uint32_t ContractErrorCount() const;
+    /// 冒烟探针：文档装载调用累计（FromMemory/FromFile 成功各 +1；通道 A/B 断言源
+    /// ——无 UIDocument 场景恒 0 = 基准护栏，批③d 前置 §5）
+    uint32_t DocumentLoadCount() const;
     /// M7 让出查询：任一 shown 文档存在焦点文本控件（引擎此刻吃键盘/文本输入）
     bool WantsKeyboard() const;
     /// M7 让出查询：任一 shown 文档带模态标记（"菜单打开时脚本让出输入"规则化）

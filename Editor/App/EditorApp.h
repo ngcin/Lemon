@@ -186,6 +186,9 @@ private:
     /// 批③b 贴图桥解析器（安装给 gameUi_）：RmlUi JoinPath 后的路径 → 项目精灵
     /// 资产 → 图集页纹理 + 尺寸（未命中 = false → ③a 告警语义）
     bool ResolveUiTexture(const std::string& source, rhi::Texture& tex, uint32_t& w, uint32_t& h);
+    /// 批③d 前置（通道 B）文档解析器（安装给 gameUi_）：C# UI.Show 的 relPath →
+    /// 项目 .rml 资产绝对路径（未命中 = false → ApplyOps 响亮失败维持）
+    bool ResolveUiDocument(const std::string& relPath, std::string& absPath);
     /// 批③c（M7）：鼠标/键盘/文本输入喂入游戏 UI + InputState 让出门（Play 段、
     /// gameUi_->Update() 前每帧）
     void FeedGameUiInput();
