@@ -246,6 +246,29 @@ private:
     bool SmokeUirmlEnterPlay();
     void SmokeUirmlFrame(uint64_t frame);
     bool SmokeUirmlVerdict();
+    /// --bench-survivor/--bench-scene 族三挂点（批③c-6 自 Run 外迁 EditorAppBench.cpp；
+    /// 挂点原位逐位不变）：帧段累计（段界戳 Run 帧局部、十参数直传——结构体化
+    /// 会跨帧残留）/ 停跑证据采集（返回 playAliveAtStop 等价增量）/ 末帧裁决
+    void BenchSample(uint64_t frame, std::chrono::steady_clock::time_point benchT0,
+                     std::chrono::steady_clock::time_point bPump,
+                     std::chrono::steady_clock::time_point bSim,
+                     std::chrono::steady_clock::time_point bUi0,
+                     std::chrono::steady_clock::time_point bUi1,
+                     std::chrono::steady_clock::time_point bAcq,
+                     std::chrono::steady_clock::time_point bScene,
+                     std::chrono::steady_clock::time_point bUiDraw,
+                     std::chrono::steady_clock::time_point bPresent);
+    uint32_t BenchCaptureStop();
+    bool BenchVerdict(uint64_t frame, uint32_t playAliveAtStop);
+    /// --final 终验族五挂点（批③c-6 自 Run 外迁 EditorAppFinal.cpp；挂点原位
+    /// 逐位不变）：向导播种 / 场景开+判据播种（守卫留原位）/ Play 中热重载播种 /
+    /// fps 采样 / 末帧验收（play 往返四量以参数过桥——Run 跨族共享态）
+    bool FinalSeedProject();
+    bool FinalSeedScene();
+    void FinalFrame(uint64_t frame);
+    void FinalSample(uint64_t frame);
+    bool FinalVerdict(uint32_t playAliveAtStop, double playEnterMs, double playExitMs,
+                      bool playVerified, double firstFrameMs);
     /// 换装判定辅助：Game/*.csproj 路径 + 输出 dll（项目根/.lemon/bin/<名>.dll）
     bool FindGameProject(std::string& csproj, std::string& dll);
     /// Game/ 源码变更检测（FileWatcher 置脏后过滤 .cs，排除 obj/bin）

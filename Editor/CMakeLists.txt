@@ -68,6 +68,8 @@ add_executable(lemon-editor
   App/EditorAppSmoke.cpp
   App/EditorAppSmokeTpl.cpp
   App/EditorAppSmokeUirml.cpp
+  App/EditorAppBench.cpp
+  App/EditorAppFinal.cpp
   App/RecentProjects.cpp
   App/ImGuiBackend.cpp
   Panels/Panels.cpp
