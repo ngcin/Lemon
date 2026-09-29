@@ -1,7 +1,7 @@
 # M6a 批③a 收尾：T7 文本输入微 spike 三判据全过（③c 开工门槛清除，D4 定案）
 
 - 日期：2026-09-28
-- 批文件：[Plans/M6a/2026-09-28-b3a-rmlui-renderer.md](../Plans/M6a/2026-09-28-b3a-rmlui-renderer.md) T7 节；决策：[ADR-014](../ADR/ADR-014-Game-UI-RmlUi-Integration.md) D4（提交制文本输入分档）
+- 批文件：[Plans/M6b/2026-09-28-b3a-rmlui-renderer.md](../Plans/M6b/2026-09-28-b3a-rmlui-renderer.md) T7 节；决策：[ADR-014](../ADR/ADR-014-Game-UI-RmlUi-Integration.md) D4（提交制文本输入分档）
 - 性质：③a 批最后一件遗留收口；**③c（C# API 与波1 机制）开工门槛就此清除**
 
 ## 结论先行

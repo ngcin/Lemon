@@ -2,7 +2,7 @@
 
 > 前提：单人全职（每周 5 天 × 6–8 有效小时）；总盘 9–12 个月到"两个可玩模板 demo + 一键出包"。
 > 纪律（继承 Prowl2D 教训）：**每个里程碑必须有 GUI 级可验收产物**——"单测全绿但编辑器不可用"不算完成。
-> **2026-09-24 重排**：M6 拆为 **M6a 玩法完善+幸存者产品化（4–6 周）→ M6b 音频（原 M6.5 前移改号）→ M6c Tilemap+TD 模板**。动因：原 M6 大半为 TD 专属件，却把幸存者向产品所需的通用件（多脚本/动画控制/GUID/配置表/产品壳）一并阻塞到 TD 之后；前置后**用户幸存者游戏即刻并行开工**（`demo/svr-test` 为工作项目，引擎卡点 DevLog 登记，M6a 验收以该游戏为准）。ARPG 模板暂缓决策（2026-09-24 用户），M6c 后按 RmlUi 升级触发条件（06 §8 v1.x）再议。历史文件中"挂 M6"字样按此映射读取。**2026-09-28 注记：RmlUi 触发条件已提前成立（用户游戏富排版 + 文本输入需求），正式接入重排至 M6a 批③，见 [ADR-014](../ADR/ADR-014-Game-UI-RmlUi-Integration.md)。**
+> **2026-09-24 重排**：M6 拆为 **M6a 玩法完善+幸存者产品化（4–6 周）→ M6b 音频（原 M6.5 前移改号）→ M6c Tilemap+TD 模板**。动因：原 M6 大半为 TD 专属件，却把幸存者向产品所需的通用件（多脚本/动画控制/GUID/配置表/产品壳）一并阻塞到 TD 之后；前置后**用户幸存者游戏即刻并行开工**（`demo/svr-test` 为工作项目，引擎卡点 DevLog 登记，M6a 验收以该游戏为准）。ARPG 模板暂缓决策（2026-09-24 用户），M6c 后按 RmlUi 升级触发条件（06 §8 v1.x）再议。历史文件中"挂 M6"字样按此映射读取。**2026-09-28 注记：RmlUi 触发条件已提前成立（用户游戏富排版 + 文本输入需求），正式接入重排至 M6a 批③，见 [ADR-014](../ADR/ADR-014-Game-UI-RmlUi-Integration.md)。** **2026-09-29 重排：UI 线（原 M6a 批③）独立为 M6b 游戏UI产品壳（M6a 三线并进观感混乱，用户拍板；子批号 ③a–③e 与批文件随迁沿用）；音频 M6b → M6c、Tilemap+TD M6c → M6d。历史文件中"挂 M6b/M6c"字样按此映射读取。**
 
 ---
 
@@ -19,9 +19,10 @@
 | **M4.7 编辑器 UI 精美化** ✅ | overlay 通道 P0 修复（网格/选框/Gizmo/标签四要素）+ 主题 token + 自绘图标 16 枚 + 工具栏三段式 + 网格 v2/v3 + 视口交互 v2（一段式拖拽/轴约束/Esc 取消）+ GameView Aspect + M4.7d 可选件（label-scrub/Console 折叠/面包屑/Layout 下拉） | 1–2 周（P0/a/b/c + d 全批次 ✅ 2026-09-21） | ✅（2026-09-21）批次判据全过：`--screenshot` 四要素可见、一段式拖拽 + Esc 恢复、全库无散落 ImVec4 字面量、`tools/editor-regression.sh` **11/11**；真人手测七轮暴露问题全修（1–5 轮 6 大类 14 项归档 [手测修复归档](../Reports/2026-09-21-m4.7-handtest-fix-summary.md)；6–7 轮见 DevLog 同日条目）（[M4.7 计划](../Plans/M4/2026-09-21-m4.7-ui-polish.md)） |
 | **M4.8 编辑器收官批** | 组件级重置 + File 最近场景 + 冒烟状态隔离（ini 漂移根治）+ 30 分钟零文档走查收官（触发：手测指南 C–L 段全量走查，修复批 `bd3ad93` 之后） | 2–4 天（a/b/c ✅ 2026-09-22；走查待用户执行） | 走查全绿 + smoke-drag 连跑 10 次全绿 + 回归 11/11（[M4.8 计划](../Plans/M4/2026-09-22-m4.8-closeout.md)） |
 | **M5 玩法 + VS 模板** | 技能/弹幕/命中/拾取/导演/HUD/存档 + vs-survivor 模板；**实体多脚本**（ScriptBox 多实例 + `.scene` `scripts[]` + Inspector 列表 + SDK `AddComponent<LemonBehaviour>` 路由，2026-09-22 用户实测登记；**批④ 未落地**——模板以单 PlayerBehaviour 规避，挂 M6 重排）；**编辑器后置项随消费者**：字段级重置（先补字段默认值元数据）、tag 资产化+下拉（等 FindByTag 用法）、Select 工具多选组操作、dotnet build 异步化（观察项转正评估） | 6–8 周 | **10 分钟完整一局可玩**（批④ 2026-09-23 代码面完成：vs-survivor 模板 + `--smoke-template` 机械链 PASS；真人 10 分钟一局验收待用户执行）；**压测 B 达标**（1 万怪 ≥45fps ✅）；**Play 调参 ADR**（ADR-011 显式不回灌 + Inspector 横幅 ✅） |
-| **M6a 玩法完善 + 幸存者产品化** | M5 余项收口（`scripts[]` 多脚本、Animator `Play`/`CrossFade`）＋ sprite 引用 GUID 化 ＋ 打击感（位图数字/飘字/世界血条）＋ 内容生产（配置表外置 ADR、AnimationEditor 最小版、技能路径数据化、存档分档）＋ **产品壳 = RmlUi 地基 + 屏幕层**（[ADR-014](../ADR/ADR-014-Game-UI-RmlUi-Integration.md) 2026-09-28 触发重定义批③；流程状态机档1 + LoadScene 档2 评估保留） | 4–6 周（批⓪ ✅ 批① ✅ 2026-09-24：多脚本/GUID 化/SDK 双路由/模板三拆 + 打击感（Anim 换段/Fx 飘字血条）；批② ✅ 2026-09-28：配置表双轨 ADR-012（.tab/CSV 导入/内嵌表格+浮动编辑）+ 动画工作台 v3.1（T3→T3-UX2 四轮）+ ADR-013 状态机 + 数值表双面落地（模板+svr-test 验收② 演示）+ 存档三档 slot_0/settings/meta（键约定：settings 版本化 KV / meta 收集条目）；[批⓪](../Plans/M6a/2026-09-24-b0-multiscript-guid.md) [批①](../Plans/M6a/2026-09-24-b1-combat-feel.md) [批②](../Plans/M6a/2026-09-25-b2-content-production.md)） | **用户幸存者项目全流程零 C++ 可玩**（主菜单→≥10 分钟一局→死亡结算→重开/回菜单）；新武器/敌人纯 prefab+C#+配置表；动画状态 Play 可切（T3d 升格：.controller 状态机/参数黑板/帧事件，ADR-013，ani.scene 双怪对决终验 ✅ 2026-09-27）；飘字/血条开启 bench-survivor ≥45fps；GUID 改名/manifest 重建引用稳定（批⓪ `--smoke-guid` ✅） |
-| **M6b 音频系统**（原 M6.5 前移改号） | miniaudio 后端 + 2D 定位声源（SFX 一次性/BGM 循环）+ 音频资产（`.wav`/`.ogg` 导入 → `.baked`）+ C# `Lemon.Audio` + 编辑器试听/Inspector 槽 + 主/组音量 | 2–3 周 | VS/TD 模板全程有声（命中/击杀/拾取/升级/BGM/波次横幅）；100 并发 SFX 模拟侧 ≤ 0.5ms（解码不占主线程）；无音频设备/静音输出不崩（无头 CI 可跑） |
-| **M6c Tilemap + TD 模板** | Tilemap/自动瓦片/FlowField/A*/摆塔状态机 + tower-defense 模板（波次表编辑器并入 M6a 配置表 ADR 定形，本里程碑只消费产出） | 5–7 周 | TD 模板 10 波通关；千怪走流场 CPU ≤ 2ms |
+| **M6a 玩法完善 + 幸存者产品化** | M5 余项收口（`scripts[]` 多脚本、Animator `Play`/`CrossFade`）＋ sprite 引用 GUID 化 ＋ 打击感（位图数字/飘字/世界血条）＋ 内容生产（配置表外置 ADR、AnimationEditor 最小版、技能路径数据化、存档分档）。（原含产品壳 RmlUi 线——**2026-09-29 拆出独立 M6b**：③a–③c 已于 M6a 期内完成，余量与批文件随线迁 [M6b](../Plans/M6b/M6b.md)） | 4–6 周（批⓪ ✅ 批① ✅ 2026-09-24：多脚本/GUID 化/SDK 双路由/模板三拆 + 打击感（Anim 换段/Fx 飘字血条）；批② ✅ 2026-09-28：配置表双轨 ADR-012（.tab/CSV 导入/内嵌表格+浮动编辑）+ 动画工作台 v3.1（T3→T3-UX2 四轮）+ ADR-013 状态机 + 数值表双面落地（模板+svr-test 验收② 演示）+ 存档三档 slot_0/settings/meta（键约定：settings 版本化 KV / meta 收集条目）；[批⓪](../Plans/M6a/2026-09-24-b0-multiscript-guid.md) [批①](../Plans/M6a/2026-09-24-b1-combat-feel.md) [批②](../Plans/M6a/2026-09-25-b2-content-production.md)） | **用户幸存者项目全流程零 C++ 可玩**（主菜单→≥10 分钟一局→死亡结算→重开/回菜单；UI 屏部分由 M6b 承接）；新武器/敌人纯 prefab+C#+配置表；动画状态 Play 可切（T3d 升格：.controller 状态机/参数黑板/帧事件，ADR-013，ani.scene 双怪对决终验 ✅ 2026-09-27）；飘字/血条开启 bench-survivor ≥45fps；GUID 改名/manifest 重建引用稳定（批⓪ `--smoke-guid` ✅） |
+| **M6b 游戏UI产品壳**（2026-09-29 自 M6a 批③ 独立；[ADR-014](../ADR/ADR-014-Game-UI-RmlUi-Integration.md)） | RmlUi 地基 + 屏幕层五子批（③a–③c ✅ M6a 期内：渲染地基/字体资产/C# API 波1 机制——smoke-uirml 全链 + script-tests 1699 + 回归 15/15）→ ③d 前置 UIDocument 场景挂载（Unity 同构粒度 + 进 Play 自动装载双通道 + 归位，planned）→ ③d 模板迁移（六屏 → `.rml` + L2 默认皮）→ ③e 图鉴；流程状态机档1（单场景零引擎改动）+ LoadScene 档2 评估 | 3–4 周（③a–③c ✅；③d 前置 planned；[M6b.md](../Plans/M6b/M6b.md)） | vs-survivor 六屏全走 `.rml` + UIDocument 挂载；L2 换皮零代码；图鉴 500 条 ADR-008 预算内；与 M6a 验收① 合流：svr-test 主菜单→一局→结算→重开全流程 UI 层零 C++ |
+| **M6c 音频系统**（原 M6.5 → M6b 前移 → 2026-09-29 改号 M6c） | miniaudio 后端 + 2D 定位声源（SFX 一次性/BGM 循环）+ 音频资产（`.wav`/`.ogg` 导入 → `.baked`）+ C# `Lemon.Audio` + 编辑器试听/Inspector 槽 + 主/组音量 | 2–3 周 | VS/TD 模板全程有声（命中/击杀/拾取/升级/BGM/波次横幅）；100 并发 SFX 模拟侧 ≤ 0.5ms（解码不占主线程）；无音频设备/静音输出不崩（无头 CI 可跑） |
+| **M6d Tilemap + TD 模板**（2026-09-29 自 M6c 改号） | Tilemap/自动瓦片/FlowField/A*/摆塔状态机 + tower-defense 模板（波次表编辑器并入 M6a 配置表 ADR 定形，本里程碑只消费产出） | 5–7 周 | TD 模板 10 波通关；千怪走流场 CPU ≤ 2ms |
 | **M7 发布管线** | packager + .baked + Steam + 存档云同步 | 4 周 | vs-survivor 一键出 Win 包 + Steam depot 上传成功；安装即玩 |
 | **M8 光照与打磨** | 光照裁剪版 + 后处理 + 性能终测（压测 A + **2h soak 长时稳定**）+ incremental 模板（若余量） | 4 周 | 压测 A 全绿（10k 怪 + 50k 弹 + 100k 粒 @60fps）；soak 2 小时内存曲线平/零崩溃（崩溃转储登记） |
 
@@ -101,16 +102,16 @@ CoreCLRHost 全量（域线程模型，ADR-010）→ SDK 核心子集（~50 导�
 
 > **并行游戏线（本里程碑的成立前提）**：用户幸存者游戏即刻开工——`demo/svr-test` 为工作项目，M6a 的 GUI 级验收即该游戏；游戏侧撞到的引擎卡点逐条 DevLog 登记，按下方批次回灌（"后置项随消费者"纪律的延伸：消费者先跑起来，引擎批次追着喂）。
 
-**WBS（四批依序；批文件开批时落 `Plans/M6a/`）**：
+**WBS（三批依序 + 批③ 迁出；批文件开批时落 `Plans/M6a/`）**：
 
 1. **批⓪ 架构地基**（先行——晚做返工面最大）：`scripts[]` 实体多脚本（M5 余项：ScriptBox 多实例 + `.scene` schema + Inspector 列表 + SDK `AddComponent<LemonBehaviour>` 路由，模板去单脚本规避）；**sprite 引用 GUID 化**（2026-09-23 登记④：`SpriteRenderer` 尾加 `spriteGuid` 字段——零重录口径——+ 场景加载期解析为运行时 spriteId，作者面（Inspector 槽/模板生成器/拖拽）只写 GUID；manifest 丢失/重排导致的引用错位**类别**消除）。**✅ 2026-09-24 完工**（[批文件](../Plans/M6a/2026-09-24-b0-multiscript-guid.md)：多脚本 schema v2 + 同类型唯一 + SDK 双路由（含 op5 DetachScript）+ 模板三拆（移动/战斗/HUD）+ `--smoke-guid` 三难回归第 14 步 + bench-survivor 82fps 不回归）。
 2. **批① 表现与打击感**：Animator 状态控制 `Play()`/`Pause()`/`CrossFade()`（M5 余项——受击/攻击/死亡状态切换）；位图数字页 + 伤害飘字通道 + 世界空间血条（恒走 sprite 管线、池化，06 §8 恒定原则）。**✅ 2026-09-24 完工**（[批文件](../Plans/M6a/2026-09-24-b1-combat-feel.md)：Animator2D 尾加换段队列（FIELD_RT 零重录）+ `Lemon.Anim`（Play/Queue/CrossFade/Pause/Resume，纯字段写零 C ABI）+ World 级 `FxChannel`（飘字 256/血条 128 池化）+ `Lemon.Fx` + GameView sprite 管线消费 + 模板受击接线；smoke-anim/smoke-template 扩断言、回归 14/14、bench-survivor fx 饱和 fps=78）。
 3. **批② 内容生产**：**数值配置外置**（CSV/JSON 表资产导入 + Inspector 表格查看/微调双轨；与"波次表编辑器"合并评估——表格式编辑器 vs 外置表导入 vs 双轨，开工时 ADR 定形；2026-09-23 登记①）；**AnimationEditor 面板最小版**（时间轴 + 帧序/时长/循环，05 §7 既列——登记②；最小版不足则手写 `.clip` 过渡，可裁剪）；新技能作者路径数据化（登记③）；**存档分档**（slot_N/settings/meta 三通道，06 §10 注记）。
-4. **批③ 产品壳 = RmlUi 地基 + 屏幕层（[ADR-014](../ADR/ADR-014-Game-UI-RmlUi-Integration.md)，2026-09-28 触发条件成立后重定义；原"通用模态面板通道（Cards 泛化）"退役）**：五子批——③a 渲染地基（`Engine/Ui` + RenderInterface over RHI + GameView 静态文档冒烟 + 文本输入微 spike 三判据）→ ③b 字体与资产通道（Noto Sans CJK + `.rml/.rcss` GUID/热重载/贴图桥）→ ③c C# API 与波1 机制（`UI.Apply(ops)` + UiEvent 队列 + 契约响亮失败 + M1/M2/M3/M6 资产源/M7 + 提交制文本输入）→ ③d 模板迁移（卡片/对话/HUD/主菜单/暂停/设置/结算转文档 + L2 最小默认皮 + smoke 随迁）→ ③e 图鉴/收集模板（波1 全量消费者）；C# 层**游戏流程状态机**（主菜单/暂停/设置/结算→重开/回菜单）——**档1 = 单场景状态机，零引擎改动**（重开 = 清局内实体集重建，复用导演/出生通道）；**档2 = LoadScene/场景切换 API 独立评估**（动 World/Scene 生命周期与 Play 域重置，档1 不够用再开工，ADR 定夺）。
+4. **批③ 产品壳 = RmlUi 地基 + 屏幕层**（[ADR-014](../ADR/ADR-014-Game-UI-RmlUi-Integration.md)，2026-09-28 触发条件成立后重定义；原"通用模态面板通道（Cards 泛化）"退役）——**2026-09-29 整体迁出独立为 M6b**（动因：M6a 三线并进混乱，用户拍板；批文件与子批号 ③a–③e 随迁沿用）：③a–③c 已于 M6a 期内 done（渲染地基/字体资产/C# API 波1 机制——③c 收口 smoke-uirml 全链 + script-tests 1699 + 回归 15/15）；余量（③d 前置 UIDocument 场景挂载 → ③d 六屏模板迁移 + L2 默认皮 + 流程状态机档1 → ③e 图鉴；LoadScene 档2 评估）全部归 [M6b](../Plans/M6b/M6b.md) 执行与验收。
 
-**登记项（观察，不扩 scope）**：手柄输入（Steam 发布目标确认 → 批③ 追加最小 Gamepad 输入位）；本地化（v1 中文单语即可，06 §9 Source Generator 移 v1.1）。
+**登记项（观察，不扩 scope）**：手柄输入（Steam 发布目标确认 → M6b 追加最小 Gamepad 输入位，随 UI 线迁出）；本地化（v1 中文单语即可，06 §9 Source Generator 移 v1.1）。
 
-**验收**：①用户幸存者项目**全流程零 C++ 可玩**：主菜单 → 一局（≥10 分钟，三选一/Boss）→ 死亡结算 → 重开/回菜单；②新增 1 武器 + 1 敌人变体仅靠 prefab + C# + 配置表（引擎零改动演示）；③动画状态 Play 中可切（受击/攻击/死亡，模板内可复现）；④飘字/世界血条开启下 bench-survivor ≥ 45fps（或逐项开销数字入 09 §6.10）；⑤GUID：资产改名/移动 + 删 manifest 重开，场景引用不错位（smoke 断言）；⑥模板 PlayerBehaviour 拆移动/战斗/HUD 三脚本 + `scripts[]` roundtrip；⑦回放：零重录（尾加字段口径）或按 09 §7 推论显式声明重录。
+**验收**：①用户幸存者项目**全流程零 C++ 可玩**：主菜单 → 一局（≥10 分钟，三选一/Boss）→ 死亡结算 → 重开/回菜单（UI 屏部分由 M6b 承接）；②新增 1 武器 + 1 敌人变体仅靠 prefab + C# + 配置表（引擎零改动演示）；③动画状态 Play 中可切（受击/攻击/死亡，模板内可复现）；④飘字/世界血条开启下 bench-survivor ≥ 45fps（或逐项开销数字入 09 §6.10）；⑤GUID：资产改名/移动 + 删 manifest 重开，场景引用不错位（smoke 断言）；⑥模板 PlayerBehaviour 拆移动/战斗/HUD 三脚本 + `scripts[]` roundtrip；⑦回放：零重录（尾加字段口径）或按 09 §7 推论显式声明重录。
 
 > **M5 收口后登记（2026-09-23 用户反馈轮；2026-09-24 重排后已并入上列批次，原文保留）**：①**数值配置外置**——波次/技能/掉落
 > 走 CSV/JSON 配置表资产（Excel/Numbers 编辑 → 导入，Inspector 表格转查看/微调
@@ -127,14 +128,19 @@ CoreCLRHost 全量（域线程模型，ADR-010）→ SDK 核心子集（~50 导�
 > 风险消除：manifest 丢失/损坏后"确定性重排"在资产集变化过（导入过新素材）的
 > 项目上仍可能与旧场景引用错位——GUID 化后此类问题类别整体消失。
 
-### M6b 音频系统（2–3 周，原 M6.5 前移改号）
+### M6b 游戏UI产品壳（3–4 周，2026-09-29 自 M6a 批③ 独立）
+
+五子批（子批号沿用；批文件与总览页落 `Plans/M6b/`，[M6b.md](../Plans/M6b/M6b.md)）：③a 渲染地基 ✅ → ③b 字体与资产通道 ✅ → ③c C# API 与波1 机制 ✅（均 M6a 期内完成）→ **③d 前置 UIDocument 场景挂载**（planned：Unity UIDocument 同构粒度——一组件挂一 `.rml` + 进 Play 自动装载双通道 + EnterPlay 归位；[批文件](../Plans/M6b/2026-09-29-b3d-pre-uidocument-scene-mount.md)）→ ③d 模板迁移（卡片/对话/HUD/主菜单/暂停/设置/结算转文档 + L2 最小默认皮 + smoke 随迁）→ ③e 图鉴/收集模板（波1 全量消费者）；流程状态机**档1 = 单场景零引擎改动**，**档2 = LoadScene 独立评估**（档1 不够用再开工，ADR 定夺）。
+**验收**：六屏全走 `.rml` + UIDocument 挂载；L2 换皮零代码；图鉴 500 条 ADR-008 预算内；与 M6a 验收① 合流（svr-test 全流程 UI 层零 C++）。
+
+### M6c 音频系统（2–3 周，原 M6.5 前移 → 2026-09-29 自 M6b 改号）
 
 miniaudio 后端（00 选型表既定；引入时登记 `THIRD_PARTY.md` + 07 矩阵行）→ 音频资产类型（`.wav`/`.ogg` 导入、GUID/`.meta`、烘焙入 `.baked`——06 §2 类型表补行）→ 2D 声源（距离衰减 + 声像；一次性 SFX + BGM 循环，解码在音频线程/预解码）→ C# `Lemon.Audio`（Play/Stop/音量/分组，批量边界纪律同 04）→ 编辑器集成（AssetBrowser 试听、AudioSource 组件 Inspector 槽、Play 内混音面板最小版）。
 **验收**：总表判据 + 模板一局全程有声 + 无音频设备不崩（CI 无头可跑）。
 > **2026-09-24 登记**（[全栈审查](../Reports/2026-09-24-code-review-546a755.md) §7 缺口）：此前 M0–M8 无任何音频引擎侧条目——00 选型表仅一句 miniaudio、风险 #6 仅素材侧提及，属规划外缺口。范围裁剪（不做 DSP 图/中间件/3D 空间化）与砍单顺序 §4 一致。
-> **2026-09-24 前移改号**：原排 M6 与 M7 之间（M7 packager 依赖音频资产类型先行，该依赖不变）；重排后提前至 M6b——幸存者产品（M6a 产出）与 TD 模板（M6c）两个消费者都在其后拿到声音。
+> **2026-09-24 前移改号**：原排 M6 与 M7 之间（M7 packager 依赖音频资产类型先行，该依赖不变）；重排后提前至当时 M6b——幸存者产品（M6a 产出）与 TD 模板两个消费者都在其后拿到声音。**2026-09-29 再改号 M6c**：UI 线独立占用 M6b（见文首重排注记）。
 
-### M6c Tilemap + tower-defense 模板（5–7 周）
+### M6d Tilemap + tower-defense 模板（5–7 周，2026-09-29 自 M6c 改号）
 
 Tilemap 数据 + chunk 烘焙渲染 → 碰撞层 → 自动瓦片 + TilePalette/笔刷 → FlowField + A* → 放置状态机（塔防摆塔）→ TD 模板整合。
 **验收**：TD 10 波通关；千怪流场 ≤ 2ms；自动瓦片 47 变体正确。
@@ -168,7 +174,7 @@ CI 每日跑 bench-mow/bench-sim，数字写入构建报告（性能回退 > 10%
 1. **可视化事件树编辑器**（yami 已证明最大成本单点；schema 已冻结，随时可后补）
 2. **2D 光照/SDF 阴影**（M8 整体；blob 阴影便宜可保）
 3. **incremental 模板**（核心系统（大数/离线结算）留钩子，模板移 v1.1）
-4. **运行时 UI 升级**（RmlUi/自研，v1 ImGui HUD 足够发布）——**2026-09-28 注记：触发条件已成立（用户游戏富排版 + 文本输入需求），转正式排期 [ADR-014](../ADR/ADR-014-Game-UI-RmlUi-Integration.md)（M6a 批③ 五子批）；本条自砍单序列退役，改由 ADR-014 D7 范围红线治理**
+4. **运行时 UI 升级**（RmlUi/自研，v1 ImGui HUD 足够发布）——**2026-09-28 注记：触发条件已成立（用户游戏富排版 + 文本输入需求），转正式排期 [ADR-014](../ADR/ADR-014-Game-UI-RmlUi-Integration.md)（原 M6a 批③ 五子批，2026-09-29 迁 M6b）；本条自砍单序列退役，改由 ADR-014 D7 范围红线治理**
 5. **Play 中编辑回灌**（降级为"Stop 后保留 diff 报告"）
 6. **macOS 正式支持**（保持开发可用级）
 7. **编辑器 C++ 插件机制**（面板注册表编译期版顶住）
@@ -204,9 +210,10 @@ CI 每日跑 bench-mow/bench-sim，数字写入构建报告（性能回退 > 10%
 | M3 | 04（脚本）、07 §1.1 |
 | M4 | 05（编辑器）、06（管线） |
 | M5 | 03 §8-11（导演/事件）、06 §7/§10（模板/存档） |
-| M6a | 04（多脚本）、05 §7（AnimationEditor）、06 §7/§8/§10（模板/UI/存档） |
-| M6b | 06 §2（音频资产类型）、07（第三方登记） |
-| M6c | 03 §7（寻路）、05 §7、06 §5 |
+| M6a | 04（多脚本）、05 §7（AnimationEditor）、06 §7/§10（模板/存档） |
+| M6b（UI） | 06 §8（UI 恒定原则/触发注记）、ADR-014 |
+| M6c（音频） | 06 §2（音频资产类型）、07（第三方登记） |
+| M6d | 03 §7（寻路）、05 §7、06 §5 |
 | M7 | 06 §6（发布） |
 | M8 | 02 §8（光照） |
 

@@ -15,13 +15,13 @@ Status: planned
 | ⓪ | [2026-09-24-b0-multiscript-guid](./2026-09-24-b0-multiscript-guid.md) | 架构地基：`scripts[]` 多脚本 + sprite 引用 GUID 化 | **done**（2026-09-24；出口判据 5/6/7 本批落账 ✅） |
 | ① | [2026-09-24-b1-combat-feel](./2026-09-24-b1-combat-feel.md) | 表现打击感：Animator `Play`/`Queue`/`CrossFade` + 位图数字/飘字/世界血条 | **done**（2026-09-24；回归 14/14、金回放零重录、bench fx 饱和 fps=78） |
 | ② | [2026-09-25-b2-content-production](./2026-09-25-b2-content-production.md) | 内容生产：配置表外置（[ADR-012](../../ADR/ADR-012-Config-Table-Dual-Track.md) 双轨）+ AnimationEditor 最小版 + 技能路径数据化 + 存档分档 | **done**（2026-09-28；T0→T6 全勾——配置表双轨/动画工作台 v3.1（ADR-013）/验收② 双面演示（散射+fast-mob）/存档三档；回归 14/14、金回放三档零重录、bench fps=82） |
-| ③ | [2026-09-28-b3a-rmlui-renderer](./2026-09-28-b3a-rmlui-renderer.md) · [2026-09-28-b3b-ui-font-asset-channel](./2026-09-28-b3b-ui-font-asset-channel.md) · [2026-09-28-b3c-csharp-ui-api](./2026-09-28-b3c-csharp-ui-api.md)（③a–③c done——T7 微 spike 三判据一次过 + ③c 全链收口，[DevLog ③c](../../DevLog/2026-09-28-m6a-b3c-csharp-ui-api.md)；③d–③e 开批新建） | 产品壳 = RmlUi 地基 + 屏幕层（[ADR-014](../../ADR/ADR-014-Game-UI-RmlUi-Integration.md)：③a 渲染地基 → ③b 字体资产 → ③c C# API 机制 → ③d 模板迁移 → ③e 图鉴）+ 流程状态机（档1 单场景零引擎改动）+ LoadScene 评估（档2 ADR） | **in-progress**（③c 2026-09-28 勾销：UI.Apply(ops)/模板克隆/响亮失败/UiEvent/M6 guid 源/M7 输入路由全链；smoke-uirml `items=2/1 ev=c1r2 contract=1 => OK` + script-tests 1699 + 回归 15/15；ui-template 标签发现入 ADR-014 M2 注记；真人验收余手感/文本输入） |
+| ③ | **已迁出 → [M6b 游戏UI产品壳](../M6b/M6b.md)** | 产品壳 = RmlUi 地基 + 屏幕层（[ADR-014](../../ADR/ADR-014-Game-UI-RmlUi-Integration.md)）——2026-09-29 重排：UI 线整体独立成里程碑，子批 ③a–③e 与批文件随迁（编号沿用）；③a–③c 已于 M6a 期内 done（③c 收口见 [DevLog](../../DevLog/2026-09-28-m6a-b3c-csharp-ui-api.md)） | **迁出**（M6a 内无余量；进度与出口判据见 [M6b.md](../M6b/M6b.md)） |
 
-批次顺序理由：批⓪ 先行（多脚本与 GUID 晚做返工面最大）；批①–③ 可按游戏侧卡点紧迫度微调次序（如游戏先需要配置表可提前批②）。
+批次顺序理由：批⓪ 先行（多脚本与 GUID 晚做返工面最大）；批①–② 可按游戏侧卡点紧迫度微调次序（如游戏先需要配置表可提前批②）。
 
 ## 出口判据（08 §2 M6a 验收①–⑦）
 
-1. 用户项目全流程零 C++：主菜单 → ≥10 分钟一局 → 死亡结算 → 重开/回菜单；
+1. 用户项目全流程零 C++：主菜单 → ≥10 分钟一局 → 死亡结算 → 重开/回菜单（**UI 屏部分由 M6b 承接**——原批③ 2026-09-29 迁出，本判据与 M6b 出口判据③ 合流验收）；
 2. 新增 1 武器 + 1 敌人变体纯 prefab/C#/配置表落地（引擎零改动演示）；
 3. 动画状态（受击/攻击/死亡）Play 中可切换——**✅ 批①**（smoke-template hitClip
    证据 + smoke-anim 切段链断言；`Lemon.Anim` Play/Queue/CrossFade）；
@@ -33,7 +33,7 @@ Status: planned
 
 ## 登记项（观察，不扩 scope）
 
-- 手柄输入：Steam 发布目标确认 → 批③ 追加最小 Gamepad 输入位；
+- 手柄输入：Steam 发布目标确认 → M6b 追加最小 Gamepad 输入位（随 UI 线迁出）；
 - 本地化：v1 中文单语，06 §9 Source Generator 移 v1.1。
 
 ## 关联

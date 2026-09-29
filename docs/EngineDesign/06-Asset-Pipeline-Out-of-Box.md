@@ -67,7 +67,7 @@ MyGame/                                   # 用户项目（升级永不触碰）
 | clip2d | json | 帧动画资产（**.anim**，T3d 批④前 .clip） | AnimationEditor 产出 |
 | animset | json | 动画集/每角色绑定（**.override**，批④前 .ani；段名→clip 引用清单） | AnimationEditor 产出 |
 | controller | json | 动画状态机（**.controller**：状态词表/参数/过渡；ADR-013） | 手写 JSON（图编辑器挂起） |
-| rml/rcss | rml/rcss | UI 文档/样式表原档（**.rml**/**.rcss**，ADR-014 一屏一文档） | M6a 批③b：DB/GUID/.meta/浏览器识别 + 双击装载 + 热重载（rcss = ReloadStyleSheet 保 DOM）；`<img>` 经贴图桥吃项目精灵（`AtlasTexture` 页借用，`rect` 属性切子图） |
+| rml/rcss | rml/rcss | UI 文档/样式表原档（**.rml**/**.rcss**，ADR-014 一屏一文档） | M6b 批③b（原 M6a）：DB/GUID/.meta/浏览器识别 + 双击装载 + 热重载（rcss = ReloadStyleSheet 保 DOM）；`<img>` 经贴图桥吃项目精灵（`AtlasTexture` 页借用，`rect` 属性切子图） |
 | particles | json | 发射器资产 | ParticleEditor 产出 |
 | tileset | png + json | 图集 + 碰撞标志 + 自动瓦片变体表 | 05 §7 |
 | curve/data | json | 曲线、Team 表、波次表 | 数据资产 |
@@ -208,7 +208,7 @@ MyGame/                                   # 用户项目（升级永不触碰）
 | v1.x 评估 | **RmlUi 6.3 首选（ADR-008 D2，spike-04 三判据已验收）**：自研 RenderInterface over Lemon RHI；备选自研轻量保留模式 UI（回退条件见 ADR-008） | 需要复杂列表/富文本/本地化排版（ARPG 对话）时升级 |
 | 恒定原则 | 世界空间 HUD（血条/飘字）永远走 sprite 渲染管线（合批零额外成本），不进 UI 框架 | yami printer/ui 分工教训 |
 
-> **2026-09-28 触发注记（[ADR-014](../ADR/ADR-014-Game-UI-RmlUi-Integration.md)）**：v1.x 升级触发条件成立（用户游戏富排版需求：菜单/图鉴/品级卡片/富文本 + 文本输入），RmlUi 正式接入排期 M6a 批③（五子批 ③a–③e）；脚本 API 由 ADR-008 D3 窄清单重写为 L1 机制契约 M1–M8（设计冻结、三波实现随消费者）；恒定原则不变。
+> **2026-09-28 触发注记（[ADR-014](../ADR/ADR-014-Game-UI-RmlUi-Integration.md)）**：v1.x 升级触发条件成立（用户游戏富排版需求：菜单/图鉴/品级卡片/富文本 + 文本输入），RmlUi 正式接入排期 M6b（原 M6a 批③，五子批 ③a–③e）；脚本 API 由 ADR-008 D3 窄清单重写为 L1 机制契约 M1–M8（设计冻结、三波实现随消费者）；恒定原则不变。
 
 > **v1 落地注（M5 批①/批④）**：HUD 通道 = World 级 `RtUi`（8 槽：key/text/frac/
 > **color**——批④ 着色）+ `Cards`（三选一：ShowCards/CardPick 消费式回读），

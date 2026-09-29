@@ -1,8 +1,8 @@
 # ADR-014：游戏 GUI 层正式接入 RmlUi——L1 机制契约（M1–M8）与三波实现
 
 - 日期：2026-09-28
-- 状态：已采纳（M6a 批③ 开工执行；ADR-008 D2 回退条件三项原文沿用，持续有效）
-- 影响：[ADR-008](./ADR-008-Runtime-UI-Strategy.md)（D2 转正式执行、D3 重写——状态行已注记）、[08-Development-Roadmap](../EngineDesign/08-Development-Roadmap.md)（§2 M6a 批③ WBS 重写、§4 砍单 #4 注记、总表 M6a 行注记）、[06-Asset-Pipeline](../EngineDesign/06-Asset-Pipeline-Out-of-Box.md) §8（v1.x 触发注记）、`THIRD_PARTY.md`（RmlUi spike 期 → 正式，批③a 开工时落）、[M6a.md](../Plans/M6a/M6a.md) 批③ 行
+- 状态：已采纳（原 M6a 批③ 开工执行；**2026-09-29 UI 线独立为 M6b 游戏UI产品壳**，子批 ③a–③e 与批文件随迁 `Plans/M6b/`，编号沿用；ADR-008 D2 回退条件三项原文沿用，持续有效）
+- 影响：[ADR-008](./ADR-008-Runtime-UI-Strategy.md)（D2 转正式执行、D3 重写——状态行已注记）、[08-Development-Roadmap](../EngineDesign/08-Development-Roadmap.md)（§2 M6b 行 + 文首重排注记、§4 砍单 #4 注记）、[06-Asset-Pipeline](../EngineDesign/06-Asset-Pipeline-Out-of-Box.md) §8（v1.x 触发注记）、`THIRD_PARTY.md`（RmlUi spike 期 → 正式，批③a 开工时落）、[M6b.md](../Plans/M6b/M6b.md)（原 M6a.md 批③ 行，2026-09-29 迁）
 
 ## 背景
 
@@ -16,11 +16,11 @@
 
 ## 决策
 
-### D1 RmlUi 正式接入，M6a 批③ 重定义为"RmlUi 地基 + 产品壳"
+### D1 RmlUi 正式接入，M6a 批③ 重定义为"RmlUi 地基 + 产品壳"（2026-09-29 迁 M6b，下文"批③"即指该线）
 
 - 原"通用模态面板通道（Cards 泛化）"**退役**——该投资与 RmlUi 呈现正交且转轨即作废；**流程状态机（档1 单场景，零引擎改动）与 LoadScene 档2 评估保留不变**（与呈现无关）。
 - 接入形态 = ADR-008 D2 原文：自研 `Rml::RenderInterface` over Lemon RHI（像素空间正交投影 + 每帧 Discard/Commit 共享动态 VB/IB + 真 scissor 去重 + 3 shader 变体 + RmlUi 6.3 CompileGeometry）+ `SystemInterface`；字体 = 随引擎/模板带 Noto Sans CJK（OFL）+ `LoadFontFace(fallback=true)`。**回退条件三项原文沿用**（适配超 2 周不收敛 / 10k 元素级文档 >3ms / macOS 路径绕开成本失控 → 退自研轻量保留模式 UI）。
-- 批③ 拆五子批（开批新建 `Plans/M6a/` 批文件，分解到文件/行级）：
+- 批③ 拆五子批（批文件落 `Plans/M6b/`——原 M6a，2026-09-29 迁；分解到文件/行级）：
   - **③a 渲染地基**：`Engine/Ui` 模块 + RenderInterface + SystemInterface + GameView 接静态文档冒烟（复用 spike-04 验收壳：交换链回读 BMP + VERDICT 行 + validation 层）+ **文本输入微 spike 三判据**（中文提交零乱码 / IME 候选窗贴光标 / 编辑器 ImGui↔RmlUi 焦点仲裁不串）；
   - **③b 字体与资产通道**：Noto Sans CJK 注册 + `.rml/.rcss` 转正式资产类型（GUID/`.meta`/manifest + AssetBrowser 识别）+ 贴图引用桥（`LoadTexture` → AtlasRegistry/sprite GUID）+ 文档热重载；
   - **③c C# API 与波1 机制**：`UI.Apply(ops)` 单一提交口 + UiEvent 事件队列 + 契约校验（响亮失败）+ M1/M2/M3/M6（资产源）/M7 + 提交制文本输入——**✅ 2026-09-28 代码面收口**（smoke-uirml 全链 `items=2/1 ev=c1r2 contract=1 => OK` + script-tests 1699 + 回归 15/15，[DevLog](../DevLog/2026-09-28-m6a-b3c-csharp-ui-api.md)；真人验收余手感/文本输入两件）；
@@ -37,7 +37,7 @@
 | M4 | 拖放 | DragStart / DragEnter / DragLeave / Drop / DragCancel；**边沿触发不逐帧**；落点 = 目标 key **或世界坐标**（摆塔用例）；**UI 载身份、游戏持语义**（拖什么/能否放/放下发生什么全在 C#）；拖拽视觉引擎托管（源元素快照跟随光标）；droppable 目标在文档声明（`data-droppable`），enter/leave 高亮 = RCSS 类引擎自动施加。**波3 实现、契约即冻结** |
 | M5 | 悬停系统 | 引擎托管延迟/跟随/贴边翻转（做一次全品类受益）；内容 = 一次 M2 填充；对比查看 = 悬停面板 + 钉住的普通文档（无专门机制）。**波2 实现** |
 | M6 | 纹理源绑定 | `img` 可绑三种源：资产 GUID（图标）/ 世界 RT（小地图、头像）/ **帧序驱动**（冷却扫描 = N 帧贴图按进度选帧；血球/充能/状态箭头同理——**美术能画的不需要机制**）。波1 落资产源，波2 补 RT 与帧序 |
-| M7 | 焦点与输入路由 | 模态抓取 / 游戏让出（"菜单打开时脚本让出输入"规则化，M6a 批③ 原案此条继承）；编辑器内 ImGui↔RmlUi 按焦点分派（含文本输入事件归属）；手柄方向键合成焦点移动（登记项，Steam 目标确认后落） |
+| M7 | 焦点与输入路由 | 模态抓取 / 游戏让出（"菜单打开时脚本让出输入"规则化，原 M6a 批③（现 M6b）原案此条继承）；编辑器内 ImGui↔RmlUi 按焦点分派（含文本输入事件归属）；手柄方向键合成焦点移动（登记项，Steam 目标确认后落） |
 | M8 | 引擎元素注册表 | RmlUi 自定义元素尾加位（`Rml::Element` 派生注册，官方扩展点）；首件候选 `radial-progress`（帧驱扫描手感不足才做）；**ADR 门控** |
 
 - **C# 侧形态与既有纪律同构**：ops 命令缓冲（SceneOps/ADR-004 先例）+ 事件队列（hostfxr 无回调纪律）+ vtable 尾加；**UI 状态不入 StateHash**（表现层，Tween/Fx 先例）；**UI 交互 = 用户 IO 不入输入快照**（RtUiCards 先例）——金回放零重录。
@@ -70,7 +70,7 @@
 
 | 波 | 时机 | 机制 | 验收消费者 |
 |---|---|---|---|
-| 1 | 批③a–③e（M6a 内） | M1 / M2 / M3 / M6（资产源）/ M7 + 提交制文本输入 | vs-survivor 模板 + svr-test 全屏幕 **L1 零新增** |
+| 1 | 批③a–③e（M6b，原 M6a 批③） | M1 / M2 / M3 / M6（资产源）/ M7 + 提交制文本输入 | vs-survivor 模板 + svr-test 全屏幕 **L1 零新增** |
 | 2 | M6c | M5 悬停、M6（RT + 帧序）、M8 视手感需要 | TD 模板（建造栏/塔详情/波次横幅/小地图）**L1 零新增** |
 | 3 | 剑阁/ARPG 立项前 | M4 拖放、打字机对话（C# 定时切片驱动 SetText，不动机制层） | 物品栏/装备拖放/对话屏 **L1 零新增** |
 
@@ -96,7 +96,7 @@
 - [x] 06 §8 v1.x 触发注记
 - [ ] `THIRD_PARTY.md` RmlUi spike 期 → 正式（③a 开工时落，FreeType 行同步核对）
 - [ ] 07 移植矩阵 RmlUi 行状态同步（③a 开工时核对）
-- [ ] 批③a 批文件开工新建（`Plans/M6a/YYYY-MM-DD-b3a-rmlui-renderer.md`，分解到文件/行级）
+- [ ] 批③a 批文件开工新建（`Plans/M6b/YYYY-MM-DD-b3a-rmlui-renderer.md`，分解到文件/行级）
 
 ## 附录 A：品类 × UI 形态矩阵（十四行收敛为八机制）
 

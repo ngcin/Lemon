@@ -1,7 +1,7 @@
 # M6a 批③b：UI 字体与资产通道（Noto 正字 + .rml/.rcss 资产化 + 贴图桥 + 文档热重载）
 
 - 日期：2026-09-28
-- 批文件：[Plans/M6a/2026-09-28-b3b-ui-font-asset-channel.md](../Plans/M6a/2026-09-28-b3b-ui-font-asset-channel.md)；决策：[ADR-014](../ADR/ADR-014-Game-UI-RmlUi-Integration.md)（③b 定义 / M2 DocumentReloaded / M6 资产源）
+- 批文件：[Plans/M6b/2026-09-28-b3b-ui-font-asset-channel.md](../Plans/M6b/2026-09-28-b3b-ui-font-asset-channel.md)；决策：[ADR-014](../ADR/ADR-014-Game-UI-RmlUi-Integration.md)（③b 定义 / M2 DocumentReloaded / M6 资产源）
 - 性质：代码面完成（验收 1/2/3 ✅ + gameRT 画面机器目检通过；真人截图走查待用户）
 
 ## 交付

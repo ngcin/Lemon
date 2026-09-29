@@ -1,7 +1,7 @@
 # M6a 批③c：C# API 与波1 机制——UI.Apply(ops) + UiEvent 队列 + 契约响亮失败 + M1/M2/M3/M6 资产源/M7（代码面收口）
 
 - 日期：2026-09-28
-- 批文件：[Plans/M6a/2026-09-28-b3c-csharp-ui-api.md](../Plans/M6a/2026-09-28-b3c-csharp-ui-api.md)；决策：[ADR-014](../ADR/ADR-014-Game-UI-RmlUi-Integration.md)（D1 ③c / D2 波1 契约 / D4 提交制）
+- 批文件：[Plans/M6b/2026-09-28-b3c-csharp-ui-api.md](../Plans/M6b/2026-09-28-b3c-csharp-ui-api.md)；决策：[ADR-014](../ADR/ADR-014-Game-UI-RmlUi-Integration.md)（D1 ③c / D2 波1 契约 / D4 提交制）
 - 性质：代码面完成（smoke-uirml 全链 OK + script-tests 1699 checks + 回归 full 15/15；真人验收余 GameView 手感 + 文本输入）
 
 ## 结论先行

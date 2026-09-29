@@ -1,7 +1,7 @@
 # M6a 批③a：RmlUi 渲染地基落地（Engine/Ui + RenderInterface over RHI）
 
 - 日期：2026-09-28
-- 批文件：[Plans/M6a/2026-09-28-b3a-rmlui-renderer.md](../Plans/M6a/2026-09-28-b3a-rmlui-renderer.md)；决策：[ADR-014](../ADR/ADR-014-Game-UI-RmlUi-Integration.md)（ADR-008 D2 接入形态执行、D3 由 M1–M8 契约重写）
+- 批文件：[Plans/M6b/2026-09-28-b3a-rmlui-renderer.md](../Plans/M6b/2026-09-28-b3a-rmlui-renderer.md)；决策：[ADR-014](../ADR/ADR-014-Game-UI-RmlUi-Integration.md)（ADR-008 D2 接入形态执行、D3 由 M1–M8 契约重写）
 - 性质：代码面完成（验收 1/2/3 ✅；真人截图走查待用户；T7 文本输入微 spike 留 ③a 收尾项、③c 开工前必须过）
 
 ## 交付
