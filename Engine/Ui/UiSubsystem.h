@@ -10,6 +10,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "Renderer/RHI.h"
 #include "Ui/UiBridge.h"
@@ -81,8 +82,19 @@ public:
     bool UnloadDocument(const char* name);
     void UnloadAllDocuments();
 
-    bool ShowDocument(const char* name, bool show);
+    /// 显隐（批③d 前置：modal = 场景声明态写入口——原本置 true 唯一路径是
+    /// ApplyOps 的 C# Show op；尾加默认参零破坏既有调用）。show=true 时 Show 后
+    /// PullToFront（层级序 = 最近 Show 序，D1 甲-轻量）。不置 stale（③b 双击
+    /// 预览 / 通道 A 声明装载来源，§3 口径）。
+    bool ShowDocument(const char* name, bool show, bool modal = false);
     bool HasDocument(const char* name) const;
+    /// 冒烟探针：文档 shown 态（查无 = false）——stale 归位断言源
+    bool IsDocumentShown(const char* name) const;
+    /// 批③d 前置（§3 EnterPlay 归位）：声明集之外的文档清理——stale（上局 C#
+    /// 动态 Show 过）→ Hide + 清 stale（装载保留，下次 Show 免 IO）；非 stale
+    /// （Edit 期双击装载）→ 保持现状（③b 预期延续）。声明集内的文档由调用方
+    /// 逐个 ShowDocument(name, showOnStart, modal) 归位到声明态（先于本调用）。
+    void ResetDynamicDocuments(const std::vector<std::string>& declared);
 
     // --------------------------------------------- 批③c：M2 ops 应用 / M3 事件 ----
     /// 单一提交口（C# UI.Apply 每帧一批；ScriptHost 拉取经 UiHooks 转入）。

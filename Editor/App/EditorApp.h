@@ -189,6 +189,12 @@ private:
     /// 批③d 前置（通道 B）文档解析器（安装给 gameUi_）：C# UI.Show 的 relPath →
     /// 项目 .rml 资产绝对路径（未命中 = false → ApplyOps 响亮失败维持）
     bool ResolveUiDocument(const std::string& relPath, std::string& absPath);
+    /// 批③d 前置（通道 A + §3 归位）：EnterPlay 成功后、首帧 TickPlay 前调用——
+    /// 扫 playWorld 的 UIDocument：GUID 解析（missing/非 Rml = 红字响亮 + 计数，
+    /// 绝不静默空屏）→ 同 GUID 去重装载（WARN）→ 按声明态 showOnStart/modal 归位；
+    /// 随后未声明且 stale 的文档 Hide + 清 stale。装载钩只认 EnterPlay 扫描——
+    /// 运行时动态加 UIDocument 不生效（批文件 §5 登记）。返回装载成功数。
+    uint32_t MountSceneUiDocuments();
     /// 批③c（M7）：鼠标/键盘/文本输入喂入游戏 UI + InputState 让出门（Play 段、
     /// gameUi_->Update() 前每帧）
     void FeedGameUiInput();

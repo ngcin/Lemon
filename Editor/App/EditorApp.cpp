@@ -38,6 +38,7 @@ static ::lemon::ui::UiSubsystem* s_gameUiForHooks = nullptr;
 #include "Components/CoreComponents.h"
 #include "Components/GameplayComponents.h"
 #include "Components/RenderComponents.h"
+#include "Components/UiComponents.h"
 #include <unistd.h> // getpid（bench-survivor tempdir）
 #include "ECS/Hierarchy.h"
 #include "Core/Log.h"
@@ -2102,7 +2103,10 @@ void EditorApp::BuildPickersAndModals() {
         if (ImGui::Button("重新编译并进入 Play", ImVec2(210, 0))) {
             ImGui::CloseCurrentPopup();
             if (TryHotReloadScripts("Play 阻断重试")) {
-                if (ctx_.EnterPlay()) tabFocusPending_ = 1;
+                if (ctx_.EnterPlay()) {
+                    MountSceneUiDocuments(); // 批③d 前置（通道 A）
+                    tabFocusPending_ = 1;
+                }
             } else if (!host_) {
                 playBlockedOpen_ = true; // 仍失败：重开模态（新错误已进 Console）
             }
@@ -2826,7 +2830,53 @@ bool EditorApp::TryEnterPlay() {
                    "错误见 Console 红字；修复保存后自动重编译装配");
         return false;
     }
-    return ctx_.EnterPlay();
+    if (!ctx_.EnterPlay()) return false;
+    MountSceneUiDocuments(); // 批③d 前置（通道 A）：场景声明装载 + EnterPlay 归位
+    return true;
+}
+
+// 批③d 前置（通道 A）：见 EditorApp.h 注记。无 UIDocument 的场景（bench/replay/
+// 基准场）装载调用恒 0——装载点只在此扫描处，不进任何通用路径（基准护栏 §5）。
+uint32_t EditorApp::MountSceneUiDocuments() {
+    if (!gameUi_) return 0;
+    AssetDatabase& db = ctx_.Assets();
+    uint32_t loaded = 0, missing = 0;
+    std::vector<std::string> declared;
+    std::vector<uint64_t> seen; // 同 GUID 去重（一屏两实体无意义；文档量小线性足够）
+    ctx_.ActiveScene().View<ecs::UIDocument>().each([&](auto raw, ecs::UIDocument& ud) {
+        const ecs::Entity e = ecs::Scene::FromEntt(raw);
+        if (ud.sourceAssetGuid == 0) return; // 未挂（合法；Inspector 提示）
+        if (std::find(seen.begin(), seen.end(), ud.sourceAssetGuid) != seen.end()) {
+            LEMON_WARN("UIDocument：实体 %llu 重复挂同一 .rml（guid %016llx）——"
+                       "一屏两实体无意义，已去重装载",
+                       (unsigned long long)e.id,
+                       (unsigned long long)ud.sourceAssetGuid);
+            return;
+        }
+        seen.push_back(ud.sourceAssetGuid);
+        const AssetEntry* en = db.FindByGuid(ud.sourceAssetGuid);
+        if (!en || en->missing || en->type != AssetType::Rml) {
+            ++missing; // 响亮失败：绝不静默空屏（guid-chain 同款 per-entity resolve）
+            LEMON_ERROR("UIDocument：资产缺失或非 .rml（guid %016llx，实体 %llu）——"
+                        "本屏不装载；修复资产或重挂后重进 Play",
+                        (unsigned long long)ud.sourceAssetGuid,
+                        (unsigned long long)e.id);
+            return;
+        }
+        if (gameUi_->LoadDocumentFromFile(en->relPath.c_str(),
+                                          db.AbsolutePath(*en).c_str())) {
+            ++loaded;
+            // 声明态归位：showOnStart=0 = 装载但隐藏（动态屏）；modal 初值入 Doc
+            gameUi_->ShowDocument(en->relPath.c_str(), ud.showOnStart != 0,
+                                  ud.modal != 0);
+            declared.push_back(en->relPath);
+        }
+    });
+    gameUi_->ResetDynamicDocuments(declared); // §3：未声明且 stale → Hide + 清 stale
+    if (loaded || missing)
+        LEMON_LOG("UIDocument 装载：%u 成功 / %u 缺失（声明态归位 + stale 清场）",
+                  loaded, missing);
+    return loaded;
 }
 
 void EditorApp::MenuNewProject() { wizOpen_ = true; }
@@ -3331,6 +3381,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
             return 1;
         }
         if (!ctx_.EnterPlay()) return 1;
+        MountSceneUiDocuments(); // 批③d 前置（通道 A）：--play/--final 程序化路径
     }
     // 批③a（ADR-014）：--smoke-uirml 独立进 Play——playTest 的"进/出往返"语义与
     // smoke 门绑定（上方块），本模式只需"Play 中持续渲染 UI"一态（Stop 由循环后
@@ -3349,6 +3400,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
                       (unsigned long long)probe.id);
         }
         if (!ctx_.EnterPlay()) return 1;
+        MountSceneUiDocuments(); // 批③d 前置（通道 A）：夹具主文档声明装载
         // 批③b 补：Play 按钮/菜单路径都设的翻页标志——③a 独立进 Play 分支漏了它，
         // 中央区标签页停在 Scene，--screenshot（交换链）只见 Scene 不见 UI（用户
         // 走查 2026-09-28 报；gameRT 本身有 UI，像素断言不受影响）
@@ -3427,6 +3479,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
             return 1;
         }
         if (!ctx_.EnterPlay()) return 1;
+        MountSceneUiDocuments(); // 批③d 前置：基准护栏活证——无 UIDocument 装载恒 0
     }
     // --bench-scene（2026-09-25 工具化）：--project/--scene 已开，进 Play 跑同款测量
     //（Immediate + 帧八段 + 逐系统分解）。不播种、无场景特定判据——RESULT 只报数，
@@ -3437,6 +3490,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
             return 2;
         }
         if (!ctx_.EnterPlay()) return 1;
+        MountSceneUiDocuments(); // 批③d 前置：基准护栏活证（用户压测场景零装载）
     }
     // M5 批④ --smoke-template：EnterPlay 已由上方 playTest 块完成（模板含 Game/、
     // 编译成功才走到这——PlayBlockedByScripts 守卫先行）。此处挂事件计数 sink。

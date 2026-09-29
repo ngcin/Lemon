@@ -759,18 +759,42 @@ void UiSubsystem::UnloadAllDocuments() {
     impl_->containers.clear();
 }
 
-bool UiSubsystem::ShowDocument(const char* name, bool show) {
+bool UiSubsystem::ShowDocument(const char* name, bool show, bool modal) {
     if (!impl_) return false;
     auto it = impl_->docs.find(name);
     if (it == impl_->docs.end() || !it->second.doc) return false;
-    if (show) it->second.doc->Show();
-    else it->second.doc->Hide();
+    it->second.modal = modal; // 声明态归位（运行时 Show op 可覆写；Hide 也写 = 全量语义）
+    if (show) {
+        it->second.doc->Show();
+        it->second.doc->PullToFront(); // D1 甲-轻量：层级序 = 最近 Show 序
+    } else {
+        it->second.doc->Hide();
+    }
     it->second.shown = show;
     return true;
 }
 
 bool UiSubsystem::HasDocument(const char* name) const {
     return impl_ && impl_->docs.count(name) > 0;
+}
+
+bool UiSubsystem::IsDocumentShown(const char* name) const {
+    if (!impl_) return false;
+    auto it = impl_->docs.find(name);
+    return it != impl_->docs.end() && it->second.shown;
+}
+
+void UiSubsystem::ResetDynamicDocuments(const std::vector<std::string>& declared) {
+    if (!impl_) return;
+    const std::set<std::string> decl(declared.begin(), declared.end());
+    for (auto& [name, d] : impl_->docs) {
+        if (decl.count(name)) continue;          // 声明集内：调用方已归位
+        if (!d.shownDuringPlay) continue;        // Edit 期双击装载：保持现状（③b）
+        if (d.doc && d.shown) d.doc->Hide();
+        d.shown = false;
+        d.shownDuringPlay = false; // stale 清（装载保留：下次 Show 免 IO）
+        LEMON_LOG("ui-subsystem: 归位隐藏动态文档 %s（装载保留）", name.c_str());
+    }
 }
 
 // ------------------------------------------------------- 批③c：M2/M3 ----
