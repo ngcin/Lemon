@@ -180,6 +180,11 @@ public:
     /// （批③d-1：期望值 = dp 值 × DpRatio()）
     bool TryGetElementBox(const char* docName, const char* elementId, float* w,
                           float* h) const;
+    /// 冒烟探针：元素浮点属性（progress value/max 等；缺属性/缺元素 = false）——
+    /// 属性通道接线断言源（T8 后修②：<progress> 原生化后 fill 为引擎定位非 DOM
+    /// 子元素，盒断言让位给属性回读 + 轨道盒）
+    bool TryGetElementAttrF(const char* docName, const char* elementId,
+                            const char* attr, float* out) const;
 
 private:
     struct Impl;

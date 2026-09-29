@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <cstdarg>
 #include <cstring>
 #include <deque>
@@ -1107,6 +1108,20 @@ bool UiSubsystem::TryGetElementBox(const char* docName, const char* elementId, f
     const Rml::Vector2f sz = el->GetBox().GetSize(Rml::BoxArea::Border);
     *w = sz.x;
     *h = sz.y;
+    return true;
+}
+
+bool UiSubsystem::TryGetElementAttrF(const char* docName, const char* elementId,
+                                     const char* attr, float* out) const {
+    if (!impl_ || !out) return false;
+    auto it = impl_->docs.find(docName);
+    if (it == impl_->docs.end() || !it->second.doc) return false;
+    Rml::Element* el = it->second.doc->GetElementById(Rml::String(elementId));
+    if (!el) return false;
+    // NaN 哨兵区分"属性缺席"（GetAttribute 缺席回默认值——0 会被误判）
+    const float v = el->GetAttribute<float>(Rml::String(attr), NAN);
+    if (std::isnan(v)) return false;
+    *out = v;
     return true;
 }
 

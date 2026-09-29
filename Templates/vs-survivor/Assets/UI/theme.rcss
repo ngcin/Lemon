@@ -49,6 +49,9 @@ body {
 /* ---- L2 组件首件套（样板两屏所需最小集）---- */
 
 .panel {                       /* 居中面板壳（卡片/对话框） */
+    display: block;            /* L2 组件显式 display：RmlUi 默认 inline（flex 子项
+                                  虽被块化，显式声明意图 + 防挪出 flex 场景复现
+                                  bar-fill 教训） */
     background: var(--c-panel);
     border: 2dp var(--c-border);
     padding: var(--sp-3);
@@ -64,12 +67,14 @@ body {
     background: var(--c-scrim);
 }
 .title {
+    display: block;            /* inline 上 text-align 无效（bar-fill 同源教训） */
     font-size: var(--fs-title);
     color: var(--c-accent);
     text-align: center;
     margin: var(--sp-1) 0 var(--sp-2) 0;
 }
 .hint {
+    display: block;
     font-size: var(--fs-hint);
     color: var(--c-dim);
     text-align: center;
@@ -82,16 +87,18 @@ body {
     margin-bottom: var(--sp-1);
     display: block;
 }
-.bar {                         /* 进度条（inline-block 随文本行） */
+.bar {                         /* 进度条 = 原生 <progress>（T8 后修②：value/max 走
+                                  属性通道 C# SetAttr 驱动；fill 为引擎定位的非 DOM
+                                  子元素——display 布局坑天然免疫；direction/fill-image
+                                  留作 ③e 表盘/竖条） */
     display: inline-block;
     width: 120dp;
     height: 10dp;
     margin-left: var(--sp-2);
     background: var(--c-bar-bg);
 }
-.bar-fill { height: 100%; }
-.bar-fill.hp { background: var(--c-hp); }
-.bar-fill.xp { background: var(--c-xp); }
+.bar.hp fill { background-color: var(--c-hp); }
+.bar.xp fill { background-color: var(--c-xp); }
 
 /* 卡片按钮（升级三选一 / 对话框单条形态） */
 .card {

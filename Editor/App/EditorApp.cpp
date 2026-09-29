@@ -481,6 +481,9 @@ body {
 /* ---- L2 组件首件套（样板两屏所需最小集）---- */
 
 .panel {                       /* 居中面板壳（卡片/对话框） */
+    display: block;            /* L2 组件显式 display：RmlUi 默认 inline（flex 子项
+                                  虽被块化，显式声明意图 + 防挪出 flex 场景复现
+                                  bar-fill 教训） */
     background: var(--c-panel);
     border: 2dp var(--c-border);
     padding: var(--sp-3);
@@ -496,12 +499,14 @@ body {
     background: var(--c-scrim);
 }
 .title {
+    display: block;            /* inline 上 text-align 无效（bar-fill 同源教训） */
     font-size: var(--fs-title);
     color: var(--c-accent);
     text-align: center;
     margin: var(--sp-1) 0 var(--sp-2) 0;
 }
 .hint {
+    display: block;
     font-size: var(--fs-hint);
     color: var(--c-dim);
     text-align: center;
@@ -514,16 +519,18 @@ body {
     margin-bottom: var(--sp-1);
     display: block;
 }
-.bar {                         /* 进度条（inline-block 随文本行） */
+.bar {                         /* 进度条 = 原生 <progress>（T8 后修②：value/max 走
+                                  属性通道 C# SetAttr 驱动；fill 为引擎定位的非 DOM
+                                  子元素——display 布局坑天然免疫；direction/fill-image
+                                  留作 ③e 表盘/竖条） */
     display: inline-block;
     width: 120dp;
     height: 10dp;
     margin-left: var(--sp-2);
     background: var(--c-bar-bg);
 }
-.bar-fill { height: 100%; }
-.bar-fill.hp { background: var(--c-hp); }
-.bar-fill.xp { background: var(--c-xp); }
+.bar.hp fill { background-color: var(--c-hp); }
+.bar.xp fill { background-color: var(--c-xp); }
 
 /* 卡片按钮（升级三选一 / 对话框单条形态） */
 .card {
@@ -559,8 +566,8 @@ body {
 </head>
 <body>
 <div id="hud">
-  <div id="hp" class="hud-row"><span id="hp-text"/><div id="hp-bar" class="bar"><div id="hp-fill" class="bar-fill hp"/></div></div>
-  <div id="xp" class="hud-row"><span id="xp-text"/><div id="xp-bar" class="bar"><div id="xp-fill" class="bar-fill xp"/></div></div>
+  <div id="hp" class="hud-row"><span id="hp-text"/><progress id="hp-bar" class="bar hp" max="100"/></div>
+  <div id="xp" class="hud-row"><span id="xp-text"/><progress id="xp-bar" class="bar xp" max="60"/></div>
   <div id="time" class="hud-row"/>
   <div id="kills" class="hud-row"/>
   <div id="best" class="hud-row"/>
@@ -1157,11 +1164,13 @@ public sealed class PlayerCombat : LemonBehaviour
         f << R"CS(using Lemon;
 using Lemon.Interop;
 
-/// <summary>HUD（M6b 批③d-1 文档化）：Assets/UI/hud.rml 六行 + 血/经双进度条，
-/// UI.SetText/SetStyle 每帧一次批量提交（UI.Apply——M2 单一口）。配色/字号/
-/// 间距全在 theme.rcss token（换肤 = 改 token 不改代码）；RtUi 通道（Lemon.Ui）
-/// 本屏退役——RmlUi 文档即编辑器 GameView 与 M8 打包的同一呈现者。读
-/// GameMain.Run 共享态；死亡相位冻结末帧（结算标题由战斗侧写入卡片屏）。</summary>
+/// <summary>HUD（M6b 批③d-1 文档化；T8 后修② 条改原生 progress）：Assets/UI/
+/// hud.rml 六行 + 血/经双进度条，UI.SetText/SetAttr 每帧一次批量提交（UI.Apply
+/// ——M2 单一口）。进度条 = RmlUi 原生 &lt;progress&gt;：value/max 走属性通道（语义
+/// 数据非样式，C# 不做百分比数学）；fill 引擎定位，免布局坑。配色/字号/间距全在
+/// theme.rcss token（换肤 = 改 token 不改代码）；RtUi 通道（Lemon.Ui）本屏退役
+/// ——RmlUi 文档即编辑器 GameView 与 M8 打包的同一呈现者。读 GameMain.Run 共享态；
+/// 死亡相位冻结末帧（结算标题由战斗侧写入卡片屏）。</summary>
 public sealed class PlayerHud : LemonBehaviour
 {
     private const string kDoc = "Assets/UI/hud.rml";
@@ -1180,9 +1189,9 @@ public sealed class PlayerHud : LemonBehaviour
         var hp = gameObject.GetComponent<Health>();
         var xp = gameObject.GetComponent<XpProgress>();
         UI.SetText(kDoc, "hp-text", $"HP {(int)hp.Cur}/{(int)hp.Max}");
-        UI.SetStyle(kDoc, "hp-fill", "width", Pct(hp.Max > 0f ? hp.Cur / hp.Max : 0f));
+        Bar(kDoc, "hp-bar", hp.Cur, hp.Max);
         UI.SetText(kDoc, "xp-text", $"LV {xp.Level} {(int)xp.Xp}/{(int)xp.XpToNext}");
-        UI.SetStyle(kDoc, "xp-fill", "width", Pct(xp.XpToNext > 0f ? xp.Xp / xp.XpToNext : 0f));
+        Bar(kDoc, "xp-bar", xp.Xp, xp.XpToNext);
         int t = (int)GameMain.Run.Time;
         UI.SetText(kDoc, "time", $"{t / 60}:{t % 60:00}");
         UI.SetText(kDoc, "kills", $"击杀 {GameMain.Run.Kills}");
@@ -1190,9 +1199,14 @@ public sealed class PlayerHud : LemonBehaviour
         UI.Apply();
     }
 
-    /// 进度条填充宽（"0%".."100%"——自定义格式无千分位/空格，RCSS 直接可吃）。
-    private static string Pct(float frac) =>
-        System.Math.Clamp(frac, 0f, 1f).ToString("0%", System.Globalization.CultureInfo.InvariantCulture);
+    /// 原生 progress 驱动（value/max 属性对；max 每帧同写——升级换挡零特判）。
+    /// (int) 舍入与文本行同口径（"0" 格式会四舍五入 → 两行数字不一致）。
+    private static void Bar(string doc, string id, float cur, float max) {
+        UI.SetAttr(doc, id, "value", ((int)cur).ToString(IC));
+        UI.SetAttr(doc, id, "max", ((int)max).ToString(IC));
+    }
+    private static readonly System.Globalization.CultureInfo IC =
+        System.Globalization.CultureInfo.InvariantCulture;
 }
 )CS";
     }
@@ -1612,6 +1626,10 @@ bool g_tplPointerHold = false; // 指针保持窗（FeedGameUiInput 让位——
 float g_tplClickX = 0, g_tplClickY = 0;
 char g_tplHudRows[64] = "";
 bool g_tplBestLoaded = false, g_tplWaveRow = false; // g_tplHudOk → g_tplHudDocOk（批③d-1 随迁）
+// T8 后修：进度条断言（文本探针测不出"样式写了布局没生效"——bar-fill 曾因
+// RmlUi 默认 inline 宽高被忽略而恒 0，文本六行全绿）。后修② 条改原生 progress：
+// 断言 = 轨道盒（120dp×10dp×ratio）+ value 属性回读对文本行数值
+bool g_tplHudBarBox = false;
 // M6a 批①：受击切段链（怪 clipId 曾 = monster-hit 段）+ fx 通道（飘字/血条在场）
 bool g_tplMobHitClip = false, g_tplFxText = false, g_tplFxBar = false;
 bool g_tplCardsSeen = false, g_tplPicked = false, g_tplCardsHidden = false;
@@ -5727,6 +5745,32 @@ int EditorApp::Run(const EditorLaunch& launch) {
                 if (!g_tplBestLoaded && hudHas("best") && std::strstr(hudTxt, "123"))
                     g_tplBestLoaded = true;
                 if (!g_tplWaveRow && hudHas("wave")) g_tplWaveRow = true;
+                // T8 后修②：条改原生 <progress>（fill = 引擎定位非 DOM 子元素，
+                // 盒探针不可达）——断言换轨双证：① 轨道盒 = 120dp×10dp×ratio
+                // （布局在场；display/规则丢失 → 0 尺寸）② value 属性回读 =
+                // 文本行同帧数值（C# SetAttr 接线落地；缺属性 = 探针 false）
+                if (!g_tplHudBarBox) {
+                    char hpT[96] = {}, xpT[96] = {};
+                    int hc = -1, hm = -1, xc = -1, xm = -1;
+                    if (gameUi_->TryGetElementText(kHudDoc, "hp-text", hpT, sizeof hpT))
+                        std::sscanf(hpT, "HP %d/%d", &hc, &hm);
+                    if (gameUi_->TryGetElementText(kHudDoc, "xp-text", xpT, sizeof xpT))
+                        std::sscanf(xpT, "LV %*d %d/%d", &xc, &xm);
+                    const float ratio = gameUi_->DpRatio();
+                    auto barOk = [&](const char* id, int cur, int max) {
+                        float w = 0, h = 0, v = -1.f;
+                        if (cur <= 0 || max <= 0 || ratio <= 0.f) return false;
+                        if (!gameUi_->TryGetElementBox(kHudDoc, id, &w, &h)) return false;
+                        if (std::fabs(w - 120.f * ratio) > 3.f ||
+                            std::fabs(h - 10.f * ratio) > 2.f)
+                            return false;
+                        if (!gameUi_->TryGetElementAttrF(kHudDoc, id, "value", &v))
+                            return false;
+                        return std::fabs(v - (float)cur) <= 0.51f;
+                    };
+                    if (barOk("hp-bar", hc, hm) && barOk("xp-bar", xc, xm))
+                        g_tplHudBarBox = true;
+                }
             }
             // M6a 批①：受击切段 + fx 通道采样（PlayerCombat.OnHit 写——脚本面端到端）
             if (!g_tplMobHitClip) {
@@ -6335,19 +6379,21 @@ int EditorApp::Run(const EditorLaunch& launch) {
             const bool layerOk = g_tplHudPixN0 > 40 &&
                                  g_tplHudPixDuring < g_tplHudPixN0 / 2 &&
                                  g_tplHudPixAfter > g_tplHudPixN0 / 2;
-            const bool tplOk = g_tplHudDocOk && g_tplBestLoaded && g_tplWaveRow &&
+            const bool tplOk = g_tplHudDocOk && g_tplHudBarBox && g_tplBestLoaded &&
+                               g_tplWaveRow &&
                                g_tplDeaths > 0 && g_tplLevelUps > 0 && g_tplCardsSeen &&
                                g_tplPicked && g_tplCardsHidden && g_tplDeathSeen &&
                                g_tplRevived && g_tplScriptOk &&
                                g_tplMobHitClip && g_tplFxText && g_tplFxBar && // 批①
                                g_tplTablesOk && // 批② T4：数值表载入
                                g_tplUiLoads == 2 && layerOk; // 批③d-1：装载恰 2 + 层序三拍
-            std::printf("[lemon] smoke-template: hud(doc)=%s saveLoad=%s wave(row=%s n=%d) "
+            std::printf("[lemon] smoke-template: hud(doc=%s bar=%s) saveLoad=%s wave(row=%s n=%d) "
                         "kills=%d levelUps=%d cards(doc seen=%s pick=%s hidden=%s) "
                         "layer(%d/%d/%d=%s) "
                         "death(seen=%s revive=%s scriptOk=%s) "
                         "hitClip=%s fx(text=%s bar=%s) tables=%s uidoc=%d => %s\n",
-                        g_tplHudDocOk ? "YES" : "NO", g_tplBestLoaded ? "YES" : "NO",
+                        g_tplHudDocOk ? "YES" : "NO",
+                        g_tplHudBarBox ? "YES" : "NO", g_tplBestLoaded ? "YES" : "NO",
                         g_tplWaveRow ? "YES" : "NO", g_tplWaveStarts, g_tplDeaths,
                         g_tplLevelUps, g_tplCardsSeen ? "YES" : "NO",
                         g_tplPicked ? "YES" : "NO", g_tplCardsHidden ? "YES" : "NO",

@@ -136,6 +136,24 @@
    一轮超时）→ 武装 50 帧未死则追击怪贴脸传送（保 Hazard 真实路径）。
 5. **画布尺寸跨会话可变**（824×464 / 1308×736 均现）——层序采样区改 DpRatio 派生，
    不写死 px。
+6. **T8 后修（2026-09-29 真人验收反馈）**：HP/XP 进度条填充恒空——`.bar-fill`
+   无 `display` 规则，RmlUi `display` 默认值 = **inline**（StyleSheetSpecification
+   注册默认，与 CSS 用户直觉相反；RmlUi 官方样例 rml.rcss 全量显式
+   `div{display:block}` 即此因），inline 元素 width/height 被布局忽略 → SetStyle
+   写入成功但盒子恒 0。修 = L2 组件全显式 display（`.bar-fill/.panel/.title/.hint`
+   补 `display:block`，`.title/.hint` 顺带修 inline 上 text-align 无效的潜伏
+   居中错位）。**烟测盲区教训**：既有 `fx(text/bar)` 位是场景 FxChannel 通道
+   （M6a 批①），非 RmlUi HUD；文本探针（TryGetElementText）测不出"样式写入
+   但布局未生效"。补 `hud(bar=)` 位：TryGetElementBox 读回 fill 宽对分数 ×
+   120dp × ratio（±3px），**阴性验证过**（回退 display → `bar=NO => FAIL` 而
+   文本位仍 YES = 盲区实证）。[DevLog](../DevLog/2026-09-29-m6b-b3d1-t8-bar-fill-fix.md)
+7. **T8 后修②（用户提案）**：L2 进度条改**原生 `<progress>`**（value/max 走
+   SetAttr 属性通道、fill 引擎定位非 DOM 子元素 = 布局坑结构性免疫、白得
+   direction 表盘/fill-image；value 变更仅 geometry_dirty 比每帧 SetStyle 宽
+   更便宜）。`Pct()` 退役；UiSubsystem 加 `TryGetElementAttrF` 探针；smoke
+   `hud(bar=)` 断言换轨 = 轨道盒 + value 属性回读对文本行（阴性验证过——
+   注意阴必须连模板再生成，smoke 复制源是模板目录非内嵌串）。
+   [DevLog](../DevLog/2026-09-29-m6b-b3d1-t8-native-progress.md)
 
 ## 风险与既知边界
 
