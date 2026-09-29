@@ -89,41 +89,6 @@ void HookSaveFlush(ecs::World& w) {
 // 空标签等程序员错误在这里现形——冒烟断言清零（M4.5 修复 Inspector ##v 撞号后
 // 加的程序化防线：这类错只在交互时弹窗，无头冒烟原本测不到）。
 int g_imguiErrorCount = 0;
-// M5 批④ --smoke-template 证据状态（批③b 2026-09-29：文件级 g_tpl* 标量收敛为
-// 单结构体实例——字段语义/初始化/注释逐项原样，访问点改 g_tplSmoke.<field>。
-// 保持文件级存储两处刚需：无捕获 event sink lambda 的计数改写 +
-// FeedGameUiInput 让位窗（pointerHold）跨函数读取）
-struct TplSmokeState {
-    int waveStarts = 0, levelUps = 0, deaths = 0;
-    int gems = 0, mobs = 0; // 峰值快照（帧内采样）
-    // 批③d 前置 T5 → 批③d-1 随迁：模板场景现挂 2 UIDocument（HUD/cards）——零装载
-    // 护栏升级为"通道 A 装载恰 2"（装载点单一性防线的同型收紧；bench 场景仍零装载）
-    int uiLoads = -1;
-    // 批③d-1：文档化断言态（原 RtUi 行/卡片探针随迁）+ 层序三拍状态机
-    bool hudDocOk = false;
-    int layerStage = 0; // 0 基线请求→1 取回→2 等卡片→3 取回→4 等隐藏→5 取回→6 完
-    int hudPixN0 = -1, hudPixDuring = -1, hudPixAfter = -1;
-    bool capReq = false, capPending = false;
-    int capPix = -1;
-    int clickPhase = 0, clickCooldown = 0; // 直灌点击三帧（定位/down/up）+ 冷却
-    bool pointerHold = false; // 指针保持窗（FeedGameUiInput 让位——Update 建悬停用）
-    float clickX = 0, clickY = 0;
-    char hudRows[64] = "";
-    bool bestLoaded = false, waveRow = false; // g_tplHudOk → g_tplHudDocOk（批③d-1 随迁）
-    // T8 后修：进度条断言（文本探针测不出"样式写了布局没生效"——bar-fill 曾因
-    // RmlUi 默认 inline 宽高被忽略而恒 0，文本六行全绿）。后修② 条改原生 progress：
-    // 断言 = 轨道盒（120dp×10dp×ratio）+ value 属性回读对文本行数值
-    bool hudBarBox = false;
-    // M6a 批①：受击切段链（怪 clipId 曾 = monster-hit 段）+ fx 通道（飘字/血条在场）
-    bool mobHitClip = false, fxText = false, fxBar = false;
-    bool cardsSeen = false, picked = false, cardsHidden = false;
-    bool deathSeen = false, revived = false, scriptOk = true; // 批④后修④死亡链
-    bool deathArmed = false; // 压血一shot（站桩下自动炮火清怪快于刷怪，磨不死）
-    // M6a 批② T4：数值表载入断言（weapons 4 行 × upgrades 7 行 × balance 2 行——
-    // 含列头行；PlayerCombat.Start 读、EnterPlay 快照建 TableStore）
-    bool tablesOk = false;
-};
-TplSmokeState g_tplSmoke;
 void ImGuiErrorSink(ImGuiContext*, void* user_data, const char* msg) {
     ++*static_cast<int*>(user_data);
     LEMON_WARN("ImGui 错误：%s", msg);
@@ -318,33 +283,8 @@ int EditorApp::Run(const EditorLaunch& launch) {
     }
     // --smoke-template（M5 批④）：向导复制 vs-survivor 到 tempdir（幂等清残留）→
     // 走标准 OpenProjectPipeline（Game/ 编译 + 脚本宿主 + watcher）→ 开 Main.scene
-    if (launch.smokeTemplate) {
-#ifndef LEMON_SCRIPT_DIR
-        LEMON_ERROR("--smoke-template 需要 LEMON_BUILD_SCRIPTING=ON 构建");
-        return 1;
-#else
-        namespace fs = std::filesystem;
-        std::error_code ec;
-        const fs::path tmp = fs::temp_directory_path() /
-                             ("lemon-smoke-template-" + std::to_string(::getpid()));
-        fs::remove_all(tmp, ec);
-        ProjectDesc d;
-        d.parentDir = tmp.string();
-        d.name = "VsSmoke";
-        d.sdkDir = LEMON_SCRIPT_DIR;
-        d.engineVersion = "0.5.0-m5";
-        d.templateName = "vs-survivor";
-        d.templateDir = std::string(LEMON_TEMPLATE_DIR) + "/vs-survivor";
-        const std::string root = ProjectWizard::Create(d);
-        if (root.empty()) {
-            LEMON_ERROR("smoke-template：向导复制失败（模板缺失/不可写）");
-            return 1;
-        }
-        launchCopy_.projectDir = root;
-        launch_ = &launchCopy_;
-        LEMON_LOG("smoke-template: 向导复制 OK %s", root.c_str());
-#endif
-    }
+    // --smoke-template 向导复制播种——外迁 EditorAppSmokeTpl.cpp（批③c-4：挂点原位）
+    if (!SmokeTplSeedProject()) return 1;
     // 批③b：--smoke-uirml 资产夹具（temp 项目：.rml + .rcss + 贴图，标准管线打开）
     // ——文档/样式/贴图/热重载四通道全走真实资产路径（③a 的内存文档退役）
     if (launch.smokeUirml) SeedSmokeUiRmlProject();
@@ -393,28 +333,8 @@ int EditorApp::Run(const EditorLaunch& launch) {
         // 预置存档 = EnterPlay 载入路径的机械验证。M6a 批② T5 双载体：meta.sav
         // （vs.best=123，新名——模板 Chan.Meta 读点）+ game.sav（旧名——slot 档
         // 惰性迁移链载体；出 Play 断言迁移落新名）
-        if (!ctx_.OpenScene(launch_->projectDir + "/Scenes/Main.scene")) return 1;
-        {
-            namespace fs = std::filesystem;
-            std::error_code ec;
-            const fs::path saves = fs::path(launch_->projectDir) / ".lemon/saves";
-            fs::create_directories(saves, ec);
-            lemon::ecs::SaveChannel pre;
-            pre.Set("vs.best", "123", 3);
-            const std::vector<uint8_t> bytes = pre.Encode();
-            std::ofstream(saves / "meta.sav", std::ios::binary | std::ios::trunc)
-                .write((const char*)bytes.data(), (std::streamsize)bytes.size());
-            std::ofstream(saves / "game.sav", std::ios::binary | std::ios::trunc)
-                .write((const char*)bytes.data(), (std::streamsize)bytes.size());
-        }
-        smokeSeeded_ = ctx_.ActiveScene().AliveCount();
-        forceDefaultLayout_ = true; // overlay 断言依赖 Scene 面板前台（同 smoke-drag 语义）
-        // overlay 三要素需要选中实体：选玩家（tag "Player"）
-        ctx_.EditScene().Each([&](ecs::Entity e) {
-            if (const ecs::Meta* m = ctx_.EditScene().TryGet<ecs::Meta>(e);
-                m && std::strcmp(m->tag, "Player") == 0)
-                ctx_.Select(e, false);
-        });
+        // --smoke-template 场景+预置存档播种——外迁 EditorAppSmokeTpl.cpp（批③c-4）
+        if (!SmokeTplSeedScene()) return 1;
     } else if (launch.smoke || launch.smokeDrag || launch.smokeUi) {
         SeedSmokeScene();
         // 冒烟不吃 ini 布局漂移账（同 smoke-drag 语义）：断言依赖 Scene 面板被绘制
@@ -537,17 +457,8 @@ int EditorApp::Run(const EditorLaunch& launch) {
     }
     // M5 批④ --smoke-template：EnterPlay 已由上方 playTest 块完成（模板含 Game/、
     // 编译成功才走到这——PlayBlockedByScripts 守卫先行）。此处挂事件计数 sink。
-    if (launch.smokeTemplate && ctx_.Playing()) {
-        // 批③d-1：通道 A 装载数（恰 2 = HUD+cards 场景声明；bench 场景零装载口径
-        // 不变——装载点只在 MountSceneUiDocuments 的 EnterPlay 扫描）
-        g_tplSmoke.uiLoads = gameUi_ ? (int)gameUi_->DocumentLoadCount() : -1;
-        ctx_.ActiveWorld().SetEventSink(
-            [](ecs::World&, const ecs::EventPacket& p) {
-                if (p.type == ecs::GameEvent::WaveStart) ++g_tplSmoke.waveStarts;
-                else if (p.type == ecs::GameEvent::LevelUp) ++g_tplSmoke.levelUps;
-                else if (p.type == ecs::GameEvent::Death) ++g_tplSmoke.deaths;
-            });
-    }
+    // --smoke-template Play 前置——外迁 EditorAppSmokeTpl.cpp（批③c-4：挂点原位）
+    SmokeTplPlaySetup();
 
     // --save-scene：场景就绪即保存退出（CLI roundtrip 验收：save → --scene 重开）
     if (!launch.saveScene.empty()) {
@@ -1102,20 +1013,8 @@ int EditorApp::Run(const EditorLaunch& launch) {
             }
             if (playDiag_ && frame >= 60 && frame < 120)
                 in.ax = 1.0f; // 诊断注入：D 键右走（自动化无真人点击，不经聚焦门）
-            if (launch.smokeTemplate && !gameViewFocused_) {
-                // 模板冒烟注入（批④后修④ 两段）：kDeathArm 前切向环绕风筝（角速
-                // 1.2rad/s × 速 240 → 半径 ~200）攒击杀/升级链；此后站桩送死——
-                // 近身 Hazard 磨死 → 死亡对话框 → 自动 pick 复活（断言见 tplDeath 段）
-                constexpr uint64_t kDeathArm = 2100;
-                if (frame < kDeathArm) {
-                    const float a = 0.02f * (float)frame;
-                    in.ax = -std::sin(a);
-                    in.ay = std::cos(a);
-                } else {
-                    in.ax = 0.0f; // 站桩 + 证据段压血（清怪快于刷怪，磨不死）
-                    in.ay = 0.0f;
-                }
-            }
+            // --smoke-template 转向注入——外迁 EditorAppSmokeTpl.cpp（批③c-4：挂点原位）
+            SmokeTplSteer(frame, in);
             ctx_.ActiveWorld().ApplyInput(in);
             bPump = BenchClock::now(); // 段界：pump（轮询/watcher/自动备份）结束 = sim 开始
             // 固定步长累加器（2026-09-29 复审 2a/2b）：模拟速率此前 = 渲染帧率
@@ -1355,232 +1254,8 @@ int EditorApp::Run(const EditorLaunch& launch) {
         SmokeAnimSample(frame);
         // M5 批④ smoke-template 证据采样：HUD 四要素行齐 / 存档载入（best=123 回显）/
         // 波次行 / 三选一卡片链（出现 → 注入选择（模拟数字键 1）→ 消费后隐藏）
-        if (launch.smokeTemplate && ctx_.Playing() && frame > 5) {
-            // M6a 批② T4：三表快照断言（EnterPlay 建、Start 消费——行数 = 列头+数据行）
-            if (!g_tplSmoke.tablesOk) {
-                auto rowsOf = [&](uint64_t guid) {
-                    const auto* t = ctx_.ActiveWorld().Tables().Find((uint32_t)guid);
-                    return t ? (int)t->size() : -1;
-                };
-                g_tplSmoke.tablesOk = rowsOf(vs_template::kWeaponsTab) == 4 &&
-                                rowsOf(vs_template::kUpgradesTab) == 7 &&
-                                rowsOf(vs_template::kBalanceTab) == 2;
-            }
-            // 批③d-1：HUD 文档化断言（原 RtUi 行探针随迁）——六要素文本经
-            // TryGetElementText（DOM 读数，零渲染依赖）；best 含 "123" = 预置存档
-            // → C# 读回 → HUD 回显
-            static const char* const kHudDoc = "Assets/UI/hud.rml";
-            if (gameUi_) {
-                char hudTxt[96] = {};
-                auto hudHas = [&](const char* id) {
-                    return gameUi_->TryGetElementText(kHudDoc, id, hudTxt,
-                                                      sizeof hudTxt) &&
-                           hudTxt[0] != '\0';
-                };
-                if (!g_tplSmoke.hudDocOk) {
-                    char t4[4][96] = {};
-                    bool ok = true;
-                    const char* const ids[4] = {"hp-text", "xp-text", "time", "kills"};
-                    for (int i = 0; i < 4; ++i)
-                        ok = ok && gameUi_->TryGetElementText(kHudDoc, ids[i], t4[i],
-                                                              sizeof t4[i]) &&
-                             t4[i][0] != '\0';
-                    g_tplSmoke.hudDocOk = ok;
-                }
-                if (!g_tplSmoke.bestLoaded && hudHas("best") && std::strstr(hudTxt, "123"))
-                    g_tplSmoke.bestLoaded = true;
-                if (!g_tplSmoke.waveRow && hudHas("wave")) g_tplSmoke.waveRow = true;
-                // T8 后修②：条改原生 <progress>（fill = 引擎定位非 DOM 子元素，
-                // 盒探针不可达）——断言换轨双证：① 轨道盒 = 120dp×10dp×ratio
-                // （布局在场；display/规则丢失 → 0 尺寸）② value 属性回读 =
-                // 文本行同帧数值（C# SetAttr 接线落地；缺属性 = 探针 false）
-                if (!g_tplSmoke.hudBarBox) {
-                    char hpT[96] = {}, xpT[96] = {};
-                    int hc = -1, hm = -1, xc = -1, xm = -1;
-                    if (gameUi_->TryGetElementText(kHudDoc, "hp-text", hpT, sizeof hpT))
-                        std::sscanf(hpT, "HP %d/%d", &hc, &hm);
-                    if (gameUi_->TryGetElementText(kHudDoc, "xp-text", xpT, sizeof xpT))
-                        std::sscanf(xpT, "LV %*d %d/%d", &xc, &xm);
-                    const float ratio = gameUi_->DpRatio();
-                    auto barOk = [&](const char* id, int cur, int max) {
-                        float w = 0, h = 0, v = -1.f;
-                        if (cur <= 0 || max <= 0 || ratio <= 0.f) return false;
-                        if (!gameUi_->TryGetElementBox(kHudDoc, id, &w, &h)) return false;
-                        if (std::fabs(w - 120.f * ratio) > 3.f ||
-                            std::fabs(h - 10.f * ratio) > 2.f)
-                            return false;
-                        if (!gameUi_->TryGetElementAttrF(kHudDoc, id, "value", &v))
-                            return false;
-                        return std::fabs(v - (float)cur) <= 0.51f;
-                    };
-                    if (barOk("hp-bar", hc, hm) && barOk("xp-bar", xc, xm))
-                        g_tplSmoke.hudBarBox = true;
-                }
-            }
-            // M6a 批①：受击切段 + fx 通道采样（PlayerCombat.OnHit 写——脚本面端到端）
-            if (!g_tplSmoke.mobHitClip) {
-                ctx_.ActiveScene().View<ecs::Animator2D>().each([&](auto, ecs::Animator2D& a) {
-                    if (a.clipId == (uint32_t)vs_template::kMonsterHitClip)
-                        g_tplSmoke.mobHitClip = true;
-                });
-            }
-            if (!g_tplSmoke.fxText || !g_tplSmoke.fxBar) {
-                const lemon::ecs::FxChannel& fx = ctx_.ActiveWorld().Fx();
-                if (fx.TextCount() > 0) g_tplSmoke.fxText = true;
-                if (fx.BarCount() > 0) g_tplSmoke.fxBar = true;
-            }
-            // 批③d-1：卡片链文档化（原 RtUiCards 探针随迁）。升级卡 3 条 / 死亡对话
-            // 框 1 条（key "ok"）；选择 = **引擎直灌点击**（SetPointer + 两帧
-            // down/up + 指针保持窗——绕 ImGui 悬停链：template 会话里 GameView
-            // IsItemHovered 被压制（mouse 落位正确仍恒假，根因未明），ImGui→RmlUi
-            // 路由链由 smoke-uirml 的 60/61 帧点击独立覆盖）：UiEvent → #16 →
-            // C# 消费 → Hide。三帧状态机：定位（下一帧 Update 建悬停）→ down → up
-            static const char* const kCardsDoc = "Assets/UI/cards.rml";
-            const int cardsN =
-                gameUi_ ? gameUi_->ContainerItemCount(kCardsDoc, "cards") : -1;
-            const bool cardsShown =
-                gameUi_ && gameUi_->IsDocumentShown(kCardsDoc);
-            if (cardsN == 3) g_tplSmoke.cardsSeen = true;
-            if (g_tplSmoke.clickCooldown > 0) --g_tplSmoke.clickCooldown;
-            if (g_tplSmoke.clickPhase == 1) { // down（本帧 Update 已按保持指针建好悬停）
-                gameUi_->ProcessMouseButton(0, true);
-                g_tplSmoke.clickPhase = 2;
-            } else if (g_tplSmoke.clickPhase == 2) { // up（RmlUi click 边沿）
-                gameUi_->ProcessMouseButton(0, false);
-                g_tplSmoke.clickPhase = 0;
-                g_tplSmoke.pointerHold = false;
-                g_tplSmoke.clickCooldown = 15; // 事件往返（→UiEvent→#16→C#→Hide）余量
-                g_tplSmoke.picked = true;
-            } else if (gameUi_ && cardsShown && cardsN >= 1 &&
-                       g_tplSmoke.clickCooldown == 0 && frame > 120) {
-                // 可见卡片逐 key 试探（u0..u5 = 升级池 id；ok = 死亡对话框）——
-                // TryGetItemCenter 只对在场条目返回中心
-                static const char* const kCardKeys[7] = {"u0", "u1", "u2", "u3",
-                                                         "u4", "u5", "ok"};
-                for (const char* key : kCardKeys) {
-                    float cx, cy;
-                    if (gameUi_->TryGetItemCenter(kCardsDoc, "cards", key, &cx, &cy)) {
-                        g_tplSmoke.clickX = cx;
-                        g_tplSmoke.clickY = cy;
-                        gameUi_->SetPointer((int)cx, (int)cy, true); // 保持至 up 帧
-                        g_tplSmoke.pointerHold = true;
-                        g_tplSmoke.clickPhase = 1;
-                        break;
-                    }
-                }
-            }
-            if (g_tplSmoke.picked && !cardsShown) g_tplSmoke.cardsHidden = true; // C# 消费 → Hide
-            // 批③d-1：层序三拍（cards 文档的 scrim 压暗 HUD 文字 = cards 在上的像素
-            // 级证明——若层序颠倒 scrim 盖不住 HUD）。计数 #f0f0f0 近色（time 行白字）。
-            // 帧序：本钩置请求位 → 次帧渲染块录 gameRT → 同帧尾本钩取回
-            if (g_tplSmoke.capPending) {
-                std::vector<uint8_t> rt;
-                uint32_t rw = 0, rh = 0;
-                if (device_->DebugFetchTextureCapture(rt, rw, rh)) {
-                    // HUD 文字区（ratio 派生——画布尺寸跨会话可变，px 写死不健壮）：
-                    // 左上 (12dp,10dp) 起 ~230dp × ~110dp（六行纵列，卡片面板居中
-                    // 不入区——只有 scrim 会盖进来）。计 #f0f0f0 近色（time 行白字）
-                    const float ratio = gameUi_ ? gameUi_->DpRatio() : 1.0f;
-                    const uint32_t x1 = (uint32_t)(242.0f * ratio);
-                    const uint32_t y1 = (uint32_t)(120.0f * ratio);
-                    int n = 0;
-                    for (uint32_t y = 0; y < rh && y < y1; ++y)
-                        for (uint32_t x = 0; x < rw && x < x1; ++x) {
-                            const uint8_t* p = &rt[((size_t)y * rw + x) * 4];
-                            if (std::abs((int)p[0] - 240) <= 30 &&
-                                std::abs((int)p[1] - 240) <= 30 &&
-                                std::abs((int)p[2] - 240) <= 30)
-                                ++n;
-                        }
-                    g_tplSmoke.capPix = n;
-                }
-                g_tplSmoke.capPending = false;
-            }
-            if (g_tplSmoke.layerStage == 0 && frame > 100) { // 基线：HUD 已上屏、卡片未到
-                g_tplSmoke.capReq = true;
-                g_tplSmoke.layerStage = 1;
-            } else if (g_tplSmoke.layerStage == 1 && g_tplSmoke.capPix >= 0) {
-                g_tplSmoke.hudPixN0 = g_tplSmoke.capPix;
-                g_tplSmoke.capPix = -1;
-                g_tplSmoke.layerStage = 2;
-            } else if (g_tplSmoke.layerStage == 2 && cardsShown) {
-                g_tplSmoke.capReq = true;
-                g_tplSmoke.layerStage = 3;
-            } else if (g_tplSmoke.layerStage == 3 && g_tplSmoke.capPix >= 0) {
-                g_tplSmoke.hudPixDuring = g_tplSmoke.capPix;
-                g_tplSmoke.capPix = -1;
-                g_tplSmoke.layerStage = 4;
-            } else if (g_tplSmoke.layerStage == 4 && g_tplSmoke.picked && !cardsShown) {
-                g_tplSmoke.capReq = true;
-                g_tplSmoke.layerStage = 5;
-            } else if (g_tplSmoke.layerStage == 5 && g_tplSmoke.capPix >= 0) {
-                g_tplSmoke.hudPixAfter = g_tplSmoke.capPix;
-                g_tplSmoke.capPix = -1;
-                g_tplSmoke.layerStage = 6;
-            }
-            // 批③d-1 催命：文档化卡片的选择有几帧事件往返（原 RtUi 直写同帧），
-            // 局内时序整体后移 → 波 2 刷新走近的余量变薄（实测一轮贴边一轮超时）。
-            // 武装后 50 帧仍未死 = 把追击怪贴脸（保 Hazard 接触真实路径，只省走路）
-            if (frame >= 2150 && !g_tplSmoke.deathSeen) {
-                Vec2 ppos{0, 0};
-                bool got = false;
-                ctx_.ActiveScene().View<scripting::ScriptBox>().each(
-                    [&](auto ent, scripting::ScriptBox&) {
-                        const ecs::Entity e = ecs::Scene::FromEntt(ent);
-                        if (const ecs::Transform2D* t =
-                                ctx_.ActiveScene().TryGet<ecs::Transform2D>(e)) {
-                            ppos = t->pos;
-                            got = true;
-                        }
-                    });
-                if (got)
-                    ctx_.ActiveScene().View<ecs::Transform2D, ecs::Chase>().each(
-                        [&](auto, ecs::Transform2D& tf, ecs::Chase&) {
-                            tf.pos = Vec2{ppos.x + 18.0f, ppos.y + 6.0f};
-                        });
-            }
-            // 批④后修④死亡链回归：kDeathArm 帧起压血到 0.1 + 掐射击（站桩下
-            // 自动炮火半路清怪、玩家碰不到怪——停火让怪群近身，Hazard 真路径击杀）
-            // → 玩家脚本实体仍在场（View 命中 = 未被销毁）、flags bit0 未置（未被
-            // 异常禁用）→ 点击复活 → 血回满 + 解冻 + 卡片文档隐藏 = 复活成功
-            if (frame >= 2100 && !g_tplSmoke.deathArmed) {
-                g_tplSmoke.deathArmed = true;
-                ctx_.ActiveScene().View<scripting::ScriptBox>().each(
-                    [&](auto ent, scripting::ScriptBox&) {
-                        ecs::Entity e = ecs::Scene::FromEntt(ent);
-                        if (ecs::Health* hp = ctx_.ActiveScene().TryGet<ecs::Health>(e))
-                            hp->cur = 0.1f;
-                        if (ecs::Shooter* sh = ctx_.ActiveScene().TryGet<ecs::Shooter>(e))
-                            sh->interval = 3600.0f;
-                    });
-            }
-            if (frame >= 2100 && !g_tplSmoke.revived) {
-                bool anyScript = false;
-                ctx_.ActiveScene().View<scripting::ScriptBox>().each(
-                    [&](auto ent, scripting::ScriptBox& sb) {
-                        anyScript = true;
-                        for (uint32_t i = 0; i < sb.count; ++i) // 逐槽查禁用位（M6a 批⓪）
-                            if (sb.slots[i].flags & scripting::kScriptFlagDisabled)
-                                g_tplSmoke.scriptOk = false;
-                        const ecs::Health* hp = ctx_.ActiveScene().TryGet<ecs::Health>(
-                            ecs::Scene::FromEntt(ent));
-                        if (!hp) return;
-                        if (hp->cur <= 0.0f) g_tplSmoke.deathSeen = true;
-                        else if (g_tplSmoke.deathSeen && hp->cur >= hp->max &&
-                                 ctx_.ActiveWorld().TimeScale() > 0.0f && !cardsShown)
-                            g_tplSmoke.revived = true;
-                    });
-                if (!anyScript) g_tplSmoke.scriptOk = false; // 脚本实体消失（销毁回归锚点）
-            }
-            if (frame % 60 == 0) { // 诊断快照（低频）：文档 HUD 位 + 场内分布
-                std::snprintf(g_tplSmoke.hudRows, sizeof g_tplSmoke.hudRows, "doc=%d cards=%d",
-                              g_tplSmoke.hudDocOk ? 1 : 0, cardsN);
-                ctx_.ActiveScene().View<ecs::Collectible>().each(
-                    [](auto, ecs::Collectible&) { ++g_tplSmoke.gems; });
-                ctx_.ActiveScene().View<ecs::Chase>().each(
-                    [](auto, ecs::Chase&) { ++g_tplSmoke.mobs; });
-            }
-        }
+        // --smoke-template 帧采样——外迁 EditorAppSmokeTpl.cpp（批③c-4：挂点原位）
+        SmokeTplSample(frame);
         if (firstFrameMs < 0.0)
             firstFrameMs = std::chrono::duration<double, std::milli>(
                                std::chrono::steady_clock::now() - tColdStart)
@@ -1950,112 +1625,8 @@ int EditorApp::Run(const EditorLaunch& launch) {
         // 批③d-1：HUD/卡片断言已随迁文档面（hud(doc)=TryGetElementText / cards 容器
         // 计数 + 合成点击 + IsDocumentShown）；layer = 层序三拍（scrim 压暗复原）；
         // uidoc = 通道 A 装载恰 2（HUD+cards 场景声明）。
-        if (launch.smokeTemplate) {
-            const bool layerOk = g_tplSmoke.hudPixN0 > 40 &&
-                                 g_tplSmoke.hudPixDuring < g_tplSmoke.hudPixN0 / 2 &&
-                                 g_tplSmoke.hudPixAfter > g_tplSmoke.hudPixN0 / 2;
-            const bool tplOk = g_tplSmoke.hudDocOk && g_tplSmoke.hudBarBox && g_tplSmoke.bestLoaded &&
-                               g_tplSmoke.waveRow &&
-                               g_tplSmoke.deaths > 0 && g_tplSmoke.levelUps > 0 && g_tplSmoke.cardsSeen &&
-                               g_tplSmoke.picked && g_tplSmoke.cardsHidden && g_tplSmoke.deathSeen &&
-                               g_tplSmoke.revived && g_tplSmoke.scriptOk &&
-                               g_tplSmoke.mobHitClip && g_tplSmoke.fxText && g_tplSmoke.fxBar && // 批①
-                               g_tplSmoke.tablesOk && // 批② T4：数值表载入
-                               g_tplSmoke.uiLoads == 2 && layerOk; // 批③d-1：装载恰 2 + 层序三拍
-            std::printf("[lemon] smoke-template: hud(doc=%s bar=%s) saveLoad=%s wave(row=%s n=%d) "
-                        "kills=%d levelUps=%d cards(doc seen=%s pick=%s hidden=%s) "
-                        "layer(%d/%d/%d=%s) "
-                        "death(seen=%s revive=%s scriptOk=%s) "
-                        "hitClip=%s fx(text=%s bar=%s) tables=%s uidoc=%d => %s\n",
-                        g_tplSmoke.hudDocOk ? "YES" : "NO",
-                        g_tplSmoke.hudBarBox ? "YES" : "NO", g_tplSmoke.bestLoaded ? "YES" : "NO",
-                        g_tplSmoke.waveRow ? "YES" : "NO", g_tplSmoke.waveStarts, g_tplSmoke.deaths,
-                        g_tplSmoke.levelUps, g_tplSmoke.cardsSeen ? "YES" : "NO",
-                        g_tplSmoke.picked ? "YES" : "NO", g_tplSmoke.cardsHidden ? "YES" : "NO",
-                        g_tplSmoke.hudPixN0, g_tplSmoke.hudPixDuring, g_tplSmoke.hudPixAfter,
-                        layerOk ? "OK" : "FAIL",
-                        g_tplSmoke.deathSeen ? "YES" : "NO", g_tplSmoke.revived ? "YES" : "NO",
-                        g_tplSmoke.scriptOk ? "YES" : "NO", g_tplSmoke.mobHitClip ? "YES" : "NO",
-                        g_tplSmoke.fxText ? "YES" : "NO", g_tplSmoke.fxBar ? "YES" : "NO",
-                        g_tplSmoke.tablesOk ? "YES" : "NO", g_tplSmoke.uiLoads,
-                        tplOk ? "OK" : "FAIL");
-            std::printf("[lemon] smoke-template: diag %s gems(peak)=%d mobs(peak)=%d\n",
-                        g_tplSmoke.hudRows, g_tplSmoke.gems, g_tplSmoke.mobs);
-            if (!tplOk) exitCode = 1;
-            // ExitPlay 兜底落盘（写路径）：Stop 后 .lemon/saves/ 三档——slot_0 =
-            // 旧 game.sav 惰性迁移后落新名（迁移链闭环：内容含种子键）；meta =
-            // vs.best（模板 Chan.Meta）；settings 空档跳过不落文件（Count 0 语义）
-            {
-                namespace fs = std::filesystem;
-                const fs::path savesDir =
-                    fs::path(ctx_.Assets().ProjectRoot()) / ".lemon/saves";
-                std::error_code ec;
-                auto fileOk = [&](const char* name) {
-                    return fs::file_size(savesDir / name, ec) > 16 && !ec;
-                };
-                const bool slotOk = fileOk("slot_0.sav"), metaOk = fileOk("meta.sav");
-                const bool skipOk = !fs::exists(savesDir / "settings.sav", ec);
-                bool migrateOk = false; // slot_0.sav 解码含种子键 vs.best=123
-                if (slotOk) {
-                    std::ifstream f(savesDir / "slot_0.sav", std::ios::binary);
-                    std::vector<uint8_t> b((std::istreambuf_iterator<char>(f)),
-                                           std::istreambuf_iterator<char>());
-                    lemon::ecs::SaveChannel ch;
-                    char buf[8] = {};
-                    migrateOk = ch.Decode(b.data(), b.size()) &&
-                                ch.GetLen("vs.best") == 3 && ch.Get("vs.best", buf, 7) == 3 &&
-                                std::memcmp(buf, "123", 3) == 0;
-                }
-                const bool savOk = slotOk && metaOk && skipOk && migrateOk;
-                std::printf("[lemon] smoke-template: saves(slot_0=%s meta=%s legacy=%s "
-                            "skipEmpty=%s) => %s\n",
-                            slotOk ? "YES" : "NO", metaOk ? "YES" : "NO",
-                            migrateOk ? "YES" : "NO", skipOk ? "YES" : "NO",
-                            savOk ? "OK" : "FAIL");
-                if (!savOk) exitCode = 1;
-            }
-            // 批④后修②回归防线：同进程再开第二个模板拷贝 → spriteId 记账必须与
-            // 第一个逐项一致（换项目注册表复位）。修复前第二个项目整体后移上个
-            // 项目的精灵数 → 场景烘焙引用悬空、玩家/怪物全不渲染（demo/svr-test
-            // 实测 +31；自动重开上次项目后走新建向导 = 稳定触发路径）。
-#ifdef LEMON_SCRIPT_DIR
-            {
-                auto SnapshotIds = [](const AssetDatabase& db) {
-                    std::vector<std::pair<std::string, std::string>> m;
-                    for (const AssetEntry& e : db.Entries())
-                        if (e.type == AssetType::Sprite && !e.missing)
-                            m.emplace_back(e.relPath,
-                                           std::to_string(e.spriteId) + "/" +
-                                               std::to_string(e.sliceBase) + "+" +
-                                               std::to_string(e.sliceCount));
-                    std::sort(m.begin(), m.end());
-                    return m;
-                };
-                const auto ids1 = SnapshotIds(ctx_.Assets());
-                namespace fs = std::filesystem;
-                const fs::path tmp2 =
-                    fs::temp_directory_path() /
-                    ("lemon-smoke-template2-" + std::to_string(::getpid()));
-                std::error_code ec2;
-                fs::remove_all(tmp2, ec2);
-                ProjectDesc d2;
-                d2.parentDir = tmp2.string();
-                d2.name = "VsSmoke2";
-                d2.sdkDir = LEMON_SCRIPT_DIR;
-                d2.engineVersion = "0.5.0-m5";
-                d2.templateName = "vs-survivor";
-                d2.templateDir = std::string(LEMON_TEMPLATE_DIR) + "/vs-survivor";
-                bool idOk = false;
-                if (const std::string root2 = ProjectWizard::Create(d2);
-                    !root2.empty() && OpenProjectPipeline(root2)) {
-                    idOk = SnapshotIds(ctx_.Assets()) == ids1;
-                }
-                std::printf("[lemon] smoke-template: second-project ids %s => %s\n",
-                            idOk ? "identical" : "DRIFTED", idOk ? "OK" : "FAIL");
-                if (!idOk) exitCode = 1;
-            }
-#endif
-        }
+        // --smoke-template 裁决——外迁 EditorAppSmokeTpl.cpp（批③c-4）
+        if (launch.smokeTemplate && !SmokeTplVerdict()) exitCode = 1;
         // ---- M4.5 终验（§6 #1/#2/#3/#6/#7 全量化）----
         bool finalOk = true;
         if (launch.finalTest) {

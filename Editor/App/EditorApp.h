@@ -26,6 +26,9 @@ class ScriptHost;
 namespace ui {
 class UiSubsystem;
 }
+namespace ecs {
+struct InputState;
+}
 }
 
 namespace lemon::editor {
@@ -229,6 +232,15 @@ private:
     void SmokeAnimFrame(uint64_t frame);
     void SmokeAnimSample(uint64_t frame);
     bool SmokeAnimVerdict();
+    /// --smoke-template 族六挂点（批③c-4 自 Run 外迁 EditorAppSmokeTpl.cpp；挂点
+    /// 原位逐位不变）：向导复制播种 / 场景+预置存档播种（else-if 守卫留原位）/
+    /// 事件 sink 装配 / 循环内转向注入（ApplyInput 前）/ 帧采样 / 末帧裁决
+    bool SmokeTplSeedProject();
+    bool SmokeTplSeedScene();
+    void SmokeTplPlaySetup();
+    void SmokeTplSteer(uint64_t frame, ecs::InputState& in);
+    void SmokeTplSample(uint64_t frame);
+    bool SmokeTplVerdict();
     /// 换装判定辅助：Game/*.csproj 路径 + 输出 dll（项目根/.lemon/bin/<名>.dll）
     bool FindGameProject(std::string& csproj, std::string& dll);
     /// Game/ 源码变更检测（FileWatcher 置脏后过滤 .cs，排除 obj/bin）
