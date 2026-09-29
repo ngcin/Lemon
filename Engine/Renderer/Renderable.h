@@ -89,6 +89,10 @@ public:
     /// （逐 setter 独立寻址 ×N 实体是 ExtractScene 的纯耗成分）
     void SetAll(uint32_t id, uint32_t spriteId, uint32_t colorBits, uint8_t layer,
                 int16_t order, Vec2 pos, float rotRad, Vec2 scale);
+    /// prev←cur 基线对齐（2026-09-29 复审 2b）：新建/换代实体首帧免从 Create 缺省
+    /// (0,0) 原点插值拉丝——ExtractScene 建槽后紧随 SetAll 调用。编辑器专用语义，
+    /// 引擎自驱路径（模拟侧逐 tick SetTransform）本就逐次落 prev，无需此口。
+    void SnapPrev(uint32_t id);
 
     // --- 模拟侧 ---
     void BeginSimTick(); // prev ← cur 双缓冲翻转（未写实体的插值结果保持不变）

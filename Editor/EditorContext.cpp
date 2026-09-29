@@ -545,6 +545,10 @@ ecs::Entity EditorContext::SpawnPlayPrefab(ecs::Scene& s, uint32_t prefabId, Vec
 // 实体 Animator2D.clipId 未命中表 → M2 纯计时回退（不炸）。
 void EditorContext::BuildPlayClipCache() {
     playWorld_->Clips().Clear();
+    // 低 32 位碰撞告警（2026-09-29 复审 3b/3c）：ClipTable::Add 为 insert_or_assign
+    // 静默后者胜——先在本侧去重告警（prefab 映射 :515 同款纪律），命中即提示作者
+    // 改用手写模板外的生成 GUID 或等 M7 dense id 烘焙。
+    std::unordered_set<uint32_t> seenClipIds;
     for (const AssetEntry& e : assets_.Entries()) {
         if (e.type != AssetType::Clip || e.missing) continue;
         std::ifstream f(assets_.AbsolutePath(e), std::ios::binary);
@@ -604,6 +608,10 @@ void EditorContext::BuildPlayClipCache() {
             }
         }
         const uint32_t clipId = (uint32_t)e.guid; // 低 32 位（映射约定同 prefabId）
+        if (!seenClipIds.insert(clipId).second)
+            LEMON_WARN("Play clip 表低 32 位碰撞：%s（guid %016llx）与先登记 clip 同 id "
+                       "%08x——后者胜，先登记档被覆盖",
+                       e.relPath.c_str(), (unsigned long long)e.guid, clipId);
         if (!playWorld_->Clips().Add(clipId, std::move(frames), fps, loop, std::move(events)))
             LEMON_WARN("clip 登记失败（空帧/fps 非法）：%s", e.relPath.c_str());
         else
@@ -666,6 +674,7 @@ void EditorContext::BuildPlayClipCache() {
 // 运行时零字符串查找）。
 void EditorContext::BuildPlayControllerCache() {
     playWorld_->Controllers().Clear();
+    std::unordered_set<uint32_t> seenControllerIds; // 低 32 位碰撞告警（复审 3b/3c）
     for (const AssetEntry& e : assets_.Entries()) {
         if (e.type != AssetType::Controller || e.missing) continue;
         std::ifstream f(assets_.AbsolutePath(e), std::ios::binary);
@@ -693,6 +702,10 @@ void EditorContext::BuildPlayControllerCache() {
             def.transitions.push_back(std::move(td));
         }
         const uint32_t controllerId = (uint32_t)e.guid; // 低 32 位（同款映射约定）
+        if (!seenControllerIds.insert(controllerId).second)
+            LEMON_WARN("Play 状态机表低 32 位碰撞：%s（guid %016llx）与先登记 controller "
+                       "同 id %08x——后者胜，先登记档被覆盖",
+                       e.relPath.c_str(), (unsigned long long)e.guid, controllerId);
         if (!playWorld_->Controllers().Add(controllerId, std::move(def)))
             LEMON_WARN("controller 登记失败（空 states）：%s", e.relPath.c_str());
         else
@@ -711,6 +724,7 @@ void EditorContext::BuildPlayControllerCache() {
 // ParseTableJson——超限即坏表）。Play 中改 .tab 不生效（表格区提示行已交代）。
 void EditorContext::BuildPlayTableCache() {
     playWorld_->Tables().Clear();
+    std::unordered_set<uint32_t> seenTableIds; // 低 32 位碰撞告警（复审 3b/3c）
     for (const AssetEntry& e : assets_.Entries()) {
         if (e.type != AssetType::Table || e.missing) continue;
         std::ifstream f(assets_.AbsolutePath(e), std::ios::binary);
@@ -722,6 +736,10 @@ void EditorContext::BuildPlayTableCache() {
             continue;
         }
         const uint32_t id = (uint32_t)e.guid; // 低 32 位（映射约定同 clipId）
+        if (!seenTableIds.insert(id).second)
+            LEMON_WARN("Play 表低 32 位碰撞：%s（guid %016llx）与先登记表同 id %08x"
+                       "——后者胜，先登记档被覆盖",
+                       e.relPath.c_str(), (unsigned long long)e.guid, id);
         const size_t rowCount = t.rows.size();
         const uint32_t colCount = t.Cols();
         if (!playWorld_->Tables().Add(id, std::move(t.rows))) {

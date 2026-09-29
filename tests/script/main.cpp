@@ -243,6 +243,15 @@ static void* GetExport(const char* method) {
     return g_sh.RawHost().GetExport("Lemon.Entry.Exports, Lemon.Entry", method);
 }
 
+// 复审 4b（2026-09-29）：lemon_api_register2 尺寸握手——SDK 侧截短注册（仅前 3 槽
+// 有效）后尾部槽必须为 null（判空降级而非越界读出的野指针）；自检内存/还原全在
+// SDK 侧完成，本测试线程串行独占域，Api 换装窗口无并发 tick。
+void TestApiHandshake() {
+    auto selftest = (int (*)())GetExport("lemon_api_handshake_selftest");
+    Expect(selftest, "api handshake selftest export resolved");
+    Expect(selftest() == 1, "register2: tail slots null after truncated register");
+}
+
 void TestDomainManager() {
     // 诊断 0：UCO 线程就地 load→unload（spike UnloadSelfTest 同形态；本测试进程内首个对照）
     auto minCycleUco =
@@ -1697,6 +1706,7 @@ int main() {
     TestBlitCopy();
     TestRoundtripTyped();
     TestRngGolden();
+    TestApiHandshake();
     TestEventPacketLayout();
     {
         auto sdkCopies = (int (*)(unsigned char*, int))GetExport("lemon_diag_sdk_copies");

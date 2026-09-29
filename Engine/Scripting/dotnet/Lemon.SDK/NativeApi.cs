@@ -7,7 +7,9 @@ using System.Runtime.InteropServices;
 namespace Lemon;
 
 /// <summary>与 C++ lemon::scripting::NativeApiVtable 逐字节一致（两侧同步改；
-/// M4.4 表尾追加 4 项、M5 批① 追加 2 项——旧宿主（未注册新项）时为 null，SDK 侧判空调用）。</summary>
+/// M4.4 表尾追加 4 项、M5 批① 追加 2 项）。宿主表短于本表时未覆盖槽 = null，
+/// SDK 侧判空调用——该语义自 lemon_api_register2 尺寸握手（2026-09-29 复审 4b）
+/// 起才真正成立：宿主传入表字节数，本侧 min 拷贝 + 尾零，不再整拷越界读。</summary>
 [StructLayout(LayoutKind.Sequential)]
 public unsafe struct NativeApi
 {
@@ -53,7 +55,39 @@ internal static unsafe class Native
 {
     internal static NativeApi Api;
 
-    internal static void Register(NativeApi* api) => Api = *api;
+    /// <summary>旧单参注册（lemon_api_register）的冻结表宽 = 引入 register2 时的
+    /// 36 槽布局。旧宿主只会调单参导出——按此宽度拷贝恰好不越界；宿主表更宽时
+    /// 多出的尾部槽在本侧 = null（判空降级）。表再增长只走 register2，此值不再动。</summary>
+    private const uint LegacyFrozenBytes = 288;
+
+    internal static void Register(NativeApi* api) => RegisterSized(api, LegacyFrozenBytes);
+
+    /// <summary>尺寸握手注册（lemon_api_register2）：min(bytes, sizeof) 拷贝 + 尾部
+    /// 清零——宿主表短于 SDK 表时未覆盖槽 = null。2026-09-29 复审 4b：原整拷
+    /// （Api = *api）在"新 SDK 配旧宿主"方向越界读宿主 .rodata，!=null 守卫反去调
+    /// 垃圾指针；这是各槽"旧宿主 = null 判空"注释真正成立的前提。</summary>
+    internal static unsafe void RegisterSized(NativeApi* api, uint hostBytes)
+    {
+        NativeApi tmp = default; // 先清零：未覆盖槽 = null
+        uint n = System.Math.Min(hostBytes, (uint)sizeof(NativeApi));
+        Buffer.MemoryCopy(api, &tmp, n, n);
+        Api = tmp;
+    }
+
+    /// <summary>register2 回归自检（script-tests 经 lemon_api_handshake_selftest 消费）：
+    /// 以仅含前 3 槽的截短缓冲注册 → 尾部槽必须为 null（判空降级而非野指针），
+    /// 随后还原全表。测试串行独占域，Api 换装窗口无并发 tick。</summary>
+    internal static unsafe int HandshakeSelfTest()
+    {
+        NativeApi saved = Api;
+        var buf = stackalloc byte[24]; // 仅 isAlive/hasComponent/readComponent 三槽
+        Buffer.MemoryCopy(&saved, buf, 24, 24);
+        RegisterSized((NativeApi*)buf, 24);
+        bool tailNull = Api.WriteComponent == null && Api.SpriteOfGuid == null &&
+                        Api.TweenTo == null && Api.SaveGetEx == null;
+        Api = saved; // 还原
+        return tailNull ? 1 : 0;
+    }
 
     internal static int IsAlive(ulong e) => Api.IsAlive != null ? Api.IsAlive(e) : 0;
     internal static int Has(ulong e, byte compId) => Api.HasComponent != null ? Api.HasComponent(e, compId) : 0;

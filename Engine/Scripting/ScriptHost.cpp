@@ -448,7 +448,15 @@ bool ScriptHost::Initialize(const char* dotnetRoot, const char* runtimeConfigPat
         (int (*)(ui::UiOpC*, int, char*, int, int*))host_.GetExport(kType, "lemon_ui_ops_pull");
     uiEventsDispatchFn_ = (void (*)(const ui::UiEventC*, int))host_.GetExport(
         kType, "lemon_ui_events_dispatch");
-    if (auto reg = (void (*)(const NativeApiVtable*))host_.GetExport(kType, "lemon_api_register"))
+    // native 表注册（2026-09-29 复审 4b）：优先尺寸握手版——宿主表字节数随表传入，
+    // SDK 侧 min 拷贝 + 尾零，"新 SDK 配旧宿主"不再越界读宿主 const 表尾部（原整拷
+    // 下 !=null 守卫反会去调 .rodata 相邻字节拼出的垃圾指针）。旧 Entry 无
+    // register2 = 回落单参版（SDK 侧已冻结为 36 槽表宽拷贝，对本仓同期旧宿主安全）。
+    if (auto reg2 = (void (*)(const NativeApiVtable*, uint32_t))host_.GetExport(
+            kType, "lemon_api_register2"))
+        reg2(&kNativeApi, (uint32_t)sizeof(NativeApiVtable));
+    else if (auto reg = (void (*)(const NativeApiVtable*))host_.GetExport(
+            kType, "lemon_api_register"))
         reg(&kNativeApi);
     return dmLoad_ && dmUnload_ && batchCountFn_ && batchQueryFn_ && batchTickFn_ &&
            eventsDispatchFn_ && eventsPullFn_ && scriptsTickFn_ && scriptsAttachFn_ &&

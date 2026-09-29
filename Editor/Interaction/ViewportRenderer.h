@@ -107,8 +107,10 @@ public:
     /// 页句柄，paletteIconTex_/iconTex_ 的旧绑定须注销重注册——防泄漏/防采样旧句柄）
     void RebindProceduralIcons();
 
-    /// 每渲染帧（BuildUI 之后调用：overlay 已由面板注入；ImGui::Image 已引用 RT）
-    void Render(rhi::CommandList& cl, EditorContext& ctx);
+    /// 每渲染帧（BuildUI 之后调用：overlay 已由面板注入；ImGui::Image 已引用 RT）。
+    /// simAlpha = 模拟插值系数（复审 2b：Play 中 = 累加器余账/步长，非 Play = 1）；
+    /// 双视口同 alpha——Extract 帧内缓存（sim 版本 + alpha）跨视口共享的既有前提。
+    void Render(rhi::CommandList& cl, EditorContext& ctx, float simAlpha);
 
     // ---- 面板侧接口 ----
     /// 视口尺寸上报（ImGui 内容区像素）；尺寸变化时重建 RT 并重注册 ImGui 纹理。
@@ -158,7 +160,8 @@ public:
 private:
     void ExtractScene(EditorContext& ctx);           // 内核 #1/#2/#4
     void RenderViewport(rhi::CommandList& cl, uint32_t idx, SpriteBatcher& batcher,
-                        const Camera2D& cam, bool withOverlay, EditorContext& ctx);
+                        const Camera2D& cam, bool withOverlay, EditorContext& ctx,
+                        float simAlpha);
 
     rhi::Device* device_ = nullptr;
     ImGuiBackend* ui_ = nullptr;

@@ -431,7 +431,8 @@ void ViewportRenderer::ExtractScene(EditorContext& ctx) {
         LEMON_ASSERT(idx < ridBySlot_.size(), "slot array must cover entity pool");
         const uint32_t ver = Scene::EnttVersion(e);
         SlotMap& slot = ridBySlot_[idx];
-        if (slot.rid == 0 || slot.version != ver) {
+        const bool freshSlot = slot.rid == 0 || slot.version != ver;
+        if (freshSlot) {
             if (slot.rid) rm_.Destroy(slot.rid);
             slot.rid = rm_.Create({.spriteId = sr.spriteId,
                                    .colorBits = sr.colorRGBA,
@@ -446,6 +447,9 @@ void ViewportRenderer::ExtractScene(EditorContext& ctx) {
         // 整包一次寻址推送：逐 setter ×N 实体是大场 ExtractScene 的纯耗成分
         rm_.SetAll(slot.rid, sr.spriteId, sr.colorRGBA, sr.sortingLayer, sr.sortOrder,
                    wt.pos, wt.rot, wt.scale);
+        // 新建/换代槽首帧基线对齐（复审 2b）：插值开启（alpha<1）时免从 Create 缺省
+        // 原点拉丝——spawn 密集场（Spawner/弹幕）每帧都有新槽
+        if (freshSlot) rm_.SnapPrev(slot.rid);
     }
     // 内核 #2：销毁/禁用差集 → renderable 释放（纪元比对；含空槽全容量顺序扫）
     for (SlotMap& slot : ridBySlot_) {
@@ -457,22 +461,22 @@ void ViewportRenderer::ExtractScene(EditorContext& ctx) {
 }
 
 // ---------------------------------------------------------------- 渲染 ----
-void ViewportRenderer::Render(rhi::CommandList& cl, EditorContext& ctx) {
+void ViewportRenderer::Render(rhi::CommandList& cl, EditorContext& ctx, float simAlpha) {
     ExtractScene(ctx);
-    RenderViewport(cl, 0, sceneBatcher_, sceneCam_, /*withOverlay=*/true, ctx);
-    RenderViewport(cl, 1, gameBatcher_, gameCam_, /*withOverlay=*/false, ctx);
+    RenderViewport(cl, 0, sceneBatcher_, sceneCam_, /*withOverlay=*/true, ctx, simAlpha);
+    RenderViewport(cl, 1, gameBatcher_, gameCam_, /*withOverlay=*/false, ctx, simAlpha);
     overlay_.clear();
 }
 
 void ViewportRenderer::RenderViewport(rhi::CommandList& cl, uint32_t idx, SpriteBatcher& batcher,
                                       const Camera2D& cam, bool withOverlay,
-                                      EditorContext& ctx) {
+                                      EditorContext& ctx, float simAlpha) {
     RT& rt = rts_[idx];
     if (!rt.tex.IsValid()) return;
     const float aspect = (float)rt.w / (float)rt.h;
     const Rect view = cam.ViewRect(aspect);
     rm_.SetViewport(cam.center, view.max.x - view.min.x, view.max.y - view.min.y, 200.0f);
-    auto packets = rm_.Extract(assets_.Registry(), 1.0f);
+    auto packets = rm_.Extract(assets_.Registry(), simAlpha);
     if (idx == 0) lastSceneVisible_ = rm_.LastStats().visible;
 
     // 复用缓冲（2026-09-26 渲染提取批：提取段零分配）——两视口串行调用、

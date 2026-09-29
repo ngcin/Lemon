@@ -163,6 +163,18 @@ internal static unsafe class Exports
     [UnmanagedCallersOnly]
     public static unsafe void lemon_api_register(NativeApi* api) => Lemon.Native.Register(api);
 
+    /// <summary>尺寸握手注册（2026-09-29 复审 4b）：宿主传入表字节数，SDK 侧
+    /// min 拷贝 + 尾零——"新 SDK 配旧宿主"不再越界读宿主 const 表尾部。宿主优先
+    /// 调本导出；旧宿主仍调单参版（SDK 侧冻结为 36 槽表宽拷贝）。</summary>
+    [UnmanagedCallersOnly]
+    public static unsafe void lemon_api_register2(NativeApi* api, uint bytes)
+        => Lemon.Native.RegisterSized(api, bytes);
+
+    /// <summary>register2 握手回归自检（script-tests 消费）：截短注册后尾部槽
+    /// 必须为 null（判空降级而非野指针）。返回 1 = 过。</summary>
+    [UnmanagedCallersOnly]
+    public static int lemon_api_handshake_selftest() => Lemon.Native.HandshakeSelfTest();
+
     /// <summary>帧执行（域线程）：Start/Update → 档② 批量 → LateUpdate（一帧固定序）。</summary>
     [UnmanagedCallersOnly]
     public static unsafe void lemon_scripts_tick(BatchSystemFrame* frames, int count, float dt)

@@ -4354,10 +4354,49 @@ int EditorApp::Run(const EditorLaunch& launch) {
                 }
             }
             ctx_.ActiveWorld().ApplyInput(in);
-            const float dt = paused_ && !singleStep_ ? 0.0f : 1.0f / 60.0f;
             bPump = BenchClock::now(); // 段界：pump（轮询/watcher/自动备份）结束 = sim 开始
-            ctx_.TickPlay(dt);         // Pause = dt0（含 Essential 提交）
-            bSim = BenchClock::now();  // 段界：sim（世界步进）结束 = glue 开始
+            // 固定步长累加器（2026-09-29 复审 2a/2b）：模拟速率此前 = 渲染帧率
+            //（vsync Fifo 下 144Hz 屏跑 2.4 倍速）。交互 Play 改墙钟进账 → N × 1/60
+            // 出账（追帧上限 5 步，停顿后不快进），余账/步长 = 渲染插值 alpha
+            //（此前 ViewportRenderer 传字面量 1.0 = 恒取 cur，插值机制空转）。
+            // 自动化链（smoke*/bench*/--frames/--final/playDiag）保持每渲染帧恰
+            // 一步 + alpha=1——帧号 = tick 号，像素断言/回放口径逐位不变。
+            const bool playPaced = !(launch.frames > 0 || launch.smoke || launch.smokeDrag ||
+                                     launch.smokeUi || launch.smokeAnim || launch.smokeGuid ||
+                                     launch.smokeUirml || launch.smokeTemplate ||
+                                     launch.benchSurvivor || launch.benchScene ||
+                                     launch.finalTest || playDiag_);
+            constexpr float kPlayFixedDt = 1.0f / 60.0f;
+            constexpr float kPlayMaxAcc = kPlayFixedDt * 5.0f; // 追帧上限（死亡螺旋钳）
+            constexpr int kPlayMaxSteps = 5;
+            int playSteps = 0;
+            if (!playPaced) {
+                ctx_.TickPlay(paused_ && !singleStep_ ? 0.0f : kPlayFixedDt);
+                playAlpha_ = 1.0f;
+            } else if (paused_ && !singleStep_) {
+                ctx_.TickPlay(0.0f); // 暂停：Essential（销毁提交）照跑（原语义）
+                playAlpha_ = 1.0f;
+            } else {
+                playAcc_ += ImGui::GetIO().DeltaTime;
+                if (playAcc_ > kPlayMaxAcc) playAcc_ = kPlayMaxAcc;
+                const bool stepping = singleStep_;
+                if (stepping) {
+                    ctx_.TickPlay(kPlayFixedDt);
+                    playAcc_ = 0.0f;
+                    playSteps = 1;
+                } else {
+                    while (playAcc_ >= kPlayFixedDt && playSteps < kPlayMaxSteps) {
+                        ctx_.TickPlay(kPlayFixedDt);
+                        playAcc_ -= kPlayFixedDt;
+                        ++playSteps;
+                    }
+                }
+                if (playSteps == 0) ctx_.TickPlay(0.0f); // 空转帧：Essential 照跑（暂停同款）
+                // 单步 = 直接呈现步后状态（alpha=0 会"慢一拍"——渲染步前 prev）；
+                // 常规帧 = 余账比例（prev→cur 插值）
+                playAlpha_ = stepping ? 1.0f : playAcc_ / kPlayFixedDt;
+            }
+            bSim = BenchClock::now();  // 段界：sim（世界步进，含追帧多步）结束 = glue 开始
             singleStep_ = false;
             UpdateGameCameraFollow();
             FeedGameUiInput(); // 批③c（M7）：鼠标/键盘喂入 + IME 锚点换算（Update 前）
@@ -4388,8 +4427,10 @@ int EditorApp::Run(const EditorLaunch& launch) {
                 }
             }
         } else {
+            playAcc_ = 0.0f;   // 出 Play 清账（复审 2a）
+            playAlpha_ = 1.0f; // 编辑态渲染恒取 cur（无插值）
             ctx_.TickEditor(1.0f / 60.0f); // Essential（销毁提交）+ 空 FixedTick
-            UpdateGameCameraFollow();  // 非 Play：退出跟随后回默认位
+            UpdateGameCameraFollow();  // 非 Play：退出跟随时回默认位
         }
 
         // 冒烟悬停扫掠（M4.5）：逐帧走窗口网格 → 会话内所有可见控件至少被悬停
@@ -5389,7 +5430,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
         rhi::CommandList& cl = device_->BeginFrame();
         bAcq = BenchClock::now(); // 段界：acquire+BeginFrame 结束 = 场景渲染开始
         const uint32_t w = device_->SwapchainWidth(), h = device_->SwapchainHeight();
-        viewport_->Render(cl, ctx_); // 双视口离屏（BuildUI 已定 RT 尺寸/注入 overlay）
+        viewport_->Render(cl, ctx_, playAlpha_); // 双视口离屏（BuildUI 已定 RT 尺寸/注入 overlay；alpha = 复审 2b 插值系数）
         bScene = BenchClock::now(); // 段界：场景 RT（ExtractScene + 双视口绘制）结束
 
         const float clear[4] = {0.055f, 0.06f, 0.08f, 1.0f};

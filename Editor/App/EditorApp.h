@@ -293,6 +293,11 @@ private:
     bool playing_ = false; // 冗余显示态（真值 = ctx_.Playing()）
     bool paused_ = false;
     bool singleStep_ = false;
+    // 固定步长累加器（2026-09-29 复审 2a/2b）：交互 Play 墙钟进账 → N × 1/60 出账，
+    // playAcc_ = 余账、playAlpha_ = 余账/步长 → 渲染插值。自动化链（smoke*/bench*/
+    // --frames/playDiag）不走此路径（每渲染帧恰一步 + alpha=1，口径逐位不变）。
+    float playAcc_ = 0.0f;
+    float playAlpha_ = 1.0f;
     bool gameViewFocused_ = false; // GameView 输入门控（§3.6）
     // 批③c（M7）：GameView 画布（ImGui 屏幕点）+ RT 像素 + 键盘差分态
     float gvCanvasX_ = 0, gvCanvasY_ = 0, gvCanvasW_ = 0, gvCanvasH_ = 0;

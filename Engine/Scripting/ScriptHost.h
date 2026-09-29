@@ -33,7 +33,9 @@ struct BatchSystemFrame {
 static_assert(sizeof(BatchBlock) == 24);
 static_assert(sizeof(BatchSystemFrame) == 40); // disabled 落在原尾垫（C# 同规则）
 
-/// native 函数表（低频语法糖通道；与 Lemon.SDK/NativeApi.cs 逐字节一致）
+/// native 函数表（低频语法糖通道；与 Lemon.SDK/NativeApi.cs 逐字节一致。注册走
+/// lemon_api_register2 尺寸握手——宿主传 sizeof(NativeApiVtable)，SDK 侧 min 拷贝 +
+/// 尾零；旧 Entry 回落单参 lemon_api_register，2026-09-29 复审 4b）
 struct NativeApiVtable {
     int (*isAlive)(uint64_t);
     int (*hasComponent)(uint64_t, uint8_t);

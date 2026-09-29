@@ -84,6 +84,14 @@ void RenderableManager::SetAll(uint32_t id, uint32_t spriteId, uint32_t colorBit
     e.curScale = scale;
 }
 
+void RenderableManager::SnapPrev(uint32_t id) {
+    Entry& e = entries_[id - 1];
+    LEMON_ASSERT(e.alive, "dead renderable");
+    e.prevPos = e.curPos;
+    e.prevRot = e.curRot;
+    e.prevScale = e.curScale;
+}
+
 void RenderableManager::BeginSimTick() {
     for (auto& e : entries_)
         if (e.alive) {
