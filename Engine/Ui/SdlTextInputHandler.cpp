@@ -1,4 +1,4 @@
-// Lemon 引擎 — SDL IME 预编辑 handler 实现（M6a 批③c）
+// Lemon 引擎 — SDL IME 预编辑 handler 实现（M6b 批③c）
 // RmlUi 类型只准出现在本 .cpp。逻辑 = spike-04 T7 验证过的官方 SDL 平台层
 // TextInputMethodEditor_SDL（backends/RmlUi_Platform_SDL.cpp:524-569，2026-09-28
 // 三判据实证：中文提交零乱码/候选窗贴光标/事件不串）。

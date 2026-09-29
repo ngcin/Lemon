@@ -1,4 +1,4 @@
-// Lemon 引擎 — RmlUi Vulkan 呈现后端实现（M6a 批③a，ADR-014 D2/D3）
+// Lemon 引擎 — RmlUi Vulkan 呈现后端实现（M6b 批③a，ADR-014 D2/D3）
 // 接入形态 = ADR-008 D2：自研 RenderInterface over 引擎 Vulkan 设备（经 RHI 内部桥）。
 // 关键纪律（spike-04 两个上游黑屏根因的对策，DevLog 2026-09-22）：
 //   * 帧首钉全幅 viewport+scissor（改造⑧）——管线启用动态 scissor，MoltenVK 上

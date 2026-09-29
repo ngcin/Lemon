@@ -1,4 +1,4 @@
-// Lemon 引擎 — RmlUi Vulkan 呈现后端（M6a 批③a，ADR-014 D2/D3）
+// Lemon 引擎 — RmlUi Vulkan 呈现后端（M6b 批③a，ADR-014 D2/D3）
 // 纪律：本头零 Vulkan/RmlUi 类型；实现全在 RmlUiBackend.cpp（Renderer .cpp 豁免区，
 // Vulkan 经 RHI 内部桥 + NativeCommandBuffer——均为 Renderer 兄弟后端专用通道）。
 // 帧协议（由 Engine/Ui 的 UiSubsystem 驱动；gameRT 动态渲染块内、sprite Record 之后）：

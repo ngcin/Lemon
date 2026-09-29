@@ -213,7 +213,7 @@ public:
     /// 纹理原生视图（void* = VkImageView；ImGui_ImplVulkan_AddTexture 用，同一豁免口）
     void* GetVulkanTextureViewInterop(Texture t);
 
-    // --- 内部桥（M6a 批③a，ADR-014）：Engine/Renderer 内兄弟后端 .cpp 专用（当前
+    // --- 内部桥（M6b 批③a，ADR-014）：Engine/Renderer 内兄弟后端 .cpp 专用（当前
     //     唯一消费者 RmlUiBackend.cpp）。与 VulkanInteropHandles 同一零泄漏豁免逻辑，
     //     但消费者是 Renderer 内部而非编辑器 glue；编辑器/游戏语义层禁用。 ---
     struct InternalBridge {

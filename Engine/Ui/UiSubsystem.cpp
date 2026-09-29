@@ -1,4 +1,4 @@
-// Lemon 引擎 — 游戏 UI 子系统实现（M6a 批③a/③b/③c，ADR-014）
+// Lemon 引擎 — 游戏 UI 子系统实现（M6b 批③a/③b/③c，ADR-014）
 // RmlUi 类型只准出现在本 .cpp（头文件零泄漏，同 Vulkan 纪律形状）。
 #include "Ui/UiSubsystem.h"
 

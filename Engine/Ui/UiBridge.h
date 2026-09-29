@@ -1,4 +1,4 @@
-// Lemon 引擎 — UI 桥线格式（M6a 批③c，ADR-014 D2 M2/M3）
+// Lemon 引擎 — UI 桥线格式（M6b 批③c，ADR-014 D2 M2/M3）
 // C#（Lemon.SDK/UI.cs staging→Apply 序列化）与 C++（ScriptHost 拉取 → UiSubsystem
 // 应用）之间的字节级契约：ops 命令缓冲（SceneOps 先例，单一提交口）+ UiEvent
 // 事件队列（无回调跨边界）。两侧改动 = 破协议，必须同步。
@@ -66,8 +66,10 @@ struct UiEventC {
 };
 static_assert(sizeof(UiEventC) == 172, "UiEventC 布局固定（桥侧 blittable）");
 
-/// 每帧拉取容量（ScriptHost 侧缓冲；溢出 = 红字截断 + 丢余量——一屏富 UI 实测量级
-/// < 8KB，图鉴 500 条 ≈ 25KB，留观察）
+/// 每帧拉取容量（ScriptHost 侧缓冲；溢出 = 红字截断 + 丢余量）。一屏富 UI 实测量级 < 8KB；
+/// 图鉴 500 条实耗 ≈ 50KB（≈ 77% 占用贴边，2026-09-29 审核复核——C# EstimateBytes 的 ×3
+/// 是 UTF-8 上界仅用于预扩容（500 条上界 ≈ 119KB），本上限检查的是实写字节。③e 判据加
+/// 实耗断言；再涨 = 分帧提交 / 抬本值 / 字段去重三选）
 inline constexpr uint32_t kUiOpsPerFrame = 256;
 inline constexpr uint32_t kUiArenaBytesPerFrame = 64 * 1024;
 inline constexpr uint32_t kUiEventsPerDrain = 64;

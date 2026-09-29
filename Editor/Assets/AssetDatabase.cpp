@@ -28,8 +28,8 @@ const char* AssetTypeName(AssetType t) {
         case AssetType::Table: return "table"; // M6a 批②：.tab 配置表（ADR-012）
         case AssetType::AnimSet: return "animset"; // M6a 批② T3c：.override 动画集容器
         case AssetType::Controller: return "controller"; // T3d：.controller 状态机
-        case AssetType::Rml: return "rml";   // M6a 批③b：UI 文档（ADR-014 一屏一文档）
-        case AssetType::Rcss: return "rcss"; // M6a 批③b：UI 样式表（<link> 引用）
+        case AssetType::Rml: return "rml";   // M6b 批③b：UI 文档（ADR-014 一屏一文档）
+        case AssetType::Rcss: return "rcss"; // M6b 批③b：UI 样式表（<link> 引用）
         default: return "generic";
     }
 }
@@ -172,8 +172,8 @@ AssetType AssetDatabase::TypeOf(const std::string& relPath) {
     if (ext == ".tab") return AssetType::Table; // M6a 批②配置表资产（ADR-012）
     if (ext == ".override") return AssetType::AnimSet; // M6a 批② T3c 动画集容器
     if (ext == ".controller") return AssetType::Controller; // T3d 动画状态机
-    if (ext == ".rml") return AssetType::Rml;     // M6a 批③b UI 文档（ADR-014）
-    if (ext == ".rcss") return AssetType::Rcss;   // M6a 批③b UI 样式表
+    if (ext == ".rml") return AssetType::Rml;     // M6b 批③b UI 文档（ADR-014）
+    if (ext == ".rcss") return AssetType::Rcss;   // M6b 批③b UI 样式表
     return AssetType::Generic;
 }
 

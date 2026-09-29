@@ -1,4 +1,4 @@
-// Lemon.SDK — 游戏 UI 通道（M6a 批③c，ADR-014 D2：M1/M2/M3 波1 + D4 提交制）----
+// Lemon.SDK — 游戏 UI 通道（M6b 批③c，ADR-014 D2：M1/M2/M3 波1 + D4 提交制）----
 // 形态与既有纪律同构：ops 命令缓冲（SceneOps 先例）+ 事件队列（无回调跨边界）。
 // 数据流：UI.* 入 staging → UI.Apply() 序列化（UTF-8 arena + 行块）→ ready 队列
 // → 宿主每帧拉取（lemon_ui_ops_pull，TickBatch 尾 → UiSubsystem::ApplyOps 当帧可见）。

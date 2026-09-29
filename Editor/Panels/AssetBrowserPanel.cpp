@@ -38,8 +38,8 @@ uint8_t KindOf(AssetType t) {
         case AssetType::Table: return 5; // M6a 批②（暂无拖拽消费者）
         case AssetType::AnimSet: return 6; // M6a 批② T3c（Inspector AnimGraph 集槽）
         case AssetType::Controller: return 7; // T3d（Inspector AnimGraph 状态机槽）
-        case AssetType::Rml: return 8;   // M6a 批③b（暂无拖拽消费者，③c 起 C# 装载）
-        case AssetType::Rcss: return 9;  // M6a 批③b（文档 <link> 引用）
+        case AssetType::Rml: return 8;   // M6b 批③b（暂无拖拽消费者，③c 起 C# 装载）
+        case AssetType::Rcss: return 9;  // M6b 批③b（文档 <link> 引用）
         default: return 3;
     }
 }

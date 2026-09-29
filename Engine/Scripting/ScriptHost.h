@@ -124,7 +124,7 @@ struct ScriptIoHooks {
 };
 void SetScriptIoHooks(const ScriptIoHooks& hooks);
 
-/// UI 桥钩子（M6a 批③c，ADR-014 D2 M2/M3）：ops 应用方与事件抽干方。编辑器装配期
+/// UI 桥钩子（M6b 批③c，ADR-014 D2 M2/M3）：ops 应用方与事件抽干方。编辑器装配期
 /// 经 SetUiHooks 注入（applyOps → UiSubsystem::ApplyOps / drainEvents → DrainEvents）；
 /// 纯运行时/测试宿主不装 = ops 丢弃 warn-once（同 EditorAssetHooks 降级语义）。
 /// UI 状态不入 StateHash、UI 交互不入输入快照——基准场零调用零漂移、金回放零重录。

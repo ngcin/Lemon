@@ -1528,7 +1528,7 @@ void TestSaveChannels() {
 } // namespace
 
 // ---------------------------------------------------------------------------
-// M6a 批③c：Lemon.UI 桥面双测（线格式字节对拍 + 事件反向直灌）——不依赖 RmlUi
+// M6b 批③c：Lemon.UI 桥面双测（线格式字节对拍 + 事件反向直灌）——不依赖 RmlUi
 // （引擎文档应用面由 --smoke-uirml 全链覆盖；本测钉死 SDK 编码 ↔ UiBridge 契约）。
 // ---------------------------------------------------------------------------
 static std::vector<lemon::ui::UiOpC> s_uiCapOps;
@@ -1708,7 +1708,7 @@ int main() {
     TestAnimGraphProbe(); // M6a 批② T3d：状态机通道（绑定/参数/trigger/exitTime/帧事件）
     TestTweenSdk();     // A 档补间（2026-09-28 用户插入项）：Lemon.Tween 通道端到端
     TestSaveChannels(); // M6a 批② T5：Lemon.Save × Chan 分档通道端到端
-    TestUiSdk();        // M6a 批③c：Lemon.UI 线格式对拍 + 事件反向直灌
+    TestUiSdk();        // M6b 批③c：Lemon.UI 线格式对拍 + 事件反向直灌
 
     // M4.6 探针（编辑器切项目场景）：同进程二次 ScriptHost 生命周期。CoreCLR 运行时
     // 进程单例——第二次 Initialize 的真实行为必须钉板（成功/失败都合法，崩 = 缺陷）。

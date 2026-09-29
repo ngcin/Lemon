@@ -54,7 +54,7 @@ public:
     const SpriteInfo& GetSprite(uint32_t spriteId) const;
     uint32_t SpriteCount() const { return (uint32_t)sprites_.size(); }
     uint32_t AtlasCount() const { return (uint32_t)atlases_.size(); }
-    /// 图集页查询（M6a 批③b UI 贴图桥：页纹理 + 尺寸；未知 index = 无效纹理）。
+    /// 图集页查询（M6b 批③b UI 贴图桥：页纹理 + 尺寸；未知 index = 无效纹理）。
     /// 外部消费者只借用（RmlUi 后端按 view 包装，不持有 image）
     rhi::Texture AtlasTexture(uint32_t atlasIndex, uint32_t& w, uint32_t& h) const;
     /// 设备丢失重建前清空（纹理句柄已失效；spriteId 由调用方按相同顺序重建恢复稳定）

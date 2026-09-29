@@ -222,7 +222,7 @@ internal static unsafe class Exports
     public static unsafe void lemon_ops_submit(byte type, byte compId, ulong e)
         => Lemon.SceneOps.SubmitRaw(type, compId, e);
 
-    // ---- M6a 批③c（ADR-014 M2/M3）：UI ops 拉取 + UiEvent 派发 --------------------
+    // ---- M6b 批③c（ADR-014 M2/M3）：UI ops 拉取 + UiEvent 派发 --------------------
     // 旧宿主（批③c 前 C++）不解析本对导出 = 零影响；新宿主缺本 Entry 构建 = 挂空安全。
 
     /// <summary>拉取脚本 UI ops（TickBatch 尾：staging 经 UI.Apply() 入 ready）。

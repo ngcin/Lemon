@@ -65,7 +65,7 @@ struct EditorLaunch {
                                 // build → Play → HUD/波次/击杀/升级/卡片断言）
     bool smokeGuid = false;     // --smoke-guid：M6a 批⓪ T5 sprite 引用稳定性链冒烟
                                 //（导入插队 + 资产改名 + 删 manifest → 重开逐实体归一断言）
-    bool smokeUirml = false;    // --smoke-uirml：M6a 批③a RmlUi 呈现地基冒烟（隐含
+    bool smokeUirml = false;    // --smoke-uirml：M6b 批③a RmlUi 呈现地基冒烟（隐含
                                 // --play；gameRT 像素断言 + 独立裁决链，不并 editor-smoke 门）
 };
 
@@ -129,7 +129,7 @@ public:
     /// 空白区右键"新建动画集…"（M6a 批② T3c）：开新建集弹窗（源目录非空 =
     /// 显示"并建首段"勾选）；落点 = AssetBrowser 当前浏览目录
     void OpenAnimationCreateSet(const std::string& relDir);
-    /// 双击 .rml → 装载到游戏 UI（M6a 批③b，ADR-014）：文档名 = relPath（热重载
+    /// 双击 .rml → 装载到游戏 UI（M6b 批③b，ADR-014）：文档名 = relPath（热重载
     /// 对账键）；Play 中 GameView 即显，非 Play 提示。③c C# 装载通道落地前的手动通道
     void LoadUiDocument(uint64_t guid);
     /// 面板 × 关闭按钮的落点（T3b-8）：同步 PanelRegistry 开关（Window 菜单可重开）

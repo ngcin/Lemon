@@ -1,4 +1,4 @@
-// Lemon 引擎 — SDL IME 预编辑 handler（M6a 批③c，ADR-014 D4/M7）
+// Lemon 引擎 — SDL IME 预编辑 handler（M6b 批③c，ADR-014 D4/M7）
 // Rml::TextInputHandler 派生：SDL_TEXT_EDITING（预编辑串）→ TextInputContext 的
 // SetText/SetCompositionRange/CommitComposition——spike-04 T7 同款逻辑的引擎落位
 // （spike backends/RmlUi_Platform_SDL.cpp TextInputMethodEditor_SDL，2026-09-28 实证）。

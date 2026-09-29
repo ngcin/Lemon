@@ -29,7 +29,7 @@ inline bool WriteFileAtomic(const std::string& path, const std::string& s) {
 // AnimatorController 壳——段身份仍是 .anim 文件 GUID，集只存引用）
 // Controller = .controller 动画状态机（M6a 批② T3d，ADR-013：状态词表 + 过渡
 // 条件 + 参数表；World 级 ControllerTable，AnimGraphSystem #16 消费）
-// Rml/Rcss = 游戏 UI 文档/样式表（M6a 批③b，ADR-014：一屏 = 一文档；.rcss 经
+// Rml/Rcss = 游戏 UI 文档/样式表（M6b 批③b，ADR-014：一屏 = 一文档；.rcss 经
 // <link> 引用；双击 .rml 装载到游戏 UI，热重载走 Rescan ChangeSet 消费）
 enum class AssetType
     : uint8_t { Sprite, Prefab, Script, Clip, Table, AnimSet, Controller, Rml, Rcss, Generic };

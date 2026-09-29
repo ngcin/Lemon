@@ -87,7 +87,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--smoke-guid"))
             launch.smokeGuid = true; // sprite 引用稳定性链冒烟（M6a 批⓪ T5，无头跑完即退）
         else if (!std::strcmp(argv[i], "--smoke-uirml"))
-            launch.smokeUirml = launch.playTest = true; // RmlUi 呈现地基冒烟（M6a 批③a：
+            launch.smokeUirml = launch.playTest = true; // RmlUi 呈现地基冒烟（M6b 批③a：
                                                          // gameRT 像素断言 + 独立裁决链）
         else
             return usageExit((std::string("unknown arg: ") + argv[i]).c_str());

@@ -49,7 +49,7 @@ public static class GameMain
         Lemon.Behaviours.Register<TweenProbeBehaviour>();
         // M6a 批② T5：存档分档（typeId 16，表尾注册同上约定）
         Lemon.Behaviours.Register<SaveChanProbeBehaviour>();
-        // M6a 批③c：Lemon.UI 全链（typeId 17，表尾注册同上约定）
+        // M6b 批③c：Lemon.UI 全链（typeId 17，表尾注册同上约定）
         Lemon.Behaviours.Register<UiProbeBehaviour>();
         // 批③c 静态订阅（Configure 期一次，跨局存活）：UI 事件计数经 RtUi 回读
         // （编辑器 --smoke-uirml --script 断言链）；DocumentReloaded → Refill
@@ -618,7 +618,7 @@ public sealed class SaveChanProbeBehaviour : Lemon.LemonBehaviour
     }
 }
 
-/// <summary>M6a 批③c（typeId 17）：Lemon.UI ops 全链验收（编辑器 --smoke-uirml
+/// <summary>M6b 批③c（typeId 17）：Lemon.UI ops 全链验收（编辑器 --smoke-uirml
 /// --script 装配）。帧1 = UiRefill()（Show/SetText/SetItems×2/SetClass + Apply →
 /// 引擎克隆渲染）；此后常驻——帧 100/140 热重载触发 DocumentReloaded → 静态订阅
 /// 重灌（M2 契约）。事件计数（合成点击 cards/opt0 → Click）经静态订阅写 RtUi
