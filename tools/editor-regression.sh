@@ -76,12 +76,17 @@ if [ "${MODE}" = "full" ]; then
         "smoke-guid: .* => OK" \
         "${EDITOR}" --smoke-guid --no-reopen
     if [ -f "${SDK}" ]; then
-        grep_step "uirml-chain smoke (RmlUi C# API: ops/clone/click-events/contract + font/asset/hot-reload + uidoc dual-channel/stale/layer/watcher-evict + zombie-render triple-form + reconcile; M6b-b3d)" \
+        grep_step "uirml-chain smoke (RmlUi C# API: ops/clone/click-events/contract + font/asset/hot-reload + uidoc dual-channel/stale/layer/watcher-evict + zombie-render triple-form + reconcile + entity-delete evict3; M6b-b3d)" \
             "smoke-uirml: .* => OK" \
-            "${EDITOR}" --script "${SDK}" --smoke-uirml --frames 400 --validate --no-reopen
+            "${EDITOR}" --script "${SDK}" --smoke-uirml --frames 470 --validate --no-reopen
     else
         echo "  SKIP uirml-chain (missing ${SDK})"
     fi
+    # 形态 D 画面防线（2026-09-29）：无脚本模式——第四局（声明实体已删）gameRT
+    # 像素断言；脚本模式 C# 帧 1 合法拉回，pix 位不裁决
+    grep_step "uirml-noscript smoke (entity-delete evict3 pixel guard; M6b-b3d)" \
+        "smoke-uirml: .* => OK" \
+        "${EDITOR}" --smoke-uirml --frames 470 --validate --no-reopen
     if [ -f "${SDK}" ]; then
         grep_step "script-chain smoke (CoreCLR/spawn/play byte-exact/--validate)" "editor-smoke PASS" \
             "${EDITOR}" --project "${TMP}/script" --script "${SDK}" --smoke --play --frames 240 --validate

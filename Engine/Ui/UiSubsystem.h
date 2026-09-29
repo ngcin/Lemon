@@ -31,6 +31,12 @@ using UiTextureResolver =
 using UiDocumentResolver =
     std::function<bool(const std::string& relPath, std::string& absPath)>;
 
+/// 文档装载来源（R10 启用——2026-09-29 形态 D 收口：场景声明移除后的清场判据）：
+/// Scene = 通道 A 场景声明装载（EnterPlay 扫描）；CSharp = 通道 B resolver 现载
+/// （C# 动态 Show）；Edit = 编辑器双击预览/冒烟播种（③b「跨 Play 保持」承诺，
+/// 清场豁免面）。重载（Reload*）不改来源——底稿变来源不变。
+enum class UiDocOrigin : uint8_t { Scene = 0, CSharp, Edit };
+
 /// M7 键盘喂入的引擎侧键位（自有枚举——头文件零 RmlUi；映射 RmlUi KI 在 .cpp）。
 /// 波1 集合 = 焦点导航 + 单行文本编辑所需（字母/数字/方向/编辑键）。
 enum class UiKey : uint8_t {
@@ -64,10 +70,13 @@ public:
     void SetDocumentResolver(UiDocumentResolver fn);
 
     /// 内存文档（③a 冒烟通道）。同名覆盖旧文档。
-    bool LoadDocumentFromMemory(const char* name, const char* rmlText);
+    bool LoadDocumentFromMemory(const char* name, const char* rmlText,
+                                UiDocOrigin origin = UiDocOrigin::Scene);
     /// 文件文档（批③b 资产通道）：absPath 为文档底稿——相对 href/src 按其目录解析
     /// （SystemInterface::JoinPath 覆写）。name 惯例 = 资产 relPath（热重载对账键）。
-    bool LoadDocumentFromFile(const char* name, const char* absPath);
+    /// origin = 装载来源（清场判据，见 UiDocOrigin；默认 Scene）。
+    bool LoadDocumentFromFile(const char* name, const char* absPath,
+                              UiDocOrigin origin = UiDocOrigin::Scene);
     /// 热重载（批③b）：重读底稿（file = 重读盘，内存 = 原文本）；shown 态保持。
     /// 全量重载前清 RmlUi 样式表缓存（Factory 按路径缓存 <link> 解析结果——不清
     /// 则重载后样式仍旧档，实测 2026-09-28）。成功后注入 DocumentReloaded 事件
@@ -93,11 +102,18 @@ public:
     std::vector<std::string> FileBackedDocumentNames() const;
     /// 冒烟探针：文档 shown 态（查无 = false）——stale 归位断言源
     bool IsDocumentShown(const char* name) const;
-    /// 批③d 前置（§3 EnterPlay 归位）：声明集之外的文档清理——stale（上局 C#
-    /// 动态 Show 过）→ Hide + 清 stale（装载保留，下次 Show 免 IO）；非 stale
-    /// （Edit 期双击装载）→ 保持现状（③b 预期延续）。声明集内的文档由调用方
-    /// 逐个 ShowDocument(name, showOnStart, modal) 归位到声明态（先于本调用）。
+    /// 批③d 前置（§3 EnterPlay 归位）：声明集之外的文档清理——**非 Edit 来源**
+    /// （Scene 声明装载但本局未声明——实体已删等；CSharp 动态屏）→ Hide（装载
+    /// 保留，下次 Show 免 IO）+ 清 stale；Edit 来源（双击预览）→ 保持现状（③b
+    /// 预期延续）。声明集内的文档由调用方逐个 ShowDocument(name, showOnStart,
+    /// modal) 归位到声明态（先于本调用）。2026-09-29 形态 D 收口：判据自 stale
+    /// 位升级为来源标记（stale 位只覆盖 C# 动态 Show，漏"声明装载后实体被删"）。
     void ResetDynamicDocuments(const std::vector<std::string>& declared);
+    /// 退 Play 清场（2026-09-29 形态 D 收口，Unity「Stop = 运行时态归零」同构）：
+    /// 非 Edit 来源（Scene/CSharp）文档全部 Hide（装载保留免 IO）+ 清 stale；
+    /// Edit 来源豁免（跨 Play 保持，③b）。返回隐藏数（观测日志用）。与
+    /// ResetDynamicDocuments 幂等共存（EnterPlay 侧仍是兜底不变量）。
+    uint32_t HideNonEditDocuments();
 
     // --------------------------------------------- 批③c：M2 ops 应用 / M3 事件 ----
     /// 单一提交口（C# UI.Apply 每帧一批；ScriptHost 拉取经 UiHooks 转入）。

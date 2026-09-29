@@ -229,8 +229,10 @@ struct UiSubsystem::Impl {
         bool modal = false;             // M1 模态标记（事件携带 + 让出面）
         bool shownDuringPlay = false;   // 批③d 前置 stale 位：只在 ApplyOps 的 Show
                                         // op 置位（C# 动态 Show 来源）——EnterPlay 归位
-                                        // 判据；ShowDocument（③b 双击预览/通道 A 声明
-                                        // 装载）不置位（§3 口径，消歧 C5）
+                                        // 观测位；清场判据 2026-09-29 升级为 origin
+        uint8_t origin = (uint8_t)UiDocOrigin::Scene; // 装载来源（R10 启用——
+                                        // ResetDynamicDocuments/HideNonEditDocuments
+                                        // 判据；装载时定，重载不变）
         uint32_t showSeq = 0;           // D1 层序序号（最近 Show 序；0 = 未 Show 过）
     };
     std::unordered_map<std::string, Doc> docs;
@@ -668,7 +670,8 @@ void UiSubsystem::SetDocumentResolver(UiDocumentResolver fn) {
 }
 
 // ---------------------------------------------------------------- 文档 ----
-bool UiSubsystem::LoadDocumentFromMemory(const char* name, const char* rmlText) {
+bool UiSubsystem::LoadDocumentFromMemory(const char* name, const char* rmlText,
+                                         UiDocOrigin origin) {
     if (!impl_ || !impl_->ctx) return false;
     Impl& i = *impl_;
     auto it = i.docs.find(name);
@@ -686,6 +689,7 @@ bool UiSubsystem::LoadDocumentFromMemory(const char* name, const char* rmlText) 
     entry.shown = false;
     entry.modal = false;
     entry.shownDuringPlay = false; // 新装载 = 新鲜态（stale 归零）
+    entry.origin = (uint8_t)origin;
     entry.showSeq = 0;             // D1：层序从装载序起步
     i.AttachListener(entry);
     i.InvalidateContainers(name);
@@ -693,7 +697,8 @@ bool UiSubsystem::LoadDocumentFromMemory(const char* name, const char* rmlText) 
     return true;
 }
 
-bool UiSubsystem::LoadDocumentFromFile(const char* name, const char* absPath) {
+bool UiSubsystem::LoadDocumentFromFile(const char* name, const char* absPath,
+                                       UiDocOrigin origin) {
     if (!impl_ || !impl_->ctx) return false;
     Impl& i = *impl_;
     auto it = i.docs.find(name);
@@ -712,6 +717,7 @@ bool UiSubsystem::LoadDocumentFromFile(const char* name, const char* absPath) {
     entry.shown = false;
     entry.modal = false;
     entry.shownDuringPlay = false; // 新装载 = 新鲜态（stale 归零）
+    entry.origin = (uint8_t)origin;
     entry.showSeq = 0;             // D1：层序从装载序起步
     i.AttachListener(entry);
     i.InvalidateContainers(name);
@@ -817,13 +823,37 @@ void UiSubsystem::ResetDynamicDocuments(const std::vector<std::string>& declared
     const std::set<std::string> decl(declared.begin(), declared.end());
     for (auto& [name, d] : impl_->docs) {
         if (decl.count(name)) continue;          // 声明集内：调用方已归位
-        if (!d.shownDuringPlay) continue;        // Edit 期双击装载：保持现状（③b）
-        if (d.doc && d.shown) d.doc->Hide();
+        if (d.origin == (uint8_t)UiDocOrigin::Edit) continue; // Edit 期装载：
+                                          // 保持现状（③b「跨 Play 保持」承诺）
+        // Scene 声明装载但本局未声明（实体已删等）/ CSharp 动态屏：Hide（装载
+        // 保留，下次 Show 免 IO）——"本屏无此界面"覆盖到画面层（形态 D：2026-09-29
+        // 判据自 stale 位升级，原先 Scene 来源非 stale 会漏放行为僵尸）
+        if (d.doc && d.shown) {
+            LEMON_LOG("ui-subsystem: 归位隐藏未声明文档 %s（来源 %s，装载保留）",
+                      name.c_str(),
+                      d.origin == (uint8_t)UiDocOrigin::CSharp ? "CSharp" : "Scene");
+            d.doc->Hide();
+        }
         d.shown = false;
         d.showSeq = 0;
-        d.shownDuringPlay = false; // stale 清（装载保留：下次 Show 免 IO）
-        LEMON_LOG("ui-subsystem: 归位隐藏动态文档 %s（装载保留）", name.c_str());
+        d.shownDuringPlay = false; // stale 清
     }
+}
+
+uint32_t UiSubsystem::HideNonEditDocuments() {
+    if (!impl_) return 0;
+    uint32_t hidden = 0;
+    for (auto& [name, d] : impl_->docs) {
+        if (d.origin == (uint8_t)UiDocOrigin::Edit) continue; // 双击预览豁免（③b）
+        if (d.doc && d.shown) {
+            d.doc->Hide();
+            ++hidden;
+        }
+        d.shown = false;
+        d.showSeq = 0;
+        d.shownDuringPlay = false; // stale 清（下局声明/C# Show 重置）
+    }
+    return hidden;
 }
 
 // ------------------------------------------------------- 批③c：M2/M3 ----
@@ -843,7 +873,8 @@ void UiSubsystem::ApplyOps(const UiOpC* ops, uint32_t count, const char* arena,
             if ((UiOpType)op.type == UiOpType::Show && i.docResolver) {
                 std::string abs;
                 if (i.docResolver(docName, abs) &&
-                    LoadDocumentFromFile(docName.c_str(), abs.c_str()))
+                    LoadDocumentFromFile(docName.c_str(), abs.c_str(),
+                                         UiDocOrigin::CSharp))
                     d = i.LookupDoc(docName.c_str());
             }
             if (!d) {

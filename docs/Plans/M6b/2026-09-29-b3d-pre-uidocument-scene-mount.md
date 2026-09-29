@@ -200,6 +200,22 @@ struct UIDocument {
 - **形态 C 并入 smoke 常驻断言**（f304 同帧裸 Rescan 播种），修复前 `edit=0 pix=8176
   FAIL` / 修复后 `edit=1 pix=0 OK`——该失败类从此有回归防线。
 
+### 后续三轮（形态 D 收口：删实体残留 → 退 Play 清场 + 归位判据升级，同日）
+
+- **用户实报（ui-test 项目）**：删场景 UIDocument 实体 → 重进 Play 仍显示——第三种
+  残留形态（资产健康、实体没了，前两轮的资产维度防线均不覆盖）。根因 = Scene 声明装载
+  显示（非 stale）+ ExitPlay 零 UI 处理 + `ResetDynamicDocuments` 的 stale 判据放行——
+  "Edit 双击保持"与"场景声明归位"两语义在状态上不可区分（R10 来源标记的预言）。
+- **修 = 双防线（用户拍板「Unity Stop 归零」方案）**：R10 来源标记启用
+  （`UiDocOrigin` Scene/CSharp/Edit，装载点三处对齐）——防线一 `HideNonEditDocuments()`
+  挂 `StopPlay()` 聚合（6 处 Stop 路径统一）；防线二 Reset 判据 stale → origin（Edit
+  豁免保持 ③b 承诺）。装载保留免 IO 不变；stale 位降为观测位。
+- **smoke 形态 D 两段**（各防线独立验收面——一段 405-420 全貌 + 二段 421-430 直调
+  ExitPlay 绕过清场专验 Reset）；阴性验证双面实抓（禁清场 `stopHide=0 FAIL` / 判据回旧
+  `reset=1/0 FAIL`）。帧门 400→470；回归新增第 16 步 uirml-noscript（形态 D 像素防线
+  常驻——脚本模式 C# 帧 1 经通道 B 合法拉回，pix 位只在无脚本模式裁决）。
+- 全部落账见 [DevLog](../../DevLog/2026-09-29-uidoc-entity-delete-exit-clear.md)。
+
 ## 风险与既知边界（R1–R12 讨论落账；R1–R3 = 决策记录 2/3/4）
 
 | # | 坑 | 处置 |
@@ -213,7 +229,7 @@ struct UIDocument {
 | R7 | 基准漂移 | 零装载断言护栏（§5） |
 | R8 | 运行时动态加组件 | 不生效，登记（§5） |
 | R9 | Edit 预览双态复杂度 | 二期不做，接口留位（决策 6） |
-| R10 | LoadScene 档2 换场景卸载 | UnloadDocument 已有；装载记录带来源标记，登记不实现 |
+| R10 | LoadScene 档2 换场景卸载 | UnloadDocument 已有；~~装载记录带来源标记，登记不实现~~（2026-09-29 形态 D 收口**已启用**：`UiDocOrigin`——清场判据，见后续三轮） |
 | R11 | smoke/回归迁移 | T5 双通道断言；③d 六屏即规模化验证 |
 | R12 | 编辑器三件 | 照抄既有模式，低风险（T4） |
 

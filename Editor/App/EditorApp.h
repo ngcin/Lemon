@@ -174,6 +174,11 @@ private:
     /// → 阻止进 Play 弹模态（对齐 Unity/Godot——静默降级 = "游戏在跑脚本没生效"
     /// 的隐性 bug）；修错保存经 watcher 自动首装解除。无 Game/ 会话直通。
     bool TryEnterPlay();
+    /// Stop 出口聚合（2026-09-29 形态 D 收口）：ctx_.ExitPlay() 成功后做 UI 清场
+    /// （HideNonEditDocuments——非 Edit 来源文档 Hide 装载保留，Edit 双击预览豁免）
+    /// + 翻页标志复位。所有 Stop 路径（交互按钮 ×3 / smoke 程序化 / --play 收尾）
+    /// 统一走此口——ExitPlay 本体在 EditorContext（无 gameUi_ 依赖，分层不动）。
+    bool StopPlay();
     void BuildPickersAndModals();
     /// 场景选择器起始目录：当前场景父目录 → 项目 Scenes/ → 项目根 → CWD（无项目）
     std::string PickerStartDir();

@@ -1886,8 +1886,7 @@ void EditorApp::BuildToolbar() {
                           playing ? theme::kPlayStop : theme::kAccentDim);
     if (ui::IconButton(*this, playing ? IconKind::Stop : IconKind::Play, "##play", false)) {
         if (playing) {
-            if (ctx_.ExitPlay()) tabFocusPending_ = -1;
-            else LEMON_WARN("Stop 后快照校验失败（编辑场景已按快照重建）");
+            if (!StopPlay()) LEMON_WARN("Stop 后快照校验失败（编辑场景已按快照重建）");
         } else if (TryEnterPlay()) {
             tabFocusPending_ = 1;
         }
@@ -2180,7 +2179,7 @@ void EditorApp::BuildShortcuts() {
             ctx_.Undo().Redo();
         if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_P)) {
             if (ctx_.Playing()) {
-                if (ctx_.ExitPlay()) tabFocusPending_ = -1;
+                StopPlay();
             } else if (TryEnterPlay()) {
                 tabFocusPending_ = 1;
             }
@@ -3142,6 +3141,20 @@ bool EditorApp::TryEnterPlay() {
     return true;
 }
 
+bool EditorApp::StopPlay() {
+    if (!ctx_.ExitPlay()) return false;
+    // 形态 D 清场（2026-09-29）：Unity「Stop = 运行时态归零」同构——Scene/CSharp
+    // 来源文档 Hide（装载保留免 IO）；Edit 双击预览豁免（③b 跨 Play 保持）。
+    // EnterPlay 侧 ResetDynamicDocuments 仍是兜底不变量（双防线，幂等共存）
+    if (gameUi_) {
+        const uint32_t hidden = gameUi_->HideNonEditDocuments();
+        if (hidden)
+            LEMON_LOG("退 Play UI 清场：隐藏 %u 个游戏文档（装载保留）", hidden);
+    }
+    tabFocusPending_ = -1;
+    return true;
+}
+
 // 批③d 前置（通道 A）：见 EditorApp.h 注记。无 UIDocument 的场景（bench/replay/
 // 基准场）装载调用恒 0——装载点只在此扫描处，不进任何通用路径（基准护栏 §5）。
 uint32_t EditorApp::MountSceneUiDocuments() {
@@ -3174,7 +3187,8 @@ uint32_t EditorApp::MountSceneUiDocuments() {
             return;
         }
         if (gameUi_->LoadDocumentFromFile(en->relPath.c_str(),
-                                          db.AbsolutePath(*en).c_str())) {
+                                          db.AbsolutePath(*en).c_str(),
+                                          lemon::ui::UiDocOrigin::Scene)) {
             ++loaded;
             // 声明态归位：showOnStart=0 = 装载但隐藏（动态屏）；modal 初值入 Doc
             gameUi_->ShowDocument(en->relPath.c_str(), ud.showOnStart != 0,
@@ -3248,9 +3262,10 @@ int EditorApp::Run(const EditorLaunch& launch) {
     // 批③b：冒烟钩子（热重载中点 100/140）与末帧捕获都锚定帧号——参数门禁对齐
     // smoke-template 先例（③a 的"缺省 180"只写 launchCopy_ 而主循环判 launch.frames，
     // 无 --frames 实际 = 无限跑 + 零捕获；显式要求根除该歧义）
-    if (launchCopy_.smokeUirml && launch.frames < 260) {
-        LEMON_ERROR("--smoke-uirml 需要 --frames N（N>=260：两段热重载中点 100/140 + "
-                    "watcher 驱动删除逐出余量（500ms 轮询）+ 稳定渲染余量）");
+    if (launchCopy_.smokeUirml && launch.frames < 470) {
+        LEMON_ERROR("--smoke-uirml 需要 --frames N（N>=470：两段热重载中点 100/140 + "
+                    "watcher 驱动删除逐出余量（500ms 轮询）+ 形态 D 两段 405-430 + "
+                    "终局画面稳定余量）");
         return 2;
     }
     const auto tStart = std::chrono::steady_clock::now();
@@ -3554,6 +3569,17 @@ int EditorApp::Run(const EditorLaunch& launch) {
     // 删（302 双击重装载 → 304 删 → 345 重进 Play 须无残留）。seed = 删前确在显示
     bool smokeUiEvictSeedOk = false;
     int smokeUiZombiePixN = -1, smokeUiEvictPixN = -1; // 253 / 348 帧 #604080 计数
+    // 形态 D（2026-09-29 用户实报收口）：删场景 UIDocument 实体 → 重进 Play 不
+    // 得残留显示。stopHide = 405 Stop 后 Scene 文档即被清场（HideNonEditDocuments）
+    // 且 Edit 预览豁免；delEnt = 410 第四局（无脚本模式全量断言——脚本模式 C# 帧 1
+    // 会经通道 B 合法拉回，非僵尸）：uirml 装载保留 + 不显示 + 装载增量 0；pix =
+    // 411 帧渲染块 #802040 计数（<5）。420 重建实体进终局，终帧画面回归原口径
+    bool smokeUiExitHideOk = false, smokeUiDelEntOk = false;
+    int smokeUiDelEntPixN = -1;
+    uint32_t smokeUiLoadsP4Base = 0; // 405 Stop 时装载计数（第四局增量断言基线）
+    // 形态 D 二段：resetSeed = 421 直调 ExitPlay（绕过清场）后 uirml 仍 shown
+    //（防线一确不在场）；resetOnly = 424 第六局 Reset origin 判据独自完成清场
+    bool smokeUiResetSeedOk = false, smokeUiResetOnlyOk = false;
     int smokeUiNegP2 = -1; // 251 帧负面行容器快照（终帧在三局——通道 A 重装已清）
     bool smokeUiEvictEditOk = false; // 三局入 Play 后 editprev 已不在 docs
     Vec2 smokeCreatePt{-1.0e9f, -1.0e9f};
@@ -3987,8 +4013,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
         // 误按一下就整体退出对编辑器太危险（原 anim-smoke 骨架遗留行为，M4.6 移除）
         const bool esc = window_->IsKeyDown(Key::Escape);
         if (esc && !escHeld_ && ctx_.Playing()) {
-            if (ctx_.ExitPlay()) tabFocusPending_ = -1;
-            else LEMON_WARN("Stop 后快照校验失败（编辑场景已按快照重建）");
+            if (!StopPlay()) LEMON_WARN("Stop 后快照校验失败（编辑场景已按快照重建）");
         }
         escHeld_ = esc;
         // 外部拖拽导入（M4.6 §5-3）：OS drop 文件 → 当前资产目录（无项目 = 可操作红字）
@@ -4157,7 +4182,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
             // stale）保持可见；A 回声明态 shown。断言须在 TickPlay 前（C# 本局
             // UiRefill 的 Show 尚未到达）
             if (frame == 200 && ctx_.Playing()) {
-                smokeUiExitP2 = ctx_.ExitPlay();
+                smokeUiExitP2 = StopPlay();
                 if (!smokeUiExitP2) LEMON_ERROR("uirml-smoke: 第二局前 ExitPlay 失败");
             }
             // 上步 Stop 失败（不该发生）时跳过第二局断言——终帧 FAIL 兜底
@@ -4214,7 +4239,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
             // 编辑态删除 → watcher 逐出 → 345 重进 Play 断言无残留（簿记 + 348 像素）；
             // 352 复种 + 394 重装载 → 终帧 hasDocC/cPrevN 回归原口径
             if (frame == 256 && ctx_.Playing()) {
-                if (!ctx_.ExitPlay()) LEMON_ERROR("uirml-smoke: 三局前 ExitPlay 失败");
+                if (!StopPlay()) LEMON_ERROR("uirml-smoke: 三局前 ExitPlay 失败");
             }
             if (frame == 258) {
                 {
@@ -4280,6 +4305,124 @@ int EditorApp::Run(const EditorLaunch& launch) {
                     LoadUiDocument(e->guid); // 终帧 hasDocC/cPrevN 复位（Play 中装载）
                 else
                     LEMON_ERROR("uirml-smoke: 终局复种未被 watcher 处理");
+            }
+            // 形态 D（2026-09-29 用户实报：删场景 UIDocument 实体 → 重进 Play 仍
+            // 显示——Scene 来源非 stale，旧 ResetDynamicDocuments 漏放行）。405
+            // Stop（StopPlay 内清场）→ 断言 uirml 即刻不显示 + editprev 豁免保持；
+            // 407 编辑态删声明实体；410 第四局——无脚本模式断言装载保留/不显示/
+            // 零装载增量；412 像素（411 渲染块录）。脚本模式 C# 帧 1 会经通道 B
+            // 合法 Show 拉回 uirml（动态屏语义，非僵尸）——delEnt/pix 仅无脚本
+            // 模式裁决。415 Stop；417 重建声明实体；420 终局 EnterPlay（终帧像素
+            // 断言回归原口径：uirml 声明显示）
+            if (frame == 405 && ctx_.Playing()) {
+                if (StopPlay()) {
+                    smokeUiLoadsP4Base = gameUi_ ? gameUi_->DocumentLoadCount() : 0;
+                    smokeUiExitHideOk =
+                        gameUi_ && gameUi_->HasDocument("Assets/UI/uirml.rml") &&
+                        !gameUi_->IsDocumentShown("Assets/UI/uirml.rml") &&
+                        gameUi_->IsDocumentShown("Assets/UI/editprev.rml");
+                    if (!smokeUiExitHideOk)
+                        LEMON_ERROR("uirml-smoke: 形态 D 清场断言失败（Stop 后 "
+                                    "Scene 文档应 Hide / Edit 预览应保持）");
+                } else
+                    LEMON_ERROR("uirml-smoke: 形态 D Stop 失败");
+            }
+            if (frame == 407 && !ctx_.Playing()) { // 编辑态删声明实体（= 用户操作）
+                bool removed = false;
+                ctx_.ActiveScene().View<ecs::UIDocument>().each(
+                    [&](auto raw, ecs::UIDocument&) {
+                        if (removed) return;
+                        ctx_.DestroyEntityTree(ecs::Scene::FromEntt(raw));
+                        removed = true;
+                    });
+                if (removed)
+                    LEMON_LOG("uirml-smoke: 形态 D——编辑态删除 UIDocument 声明实体");
+                else
+                    LEMON_ERROR("uirml-smoke: 形态 D 删实体失败（场景无 UIDocument）");
+            }
+            if (frame == 410 && !ctx_.Playing() && TryEnterPlay()) {
+                tabFocusPending_ = 1;
+                // 簿记断言全模式安全：本钩子先于当帧 TickPlay——脚本模式 C# 的
+                // 帧 1 UiRefill（合法通道 B 拉回）发生在断言之后
+                smokeUiDelEntOk =
+                    gameUi_ && gameUi_->HasDocument("Assets/UI/uirml.rml") &&
+                    !gameUi_->IsDocumentShown("Assets/UI/uirml.rml") &&
+                    gameUi_->DocumentLoadCount() == smokeUiLoadsP4Base;
+                if (!smokeUiDelEntOk)
+                    LEMON_ERROR("uirml-smoke: 形态 D 第四局残留（声明移除后"
+                                "须：装载保留 + 不显示 + 零装载增量）");
+            }
+            if (frame == 412 && gameUi_ && launch.script.empty()) { // 411 渲染块已录
+                std::vector<uint8_t> rt;
+                uint32_t rw = 0, rh = 0;
+                if (device_->DebugFetchTextureCapture(rt, rw, rh))
+                    smokeUiDelEntPixN = CountPixelsNear(rt, rw, rh, 128, 32, 64, 30);
+            }
+            if (frame == 415 && ctx_.Playing()) {
+                if (!StopPlay()) LEMON_ERROR("uirml-smoke: 形态 D 终局前 Stop 失败");
+            }
+            if (frame == 417 && !ctx_.Playing()) { // 重建声明实体（终局画面回归）
+                const AssetEntry* en =
+                    ctx_.Assets().FindByPath("Assets/UI/uirml.rml");
+                if (en) {
+                    ecs::Entity ue = ctx_.CreateEntity("UIDocument");
+                    ctx_.ActiveScene().Emplace<ecs::UIDocument>(ue).sourceAssetGuid =
+                        en->guid;
+                } else
+                    LEMON_ERROR("uirml-smoke: 形态 D 重建实体失败（夹具资产缺）");
+            }
+            if (frame == 420 && !ctx_.Playing()) {
+                if (TryEnterPlay()) tabFocusPending_ = 1;
+                else LEMON_ERROR("uirml-smoke: 终局 EnterPlay 失败");
+            }
+            // 形态 D 第二段（防线二独立验收面）：421 Stop **直调 ctx_.ExitPlay**
+            // 绕过 StopPlay 清场（= 清场被跳过/失效的窗口形态）→ uirml 保持
+            // shown → 422 删声明实体 → 424 第六局：无声明 + Scene 来源 + shown——
+            // ResetDynamicDocuments 的 origin 判据必须独自完成清场（防线一不在
+            // 场）。426 常规 Stop；428 重建实体；430 真终局（画面回归原口径）
+            if (frame == 421 && ctx_.Playing()) {
+                if (ctx_.ExitPlay()) // 直调（绕过 StopPlay 清场 = 防线一失效形态）
+                    // seed 在场证明：Stop 后 uirml 仍 shown（清场确被绕过，防线二
+                    // 是本局唯一清场者——TryEnterPlay 内部 Reset 先于一切读数）
+                    smokeUiResetSeedOk = gameUi_ &&
+                                         gameUi_->IsDocumentShown("Assets/UI/uirml.rml");
+                else
+                    LEMON_ERROR("uirml-smoke: 形态 D 二段 Stop 失败（绕过清场）");
+            }
+            if (frame == 422 && !ctx_.Playing()) {
+                bool removed = false;
+                ctx_.ActiveScene().View<ecs::UIDocument>().each(
+                    [&](auto raw, ecs::UIDocument&) {
+                        if (removed) return;
+                        ctx_.DestroyEntityTree(ecs::Scene::FromEntt(raw));
+                        removed = true;
+                    });
+                if (!removed)
+                    LEMON_ERROR("uirml-smoke: 形态 D 二段删实体失败（无声明实体）");
+            }
+            if (frame == 424 && !ctx_.Playing() && TryEnterPlay()) {
+                tabFocusPending_ = 1;
+                smokeUiResetOnlyOk = smokeUiResetSeedOk && gameUi_ &&
+                                     !gameUi_->IsDocumentShown("Assets/UI/uirml.rml");
+                if (!smokeUiResetOnlyOk)
+                    LEMON_ERROR("uirml-smoke: 形态 D 二段失败（防线二/Reset origin "
+                                "判据未清未声明文档）");
+            }
+            if (frame == 426 && ctx_.Playing()) {
+                if (!StopPlay()) LEMON_ERROR("uirml-smoke: 形态 D 二段 Stop 失败");
+            }
+            if (frame == 428 && !ctx_.Playing()) {
+                if (const AssetEntry* en =
+                        ctx_.Assets().FindByPath("Assets/UI/uirml.rml")) {
+                    ecs::Entity ue = ctx_.CreateEntity("UIDocument");
+                    ctx_.ActiveScene().Emplace<ecs::UIDocument>(ue).sourceAssetGuid =
+                        en->guid;
+                } else
+                    LEMON_ERROR("uirml-smoke: 形态 D 二段重建实体失败");
+            }
+            if (frame == 430 && !ctx_.Playing()) {
+                if (TryEnterPlay()) tabFocusPending_ = 1;
+                else LEMON_ERROR("uirml-smoke: 真终局 EnterPlay 失败");
             }
             if (frame == 100) {
                 if (rewriteFile(uiDir / "uirml.rml", "#ffd060", "#40ff90"))
@@ -5453,10 +5596,11 @@ int EditorApp::Run(const EditorLaunch& launch) {
         const bool wantCapture =
             !launch.screenshot.empty() || launch.smoke || launchCopy_.smokeUirml;
         // 批③d 前置 T5：层序断言两段中点捕获（171/191 钩子取回数色——见帧钩子段）；
-        // 真人验收②二轮：243/347 = 僵尸渲染防线捕获（删文档后活画面像素清零断言源）
+        // 真人验收②二轮：243/347 = 僵尸渲染防线捕获（删文档后活画面像素清零断言源）；
+        // 形态 D：411 = 删声明实体后第四局活画面（残留显示断言源）
         const bool midUirmlCapture = launchCopy_.smokeUirml &&
                                      (frame == 170 || frame == 190 || frame == 252 ||
-                                      frame == 347);
+                                      frame == 347 || frame == 411);
         const bool lastFrame =
             (launch.frames > 0 && (int)frame == launch.frames - 1 && wantCapture) ||
             midUirmlCapture;
@@ -5859,7 +6003,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
     if (ctx_.Playing()) { // --play：跑满帧数后 Stop（恢复编辑世界）
         playAliveAtStop = ctx_.ActiveScene().AliveCount();
         playEnterMs = ctx_.LastEnterPlayMs();
-        playVerified = ctx_.ExitPlay();
+        playVerified = StopPlay();
         playExitMs = ctx_.LastExitPlayMs();
     }
 
@@ -6496,20 +6640,28 @@ int EditorApp::Run(const EditorLaunch& launch) {
         std::snprintf(dynText, sizeof(dynText), "%s", smokeUiDynText); // 220 快照（逐出后终帧读恒空）
         // scripted：C# 同批 Show+SetText 到刚兜底装载的 dyn（通道 B 顺序契约）
         const bool dynTextOk = !scripted || std::strcmp(dynText, "通道B已装载") == 0;
+        // 形态 D：stopHide/delEnt 全模式（410 簿记断言先于当帧 C#）；pix 仅无脚本
+        // 模式（脚本模式 C# 帧 1 经通道 B 合法 Show 拉回 = 动态屏非僵尸）；
+        // reset = 二段防线二独立面（421 绕过清场 → 424 Reset 独自清场）
+        const bool evict3Ok = smokeUiExitHideOk && smokeUiDelEntOk &&
+                              smokeUiResetSeedOk && smokeUiResetOnlyOk &&
+                              (scripted || (smokeUiDelEntPixN >= 0 &&
+                                            smokeUiDelEntPixN < 5));
         const bool uidocOk = hasDoc && hasDocB && hasDocC && smokeUiExitP2 &&
                              smokeUiStaleOk && smokeUiKeepCOk && smokeUiLoadsP2 == 1 &&
                              smokeUiLayerBTopN > 500 && smokeUiLayerATopN < 5 &&
                              cPrevN > 100 && dynTextOk && smokeUiDelEvictOk &&
                              smokeUiEvictSeedOk && smokeUiZombiePixN >= 0 &&
                              smokeUiZombiePixN < 5 && smokeUiEvictEditOk &&
-                             smokeUiEvictPixN >= 0 && smokeUiEvictPixN < 5;
+                             smokeUiEvictPixN >= 0 && smokeUiEvictPixN < 5 && evict3Ok;
         std::printf("[lemon] smoke-uirml: doc=%d font=%s panel=%d(>3000) titleG=%d(>20) "
                     "bodyB=%d(>20) tex=%d(>500) old=%d/%d(<5) titleTop=%d/%d(≥3/4) "
                     "dp(ratio=%.3f box=%.1fx%.1f/%s) "
                     "items=%d/%d ev=c%dr%d contract=%u/%s "
                     "uidoc(a=%d/b=%d/c=%d loads=%u/%u) layer(bTop=%d aTop=%d) "
                     "p2(stale=%d keepC=%d+%dpx dyn=%s del=%d) "
-                    "evict2(seed=%d live=%d edit=%d pix=%d) => %s\n",
+                    "evict2(seed=%d live=%d edit=%d pix=%d) "
+                    "evict3(stopHide=%d delEnt=%d reset=%d/%d pix=%d) => %s\n",
                     hasDoc ? 1 : 0, gameUi_ ? gameUi_->LoadedFontFamily() : "-",
                     panelN, titleGN, bodyBN, texN, oldGoldN, oldGrayN, titleTopN, titleGN,
                     dpRatio, dpW, dpH, (dpRatioOk && dpBoxOk) ? "OK" : "BAD",
@@ -6519,7 +6671,9 @@ int EditorApp::Run(const EditorLaunch& launch) {
                     smokeUiStaleOk ? 1 : 0, smokeUiKeepCOk ? 1 : 0, cPrevN,
                     dynTextOk ? "OK" : "BAD", smokeUiDelEvictOk ? 1 : 0,
                     smokeUiEvictSeedOk ? 1 : 0, smokeUiZombiePixN, smokeUiEvictEditOk ? 1 : 0,
-                    smokeUiEvictPixN,
+                    smokeUiEvictPixN, smokeUiExitHideOk ? 1 : 0, smokeUiDelEntOk ? 1 : 0,
+                    smokeUiResetSeedOk ? 1 : 0, smokeUiResetOnlyOk ? 1 : 0,
+                    smokeUiDelEntPixN,
                     (uiOk && uiOk3c && uidocOk && dpRatioOk && dpBoxOk) ? "OK" : "FAIL");
         if (!uiOk || !uiOk3c || !uidocOk || !dpRatioOk || !dpBoxOk) exitCode = 1;
     }
@@ -6555,7 +6709,8 @@ void EditorApp::LoadUiDocument(uint64_t guid) {
     const AssetEntry* e = ctx_.Assets().FindByGuid(guid);
     if (!e || e->missing || e->type != AssetType::Rml) return;
     const std::string abs = ctx_.Assets().AbsolutePath(*e);
-    if (!gameUi_->LoadDocumentFromFile(e->relPath.c_str(), abs.c_str())) return;
+    if (!gameUi_->LoadDocumentFromFile(e->relPath.c_str(), abs.c_str(),
+                                       lemon::ui::UiDocOrigin::Edit)) return;
     gameUi_->ShowDocument(e->relPath.c_str(), true);
     LEMON_LOG("UI 文档已装载%s：%s（改动落盘经 watcher/重扫热重载）",
               ctx_.Playing() ? "" : "（进 Play 后 GameView 显示）", e->relPath.c_str());
@@ -6802,7 +6957,8 @@ void EditorApp::SeedSmokeUiDocument() {
         LEMON_ERROR("uirml 播种失败：夹具缺 %s", rel.c_str());
         return;
     }
-    if (gameUi_->LoadDocumentFromFile(rel.c_str(), ctx_.Assets().AbsolutePath(*e).c_str()))
+    if (gameUi_->LoadDocumentFromFile(rel.c_str(), ctx_.Assets().AbsolutePath(*e).c_str(),
+                                      lemon::ui::UiDocOrigin::Edit))
         gameUi_->ShowDocument(rel.c_str(), true);
 }
 
