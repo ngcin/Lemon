@@ -31,7 +31,7 @@
 
 | # | 机制 | 契约要点 |
 |---|---|---|
-| M1 | 屏幕栈 | `Show/Hide` + 模态标记 + 层级序；**一屏 = 一文档**；tooltip / toast（横幅）层固定位 |
+| M1 | 屏幕栈 | `Show/Hide` + 模态标记 + 层级序；**一屏 = 一文档**；tooltip / toast（横幅）层固定位。**2026-09-29 层级序实现语义落定（开工前审核拍板 D1 甲-轻量）**：层级序 = 最近 Show 序——引擎在 `ShowDocument` 与 ApplyOps 的 Show 分支于 `doc->Show()` 后显式 `PullToFront()`，装载序为初值；toast 固定位 = 显示（后 Show）即提层。RmlUi 原生 `ModalFlag` 不使用（模态语义 = 引擎自有 `Doc::modal` 标记 + M7 让出门），其焦点收容守卫不在依赖面。装载语义补章（场景挂载双通道 + stale 归位）随 ③d 前置 T6 落注记 |
 | M2 | 数据通道 | `SetText/SetAttr/SetClass/SetStyle/SetItems/SetInnerRml`；单一 `UI.Apply(ops)` 每帧批量提交；string id；**SetItems = 模板克隆**（文档内 `<ui-template data-name>` 原型 + `data-field` 契约 + 稳定 key，字段 schema 只活在文档与 C# 两侧，引擎只认数量。**2026-09-28 ③c 实现修订**：原型标签由 `<template>` 改 `<ui-template>`——RmlUi 原生 `<template>` 被其模板注入机制占用（XMLNodeHandlerTemplate，无 `src` 时子元素漏进父容器），属其 datamodel 家族即本 ADR 拒用面）；**响亮失败**（id/field 不匹配 → 控制台错误 + stats 计数 + smoke 断言"零契约错误"——③c 冒烟口径 = 恰好 N 个已知反例、其余零容忍）；`DocumentReloaded` 事件 → C# 重灌数据（热重载后屏幕不空，③c 已实证） |
 | M3 | 事件通道 | `UiEvent{doc, key, type, payload}` 走事件队列（**无回调跨边界**）；click/change/submit/hover…；payload 预留字符串值与**世界坐标位**（M4 依赖，第一波就把事件结构定够宽） |
 | M4 | 拖放 | DragStart / DragEnter / DragLeave / Drop / DragCancel；**边沿触发不逐帧**；落点 = 目标 key **或世界坐标**（摆塔用例）；**UI 载身份、游戏持语义**（拖什么/能否放/放下发生什么全在 C#）；拖拽视觉引擎托管（源元素快照跟随光标）；droppable 目标在文档声明（`data-droppable`），enter/leave 高亮 = RCSS 类引擎自动施加。**波3 实现、契约即冻结** |

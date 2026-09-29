@@ -2,6 +2,7 @@
 
 - 日期：2026-09-29
 - Status: **planned（设计定案冻结，待开工）**——本批当前只落本批文件，未写代码。
+- **2026-09-29 审核修订（开工前解冻再冻结）**：M6b 开工前第三方审核发现三处硬伤 + 两项关联决策拍板，本文件同步修订——①T1 布局字数错误（8B → 16B）+ 补注册 id（=30）；②T3 的 modal 归位缺引擎侧写入口，补 `ShowDocument` 尾加形参任务项；③§3 归位规则与 ③b 双击预览语义打架（C5），落 stale 位口径消歧；④D1 层序路线拍板「甲-轻量：Show 即提层」，落进 T2/T3；⑤关联决策 B1（dp 坐标系）与 D2（③d 两拆）归 [M6b.md 决策注记](./M6b.md)，本批不含 dp。
 - 归属：M6b 游戏UI产品壳（原 M6a 批③，2026-09-29 迁；总览页 [M6b.md](./M6b.md)）
 - 关联：[ADR-014](../../ADR/ADR-014-Game-UI-RmlUi-Integration.md) M1（装载语义补章，T6 落注记）· [批③c](./2026-09-28-b3c-csharp-ui-api.md)（C# API 已交付，本批零改动）· [③b 批文件](./2026-09-28-b3b-ui-font-asset-channel.md)（双击手动通道 = 本批取代对象）
 - 性质：③d 模板迁移（六屏）的公共地基——每屏都要"装载 + 显隐管理"，本批把这两个动作从口头约定升为场景数据。
@@ -38,9 +39,11 @@
 ### 1. UIDocument 组件（Unity 同构；Engine/Components/UiComponents.h 新组首件）
 
 ```cpp
-// Lemon 引擎 — 组件目录 · UI 组首件（M6a 批③d 前置；Unity UIDocument 同构挂载粒度）
+// Lemon 引擎 — 组件目录 · UI 组首件（M6b 批③d 前置，原 M6a 批③；Unity UIDocument 同构挂载粒度）
 // 一组件 = 一 .rml 文档资产 = 一屏（ADR-014 M1 一屏一文档）。运行时状态（装载句柄/
 // shown 态）全在 UiSubsystem（name→doc map），**严禁回写本组件**（快照确定性铁律）。
+// 布局：u64+u8+u8+u16 裸 12B、自然对齐 sizeof=16/alignof=8（2026-09-29 审核修正：
+// 原误写 8B；C# 镜像 Sequential 无 Pack 逐字节同构，勿手写 elemSize——注册一律 sizeof）。
 struct UIDocument {
     uint64_t sourceAssetGuid = 0; // .rml 资产 GUID（Unity sourceAsset 的 GUID 形态）；0 = 未挂（合法，Inspector 提示）
     uint8_t  showOnStart = 1;     // 进 Play 即显；0 = 装载但隐藏（死亡/结算类动态屏由 C# UI.Show 点亮）
@@ -63,8 +66,10 @@ struct UIDocument {
 
 ### 3. EnterPlay 归位（大扫除）与 ExitPlay
 
-- **EnterPlay（通道 A 末段，一次性归位全部已装载文档）**：场景声明的屏 → `showOnStart`/`modal` 声明态；**场景未声明、上局动态 Show 过的文档 → Hide（装载保留，下次 Show 免 IO）**。消灭 R2 残留（第二局 HUD 带上局数据 / modal 残留 / 死亡框没收）。
+- **归位判据 = stale 位（2026-09-29 审核消歧 C5）**：`Doc` 增 `shownDuringPlay` 标记——**只在 ApplyOps 的 Show op 路径置位**（C# 动态 Show）；`ShowDocument`（③b 双击预览、通道 A 声明装载）**不置位**。这样"上局动态 Show 过"（要归位 Hide）与"Edit 期双击装载"（③b 承诺「进 Play 后 GameView 显示」，保持 shown）两个来源无需 R10 的完整装载来源标记即可区分。
+- **EnterPlay（通道 A 末段，一次性归位全部已装载文档）**：场景声明的屏 → `showOnStart`/`modal` 声明态 + 清 stale；**场景未声明且 stale 的文档 → Hide（装载保留，下次 Show 免 IO）+ 清 stale**；未声明且非 stale（Edit 期双击装载）→ 保持现状。消灭 R2 残留（第二局 HUD 带上局数据 / modal 残留 / 死亡框没收）。
 - ExitPlay：不主动卸载（Edit 期不渲染，无害）；归位统一在下次 EnterPlay 做（单一时点，简单）。
+- **层序（2026-09-29 拍板 D1 甲-轻量）**：`ShowDocument` 与 ApplyOps 的 Show 分支在 `doc->Show()` 后**显式 `PullToFront()`**——层级序 = 最近 Show 序，装载序为初值；模态屏总在后 Show 自然压 HUD。纯文本文档（无焦点元素、原本不会被焦点副作用提层）从此有确定语义。ADR-014 M1 注记随 T6 落。
 
 ### 4. 寻址约定（R3/R4 处置）
 
@@ -84,18 +89,20 @@ struct UIDocument {
 
 ### T1 组件（Engine/Components + SDK 镜像）
 
-- 新 `Engine/Components/UiComponents.h`：`UIDocument`（上述 sketch）+ 注册进 `ComponentCatalog.cpp`（序列化/Inspector 泛型渲染即刻可用）。
-- `Lemon.SDK/Interop/Components.cs` 同步镜像（IComponent，8B 布局冻结，SpriteRenderer 同款注释纪律）。
+- 新 `Engine/Components/UiComponents.h`：`UIDocument`（上述 sketch）+ 注册进 `ComponentCatalog.cpp`（序列化/Inspector 泛型渲染即刻可用）。**注册 id = 30**（登记顺序即 id、只增不改序——2026-09-29 审核时点现有 30 项 id 0..29；实现期以目录实际尾部为准，勿凭本文件数字硬编码）。
+- `Lemon.SDK/Interop/Components.cs` 同步镜像（IComponent，**16B 布局冻结**——2026-09-29 审核修正，原误写 8B；SpriteRenderer 同款注释纪律）。
 - Inspector 特化：`sourceAssetGuid` 字段 = .rml 资产选择器（`AssetType::Rml` 过滤；0 = "未挂"提示）。
 
 ### T2 通道 B：Show 落空兜底（Engine/Ui + Editor 装配）
 
 - `UiSubsystem` 增 `SetDocumentResolver` + `ApplyOps` Show 分支（FindDoc miss → resolver → LoadDocumentFromFile → 重试；resolver 未装 = 现行 ContractFail）。
+- ApplyOps Show 分支顺带落两件（§3）：置 `shownDuringPlay`（stale，归位判据）；`doc->Show()` 后 `PullToFront()`（层序 = 最近 Show 序）。
 - EditorApp gameUi_ Init 段装配 resolver。
 
 ### T3 通道 A：EnterPlay 装载 + 归位（EditorApp）
 
-- `TryEnterPlay()`（:2822）`ctx_.EnterPlay()` true 后：扫 playWorld UIDocument → GUID 解析/去重/装载 → showOnStart/modal 归位 → 未声明已装载文档 Hide。
+- **前置（2026-09-29 审核补 A4）：`UiSubsystem::ShowDocument` 尾加 `bool modal = false` 形参**——modal 的场景声明态写入口（原本置 true 唯一路径是 ApplyOps 的 C# Show op，T3 的「modal 归位」无 API 可调）；尾加默认参零破坏既有调用（EditorApp 双击路径、smoke 调用点不动）。顺带本 API 内落 §3 的 Show 后 `PullToFront()`。
+- `TryEnterPlay()`（:2822）`ctx_.EnterPlay()` true 后：扫 playWorld UIDocument → GUID 解析/去重/装载 → showOnStart/modal 归位（经上述形参）→ 未声明且 stale 的已装载文档 Hide + 清 stale（§3 口径：Edit 期双击装载的非 stale 文档保持 shown）。
 - 断言/日志：装载成功数、missing 数、去重警告——进 Console。
 
 ### T4 编辑器三件（Editor/Panels）
@@ -108,7 +115,8 @@ struct UIDocument {
 
 - smoke-uirml 迁移：夹具场景挂 UIDocument 实体（主文档走通道 A）+ C# 动态 `UI.Show` 第二文档（走通道 B）——**双通道各至少一条断言**（装载计数/可见像素/契约错误恰为已知反例数）。
 - 基准护栏断言：无 UIDocument 场景装载调用 = 0。
-- Play→Stop→Play 循环断言：第二局无残留（uiev 类回执或像素断言）。
+- Play→Stop→Play 循环断言：第二局无残留（uiev 类回执或像素断言）；stale 口径断言——动态 Show 过的第二文档第二局被 Hide，Edit 期双击装载的文档跨 Play 保持可见（③b 预期延续，§3）。
+- 层序断言（§3 D1）：两文档先后 Show，后者在上的像素/回执验证。
 - 回归 15 步结构不动，uirml-chain 断言串升级（`uidoc=…` 位）。
 
 ### T6 文档落账
