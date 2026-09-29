@@ -10,6 +10,7 @@
 #include "Components/CoreComponents.h"
 #include "Components/GameplayComponents.h"
 #include "Components/RenderComponents.h"
+#include "Components/UiComponents.h"
 #include "ECS/ComponentRegistry.h"
 #include "ECS/Scene.h"
 
@@ -30,6 +31,7 @@ namespace {
 #define ED_RESET { FieldHint::Reset }
 #define ED_ASSET(tip) { FieldHint::AssetRef, 0, 0, nullptr, 0, tip }
 #define ED_CLIPREF(tip) { FieldHint::ClipRef, 0, 0, nullptr, 0, tip } // M5 批③
+#define ED_RMLREF(tip) { FieldHint::RmlRef, 0, 0, nullptr, 0, tip } // M6b 批③d 前置
 
 // ---- Core（id 0..4）----
 constexpr FieldMeta kTransform2D[] = {
@@ -111,6 +113,21 @@ constexpr FieldMeta kAnimParams[] = {
     { "param5", FieldType::Float, (uint16_t)(offsetof(AnimParams, v) + 5 * sizeof(float)), kFieldRuntime },
     { "param6", FieldType::Float, (uint16_t)(offsetof(AnimParams, v) + 6 * sizeof(float)), kFieldRuntime },
     { "param7", FieldType::Float, (uint16_t)(offsetof(AnimParams, v) + 7 * sizeof(float)), kFieldRuntime }};
+
+// ---- M6b 批③d 前置（id 30；表尾追加，只增不改序）----
+// Unity UIDocument 同构：一组件 = 一 .rml 文档资产 = 一屏（ADR-014 M1）。布局
+// sizeof=16/alignof=8（2026-09-29 审核修正原 8B 误写）；reserved = 布局余量不进
+// 编辑面。Inspector：sourceAssetGuid = .rml 资产选择器（RmlRef）。
+constexpr FieldMeta kUIDocument[] = {
+    FIELD(UIDocument, sourceAssetGuid, UInt64),
+    FIELD(UIDocument, showOnStart, UInt8),
+    FIELD(UIDocument, modal, UInt8),
+    FIELD(UIDocument, reserved, UInt16)};
+constexpr FieldEditorMeta kEdUIDocument[] = {
+    ED_RMLREF(".rml 文档资产槽（GUID 真源；进 Play 声明式装载，双击 AssetBrowser 可预览）"),
+    ED_BOOL8,
+    ED_BOOL8,
+    ED_HIDE};
 
 // ---- Behavior（id 9..20）----
 constexpr FieldMeta kHealth[] = {FIELD(Health, max, Float), FIELD(Health, cur, Float),
@@ -422,6 +439,7 @@ void RegisterAllComponents() {
     REGISTER_ED_SEG(WaveDirector, kWaveDirector, kEdWaveDirector, kWaveDirectorSeg)
     REGISTER_ED(AnimGraph, kAnimGraph, kEdAnimGraph) // T3d 批①：id 28（表尾追加）
     REGISTER(AnimParams, kAnimParams)                // T3d 批②：id 29（全 RT 槽，无编辑面）
+    REGISTER_ED(UIDocument, kUIDocument, kEdUIDocument) // M6b 批③d 前置：id 30（表尾追加）
 }
 
 } // namespace lemon::ecs

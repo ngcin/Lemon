@@ -1,4 +1,4 @@
-// Lemon.SDK — 27 组件镜像 struct（与 lemon::ecs 组件头逐字节对齐；M3-1 布局护栏锁定）。
+// Lemon.SDK — 31 组件镜像 struct（与 lemon::ecs 组件头逐字节对齐；M3-1 布局护栏锁定）。
 // 纪律：
 //   * 字段顺序/类型与 ComponentCatalog.cpp 登记表 1:1（改动 = 破回放，须两侧同步）；
 //   * 布局一致性由 lemon-script-tests 双向校验（C# 报告表 vs C++ ComponentMeta），
@@ -342,6 +342,19 @@ public unsafe struct AnimGraph : IComponent   // 24B
 public struct AnimParams : IComponent  // 32B：参数黑板 8 槽（float/bool/trigger 统一
 {                                      // f32；槽位 = 所绑 controller 参数表定序）
     public float P0, P1, P2, P3, P4, P5, P6, P7;
+}
+
+// ---- M6b 批③d 前置（id 30；登记表尾追加，与 ComponentCatalog 同步）----
+
+[StructLayout(LayoutKind.Sequential)]
+public struct UIDocument : IComponent  // 16B（u64+u8+u8+u16，自然对齐 sizeof=16——
+{                                      // 2026-09-29 审核修正，原 8B 误写）
+    public ulong SourceAssetGuid; // .rml 资产 GUID（0 = 未挂；guid 真源）
+    public byte ShowOnStart;      // 进 Play 即显。注意：C++ 默认 1，C# default = 0——
+                                  // SetComponent 整写前须显式 ShowOnStart = 1（否则
+                                  // 装载但隐藏；SpriteRenderer.Flags 同款镜像默认值坑）
+    public byte Modal;            // 模态标记初值（运行时 UI.Show(doc, true) 可覆写）
+    internal ushort _reserved;    // C++ reserved 衬齐（尾加纪律）
 }
 
 // ---- 事件包镜像（Events.h：48B 固定布局，桥侧 blittable）----

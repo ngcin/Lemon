@@ -290,9 +290,9 @@ bool DrawClipSlot(EditorApp& app, uint8_t* p) {
     return false;
 }
 
-/// GUID 资产槽（FieldHint::AnimSetRef/ControllerRef + UInt64；T3d 批①）。
-/// 值 = 资产 GUID 全量（u64，非 clipId 的低 32 位截断——绑定是配置面）。
-/// 下拉全列同类型 / AssetBrowser 拖入（kind 6=集 / 7=controller）/ 右键清空。
+/// GUID 资产槽（FieldHint::AnimSetRef/ControllerRef/RmlRef + UInt64；T3d 批①、
+/// 批③d 前置）。值 = 资产 GUID 全量（u64，非 clipId 的低 32 位截断——绑定是配置面）。
+/// 下拉全列同类型 / AssetBrowser 拖入（kind 6=集 / 7=controller / 8=rml）/ 右键清空。
 /// 写入就地完成（combo 尾置 → 属性轨由 Deactivated 捕获，DrawClipSlot 同款）。
 bool DrawGuidSlot(EditorApp& app, uint8_t* p, AssetType type, uint8_t dragKind,
                   const char* noneLabel) {
@@ -429,6 +429,7 @@ FieldResult DrawField(EditorApp& app, const ecs::ComponentMeta& meta, ecs::Entit
         !ecs::HasHint(ed.hints, FieldHint::ClipRef) &&
         !ecs::HasHint(ed.hints, FieldHint::AnimSetRef) &&
         !ecs::HasHint(ed.hints, FieldHint::ControllerRef) &&
+        !ecs::HasHint(ed.hints, FieldHint::RmlRef) &&
         !ecs::HasHint(ed.hints, FieldHint::Enum) &&
         !ecs::HasHint(ed.hints, FieldHint::ColorHex) &&
         (f.type == FieldType::Float || f.type == FieldType::Double ||
@@ -463,7 +464,8 @@ FieldResult DrawField(EditorApp& app, const ecs::ComponentMeta& meta, ecs::Entit
         !ecs::HasHint(ed.hints, ecs::FieldHint::AssetRef) &&
         !ecs::HasHint(ed.hints, ecs::FieldHint::ClipRef) &&
         !ecs::HasHint(ed.hints, ecs::FieldHint::AnimSetRef) &&
-        !ecs::HasHint(ed.hints, ecs::FieldHint::ControllerRef)) {
+        !ecs::HasHint(ed.hints, ecs::FieldHint::ControllerRef) &&
+        !ecs::HasHint(ed.hints, ecs::FieldHint::RmlRef)) {
         const float iconSz = ImGui::GetFrameHeight() - 4.0f;
         ImGui::SameLine();
         // slack 必须在 SameLine 之后取：文本绘制后光标已换行到列首，之前取到的
@@ -504,6 +506,9 @@ FieldResult DrawField(EditorApp& app, const ecs::ComponentMeta& meta, ecs::Entit
         DrawGuidSlot(app, p, AssetType::AnimSet, 6, "(无集 · 按名回退当前段所属集)");
     } else if (ecs::HasHint(ed.hints, FieldHint::ControllerRef) && f.type == FieldType::UInt64) {
         DrawGuidSlot(app, p, AssetType::Controller, 7, "(无状态机 · 仅集绑定)");
+    } else if (ecs::HasHint(ed.hints, FieldHint::RmlRef) && f.type == FieldType::UInt64) {
+        // 批③d 前置：UIDocument.sourceAssetGuid（0 = 未挂，进 Play 不装载该屏）
+        DrawGuidSlot(app, p, AssetType::Rml, 8, "(未挂 .rml · 进 Play 不装载)");
     } else if (ecs::HasHint(ed.hints, FieldHint::Enum)) {
         changed = DrawEnumControl(f, ed, p);
     } else if (ecs::HasHint(ed.hints, FieldHint::ColorHex) && f.type == FieldType::UInt32) {

@@ -81,14 +81,14 @@ int (*lemonEventPacketLayout)(uint16_t*, uint16_t*, uint16_t*, uint16_t*, uint16
 void TestLayoutAgainstRegistry() {
     lemon::ecs::RegisterAllComponents();
     auto& reg = lemon::ecs::ComponentRegistry::Instance();
-    Expect(reg.Count() == 30, "registry count 30（M5 批② + WaveDirector + T3d AnimGraph/AnimParams）");
+    Expect(reg.Count() == 31, "registry count 31（M5 批② WaveDirector + T3d AnimGraph/AnimParams + M6b 批③d 前置 UIDocument）");
 
     std::vector<CompLayoutRow> comps(64);
     std::vector<FieldLayoutRow> fields(256);
     std::vector<SegLayoutRow> segs(8);
     int n = lemonSdkLayout(comps.data(), (int)comps.size(), fields.data(), (int)fields.size(),
                            segs.data(), (int)segs.size());
-    Expect(n == 30, "sdk layout comp count");
+    Expect(n == 31, "sdk layout comp count");
 
     uint32_t totalFields = 0;
     for (int i = 0; i < n; i++) {

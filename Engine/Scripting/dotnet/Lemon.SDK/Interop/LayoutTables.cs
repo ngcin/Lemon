@@ -281,6 +281,14 @@ public static unsafe class LayoutTables
             F("param6", FieldTypeCode.Float, 1, O(p, &p->P6)),
             F("param7", FieldTypeCode.Float, 1, O(p, &p->P7)) }); }
 
+        // ---- M6b 批③d 前置（id 30；登记表尾追加，禁重排）----
+        { UIDocument t = default; UIDocument* p = &t;
+          Add<UIDocument>("UIDocument", (uint)sizeof(UIDocument), new[] {
+            F("sourceAssetGuid", FieldTypeCode.UInt64, 0, O(p, &p->SourceAssetGuid)),
+            F("showOnStart", FieldTypeCode.UInt8, 0, O(p, &p->ShowOnStart)),
+            F("modal", FieldTypeCode.UInt8, 0, O(p, &p->Modal)),
+            F("reserved", FieldTypeCode.UInt16, 0, O(p, &p->_reserved)) }); }
+
         // ---- 数组段（元素字段行挂 Fields 尾部；对照 ArraySegMeta）----
         var segs = new List<SegLayoutRow>();
         { StatusEffects t = default; StatusEffects* p = &t;
