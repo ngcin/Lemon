@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <vector>
 
 namespace lemon::editor {
 
@@ -35,6 +36,11 @@ void WriteAnimSheetAssets(const std::filesystem::path& assetsDir);
 
 /// bench-survivor 压测场景播种（tempdir 项目 + 1 万怪导演拉满；--bench-survivor）
 bool SeedBenchSurvivorScene(EditorContext& ctx);
+
+/// 冒烟像素断言辅助：overlay 渲染可见性（数像素不数包）。定义在 EditorApp.cpp
+///（smoke 主链 overlay 断言留驻），批③c-5 起供 EditorAppSmokeUirml.cpp 共用。
+int CountPixelsNear(const std::vector<uint8_t>& px, uint32_t w, uint32_t h, int r, int g,
+                    int b, int tol);
 
 // ---- M5 批④ --smoke-template 证据状态（批③b 2026-09-29 文件级 g_tpl* 标量收敛为
 // 单结构体实例；批③c-4 随函数族外迁：定义在 EditorAppSmokeTpl.cpp，此处 extern

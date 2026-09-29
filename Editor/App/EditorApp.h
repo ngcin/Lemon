@@ -241,6 +241,11 @@ private:
     void SmokeTplSteer(uint64_t frame, ecs::InputState& in);
     void SmokeTplSample(uint64_t frame);
     bool SmokeTplVerdict();
+    /// --smoke-uirml 族三挂点（批③c-5 自 Run 外迁 EditorAppSmokeUirml.cpp；挂点
+    /// 原位逐位不变）：独立进 Play（守卫留原位）/ 帧链 / 末帧裁决
+    bool SmokeUirmlEnterPlay();
+    void SmokeUirmlFrame(uint64_t frame);
+    bool SmokeUirmlVerdict();
     /// 换装判定辅助：Game/*.csproj 路径 + 输出 dll（项目根/.lemon/bin/<名>.dll）
     bool FindGameProject(std::string& csproj, std::string& dll);
     /// Game/ 源码变更检测（FileWatcher 置脏后过滤 .cs，排除 obj/bin）
