@@ -1309,6 +1309,7 @@ int g_imguiErrorCount = 0;
 // M5 批④ --smoke-template 证据计数（事件 sink + 帧循环采样写入；verdict 汇总）
 int g_tplWaveStarts = 0, g_tplLevelUps = 0, g_tplDeaths = 0;
 int g_tplGems = 0, g_tplMobs = 0; // 峰值快照（帧内采样）
+bool g_tplUiDocZero = false; // 批③d 前置 T5：无 UIDocument 场景装载恒 0（基准护栏）
 char g_tplHudRows[64] = "";
 bool g_tplHudOk = false, g_tplBestLoaded = false, g_tplWaveRow = false;
 // M6a 批①：受击切段链（怪 clipId 曾 = monster-hit 段）+ fx 通道（飘字/血条在场）
@@ -3214,6 +3215,11 @@ int EditorApp::Run(const EditorLaunch& launch) {
     bool smokeFolderCreateOk = false, smokeDblClipOk = false; // T3-UX7：极简创建/断路
     bool smokeDragItemOk = false; // T3-UX9：帧格交互件回归位（项 ID 非零）
     bool smokeLeftColOk = false, smokeLeftColDone = false; // 三图优化点①：左列段行元信息
+    // 批③d 前置 T5：UIDocument 双通道/层序/stale 断言位（钩子写、Run 尾裁决读）
+    int smokeUiLayerBTopN = -1, smokeUiLayerATopN = -1; // 帧中点两捕获的 #802040 计数
+    bool smokeUiStaleOk = false, smokeUiKeepCOk = false; // 第二局动态屏 Hide / Edit 双击保持
+    uint32_t smokeUiLoadsP2 = 0; // 第二局装载增量（恰 1 = 只重装声明文档）
+    bool smokeUiExitP2 = false; // Play→Stop→Play 往返完成
     Vec2 smokeCreatePt{-1.0e9f, -1.0e9f};
     Vec2 smokePickPt{-1.0e9f, -1.0e9f};
     Vec2 smokeSheetPt{-1.0e9f, -1.0e9f};
@@ -3399,6 +3405,17 @@ int EditorApp::Run(const EditorLaunch& launch) {
             LEMON_LOG("uirml 播种：UiProbeBehaviour 挂载（实体 %llu）",
                       (unsigned long long)probe.id);
         }
+        // 批③d 前置 T5：夹具场景声明主文档（通道 A 验收面）——UIDocument 进快照，
+        // EnterPlay 声明式装载 + showOnStart 归位；dyn/editprev 不声明（通道 B /
+        // Edit 双击装载两块独立断言面）
+        {
+            ecs::Entity ue = ctx_.CreateEntity("UIDocument");
+            ecs::UIDocument& ud = ctx_.ActiveScene().Emplace<ecs::UIDocument>(ue);
+            if (const AssetEntry* en = ctx_.Assets().FindByPath("Assets/UI/uirml.rml"))
+                ud.sourceAssetGuid = en->guid;
+            else
+                LEMON_ERROR("uirml 夹具缺 Assets/UI/uirml.rml——UIDocument 播种失败");
+        }
         if (!ctx_.EnterPlay()) return 1;
         MountSceneUiDocuments(); // 批③d 前置（通道 A）：夹具主文档声明装载
         // 批③b 补：Play 按钮/菜单路径都设的翻页标志——③a 独立进 Play 分支漏了它，
@@ -3495,6 +3512,9 @@ int EditorApp::Run(const EditorLaunch& launch) {
     // M5 批④ --smoke-template：EnterPlay 已由上方 playTest 块完成（模板含 Game/、
     // 编译成功才走到这——PlayBlockedByScripts 守卫先行）。此处挂事件计数 sink。
     if (launch.smokeTemplate && ctx_.Playing()) {
+        // 批③d 前置 T5：基准护栏——模板场景无 UIDocument，装载调用恒 0（装载点
+        // 只在 MountSceneUiDocuments 的 EnterPlay 扫描，未进任何通用路径）
+        g_tplUiDocZero = !gameUi_ || gameUi_->DocumentLoadCount() == 0;
         ctx_.ActiveWorld().SetEventSink(
             [](ecs::World&, const ecs::EventPacket& p) {
                 if (p.type == ecs::GameEvent::WaveStart) ++g_tplWaveStarts;
@@ -3744,10 +3764,12 @@ int EditorApp::Run(const EditorLaunch& launch) {
                                 gameUi_->PendingEventCount());
                 }
             }
-            // 批③c：负面契约 op 直灌（frame 160，热重载两段之后）：field 'nope' 不在
-            // 模板集（has: lab）→ 响亮失败恰 1 + 负面容器克隆 1 行（不渲染）。
-            // 行块用八进制转义（十六进制 \x 会贪婪连吃后续 hex 字母——C 词法坑）
-            if (frame == 160 && gameUi_) {
+            // 批③c：负面契约 op 直灌（原 frame 160；批③d 前置移 210 = 第二局内——
+            // EnterPlay 通道 A 重装主文档会 InvalidateContainers，160 时点的负面容器
+            // 活不到终帧）：field 'nope' 不在模板集（has: lab）→ 响亮失败恰 1 +
+            // 负面容器克隆 1 行（不渲染）。行块用八进制转义（十六进制 \x 会贪婪
+            // 连吃后续 hex 字母——C 词法坑）
+            if (frame == 210 && gameUi_ && ctx_.Playing()) {
                 static const char kNegArena[] =
                     "Assets/UI/uirml.rml\0"               // s0=0（19 字符 + NUL）
                     "negbox\0"                             // s1=20
@@ -3759,14 +3781,64 @@ int EditorApp::Run(const EditorLaunch& launch) {
                 gameUi_->ApplyOps(&op, 1, kNegArena, (uint32_t)sizeof(kNegArena));
                 LEMON_LOG("uirml-smoke: 负面契约 op 直灌（field 'nope'）");
             }
+            // 批③d 前置 T5：通道 B 无脚本路径——dyn.rml 未装载，Show op 落空 →
+            // resolver 现载（脚本会话由 C# UiRefill 的 UI.Show 走同一通道，本钩让位）
+            if (frame == 20 && gameUi_ && !ctx_.Scripts()) {
+                static const char kDynArena[] = "Assets/UI/dyn.rml"; // s0=0（NUL 终止）
+                const ::lemon::ui::UiOpC op = {
+                    (uint8_t)::lemon::ui::UiOpType::Show, 0, 1, 0,
+                    0, 0, 0, 0, 0, 0, 0};
+                gameUi_->ApplyOps(&op, 1, kDynArena, (uint32_t)sizeof(kDynArena));
+                LEMON_LOG("uirml-smoke: 通道 B 直灌 Show（dyn.rml 落空兜底）");
+            }
+            // 批③d 前置 T5：层序断言两段中点捕获（D1 甲-轻量：层级序 = 最近 Show 序）。
+            // 170/190 渲染块录 gameRT，171/191 钩子取回数 #802040：段① B 后 Show 在上
+            // → 计数 > 500；175 显式重 Show A → 段② A 在上 → 计数 < 5
+            if ((frame == 171 || frame == 191) && gameUi_) {
+                std::vector<uint8_t> rt;
+                uint32_t rw = 0, rh = 0;
+                if (device_->DebugFetchTextureCapture(rt, rw, rh)) {
+                    const int n = CountPixelsNear(rt, rw, rh, 128, 32, 64, 30); // #802040
+                    if (frame == 171) smokeUiLayerBTopN = n;
+                    else smokeUiLayerATopN = n;
+                }
+            }
+            if (frame == 175 && gameUi_)
+                gameUi_->ShowDocument("Assets/UI/uirml.rml", true); // 重 Show = 提层
             // 批③c：uiev 终值捕获（Play 中的 RtUi 槽；退 Play 后 play world 即毁，
-            // 终帧 VERDICT 只能读快照）
-            if (frame == 238 && ctx_.Playing()) {
+            // 终帧 VERDICT 只能读快照）。批③d 前置：移至 199——200 起 Play→Stop→Play
+            // 往返，第二局 RtUi 是新世界（无点击/无重载 → 槽恒空）
+            if (frame == 199 && ctx_.Playing()) {
                 const lemon::ecs::RtUiChannel& rt = ctx_.ActiveWorld().RtUi();
                 for (uint32_t i = 0; i < rt.Count(); ++i)
                     if (std::strcmp(rt.At(i).key, "uiev") == 0)
                         std::snprintf(smokeUiEvText_, sizeof(smokeUiEvText_), "%s",
                                       rt.At(i).text);
+            }
+            // 批③d 前置 T5：Play→Stop→Play 往返（§3 归位机断言）。200 Stop（快照
+            // 逐字节校验）；203 重进——装载增量恰 1（只重装声明文档，dyn 装载保留）；
+            // dyn（上局 C# Show 过 = stale）被 Hide；editprev（Edit 双击装载，非
+            // stale）保持可见；A 回声明态 shown。断言须在 TickPlay 前（C# 本局
+            // UiRefill 的 Show 尚未到达）
+            if (frame == 200 && ctx_.Playing()) {
+                smokeUiExitP2 = ctx_.ExitPlay();
+                if (!smokeUiExitP2) LEMON_ERROR("uirml-smoke: 第二局前 ExitPlay 失败");
+            }
+            // 上步 Stop 失败（不该发生）时跳过第二局断言——终帧 FAIL 兜底
+            if (frame == 203 && !ctx_.Playing() && smokeUiExitP2) {
+                const uint32_t loadsBefore =
+                    gameUi_ ? gameUi_->DocumentLoadCount() : 0;
+                if (TryEnterPlay()) {
+                    tabFocusPending_ = 1;
+                    smokeUiStaleOk =
+                        gameUi_ && gameUi_->HasDocument("Assets/UI/dyn.rml") &&
+                        !gameUi_->IsDocumentShown("Assets/UI/dyn.rml") &&
+                        gameUi_->IsDocumentShown("Assets/UI/uirml.rml");
+                    smokeUiKeepCOk =
+                        gameUi_ && gameUi_->IsDocumentShown("Assets/UI/editprev.rml");
+                    smokeUiLoadsP2 =
+                        gameUi_ ? gameUi_->DocumentLoadCount() - loadsBefore : 0;
+                }
             }
             if (frame == 100) {
                 if (rewriteFile(uiDir / "uirml.rml", "#ffd060", "#40ff90"))
@@ -4898,8 +4970,12 @@ int EditorApp::Run(const EditorLaunch& launch) {
 
         const bool wantCapture =
             !launch.screenshot.empty() || launch.smoke || launchCopy_.smokeUirml;
+        // 批③d 前置 T5：层序断言两段中点捕获（171/191 钩子取回数色——见帧钩子段）
+        const bool midUirmlCapture =
+            launchCopy_.smokeUirml && (frame == 170 || frame == 190);
         const bool lastFrame =
-            launch.frames > 0 && (int)frame == launch.frames - 1 && wantCapture;
+            (launch.frames > 0 && (int)frame == launch.frames - 1 && wantCapture) ||
+            midUirmlCapture;
         if (lastFrame) {
             cl.DebugRecordCapture();
             // 场景 RT 回读（冒烟像素断言源：线性空间、无 UI 合成/sRGB 干扰）；
@@ -5509,11 +5585,12 @@ int EditorApp::Run(const EditorLaunch& launch) {
                                g_tplPicked && g_tplCardsHidden && g_tplDeathSeen &&
                                g_tplRevived && g_tplScriptOk &&
                                g_tplMobHitClip && g_tplFxText && g_tplFxBar && // 批①
-                               g_tplTablesOk; // 批② T4：数值表载入
+                               g_tplTablesOk && // 批② T4：数值表载入
+                               g_tplUiDocZero; // 批③d 前置：基准护栏（零装载）
             std::printf("[lemon] smoke-template: hud=%s saveLoad=%s wave(row=%s n=%d) "
                         "kills=%d levelUps=%d cards(seen=%s pick=%s hidden=%s) "
                         "death(seen=%s revive=%s scriptOk=%s) "
-                        "hitClip=%s fx(text=%s bar=%s) tables=%s => %s\n",
+                        "hitClip=%s fx(text=%s bar=%s) tables=%s uidoc=%s => %s\n",
                         g_tplHudOk ? "YES" : "NO", g_tplBestLoaded ? "YES" : "NO",
                         g_tplWaveRow ? "YES" : "NO", g_tplWaveStarts, g_tplDeaths,
                         g_tplLevelUps, g_tplCardsSeen ? "YES" : "NO",
@@ -5521,7 +5598,8 @@ int EditorApp::Run(const EditorLaunch& launch) {
                         g_tplDeathSeen ? "YES" : "NO", g_tplRevived ? "YES" : "NO",
                         g_tplScriptOk ? "YES" : "NO", g_tplMobHitClip ? "YES" : "NO",
                         g_tplFxText ? "YES" : "NO", g_tplFxBar ? "YES" : "NO",
-                        g_tplTablesOk ? "YES" : "NO", tplOk ? "OK" : "FAIL");
+                        g_tplTablesOk ? "YES" : "NO", g_tplUiDocZero ? "0" : "N",
+                        tplOk ? "OK" : "FAIL");
             std::printf("[lemon] smoke-template: diag %s gems(peak)=%d mobs(peak)=%d\n",
                         g_tplHudRows, g_tplGems, g_tplMobs);
             if (!tplOk) exitCode = 1;
@@ -5777,14 +5855,41 @@ int EditorApp::Run(const EditorLaunch& launch) {
         const bool evOk = !scripted || (evClicks >= 1 && evReloads >= 2);
         const bool contractOk = !scripted || (contractN == 1 && textOk);
         const bool uiOk3c = itemsOk && evOk && contractOk;
+        // 批③d 前置 T5：UIDocument 双通道/层序/stale 裁决位。
+        //   uidocA/B = 通道 A/B 装载（场景声明 + Show 落空兜底各至少一条断言）；
+        //   layer = D1 层序（B 后 Show 在上 → 171 段 #802040>500；175 重 Show A 后
+        //   190 段 <5 = 被盖住）；stale/keepC/p2 = Play→Stop→Play：第二局动态屏被
+        //   Hide（装载保留）、Edit 双击装载保持可见、装载增量恰 1（只重装声明文档）
+        const bool hasDocB = gameUi_ && gameUi_->HasDocument("Assets/UI/dyn.rml");
+        const bool hasDocC = gameUi_ && gameUi_->HasDocument("Assets/UI/editprev.rml");
+        const uint32_t loadsN = gameUi_ ? gameUi_->DocumentLoadCount() : 0;
+        int cPrevN = 0;
+        char dynText[64] = {};
+        if (gameUi_ && fetched)
+            cPrevN = CountPixelsNear(rt, rw, rh, 96, 64, 128, 30); // #604080 Edit 预览
+        if (gameUi_)
+            gameUi_->TryGetElementText("Assets/UI/dyn.rml", "dyntitle", dynText,
+                                       sizeof(dynText));
+        // scripted：C# 同批 Show+SetText 到刚兜底装载的 dyn（通道 B 顺序契约）
+        const bool dynTextOk = !scripted || std::strcmp(dynText, "通道B已装载") == 0;
+        const bool uidocOk = hasDoc && hasDocB && hasDocC && smokeUiExitP2 &&
+                             smokeUiStaleOk && smokeUiKeepCOk && smokeUiLoadsP2 == 1 &&
+                             smokeUiLayerBTopN > 500 && smokeUiLayerATopN < 5 &&
+                             cPrevN > 100 && dynTextOk;
         std::printf("[lemon] smoke-uirml: doc=%d font=%s panel=%d(>3000) titleG=%d(>20) "
                     "bodyB=%d(>20) tex=%d(>500) old=%d/%d(<5) titleTop=%d/%d(≥3/4) "
-                    "items=%d/%d ev=c%dr%d contract=%u/%s => %s\n",
+                    "items=%d/%d ev=c%dr%d contract=%u/%s "
+                    "uidoc(a=%d/b=%d/c=%d loads=%u/%u) layer(bTop=%d aTop=%d) "
+                    "p2(stale=%d keepC=%d+%dpx dyn=%s) => %s\n",
                     hasDoc ? 1 : 0, gameUi_ ? gameUi_->LoadedFontFamily() : "-",
                     panelN, titleGN, bodyBN, texN, oldGoldN, oldGrayN, titleTopN, titleGN,
                     itemsN, negN, evClicks, evReloads, contractN, textOk ? "textOK" : "textBAD",
-                    (uiOk && uiOk3c) ? "OK" : "FAIL");
-        if (!uiOk || !uiOk3c) exitCode = 1;
+                    hasDoc ? 1 : 0, hasDocB ? 1 : 0, hasDocC ? 1 : 0, loadsN, smokeUiLoadsP2,
+                    smokeUiLayerBTopN, smokeUiLayerATopN,
+                    smokeUiStaleOk ? 1 : 0, smokeUiKeepCOk ? 1 : 0, cPrevN,
+                    dynTextOk ? "OK" : "BAD",
+                    (uiOk && uiOk3c && uidocOk) ? "OK" : "FAIL");
+        if (!uiOk || !uiOk3c || !uidocOk) exitCode = 1;
     }
 
     watcher_.Stop();          // 先停 watcher 线程（此后无资产重扫）
@@ -5996,7 +6101,14 @@ void EditorApp::SeedSmokeUiRmlProject() {
              "#cards { margin-left: 24px; margin-top: 8px; }\n"
              ".cardb { display: block; width: 300px; margin: 6px 0; padding: 10px;\n"
              "    background: #40d080; color: #103018; font-size: 15px; text-align: center; }\n"
-             ".nb { display: none; }\n";
+             ".nb { display: none; }\n"
+             // 批③d 前置 T5：dyn = 通道 B 动态屏（覆盖块落在 A 面板右下内区——
+             // 层序断言观察窗：B 在上 = #802040 可见 / A 在上 = 被 #204060 盖住）；
+             // editprev = Edit 期双击装载代表（A 面板右侧空带，跨 Play 保持可见）
+             "#dynpanel { position: absolute; left: 400px; top: 300px; width: 160px;\n"
+             "    height: 120px; background: #802040; color: #e0c0d0; font-size: 14px; }\n"
+             "#editpanel { position: absolute; left: 590px; top: 80px; width: 140px;\n"
+             "    height: 60px; background: #604080; color: #d0c0e8; font-size: 12px; }\n";
     }
     { // 文档：<link> 引样式 + 三要素 + <img>（热重载中点标题色 → #40ff90 绿）
         std::ofstream f(assets / "uirml.rml", std::ios::trunc);
@@ -6021,12 +6133,29 @@ void EditorApp::SeedSmokeUiRmlProject() {
     }
     launchCopy_.projectDir = tmp.string();
     launch_ = &launchCopy_;
+    { // 批③d 前置 T5：通道 B 动态屏（场景不声明——C# UI.Show / 引擎 op 直灌落空兜底）
+        std::ofstream f(assets / "dyn.rml", std::ios::trunc);
+        f << "<rml>\n<head><title>dyn</title>\n"
+             "<link type=\"text/rcss\" rel=\"stylesheet\" href=\"uirml.rcss\"/>\n</head>\n"
+             "<body>\n<div id=\"dynpanel\">通道 B 动态屏\n"
+             "  <div id=\"dyntitle\">未装载</div>\n"
+             "</div>\n</body>\n</rml>\n";
+    }
+    { // 批③d 前置 T5：Edit 期双击装载代表（SeedSmokeUiDocument 装载——跨 Play 保持）
+        std::ofstream f(assets / "editprev.rml", std::ios::trunc);
+        f << "<rml>\n<head><title>edit preview</title>\n"
+             "<link type=\"text/rcss\" rel=\"stylesheet\" href=\"uirml.rcss\"/>\n</head>\n"
+             "<body>\n<div id=\"editpanel\">Edit 预览</div>\n</body>\n</rml>\n";
+    }
     LEMON_LOG("uirml 夹具：%s", tmp.string().c_str());
 }
 
-// 批③b：--smoke-uirml 文档装载（从夹具资产走文件通道——③a 内存文档退役）
+// 批③b：--smoke-uirml 文档装载（从夹具资产走文件通道——③a 内存文档退役）。
+// 批③d 前置 T5 改制：本钩只装载 editprev.rml（Edit 期"双击预览"代表——非 stale，
+// 跨 Play 保持可见的 §3 断言面）；主文档 uirml.rml 改由场景 UIDocument 声明 →
+// 通道 A EnterPlay 装载（双通道各自有独立断言）；dyn.rml 留给通道 B 落空兜底。
 void EditorApp::SeedSmokeUiDocument() {
-    const std::string rel = "Assets/UI/uirml.rml";
+    const std::string rel = "Assets/UI/editprev.rml";
     const AssetEntry* e = ctx_.Assets().FindByPath(rel);
     if (!e || e->missing) {
         LEMON_ERROR("uirml 播种失败：夹具缺 %s", rel.c_str());

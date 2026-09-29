@@ -154,7 +154,8 @@ void TestLayoutAgainstRegistry() {
             }
         }
     }
-    std::printf("script-tests: layout 27 comps / %u fields checked\n", totalFields);
+    std::printf("script-tests: layout %u comps / %u fields checked\n",
+                lemon::ecs::ComponentRegistry::Instance().Count(), totalFields);
 }
 
 void TestBlitCopy() {
@@ -1585,9 +1586,10 @@ void TestUiSdk() {
     s_uiCapOps.clear();
     w.Step(0.25f);
 
-    // ---- ① ops 线格式对拍：UiRefill() = Show + SetText + SetItems + SetClass ----
-    Expect(s_uiCapOps.size() == 4, "ui: Apply 产出 4 op（Show/SetText/SetItems/SetClass）");
-    if (s_uiCapOps.size() == 4) {
+    // ---- ① ops 线格式对拍：UiRefill() = Show+SetText+SetItems+SetClass（主文档）+
+    //      Show+SetText（批③d 前置通道 B 动态屏 dyn——Show 落空兜底 + 同批可达） ----
+    Expect(s_uiCapOps.size() == 6, "ui: Apply 产出 6 op（主文档 4 + dyn 通道 B 2）");
+    if (s_uiCapOps.size() == 6) {
         const auto& opShow = s_uiCapOps[0];
         Expect(opShow.type == (uint8_t)lemon::ui::UiOpType::Show && opShow.strCount == 1,
                "ui: op0 = Show(doc)");
@@ -1634,6 +1636,18 @@ void TestUiSdk() {
         Expect(std::strcmp(CapStr(opCls.s1), "cards/opt0") == 0 &&
                    std::strcmp(CapStr(opCls.s2), "rare") == 0,
                "ui: op3 路径 key/class 命中");
+        // 批③d 前置：通道 B 动态屏两条（未装载文档的 Show = 落空兜底面；SetText
+        // 同批可达 = 装载在 Show op 处完成的顺序契约）
+        const auto& opShowDyn = s_uiCapOps[4];
+        Expect(opShowDyn.type == (uint8_t)lemon::ui::UiOpType::Show && opShowDyn.strCount == 1,
+               "ui: op4 = Show(dyn)");
+        Expect(std::strcmp(CapStr(opShowDyn.s0), "Assets/UI/dyn.rml") == 0,
+               "ui: op4 动态屏文档名命中");
+        const auto& opTextDyn = s_uiCapOps[5];
+        Expect(opTextDyn.type == (uint8_t)lemon::ui::UiOpType::SetText && opTextDyn.strCount == 3,
+               "ui: op5 = SetText(dyn,dyntitle)");
+        Expect(std::strcmp(CapStr(opTextDyn.s1), "dyntitle") == 0,
+               "ui: op5 动态屏 key 命中");
     }
 
     // ---- ② 事件反向直灌：drainEvents → lemon_ui_events_dispatch → 静态订阅 →
@@ -1650,7 +1664,7 @@ void TestUiSdk() {
            "ui: 注入 Click → C# 订阅回执 → RtUi uiev=c1r0（全链反向）");
 
     lemon::scripting::SetUiHooks({nullptr, nullptr}); // 后续测试零扰动
-    std::printf("script-tests: TestUiSdk OK（ops 4 条字节对拍 + 事件反向 c1r0）\n");
+    std::printf("script-tests: TestUiSdk OK（ops 6 条字节对拍（含通道 B dyn 2 条） + 事件反向 c1r0）\n");
 }
 
 int main() {

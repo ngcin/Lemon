@@ -60,6 +60,9 @@ public static class GameMain
     // ---- 批③c：UI 全链探针态（静态——Configure 订阅不持实例）----
     internal static int UiClicks, UiReloads;
     internal const string UiDoc = "Assets/UI/uirml.rml";
+    // 批③d 前置 T5：通道 B 动态屏（场景不声明——UI.Show 落空 → resolver 现载；
+    // 同批 SetText 证明"装载在 Show op 处完成，后续 op 同批可达"顺序契约）
+    internal const string UiDocDyn = "Assets/UI/dyn.rml";
 
     private static void OnUiEvent(Lemon.UiEvent e)
     {
@@ -83,6 +86,10 @@ public static class GameMain
             new() { Key = "opt1", Fields = { ["label"] = "磁力+25%" } },
         });
         Lemon.UI.SetClass(UiDoc, "cards/opt0", "rare", true);
+        // 批③d 前置 T5：通道 B——dyn 未装载，Show 落空兜底现载；SetText 同批到达
+        // （终帧 dyntitle 文本断言）。Show 在 A 之后 = B 在上层（层序断言段①）
+        Lemon.UI.Show(UiDocDyn);
+        Lemon.UI.SetText(UiDocDyn, "dyntitle", "通道B已装载");
         Lemon.UI.Apply();
     }
 }

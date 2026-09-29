@@ -225,8 +225,22 @@ struct UiSubsystem::Impl {
                                         // op 置位（C# 动态 Show 来源）——EnterPlay 归位
                                         // 判据；ShowDocument（③b 双击预览/通道 A 声明
                                         // 装载）不置位（§3 口径，消歧 C5）
+        uint32_t showSeq = 0;           // D1 层序序号（最近 Show 序；0 = 未 Show 过）
     };
     std::unordered_map<std::string, Doc> docs;
+    uint32_t showSeqNext = 0;           // D1 层序发号器（Show 时 ++）
+
+    // D1 甲-轻量的补全（实现期发现）：文档重载 = 从 context 根重挂 → 隐式提层，
+    // "最近 Show 序"被装载序覆写。重载路径尾部按 showSeq 升序对 shown 文档逐个
+    // PullToFront 复排——纯文本文档/多屏叠放跨热重载保持声明层序。
+    void RestoreDocumentOrder() {
+        std::vector<std::pair<uint32_t, Rml::ElementDocument*>> order;
+        for (auto& [n, d] : docs)
+            if (d.doc && d.shown && d.showSeq) order.emplace_back(d.showSeq, d.doc);
+        std::sort(order.begin(), order.end(),
+                  [](const auto& a, const auto& b) { return a.first < b.first; });
+        for (auto& [seq, doc] : order) doc->PullToFront();
+    }
 
     // 批③d 前置（通道 B）：Show 落空兜底解析器（编辑器装配：relPath→absPath）
     UiDocumentResolver docResolver;
@@ -343,12 +357,6 @@ struct UiSubsystem::Impl {
     Doc* LookupDoc(const char* name) {
         auto it = docs.find(name);
         return (it == docs.end() || !it->second.doc) ? nullptr : &it->second;
-    }
-
-    Doc* FindDoc(const char* name) {
-        Doc* d = LookupDoc(name);
-        if (!d) ContractFail("document '%s' 未装载（ops 目标缺）", name);
-        return d;
     }
 
     // key 双形解析：文档内元素 id ∥ "容器id/条目key"（SetItems 稳定 key 寻址）
@@ -672,6 +680,7 @@ bool UiSubsystem::LoadDocumentFromMemory(const char* name, const char* rmlText) 
     entry.shown = false;
     entry.modal = false;
     entry.shownDuringPlay = false; // 新装载 = 新鲜态（stale 归零）
+    entry.showSeq = 0;             // D1：层序从装载序起步
     i.AttachListener(entry);
     i.InvalidateContainers(name);
     ++i.docLoads;
@@ -697,6 +706,7 @@ bool UiSubsystem::LoadDocumentFromFile(const char* name, const char* absPath) {
     entry.shown = false;
     entry.modal = false;
     entry.shownDuringPlay = false; // 新装载 = 新鲜态（stale 归零）
+    entry.showSeq = 0;             // D1：层序从装载序起步
     i.AttachListener(entry);
     i.InvalidateContainers(name);
     ++i.docLoads;
@@ -713,6 +723,7 @@ bool UiSubsystem::ReloadDocument(const char* name) {
     Rml::ElementDocument* doc = impl_->ReloadDoc(it->second, name);
     if (doc && shown) doc->Show();
     it->second.shown = shown;
+    impl_->RestoreDocumentOrder(); // D1：重挂隐式提层 → 按"最近 Show 序"复排
     if (doc) impl_->PushReloadedEvent(name); // M2：C# 重灌信号
     LEMON_LOG("ui-subsystem: 文档热重载 %s（%s）", name,
               it->second.sourcePath.empty() ? "内存底稿" : it->second.sourcePath.c_str());
@@ -740,6 +751,7 @@ void UiSubsystem::ReloadAllDocuments() {
         d.shown = shown;
         if (doc) impl_->PushReloadedEvent(name);
     }
+    impl_->RestoreDocumentOrder(); // D1：重挂隐式提层 → 按"最近 Show 序"复排
 }
 
 bool UiSubsystem::UnloadDocument(const char* name) {
@@ -767,8 +779,10 @@ bool UiSubsystem::ShowDocument(const char* name, bool show, bool modal) {
     if (show) {
         it->second.doc->Show();
         it->second.doc->PullToFront(); // D1 甲-轻量：层级序 = 最近 Show 序
+        it->second.showSeq = ++impl_->showSeqNext;
     } else {
         it->second.doc->Hide();
+        it->second.showSeq = 0;
     }
     it->second.shown = show;
     return true;
@@ -792,6 +806,7 @@ void UiSubsystem::ResetDynamicDocuments(const std::vector<std::string>& declared
         if (!d.shownDuringPlay) continue;        // Edit 期双击装载：保持现状（③b）
         if (d.doc && d.shown) d.doc->Hide();
         d.shown = false;
+        d.showSeq = 0;
         d.shownDuringPlay = false; // stale 清（装载保留：下次 Show 免 IO）
         LEMON_LOG("ui-subsystem: 归位隐藏动态文档 %s（装载保留）", name.c_str());
     }
@@ -806,18 +821,21 @@ void UiSubsystem::ApplyOps(const UiOpC* ops, uint32_t count, const char* arena,
         const UiOpC& op = ops[k];
         const std::string docName =
             i.ArenaStr(arena, arenaBytes, op.s0, "doc");
-        Impl::Doc* d = i.FindDoc(docName.c_str());
+        Impl::Doc* d = i.LookupDoc(docName.c_str());
         if (!d) {
             // 批③d 前置（通道 B）：Show 落空兜底——解析器现载后重试；同批后续
             // SetText/SetItems 直接可达（装载在此完成，③c 顺序契约）。未装/未命中
-            // = 维持 FindDoc 已记的响亮失败（M8 前裸运行时同口径）
+            // 才记响亮失败（兜底成功不算契约错误）
             if ((UiOpType)op.type == UiOpType::Show && i.docResolver) {
                 std::string abs;
                 if (i.docResolver(docName, abs) &&
                     LoadDocumentFromFile(docName.c_str(), abs.c_str()))
                     d = i.LookupDoc(docName.c_str());
             }
-            if (!d) continue;
+            if (!d) {
+                i.ContractFail("document '%s' 未装载（ops 目标缺）", docName.c_str());
+                continue;
+            }
         }
         switch ((UiOpType)op.type) {
         case UiOpType::Show:
@@ -826,11 +844,13 @@ void UiSubsystem::ApplyOps(const UiOpC* ops, uint32_t count, const char* arena,
             d->doc->Show();
             d->doc->PullToFront(); // D1 甲-轻量：层级序 = 最近 Show 序（装载序为初值）
             d->shown = true;
+            d->showSeq = ++i.showSeqNext;
             break;
         case UiOpType::Hide:
             d->modal = false;
             d->doc->Hide();
             d->shown = false;
+            d->showSeq = 0; // 隐藏文档退出层序（再 Show 重新发号）
             break;
         case UiOpType::SetText:
             if (Rml::Element* el = i.ResolveKey(*d, docName,
