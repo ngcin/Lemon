@@ -2345,7 +2345,11 @@ void EditorApp::RescanAssets() {
                 return;
             }
             if (e->type != AssetType::Rml) return;
-            if (removed) gameUi_->UnloadDocument(e->relPath.c_str());
+            if (removed) {
+                // 真人验收②观测位：逐出是否发生一目了然（docs 无此名 = no-op 也留痕）
+                if (gameUi_->UnloadDocument(e->relPath.c_str()))
+                    LEMON_LOG("UI 文档已卸载（资产删除）：%s", e->relPath.c_str());
+            }
             else if (gameUi_->HasDocument(e->relPath.c_str()))
                 gameUi_->ReloadDocument(e->relPath.c_str());
         };
@@ -2925,9 +2929,9 @@ int EditorApp::Run(const EditorLaunch& launch) {
     // 批③b：冒烟钩子（热重载中点 100/140）与末帧捕获都锚定帧号——参数门禁对齐
     // smoke-template 先例（③a 的"缺省 180"只写 launchCopy_ 而主循环判 launch.frames，
     // 无 --frames 实际 = 无限跑 + 零捕获；显式要求根除该歧义）
-    if (launchCopy_.smokeUirml && launch.frames < 240) {
-        LEMON_ERROR("--smoke-uirml 需要 --frames N（N>=240：两段热重载中点 100/140 + "
-                    "稳定渲染余量）");
+    if (launchCopy_.smokeUirml && launch.frames < 260) {
+        LEMON_ERROR("--smoke-uirml 需要 --frames N（N>=260：两段热重载中点 100/140 + "
+                    "watcher 驱动删除逐出余量（500ms 轮询）+ 稳定渲染余量）");
         return 2;
     }
     const auto tStart = std::chrono::steady_clock::now();
@@ -3843,20 +3847,19 @@ int EditorApp::Run(const EditorLaunch& launch) {
                         gameUi_ ? gameUi_->DocumentLoadCount() - loadsBefore : 0;
                 }
             }
-            // 批③d 前置 T5 补（真人验收②回灌）：删 .rml → 已装载文档逐出。220 删
-            // dyn.rml + 直接重扫（watcher 亦到，二次 no-op）→ RescanAssets 的
-            // removed 分支 UnloadDocument；230 断言 docs map 已无该文档。红字另证
-            // （本钩在 Play 中且场景未声明 dyn，通道 A 的 missing 红字源在别处）
-            if (frame == 220 && gameUi_) {
+            // 批③d 前置 T5 补（真人验收②回灌）：删 .rml → 已装载文档逐出。212 删
+            // dyn.rml 后**不直调重扫**——完全走 watcher（500ms 快照轮询 → ConsumeDirty
+            // → RescanAssets removed 分支 UnloadDocument，= 真人删除路径）；252 断言
+            // docs map 已无该文档。红字另证（本钩在 Play 中且场景未声明 dyn）
+            if (frame == 212 && gameUi_) {
                 smokeUiHasDocB = gameUi_->HasDocument("Assets/UI/dyn.rml");
                 gameUi_->TryGetElementText("Assets/UI/dyn.rml", "dyntitle",
                                            smokeUiDynText, sizeof(smokeUiDynText));
                 std::error_code ecd;
                 std::filesystem::remove(uiDir / "dyn.rml", ecd);
-                RescanAssets();
-                LEMON_LOG("uirml-smoke: dyn.rml 删除播种（→ UnloadDocument 逐出）");
+                LEMON_LOG("uirml-smoke: dyn.rml 删除播种（等 watcher 驱动逐出）");
             }
-            if (frame == 230 && gameUi_)
+            if (frame == 252 && gameUi_)
                 smokeUiDelEvictOk = !gameUi_->HasDocument("Assets/UI/dyn.rml");
             if (frame == 100) {
                 if (rewriteFile(uiDir / "uirml.rml", "#ffd060", "#40ff90"))

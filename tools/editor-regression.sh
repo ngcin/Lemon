@@ -76,9 +76,9 @@ if [ "${MODE}" = "full" ]; then
         "smoke-guid: .* => OK" \
         "${EDITOR}" --smoke-guid --no-reopen
     if [ -f "${SDK}" ]; then
-        grep_step "uirml-chain smoke (RmlUi C# API: ops/clone/click-events/contract + font/asset/hot-reload; M6a-b3c)" \
+        grep_step "uirml-chain smoke (RmlUi C# API: ops/clone/click-events/contract + font/asset/hot-reload + uidoc dual-channel/stale/layer/watcher-evict; M6b-b3d)" \
             "smoke-uirml: .* => OK" \
-            "${EDITOR}" --script "${SDK}" --smoke-uirml --frames 240 --validate --no-reopen
+            "${EDITOR}" --script "${SDK}" --smoke-uirml --frames 260 --validate --no-reopen
     else
         echo "  SKIP uirml-chain (missing ${SDK})"
     fi
