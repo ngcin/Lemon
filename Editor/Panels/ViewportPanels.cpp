@@ -775,6 +775,7 @@ void GameViewPanel::OnGui(EditorApp& app) {
     ImGui::BeginChild("gv", ImVec2(0, 0), ImGuiChildFlags_None,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     const ImVec2 avail = ImGui::GetContentRegionAvail();
+    app.SetGameViewCanvas(0, 0, 0, 0, 0, 0, false); // 先失效，可用时下方覆写
     if (avail.x >= 16 && avail.y >= 16) {
         const float dpi = app.Ui().DisplayScale();
         // 先算 letterbox 显示矩形，RT 按**显示矩形**的像素尺寸建 → 1:1 呈现。
@@ -789,11 +790,19 @@ void GameViewPanel::OnGui(EditorApp& app) {
         }
         void* tex = vr.EnsureRenderTarget(1, (uint32_t)(imgW * dpi),
                                           (uint32_t)(imgH * dpi), "gameRT");
+        // 批③c（M7）：画布矩形上报（真实 RT 尺寸——EnsureRenderTarget 可能钳位）
+        const uint32_t gvRtW = vr.RenderTargetWidth(1), gvRtH = vr.RenderTargetHeight(1);
         Camera2D& cam = vr.GameCam();
         cam.halfHeight = kRefHalfHeight / cam.zoom;
         const ImVec2 off((avail.x - imgW) * 0.5f, (avail.y - imgH) * 0.5f);
         ImGui::SetCursorPos(ImVec2(ImGui::GetCursorPosX() + off.x, ImGui::GetCursorPosY() + off.y));
+        // 批③c（M7）：Image 紧前的光标位 = 画布左上（ImGui 屏幕点 = 窗口点）；
+        // 悬停取 Image 后的 IsItemHovered（浮窗遮挡 = false；全局 WantCaptureMouse
+        // 在 Game 窗口上恒真，不可作门）
+        const ImVec2 gvMin = ImGui::GetCursorScreenPos();
         ImGui::Image(tex, ImVec2(imgW, imgH), ImVec2(0, 0), ImVec2(1, 1));
+        app.SetGameViewCanvas(gvMin.x, gvMin.y, imgW, imgH, gvRtW, gvRtH,
+                              ImGui::IsItemHovered());
         // §3.6 门控：聚焦（且悬停）时键鼠进 Play World；失焦不进
         app.SetGameViewFocused(ImGui::IsWindowFocused() && ImGui::IsWindowHovered());
         if (app.Ctx().Playing()) {

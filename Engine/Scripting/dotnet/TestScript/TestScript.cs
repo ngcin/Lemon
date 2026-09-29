@@ -1,5 +1,6 @@
 // TestScript — 用户脚本程序集样例（M3-2b 域生命周期 + M3-3 批量系统档②）。
 // 装配入口约定：public static class GameMain.Configure()（DomainManager 加载后调用）。
+using System.Collections.Generic;
 using Lemon;
 using Lemon.Interop;
 
@@ -48,6 +49,41 @@ public static class GameMain
         Lemon.Behaviours.Register<TweenProbeBehaviour>();
         // M6a 批② T5：存档分档（typeId 16，表尾注册同上约定）
         Lemon.Behaviours.Register<SaveChanProbeBehaviour>();
+        // M6a 批③c：Lemon.UI 全链（typeId 17，表尾注册同上约定）
+        Lemon.Behaviours.Register<UiProbeBehaviour>();
+        // 批③c 静态订阅（Configure 期一次，跨局存活）：UI 事件计数经 RtUi 回读
+        // （编辑器 --smoke-uirml --script 断言链）；DocumentReloaded → Refill
+        // （M2 契约：热重载后 C# 重灌——不灌则屏幕空回夹具初值）
+        Lemon.UI.Events.Subscribe(OnUiEvent);
+    }
+
+    // ---- 批③c：UI 全链探针态（静态——Configure 订阅不持实例）----
+    internal static int UiClicks, UiReloads;
+    internal const string UiDoc = "Assets/UI/uirml.rml";
+
+    private static void OnUiEvent(Lemon.UiEvent e)
+    {
+        if (e.Kind == (byte)Lemon.UiEventKind.Click) ++UiClicks;
+        else if (e.Kind == (byte)Lemon.UiEventKind.DocumentReloaded) {
+            ++UiReloads;
+            UiRefill(); // 热重载重灌（帧 100/140 两段都会触发）
+        }
+        Lemon.Ui.Set("uiev", $"c{UiClicks}r{UiReloads}", -1f); // RtUi 回读（零新探针）
+    }
+
+    /// <summary>正面 op 全家（Show/SetText/SetItems×2/SetClass + Apply）——编辑器
+    /// 冒烟断言 ContainerItemCount==2 与 title 文本；负面契约 op 由 C++ 侧直灌
+    /// （field 'nope' 反例 → 契约错误恰 1）。</summary>
+    internal static void UiRefill()
+    {
+        Lemon.UI.Show(UiDoc);
+        Lemon.UI.SetText(UiDoc, "title", "升级！三选一");
+        Lemon.UI.SetItems(UiDoc, "cards", "card", new List<Lemon.UiItem> {
+            new() { Key = "opt0", Fields = { ["label"] = "移速+10%" } },
+            new() { Key = "opt1", Fields = { ["label"] = "磁力+25%" } },
+        });
+        Lemon.UI.SetClass(UiDoc, "cards/opt0", "rare", true);
+        Lemon.UI.Apply();
     }
 }
 
@@ -579,5 +615,19 @@ public sealed class SaveChanProbeBehaviour : Lemon.LemonBehaviour
         } else if (fc == 3) {
             gameObject.Destroy();
         }
+    }
+}
+
+/// <summary>M6a 批③c（typeId 17）：Lemon.UI ops 全链验收（编辑器 --smoke-uirml
+/// --script 装配）。帧1 = UiRefill()（Show/SetText/SetItems×2/SetClass + Apply →
+/// 引擎克隆渲染）；此后常驻——帧 100/140 热重载触发 DocumentReloaded → 静态订阅
+/// 重灌（M2 契约）。事件计数（合成点击 cards/opt0 → Click）经静态订阅写 RtUi
+/// "uiev"（c点击数r重裝数），C++ 侧终帧断言 c≥1。</summary>
+public sealed class UiProbeBehaviour : Lemon.LemonBehaviour
+{
+    protected override void Update()
+    {
+        if (Lemon.Time.FrameCount == 1) GameMain.UiRefill();
+        // 常驻到会话尾（重灌回调依赖静态订阅，本体仅首帧播种一次）
     }
 }

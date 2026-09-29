@@ -9,6 +9,7 @@
 //   * lemon-engine 不出现任何 ImGui 引用（tests/imgui_isolation.cmake 编译期断言）。
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -98,6 +99,11 @@ public:
         textIn_ = utf8;
         textSet_ = true;
     }
+
+    /// 批③c（ADR-014 M7）：SDL 事件旁听 tap——EventThunk 喂完 ImGui 后转发原始
+    /// SDL_Event*（TEXT_INPUT/TEXT_EDITING → 游戏 UI 文本输入；不夺 ImGui 事件流）。
+    /// std::function（捕捉 lambda 携 EditorApp this）；Init 前/Shutdown 后安全空。
+    void SetSdlEventTap(std::function<void(const void*)> tap);
 
 private:
     struct Impl;

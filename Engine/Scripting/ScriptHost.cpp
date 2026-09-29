@@ -359,6 +359,10 @@ const NativeApiVtable kNativeApi{NativeIsAlive,
 
 void SetScriptIoHooks(const ScriptIoHooks& hooks) { g_scriptIo = hooks; }
 
+// 批③c：UI 桥钩子（进程级单份，装配期一次；同 g_editorAssets 形态）
+static UiHooks g_uiHooks;
+void SetUiHooks(const UiHooks& hooks) { g_uiHooks = hooks; }
+
 namespace {
 
 constexpr uint32_t kBlockStride = 64; // 块步长恒 64（末块 Length<64；04 §2.2 块 ≥64 摊薄）
@@ -439,6 +443,11 @@ bool ScriptHost::Initialize(const char* dotnetRoot, const char* runtimeConfigPat
     scriptsDetachFn_ =
         (void (*)(int, uint64_t))host_.GetExport(kType, "lemon_scripts_detach"); // M6a 批⓪ T3（可缺席）
     opsPullFn_ = (int (*)(SceneOpC*, int))host_.GetExport(kType, "lemon_ops_pull");
+    // 批③c（ADR-014 M2/M3）：UI ops 拉取 + UiEvent 派发（旧 Entry 缺 = null 挂空）
+    uiOpsPullFn_ =
+        (int (*)(ui::UiOpC*, int, char*, int, int*))host_.GetExport(kType, "lemon_ui_ops_pull");
+    uiEventsDispatchFn_ = (void (*)(const ui::UiEventC*, int))host_.GetExport(
+        kType, "lemon_ui_events_dispatch");
     if (auto reg = (void (*)(const NativeApiVtable*))host_.GetExport(kType, "lemon_api_register"))
         reg(&kNativeApi);
     return dmLoad_ && dmUnload_ && batchCountFn_ && batchQueryFn_ && batchTickFn_ &&
@@ -582,6 +591,38 @@ void ScriptHost::TickBatch(ecs::World& world, ecs::Scene& scene, float dt) {
         // 回读禁用位（域线程已同步返回，栅栏保证可见）
         for (auto& fr : frameBuf_)
             if (fr.disabled) batch_[fr.systemIndex].disabled = true;
+    }
+
+    // ---- 批③c（ADR-014 M2）：UI ops 拉取——脚本当帧 UI.* + UI.Apply() 的 ready
+    // 队列。表现层通道当帧可见：EditorApp 侧钩子直转 UiSubsystem::ApplyOps（先于
+    // 主循环 gameUi_->Update()）。无导出（旧 Entry）= 挂空；无钩子（纯运行时/测试
+    // 宿主）= 丢弃 + warn-once（同 EditorAssetHooks 降级语义）。
+    if (uiOpsPullFn_ && g_uiHooks.applyOps) {
+        if (uiOpBuf_.empty()) {
+            uiOpBuf_.resize(ui::kUiOpsPerFrame);
+            uiArenaBuf_.resize(ui::kUiArenaBytesPerFrame);
+        }
+        int arenaBytes = 0;
+        const int n = uiOpsPullFn_(uiOpBuf_.data(), (int)uiOpBuf_.size(),
+                                   uiArenaBuf_.data(), (int)uiArenaBuf_.size(), &arenaBytes);
+        if (n > 0) {
+            g_uiHooks.applyOps(uiOpBuf_.data(), (uint32_t)n, uiArenaBuf_.data(),
+                               (uint32_t)(arenaBytes < 0 ? 0 : arenaBytes));
+        } else if (n < 0 && !warnedUiOpsDropped_) {
+            warnedUiOpsDropped_ = true;
+            LEMON_WARN("ui-ops：单帧 ops/arena 超容量被截断（%d op / %dB arena 上限）",
+                       (int)ui::kUiOpsPerFrame, (int)ui::kUiArenaBytesPerFrame);
+        }
+    } else if (uiOpsPullFn_ && !g_uiHooks.applyOps) {
+        // 无钩子宿主也拉空（清 ready 队列防跨宿主滞留）+ warn-once
+        int arenaBytes = 0;
+        const int n = uiOpsPullFn_(uiOpBuf_.empty() ? nullptr : uiOpBuf_.data(),
+                                   0, nullptr, 0, &arenaBytes);
+        if (n != 0 && !warnedUiOpsDropped_) {
+            warnedUiOpsDropped_ = true;
+            LEMON_WARN("ui-ops：宿主未装 UiHooks——脚本 UI ops 丢弃（纯运行时预期内；"
+                       "编辑器装配遗漏则查 SetUiHooks）");
+        }
     }
 }
 
@@ -814,12 +855,20 @@ void ScriptHost::DispatchEvents(ecs::World& world, ecs::Scene& scene,
     // 入参 = #16 取出的稳定快照（与队列底层分离）：订阅方回调内 Events().Push
     // 落回队列、下帧派发，不再有旧 HeadSpan/TailSpan 直指队列缓冲、回调 Push 触发
     // Grow 即段指针悬空的窗口（2026-09-24 审查 P5；快照拷贝 48B×N 代价可忽略）
-    if (!eventsDispatchFn_ || !events || count == 0) return;
     // M5 批②：事件回调与 Update 同一 native 窗口（g_world/g_scene）——订阅方在
     // WaveStart 等回调内可调 Ui.Set/Time.Scale/Instantiate。此前窗口只盖 TickBatch，
     // #16 派发期的回调内 native 调用会静默空转（批① xp 样例恰在 Update 内调用
     // 故未暴露）。
     NativeApiWindow win(&world, &scene);
+    // 批③c（M3）：UI 事件先派发——上一帧 gameUi_->Update() 产生、经 UiHooks 抽干
+    // 到此（与游戏事件同一 #16 站点，帧内延迟一致；回调内可调 native，窗口已就位）
+    if (uiEventsDispatchFn_ && g_uiHooks.drainEvents) {
+        if (uiEventBuf_.empty()) uiEventBuf_.resize(ui::kUiEventsPerDrain);
+        const uint32_t n = g_uiHooks.drainEvents(uiEventBuf_.data(),
+                                                 (uint32_t)uiEventBuf_.size());
+        if (n > 0) uiEventsDispatchFn_(uiEventBuf_.data(), (int)n);
+    }
+    if (!eventsDispatchFn_ || !events || count == 0) return;
     eventsDispatchFn_(events, (int)count);
 }
 

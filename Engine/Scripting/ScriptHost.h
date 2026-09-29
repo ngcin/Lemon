@@ -11,6 +11,7 @@
 #include "ECS/World.h"
 #include "Scripting/CoreCLRHost.h"
 #include "Scripting/ScriptBox.h"
+#include "Ui/UiBridge.h"
 
 namespace lemon::scripting {
 
@@ -122,6 +123,17 @@ struct ScriptIoHooks {
     void (*saveFlush)(ecs::World& world); // 全量落盘（幂等）
 };
 void SetScriptIoHooks(const ScriptIoHooks& hooks);
+
+/// UI 桥钩子（M6a 批③c，ADR-014 D2 M2/M3）：ops 应用方与事件抽干方。编辑器装配期
+/// 经 SetUiHooks 注入（applyOps → UiSubsystem::ApplyOps / drainEvents → DrainEvents）；
+/// 纯运行时/测试宿主不装 = ops 丢弃 warn-once（同 EditorAssetHooks 降级语义）。
+/// UI 状态不入 StateHash、UI 交互不入输入快照——基准场零调用零漂移、金回放零重录。
+struct UiHooks {
+    void (*applyOps)(const ui::UiOpC* ops, uint32_t count, const char* arena,
+                     uint32_t arenaBytes);
+    uint32_t (*drainEvents)(ui::UiEventC* dst, uint32_t cap);
+};
+void SetUiHooks(const UiHooks& hooks);
 
 /// 结构命令（与 Lemon.SDK/SceneOps.cs SceneOp 一致，16B）
 struct SceneOpC {
@@ -237,12 +249,20 @@ private:
     void (*scriptsDestroyFn_)(uint64_t) = nullptr;
     void (*scriptsDetachFn_)(int, uint64_t) = nullptr; // M6a 批⓪ T3（旧 Entry = null 挂空安全）
     int (*opsPullFn_)(SceneOpC*, int) = nullptr;
+    // ---- 批③c（旧 Entry 程序集缺两导出 = null 挂空安全，既定纪律）----
+    int (*uiOpsPullFn_)(ui::UiOpC*, int, char*, int, int*) = nullptr; // n; *arenaBytes
+    void (*uiEventsDispatchFn_)(const ui::UiEventC*, int) = nullptr;
     int (*behavioursListFn_)(char*, int) = nullptr; // 惰性解析一次（BehaviourTypeNames 用）
     mutable unsigned long long (*gcAllocFn_)() = nullptr; // 惰性解析一次（GetExport 每调
     // 一次会在托管侧分配——M3-7 GC 验收实测坑）
 
     std::vector<ecs::EventPacket> pullBuf_; // 脚本 pending 拉取缓冲（复用）
     std::vector<SceneOpC> opBuf_;           // 结构命令拉取缓冲（复用）
+    // ---- 批③c：UI ops/事件桥缓冲（复用；容量 = UiBridge.h 常量）----
+    std::vector<ui::UiOpC> uiOpBuf_;
+    std::vector<char> uiArenaBuf_;
+    std::vector<ui::UiEventC> uiEventBuf_;
+    bool warnedUiOpsDropped_ = false;       // 无钩子宿主 ops 丢弃告警只响一次
     std::vector<std::string> behaviourNames_; // 惰性缓存（BehaviourTypeNames）
     int hrCount_ = 0;                       // 换装计数（镜像托管侧；Profiler 显示）
     int hrLeaks_ = 0;                       // 泄漏计数（红字告警口径，ADR-010 A 线）

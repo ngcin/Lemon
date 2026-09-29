@@ -122,6 +122,7 @@ internal static unsafe class Exports
     {
         Lemon.Behaviours.ClearInstances();
         Lemon.Events.PlayReset();
+        Lemon.UI.PlayReset(); // 批③c：UI 待发/计数随局清（订阅表保留，跨局存活）
     }
 
     // ---- M3-3 档② 批量系统 ------------------------------------------------------
@@ -220,6 +221,35 @@ internal static unsafe class Exports
     [UnmanagedCallersOnly]
     public static unsafe void lemon_ops_submit(byte type, byte compId, ulong e)
         => Lemon.SceneOps.SubmitRaw(type, compId, e);
+
+    // ---- M6a 批③c（ADR-014 M2/M3）：UI ops 拉取 + UiEvent 派发 --------------------
+    // 旧宿主（批③c 前 C++）不解析本对导出 = 零影响；新宿主缺本 Entry 构建 = 挂空安全。
+
+    /// <summary>拉取脚本 UI ops（TickBatch 尾：staging 经 UI.Apply() 入 ready）。
+    /// *arenaBytes = arena 实际字节数；返回 op 数；-1 = 超容量整批丢弃（响亮）。</summary>
+    [UnmanagedCallersOnly]
+    public static unsafe int lemon_ui_ops_pull(Lemon.UiOp* dst, int capOps,
+                                               byte* dstArena, int capArena, int* arenaBytes)
+    {
+        try { return Lemon.UI.PullOps(dst, capOps, dstArena, capArena, arenaBytes); }
+        catch (Exception e) { // M4.6 导出纪律（上方 52 行）：未捕获 = coreclr abort
+            Console.Error.WriteLine("[lemon] ui_ops_pull 异常（已拦，保进程）：" + e.Message);
+            Lemon.UI.DiscardPending(); // -1 语义 = 整批已丢弃——把契约做实
+            if (arenaBytes != null) *arenaBytes = 0;
+            return -1;
+        }
+    }
+
+    /// <summary>UI 事件批量派发（#16 头部：引擎文档监听器 → 订阅者）。
+    /// 订阅者异常由 UI.DispatchEvents 逐个隔离；此处兜底编码/框架层异常。</summary>
+    [UnmanagedCallersOnly]
+    public static unsafe void lemon_ui_events_dispatch(Lemon.UiEvent* src, int n)
+    {
+        try { Lemon.UI.DispatchEvents(src, n); }
+        catch (Exception e) {
+            Console.Error.WriteLine("[lemon] ui_events_dispatch 异常（已拦，保进程）：" + e.Message);
+        }
+    }
 
     // ---- M3-2b 卸载 pin 诊断探针（长期保留：ADR-010 修订——.NET runtime 升级后
     //      重跑 lemon-script-tests 即知 pin 行为是否修复）--------------------------

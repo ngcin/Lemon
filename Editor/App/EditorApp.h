@@ -91,6 +91,15 @@ public:
     bool SnapEnabled() const { return snapEnabled_; } // 拖拽吸附（默认关；Ctrl 临时取反）
     void RequestExit() { exitRequested_ = true; }
     void SetGameViewFocused(bool f) { gameViewFocused_ = f; }
+    /// 批③c（M7）：GameView 画布矩形上报（GameViewPanel 每帧；ImGui 屏幕点 + RT
+    /// 像素——鼠标→画布坐标换算与 IME 候选窗锚点换算的底座）
+    void SetGameViewCanvas(float x, float y, float w, float h, uint32_t rtW, uint32_t rtH,
+                           bool hovered) {
+        gvCanvasX_ = x; gvCanvasY_ = y; gvCanvasW_ = w; gvCanvasH_ = h;
+        gvRtW_ = rtW; gvRtH_ = rtH;
+        gvCanvasValid_ = w >= 1.0f && h >= 1.0f && rtW > 0 && rtH > 0;
+        gvCanvasHovered_ = hovered && gvCanvasValid_;
+    }
     const EditorLaunch& Launch() const { return *launch_; }
 
     // 脏场景确认后的续操作（M4.2 欠账 2026-09-21 补齐：此前 SceneOp 复用退出模态，
@@ -177,6 +186,9 @@ private:
     /// 批③b 贴图桥解析器（安装给 gameUi_）：RmlUi JoinPath 后的路径 → 项目精灵
     /// 资产 → 图集页纹理 + 尺寸（未命中 = false → ③a 告警语义）
     bool ResolveUiTexture(const std::string& source, rhi::Texture& tex, uint32_t& w, uint32_t& h);
+    /// 批③c（M7）：鼠标/键盘/文本输入喂入游戏 UI + InputState 让出门（Play 段、
+    /// gameUi_->Update() 前每帧）
+    void FeedGameUiInput();
     void LoadProjectFonts(); // 批③b：Assets/ 下字体文件 → RmlUi fallback 注册
     /// M4.5 终验判据场景（向导项目上零代码搭"走地图+刷怪"）：地图/角色/刷怪器
     void SeedJudgementScene(uint64_t spawnGuid);
@@ -267,6 +279,14 @@ private:
     bool paused_ = false;
     bool singleStep_ = false;
     bool gameViewFocused_ = false; // GameView 输入门控（§3.6）
+    // 批③c（M7）：GameView 画布（ImGui 屏幕点）+ RT 像素 + 键盘差分态
+    float gvCanvasX_ = 0, gvCanvasY_ = 0, gvCanvasW_ = 0, gvCanvasH_ = 0;
+    uint32_t gvRtW_ = 0, gvRtH_ = 0;
+    bool gvCanvasValid_ = false;
+    bool gvCanvasHovered_ = false; // 画布悬停（面板内 IsItemHovered——浮窗遮挡为假）
+    bool gvKeyWasDown_[64] = {}; // UiKey 差分（边沿转发 RmlUi；枚举值 < 64）
+    char smokeUiEvText_[48] = {}; // 批③c：uiev 回读快照（Play 中的 RtUi 槽——退 Play
+                                  // 后 play world 即毁，终帧前捕获）
     bool gameFollowActive_ = false; // 游戏相机跟随已吸附（UpdateGameCameraFollow）
     EditTool tool_ = EditTool::Move;
     // 网格显示与吸附解耦（手测第五轮）：旧 gridSnap_ 一flag两用——想看网格就被迫

@@ -18,6 +18,13 @@
 
 #include "stb_image_write.h"
 
+// 批③c：UI 桥钩子目标（gameUi_ 生命周期镜像——Init 成功置位 / Shutdown 清空；
+// UiHooks 是 C 函数指针，不能捕 this）
+static ::lemon::ui::UiSubsystem* s_gameUiForHooks = nullptr;
+
+
+#include <SDL3/SDL.h>
+
 #include "App/ImGuiBackend.h"
 #include "Assets/AssetDatabase.h"
 #include "Assets/ClipEdit.h" // M6a 批② T3：smoke-anim clip 编辑链（面板数据面同款）
@@ -2912,9 +2919,20 @@ int EditorApp::Run(const EditorLaunch& launch) {
     // （红字 + 层不挂——UI 缺席是可运行的降级态）；Play 中由 ViewportRenderer
     // 在 gameRT 动态渲染块内叠画（sprite 之后、EndPass 之前）
     gameUi_ = std::make_unique<::lemon::ui::UiSubsystem>();
-    if (gameUi_->Init(*device_, rhi::Format::RGBA8Unorm)) {
+    if (gameUi_->Init(*device_, rhi::Format::RGBA8Unorm, window_->NativeHandle())) {
         viewport_->SetGameUiLayer(
             [this](rhi::CommandList& cl, uint32_t w, uint32_t h) { gameUi_->Render(cl, w, h); });
+        // 批③c（M7/ADR-014 D2）：文本输入事件 tap（ImGui 先吃、游戏 UI 后喂——
+        // GameView 聚焦 + Play 中才转发；候选窗锚点 = ActivateKeyboard→SetTextInputArea，
+        // T7 实证核心自带光标随移随发）
+        ui_->SetSdlEventTap([this](const void* raw) {
+            const SDL_Event* e = (const SDL_Event*)raw;
+            if (!gameUi_ || !ctx_.Playing() || !gameViewFocused_) return;
+            if (e->type == SDL_EVENT_TEXT_INPUT)
+                gameUi_->ProcessTextInput(e->text.text);
+            else if (e->type == SDL_EVENT_TEXT_EDITING)
+                gameUi_->ProcessTextEditing(e->edit.text, e->edit.start, e->edit.length);
+        });
         // 批③b：引擎正字 Noto Sans SC（OFL，随仓库 Engine/Ui/Fonts；LEMON_TEMPLATE_DIR
         // 同款编译期路径）。fallback=true——RCSS 未命中的族名也有字可渲（③a 发现
         // RCSS 无逗号回退列表）。装载失败红字不阻断（Init 内系统链仍兜底）
@@ -2926,6 +2944,17 @@ int EditorApp::Run(const EditorLaunch& launch) {
                    "沿用系统字体链");
 #endif
         // --smoke-uirml 播种延后到项目打开后（批③b 起文档/样式/贴图均来自夹具资产）
+        // 批③c（M2/M3）：UI 桥钩子装配——ScriptHost TickBatch 尾拉 C# ops 直转
+        // ApplyOps（当帧可见）；#16 头抽干事件直转 DrainEvents。静态指针镜像
+        // gameUi_ 生命周期（钩子是 C 函数指针，Shutdown 时清空）
+        s_gameUiForHooks = gameUi_.get();
+        scripting::SetUiHooks(
+            {[](const ::lemon::ui::UiOpC* ops, uint32_t n, const char* arena, uint32_t bytes) {
+                 if (s_gameUiForHooks) s_gameUiForHooks->ApplyOps(ops, n, arena, bytes);
+             },
+             [](::lemon::ui::UiEventC* dst, uint32_t cap) -> uint32_t {
+                 return s_gameUiForHooks ? s_gameUiForHooks->DrainEvents(dst, cap) : 0;
+             }});
     } else {
         gameUi_.reset();
     }
@@ -3305,6 +3334,14 @@ int EditorApp::Run(const EditorLaunch& launch) {
             LEMON_ERROR("smoke-uirml 已阻止进入 Play：Game/ 编译失败（脚本宿主未装配）");
             return 1;
         }
+        // 批③c：--script 时挂 UI 全链探针（此处场景已定型——Init 期创建会被后续
+        // 场景装配块 OpenScene/SeedSmoke 换掉，快照 0 实体实测教训）
+        if (ctx_.Scripts()) {
+            ecs::Entity probe = ctx_.ActiveScene().Create();
+            ctx_.AttachScript(probe, 0, "UiProbeBehaviour");
+            LEMON_LOG("uirml 播种：UiProbeBehaviour 挂载（实体 %llu）",
+                      (unsigned long long)probe.id);
+        }
         if (!ctx_.EnterPlay()) return 1;
         // 批③b 补：Play 按钮/菜单路径都设的翻页标志——③a 独立进 Play 分支漏了它，
         // 中央区标签页停在 Scene，--screenshot（交换链）只见 Scene 不见 UI（用户
@@ -3629,6 +3666,48 @@ int EditorApp::Run(const EditorLaunch& launch) {
                 out << t;
                 return true;
             };
+            // 批③c：M7 合成点击全链（帧 60 按下/61 释放，经 ImGui 注入 →
+            // FeedGameUiInput → RmlUi → UiEvent → 下一帧 #16 → C# 回执 → RtUi uiev）
+            if ((frame == 60 || frame == 61) && gameUi_) {
+                float cx, cy;
+                if (gameUi_->TryGetItemCenter("Assets/UI/uirml.rml", "cards", "opt0", &cx,
+                                              &cy)) {
+                    const float sx = gvCanvasX_ + cx * gvCanvasW_ / (float)gvRtW_;
+                    const float sy = gvCanvasY_ + cy * gvCanvasH_ / (float)gvRtH_;
+                    ui_->SetInputOverride(sx, sy, frame == 60 ? 1 : 0);
+                } else {
+                    LEMON_ERROR("uirml-smoke: 点击注入失败——cards/opt0 未克隆（帧 %llu，"
+                                "items=%d neg=%d pending=%u）",
+                                (unsigned long long)frame,
+                                gameUi_->ContainerItemCount("Assets/UI/uirml.rml", "cards"),
+                                gameUi_->ContainerItemCount("Assets/UI/uirml.rml", "negbox"),
+                                gameUi_->PendingEventCount());
+                }
+            }
+            // 批③c：负面契约 op 直灌（frame 160，热重载两段之后）：field 'nope' 不在
+            // 模板集（has: lab）→ 响亮失败恰 1 + 负面容器克隆 1 行（不渲染）。
+            // 行块用八进制转义（十六进制 \x 会贪婪连吃后续 hex 字母——C 词法坑）
+            if (frame == 160 && gameUi_) {
+                static const char kNegArena[] =
+                    "Assets/UI/uirml.rml\0"               // s0=0（19 字符 + NUL）
+                    "negbox\0"                             // s1=20
+                    "nrow\0"                               // s2=27
+                    "\001b\001\000\004nope\001\000x";      // s3=32 起：1 行 b/{nope=x}
+                const ::lemon::ui::UiOpC op = {
+                    (uint8_t)::lemon::ui::UiOpType::SetItems, 0, 4, 0,
+                    0, 20, 27, 32, 1, 0, 0};
+                gameUi_->ApplyOps(&op, 1, kNegArena, (uint32_t)sizeof(kNegArena));
+                LEMON_LOG("uirml-smoke: 负面契约 op 直灌（field 'nope'）");
+            }
+            // 批③c：uiev 终值捕获（Play 中的 RtUi 槽；退 Play 后 play world 即毁，
+            // 终帧 VERDICT 只能读快照）
+            if (frame == 238 && ctx_.Playing()) {
+                const lemon::ecs::RtUiChannel& rt = ctx_.ActiveWorld().RtUi();
+                for (uint32_t i = 0; i < rt.Count(); ++i)
+                    if (std::strcmp(rt.At(i).key, "uiev") == 0)
+                        std::snprintf(smokeUiEvText_, sizeof(smokeUiEvText_), "%s",
+                                      rt.At(i).text);
+            }
             if (frame == 100) {
                 if (rewriteFile(uiDir / "uirml.rml", "#ffd060", "#40ff90"))
                     LEMON_LOG("uirml-smoke: .rml 热重载播种（标题金→绿）");
@@ -3670,7 +3749,11 @@ int EditorApp::Run(const EditorLaunch& launch) {
             }
             // 输入路由：GameView 聚焦且非文本输入 → 语义子集（WASD/箭头/空格）进 Play World
             ecs::InputState in;
-            if (gameViewFocused_ && !ImGui::GetIO().WantTextInput) {
+            // 批③c（M7 让出）：RmlUi 文本控件持有键盘（WantsKeyboard）或模态文档
+            // 打开（AnyModalShown）= 游戏输入让出——"菜单打开时脚本让出输入"规则化
+            const bool uiHoldsInput =
+                gameUi_ && (gameUi_->WantsKeyboard() || gameUi_->AnyModalShown());
+            if (gameViewFocused_ && !ImGui::GetIO().WantTextInput && !uiHoldsInput) {
                 float ax = 0, ay = 0;
                 if (ImGui::IsKeyDown(ImGuiKey_A) || ImGui::IsKeyDown(ImGuiKey_LeftArrow)) ax -= 1.0f;
                 if (ImGui::IsKeyDown(ImGuiKey_D) || ImGui::IsKeyDown(ImGuiKey_RightArrow)) ax += 1.0f;
@@ -3704,7 +3787,14 @@ int EditorApp::Run(const EditorLaunch& launch) {
             bSim = BenchClock::now();  // 段界：sim（世界步进）结束 = glue 开始
             singleStep_ = false;
             UpdateGameCameraFollow();
+            FeedGameUiInput(); // 批③c（M7）：鼠标/键盘喂入 + IME 锚点换算（Update 前）
             if (gameUi_) gameUi_->Update(); // 批③a：UI 帧逻辑（World 步进后、渲染前）
+            // 批③c review P2：画布/焦点是"上一帧面板绘制上报、本帧头部消费"的一帧
+            // 延迟数据——消费后即失效。GameView 关闭（OnGui 不再跑）时残值原本会
+            // 一直喂鼠标/键盘/IME 到错误位置；面板若仍开着，帧尾 BuildUI 会重新上报。
+            gvCanvasValid_ = false;
+            gvCanvasHovered_ = false;
+            gameViewFocused_ = false;
             if (playDiag_ && frame >= 2 && frame < 220) {
                 // 逐帧：墙钟帧耗时（pacing）/ 相机中心 / 跟随目标 / gameRT 尺寸（重建
                 // 翻转即 churn）。f60-120 走、121+ 停——抖动段应能在 dt 或 cam 序列现形
@@ -3733,7 +3823,10 @@ int EditorApp::Run(const EditorLaunch& launch) {
         // 一次——ImGui 的 ID 冲突检查挂 HoveredId 路径，不悬停就永远测不到。
         // 经 SetMouseOverride 注入（SDL 后端每帧轮询真实鼠标，普通事件会被盖掉；
         // 覆盖口在轮询后、NewFrame 排水前生效）。
-        if (launch.smoke) {
+        if (launch.smoke &&
+            !(launchCopy_.smokeUirml && (frame == 60 || frame == 61))) {
+            // 批③c 注：smoke-uirml 帧 60/61 是 UI 点击注入帧——扫掠让位（否则覆写
+            // 注入位置，RmlUi 收不到画布坐标的按下/释放）
             ImGuiIO& io = ImGui::GetIO();
             if (io.DisplaySize.x > 1.0f && io.DisplaySize.y > 1.0f) {
                 constexpr uint64_t kCols = 40, kRows = 15;
@@ -5601,12 +5694,37 @@ int EditorApp::Run(const EditorLaunch& launch) {
             uiOk = notoFont && panelN > 3000 && titleGN > 20 && bodyBN > 20 && texN > 500 &&
                    oldGoldN < 5 && oldGrayN < 5 && titleTopN >= titleGN * 3 / 4;
         }
+        // 批③c：C# API 全链位（--script 时生效；未带脚本 = n/a 通过——③b 口径
+        // 的直跑兼容）。items = 克隆行数（cards 2 + negbox 1 负面行）；text = 探针
+        // SetText 后的 title（热重载两段后仍是探针值 = DocumentReloaded 重灌证据）；
+        // ev = 合成点击/重灌计数回读（RtUi uiev）；contract = 契约错误恰 1（负面
+        // op 直灌的一个，其余零容忍——"响亮失败"回归防线）
+        const bool scripted = ctx_.Scripts() != nullptr;
+        int itemsN = -1, negN = -1;
+        if (gameUi_) {
+            itemsN = gameUi_->ContainerItemCount("Assets/UI/uirml.rml", "cards");
+            negN = gameUi_->ContainerItemCount("Assets/UI/uirml.rml", "negbox");
+        }
+        char titleText[64] = {};
+        if (gameUi_)
+            gameUi_->TryGetElementText("Assets/UI/uirml.rml", "title", titleText,
+                                       sizeof(titleText));
+        int evClicks = -1, evReloads = -1;
+        std::sscanf(smokeUiEvText_, "c%dr%d", &evClicks, &evReloads);
+        const uint32_t contractN = gameUi_ ? gameUi_->ContractErrorCount() : 0;
+        const bool textOk = std::strcmp(titleText, "升级！三选一") == 0;
+        const bool itemsOk = !scripted || (itemsN == 2 && negN == 1);
+        const bool evOk = !scripted || (evClicks >= 1 && evReloads >= 2);
+        const bool contractOk = !scripted || (contractN == 1 && textOk);
+        const bool uiOk3c = itemsOk && evOk && contractOk;
         std::printf("[lemon] smoke-uirml: doc=%d font=%s panel=%d(>3000) titleG=%d(>20) "
-                    "bodyB=%d(>20) tex=%d(>500) old=%d/%d(<5) titleTop=%d/%d(≥3/4) => %s\n",
+                    "bodyB=%d(>20) tex=%d(>500) old=%d/%d(<5) titleTop=%d/%d(≥3/4) "
+                    "items=%d/%d ev=c%dr%d contract=%u/%s => %s\n",
                     hasDoc ? 1 : 0, gameUi_ ? gameUi_->LoadedFontFamily() : "-",
                     panelN, titleGN, bodyBN, texN, oldGoldN, oldGrayN, titleTopN, titleGN,
-                    uiOk ? "OK" : "FAIL");
-        if (!uiOk) exitCode = 1;
+                    itemsN, negN, evClicks, evReloads, contractN, textOk ? "textOK" : "textBAD",
+                    (uiOk && uiOk3c) ? "OK" : "FAIL");
+        if (!uiOk || !uiOk3c) exitCode = 1;
     }
 
     watcher_.Stop();          // 先停 watcher 线程（此后无资产重扫）
@@ -5617,6 +5735,8 @@ int EditorApp::Run(const EditorLaunch& launch) {
     SetLogSink(nullptr, nullptr);
     device_->SavePipelineCache();
     if (gameUi_) { // 批③a：UI 子系统先于 viewport/device 收尾（Rml 收尾仍回调后端 + WaitIdle + 反注册）
+        s_gameUiForHooks = nullptr; // 批③c：桥钩子目标先清（防收尾期 TickBatch 悬垂）
+        scripting::SetUiHooks({nullptr, nullptr});
         gameUi_->Shutdown();
         gameUi_.reset();
     }
@@ -5644,6 +5764,70 @@ void EditorApp::LoadUiDocument(uint64_t guid) {
               ctx_.Playing() ? "" : "（进 Play 后 GameView 显示）", e->relPath.c_str());
 }
 
+// 批③c（M7/ADR-014 D2）：游戏 UI 输入喂入（Play 段、gameUi_->Update() 前每帧）——
+//   鼠标：画布矩形内（ImGui 屏幕点 → 画布 RT 像素）逐帧 SetPointer + 点击边沿；
+//   键盘：gameViewFocused_ 时 ImGui key 态差分（边沿）转发（RmlUi 焦点导航/文本编辑）；
+//   IME 锚点：窗口点 = 画布原点 + caret×(画布点/RT 像素)——ActivateKeyboard 消费。
+//   游戏侧让出门在 ApplyInput（uiHoldsInput）——本函数只喂 UI 不夺编辑器事件。
+void EditorApp::FeedGameUiInput() {
+    if (!gameUi_) return;
+    bool inside = false;
+    float px = 0, py = 0;
+    if (gvCanvasValid_ && gvCanvasHovered_) {
+        const ImVec2 mp = ImGui::GetMousePos();
+        inside = mp.x >= gvCanvasX_ && mp.x <= gvCanvasX_ + gvCanvasW_ &&
+                 mp.y >= gvCanvasY_ && mp.y <= gvCanvasY_ + gvCanvasH_;
+        if (inside) {
+            px = (mp.x - gvCanvasX_) * (float)gvRtW_ / gvCanvasW_;
+            py = (mp.y - gvCanvasY_) * (float)gvRtH_ / gvCanvasH_;
+        }
+    }
+    gameUi_->SetPointer((int)px, (int)py, inside);
+    // review P2：画布无效（GameView 关闭/未上报）时 W/H 与 RT 均为残 0——0/0 = NaN
+    // 会灌进 SDL_SetTextInputArea。守卫 + 恒等中性（锚点 = 光标本位）。
+    if (gvCanvasValid_ && gvRtW_ > 0 && gvRtH_ > 0 && gvCanvasW_ > 0.0f && gvCanvasH_ > 0.0f)
+        gameUi_->SetImeRectTransform(gvCanvasX_, gvCanvasY_, gvCanvasW_ / (float)gvRtW_,
+                                     gvCanvasH_ / (float)gvRtH_);
+    else
+        gameUi_->SetImeRectTransform(0.0f, 0.0f, 1.0f, 1.0f);
+    if (inside) {
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) gameUi_->ProcessMouseButton(0, true);
+        if (ImGui::IsMouseReleased(ImGuiMouseButton_Left))
+            gameUi_->ProcessMouseButton(0, false);
+    }
+    if (gameViewFocused_) {
+        // ImGuiKey → UiKey（波1 集合：字母/数字/方向/编辑键；差分出边沿）
+        using UK = ::lemon::ui::UiKey;
+        static const struct { int ik; UK uk; } kMap[] = {
+            {ImGuiKey_A, UK::A}, {ImGuiKey_B, UK::B}, {ImGuiKey_C, UK::C},
+            {ImGuiKey_D, UK::D}, {ImGuiKey_E, UK::E}, {ImGuiKey_F, UK::F},
+            {ImGuiKey_G, UK::G}, {ImGuiKey_H, UK::H}, {ImGuiKey_I, UK::I},
+            {ImGuiKey_J, UK::J}, {ImGuiKey_K, UK::K}, {ImGuiKey_L, UK::L},
+            {ImGuiKey_M, UK::M}, {ImGuiKey_N, UK::N}, {ImGuiKey_O, UK::O},
+            {ImGuiKey_P, UK::P}, {ImGuiKey_Q, UK::Q}, {ImGuiKey_R, UK::R},
+            {ImGuiKey_S, UK::S}, {ImGuiKey_T, UK::T}, {ImGuiKey_U, UK::U},
+            {ImGuiKey_V, UK::V}, {ImGuiKey_W, UK::W}, {ImGuiKey_X, UK::X},
+            {ImGuiKey_Y, UK::Y}, {ImGuiKey_Z, UK::Z},
+            {ImGuiKey_0, UK::Num0}, {ImGuiKey_1, UK::Num1}, {ImGuiKey_2, UK::Num2},
+            {ImGuiKey_3, UK::Num3}, {ImGuiKey_4, UK::Num4}, {ImGuiKey_5, UK::Num5},
+            {ImGuiKey_6, UK::Num6}, {ImGuiKey_7, UK::Num7}, {ImGuiKey_8, UK::Num8},
+            {ImGuiKey_9, UK::Num9},
+            {ImGuiKey_UpArrow, UK::Up}, {ImGuiKey_DownArrow, UK::Down},
+            {ImGuiKey_LeftArrow, UK::Left}, {ImGuiKey_RightArrow, UK::Right},
+            {ImGuiKey_Backspace, UK::Backspace}, {ImGuiKey_Enter, UK::Return},
+            {ImGuiKey_Escape, UK::Escape}, {ImGuiKey_Space, UK::Space},
+            {ImGuiKey_Home, UK::Home}, {ImGuiKey_End, UK::End},
+            {ImGuiKey_Delete, UK::Delete}, {ImGuiKey_Tab, UK::Tab},
+        };
+        for (const auto& m : kMap) {
+            const bool down = ImGui::IsKeyDown((ImGuiKey)m.ik);
+            const int idx = (int)m.uk;
+            if (down != gvKeyWasDown_[idx]) gameUi_->ProcessKey(m.uk, down);
+            gvKeyWasDown_[idx] = down;
+        }
+    }
+}
+
 // 批③b 贴图桥解析器（RmlUi JoinPath 解析后的绝对路径 → 项目精灵资产 → 图集页）。
 // 切片子图由 RmlUi 原生 <img rect="x y w h"> 表达，引擎零机制（M6 波2 扩 GUID/RT 源）
 bool EditorApp::ResolveUiTexture(const std::string& source, rhi::Texture& tex, uint32_t& w,
@@ -5651,6 +5835,19 @@ bool EditorApp::ResolveUiTexture(const std::string& source, rhi::Texture& tex, u
     namespace fs = std::filesystem;
     const AssetDatabase& db = ctx_.Assets();
     if (db.ProjectRoot().empty()) return false;
+    // 批③c（M6 资产源）：GUID 直引协议（img data-field 值 16hex → "guid:<hex>"——
+    // JoinPath 见 ':' 直通；图鉴/卡片图标通道，纸面验证 ⓪/① 形态）
+    if (source.rfind("guid:", 0) == 0) {
+        const AssetEntry* e = db.FindByGuid(AssetDatabase::HexToGuid(source.substr(5).c_str()));
+        if (!e || e->missing || e->type != AssetType::Sprite) return false;
+        renderer::AtlasRegistry& reg = viewport_->Assets().Registry();
+        if (!reg.IsValidSprite(e->spriteId)) return false;
+        const renderer::SpriteInfo& si = reg.GetSprite(e->spriteId);
+        const rhi::Texture t = reg.AtlasTexture(si.atlasIndex, w, h);
+        if (!t.IsValid()) return false;
+        tex = t;
+        return true;
+    }
     std::error_code ec;
     const fs::path rel = fs::relative(fs::path(source), fs::path(db.ProjectRoot()), ec);
     if (ec) return false;
@@ -5719,10 +5916,16 @@ void EditorApp::SeedSmokeUiRmlProject() {
         // .rcss（<link> 表，ReloadStyleSheets 保 DOM 路径）
         std::ofstream f(assets / "uirml.rcss", std::ios::trunc);
         f << "body { font-family: Noto Sans SC; color: #e0e0e0; }\n"
-             "#panel { position: absolute; left: 80px; top: 80px; width: 480px; height: 260px;\n"
+             "#panel { position: absolute; left: 80px; top: 80px; width: 480px; height: 430px;\n"
              "    background: #204060; border: 3px #60a0ff; }\n"
              "#body  { font-size: 16px; margin-left: 28px; }\n"
-             "#teximg { position: absolute; left: 320px; top: 120px; width: 96px; height: 96px; }\n";
+             "#teximg { position: absolute; left: 320px; top: 120px; width: 96px; height: 96px; }\n"
+             // 批③c：模板克隆行（cardb 绿底按钮——items 像素断言目标）+ 负面容器行
+             // （display:none——契约错误计数面，渲染零干扰）
+             "#cards { margin-left: 24px; margin-top: 8px; }\n"
+             ".cardb { display: block; width: 300px; margin: 6px 0; padding: 10px;\n"
+             "    background: #40d080; color: #103018; font-size: 15px; text-align: center; }\n"
+             ".nb { display: none; }\n";
     }
     { // 文档：<link> 引样式 + 三要素 + <img>（热重载中点标题色 → #40ff90 绿）
         std::ofstream f(assets / "uirml.rml", std::ios::trunc);
@@ -5734,6 +5937,15 @@ void EditorApp::SeedSmokeUiRmlProject() {
              "  <div id=\"title\">Lemon 游戏 UI ③b</div>\n"
              "  <div id=\"body\">资产通道冒烟：字体/样式/贴图/热重载</div>\n"
              "  <img id=\"teximg\" src=\"tex.png\"/>\n"
+             // 批③c：M2 模板克隆容器（纸面验证 ⓪ 形态）+ 负面契约容器
+             "  <div id=\"cards\" data-template=\"card\">\n"
+             "    <ui-template data-name=\"card\"><button class=\"cardb\" data-event=\"pick\">"
+             "<span data-field=\"label\"/></button></ui-template>\n"
+             "  </div>\n"
+             "  <div id=\"negbox\" data-template=\"nrow\">\n"
+             "    <ui-template data-name=\"nrow\"><div class=\"nb\"><span data-field=\"lab\"/>"
+             "</div></ui-template>\n"
+             "  </div>\n"
              "</div>\n</body>\n</rml>\n";
     }
     launchCopy_.projectDir = tmp.string();

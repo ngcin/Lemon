@@ -29,6 +29,7 @@ add_library(lemon-engine STATIC
   Renderer/SpriteBatcher.cpp
   Renderer/Particles.cpp
   Renderer/BitmapFont.cpp
+  Ui/SdlTextInputHandler.cpp
   Ui/UiSubsystem.cpp
 )
 

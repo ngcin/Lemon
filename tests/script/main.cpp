@@ -318,7 +318,7 @@ void TestDomainManager() {
         auto listFn = (int (*)(char*, int))GetExport("lemon_behaviours_list");
         char buf[4096];
         int n = listFn ? listFn(buf, (int)sizeof buf) : -1;
-        Expect(n == 17, "behaviours list after hot reload (+M11/M15/F-08.2/T3/b1/b2/T3c/T3d/A档tween/T5存档档 probes)");
+        Expect(n == 18, "behaviours list after hot reload (+M11/M15/F-08.2/T3/b1/b2/T3c/T3d/A档tween/T5存档档/b3c UI probes)");
         // M4.6 回归（用户实测闪退根因）：相对路径进 dm_reload 曾抛 ArgumentException
         // 逃逸 UnmanagedCallersOnly → coreclr abort。拦截层必须转 0 返回且进程存活
         // （本断言能跑到 = 进程没死）。换装失败后旧域已弃——再换一次真路径恢复。
@@ -1527,6 +1527,132 @@ void TestSaveChannels() {
 
 } // namespace
 
+// ---------------------------------------------------------------------------
+// M6a 批③c：Lemon.UI 桥面双测（线格式字节对拍 + 事件反向直灌）——不依赖 RmlUi
+// （引擎文档应用面由 --smoke-uirml 全链覆盖；本测钉死 SDK 编码 ↔ UiBridge 契约）。
+// ---------------------------------------------------------------------------
+static std::vector<lemon::ui::UiOpC> s_uiCapOps;
+static std::vector<char> s_uiCapArena;
+static lemon::ui::UiEventC s_uiInjectEvent;
+static bool s_uiInjectPending = false;
+
+static void UiCapApplyOps(const lemon::ui::UiOpC* ops, uint32_t n, const char* arena,
+                          uint32_t bytes) {
+    s_uiCapOps.assign(ops, ops + n);
+    s_uiCapArena.assign(arena, arena + bytes);
+}
+static uint32_t UiCapDrainEvents(lemon::ui::UiEventC* dst, uint32_t cap) {
+    if (!s_uiInjectPending || cap == 0) return 0;
+    s_uiInjectPending = false;
+    dst[0] = s_uiInjectEvent;
+    return 1;
+}
+
+static const char* CapStr(uint32_t off) {
+    return off < s_uiCapArena.size() ? s_uiCapArena.data() + off : "";
+}
+
+void TestUiSdk() {
+    using namespace lemon::ecs;
+    auto timeResetFn = (void (*)())GetExport("lemon_time_reset");
+    Expect(timeResetFn, "ui: time reset export resolved");
+    timeResetFn(); // 探针按 FrameCount==1 播种——本测试 = 新一局
+
+    // 桥钩子：ops 捕获 + 事件注入（一次 Click cards/opt0）
+    lemon::scripting::UiHooks hooks{UiCapApplyOps, UiCapDrainEvents};
+    lemon::scripting::SetUiHooks(hooks);
+    s_uiInjectEvent = {};
+    s_uiInjectEvent.kind = (uint8_t)lemon::ui::UiEventKind::Click;
+    std::snprintf(s_uiInjectEvent.doc, sizeof(s_uiInjectEvent.doc), "Assets/UI/uirml.rml");
+    std::snprintf(s_uiInjectEvent.key, sizeof(s_uiInjectEvent.key), "cards/opt0");
+    std::snprintf(s_uiInjectEvent.ev, sizeof(s_uiInjectEvent.ev), "pick");
+    s_uiInjectPending = true;
+
+    WorldDesc d;
+    d.threadCount = 1;
+    World w(d);
+    Scene& s = w.CreateScene("UiSdk");
+    w.SetActiveScene(&s);
+    w.SetScriptBackend(&g_sh);
+    w.Pipeline().AddSystem(std::make_unique<CSharpBatchSystem>());
+    w.Pipeline().AddSystem(std::make_unique<ScriptEventDispatchSystem>());
+    w.Pipeline().AddSystem(std::make_unique<DestroyCommitSystem>());
+    w.Pipeline().ResolveOrder();
+
+    Entity e = s.Create();
+    g_sh.AttachBehaviour(w, s, e, 17); // UiProbe（表尾 typeId 17）
+
+    s_uiCapOps.clear();
+    w.Step(0.25f);
+
+    // ---- ① ops 线格式对拍：UiRefill() = Show + SetText + SetItems + SetClass ----
+    Expect(s_uiCapOps.size() == 4, "ui: Apply 产出 4 op（Show/SetText/SetItems/SetClass）");
+    if (s_uiCapOps.size() == 4) {
+        const auto& opShow = s_uiCapOps[0];
+        Expect(opShow.type == (uint8_t)lemon::ui::UiOpType::Show && opShow.strCount == 1,
+               "ui: op0 = Show(doc)");
+        Expect(std::strcmp(CapStr(opShow.s0), "Assets/UI/uirml.rml") == 0,
+               "ui: op0 doc 字符串命中（NUL 终止契约）");
+        const auto& opText = s_uiCapOps[1];
+        Expect(opText.type == (uint8_t)lemon::ui::UiOpType::SetText && opText.strCount == 3,
+               "ui: op1 = SetText(doc,key,text)");
+        Expect(std::strcmp(CapStr(opText.s1), "title") == 0 &&
+                   std::strcmp(CapStr(opText.s2), "升级！三选一") == 0,
+               "ui: op1 key/text 字节命中（UTF-8 零乱码）");
+        const auto& opItems = s_uiCapOps[2];
+        Expect(opItems.type == (uint8_t)lemon::ui::UiOpType::SetItems && opItems.i0 == 2,
+               "ui: op2 = SetItems(2 行)");
+        Expect(std::strcmp(CapStr(opItems.s1), "cards") == 0 &&
+                   std::strcmp(CapStr(opItems.s2), "card") == 0,
+               "ui: op2 容器/模板名命中");
+        // 行块解码（引擎 UiSubsystem::SetItems 同款口径）：每行 = key + 字段
+        const uint8_t* rp = (const uint8_t*)CapStr(opItems.s3);
+        const char* keys[2] = {"opt0", "opt1"};
+        for (int r = 0; r < 2; ++r) {
+            const uint8_t keyLen = *rp++;
+            Expect(keyLen == 4 && std::memcmp(rp, keys[r], 4) == 0, "ui: 行 key 命中");
+            rp += keyLen;
+            uint16_t fieldCount;
+            std::memcpy(&fieldCount, rp, 2);
+            rp += 2;
+            Expect(fieldCount == 1, "ui: 行字段数 = 1");
+            const uint8_t nameLen = *rp++;
+            Expect(nameLen == 5 && std::memcmp(rp, "label", 5) == 0, "ui: 字段名命中");
+            rp += nameLen;
+            uint16_t valLen;
+            std::memcpy(&valLen, rp, 2);
+            rp += 2;
+            Expect(valLen > 0 && valLen < 32, "ui: 字段值长度合理");
+            rp += valLen;
+        }
+        Expect((size_t)(rp - (const uint8_t*)s_uiCapArena.data()) <= s_uiCapArena.size(),
+               "ui: 行块解码未越界（自描述长度闭合）");
+        const auto& opCls = s_uiCapOps[3];
+        Expect(opCls.type == (uint8_t)lemon::ui::UiOpType::SetClass &&
+                   (opCls.flags & 1) != 0 && opCls.strCount == 3,
+               "ui: op3 = SetClass(add)");
+        Expect(std::strcmp(CapStr(opCls.s1), "cards/opt0") == 0 &&
+                   std::strcmp(CapStr(opCls.s2), "rare") == 0,
+               "ui: op3 路径 key/class 命中");
+    }
+
+    // ---- ② 事件反向直灌：drainEvents → lemon_ui_events_dispatch → 静态订阅 →
+    //      计数经 Lemon.Ui.Set 落 World.RtUi（同帧 #16 窗口内 native 可用） ----
+    const RtUiChannel& rtui = w.RtUi();
+    bool sawUiev = false;
+    char uievText[48] = {};
+    for (uint32_t i = 0; i < rtui.Count(); ++i)
+        if (std::strcmp(rtui.At(i).key, "uiev") == 0) {
+            sawUiev = true;
+            std::snprintf(uievText, sizeof(uievText), "%s", rtui.At(i).text);
+        }
+    Expect(sawUiev && std::strcmp(uievText, "c1r0") == 0,
+           "ui: 注入 Click → C# 订阅回执 → RtUi uiev=c1r0（全链反向）");
+
+    lemon::scripting::SetUiHooks({nullptr, nullptr}); // 后续测试零扰动
+    std::printf("script-tests: TestUiSdk OK（ops 4 条字节对拍 + 事件反向 c1r0）\n");
+}
+
 int main() {
     Expect(g_sh.Initialize(nullptr, LEMON_SCRIPT_DIR "/Lemon.Entry.runtimeconfig.json",
                             LEMON_SCRIPT_DIR "/Lemon.Entry.dll"),
@@ -1582,6 +1708,7 @@ int main() {
     TestAnimGraphProbe(); // M6a 批② T3d：状态机通道（绑定/参数/trigger/exitTime/帧事件）
     TestTweenSdk();     // A 档补间（2026-09-28 用户插入项）：Lemon.Tween 通道端到端
     TestSaveChannels(); // M6a 批② T5：Lemon.Save × Chan 分档通道端到端
+    TestUiSdk();        // M6a 批③c：Lemon.UI 线格式对拍 + 事件反向直灌
 
     // M4.6 探针（编辑器切项目场景）：同进程二次 ScriptHost 生命周期。CoreCLR 运行时
     // 进程单例——第二次 Initialize 的真实行为必须钉板（成功/失败都合法，崩 = 缺陷）。

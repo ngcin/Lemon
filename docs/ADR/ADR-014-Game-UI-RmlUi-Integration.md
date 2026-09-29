@@ -23,7 +23,7 @@
 - 批③ 拆五子批（开批新建 `Plans/M6a/` 批文件，分解到文件/行级）：
   - **③a 渲染地基**：`Engine/Ui` 模块 + RenderInterface + SystemInterface + GameView 接静态文档冒烟（复用 spike-04 验收壳：交换链回读 BMP + VERDICT 行 + validation 层）+ **文本输入微 spike 三判据**（中文提交零乱码 / IME 候选窗贴光标 / 编辑器 ImGui↔RmlUi 焦点仲裁不串）；
   - **③b 字体与资产通道**：Noto Sans CJK 注册 + `.rml/.rcss` 转正式资产类型（GUID/`.meta`/manifest + AssetBrowser 识别）+ 贴图引用桥（`LoadTexture` → AtlasRegistry/sprite GUID）+ 文档热重载；
-  - **③c C# API 与波1 机制**：`UI.Apply(ops)` 单一提交口 + UiEvent 事件队列 + 契约校验（响亮失败）+ M1/M2/M3/M6（资产源）/M7 + 提交制文本输入；
+  - **③c C# API 与波1 机制**：`UI.Apply(ops)` 单一提交口 + UiEvent 事件队列 + 契约校验（响亮失败）+ M1/M2/M3/M6（资产源）/M7 + 提交制文本输入——**✅ 2026-09-28 代码面收口**（smoke-uirml 全链 `items=2/1 ev=c1r2 contract=1 => OK` + script-tests 1699 + 回归 15/15，[DevLog](../DevLog/2026-09-28-m6a-b3c-csharp-ui-api.md)；真人验收余手感/文本输入两件）；
   - **③d 模板迁移**：升级卡片/死亡对话/HUD/主菜单/暂停/设置/结算全部转文档 + L2 最小默认皮（见 D7）+ smoke-template 断言随迁；
   - **③e 图鉴/收集模板**：波1 机制全量消费者 + L1 零新增出口判据实证。
 
@@ -32,7 +32,7 @@
 | # | 机制 | 契约要点 |
 |---|---|---|
 | M1 | 屏幕栈 | `Show/Hide` + 模态标记 + 层级序；**一屏 = 一文档**；tooltip / toast（横幅）层固定位 |
-| M2 | 数据通道 | `SetText/SetAttr/SetClass/SetStyle/SetItems/SetInnerRml`；单一 `UI.Apply(ops)` 每帧批量提交；string id；**SetItems = 模板克隆**（文档内 `<template data-name>` 原型 + `data-field` 契约 + 稳定 key，字段 schema 只活在文档与 C# 两侧，引擎只认数量）；**响亮失败**（id/field 不匹配 → 控制台错误 + stats 计数 + smoke 断言"零契约错误"）；`DocumentReloaded` 事件 → C# 重灌数据（热重载后屏幕不空） |
+| M2 | 数据通道 | `SetText/SetAttr/SetClass/SetStyle/SetItems/SetInnerRml`；单一 `UI.Apply(ops)` 每帧批量提交；string id；**SetItems = 模板克隆**（文档内 `<ui-template data-name>` 原型 + `data-field` 契约 + 稳定 key，字段 schema 只活在文档与 C# 两侧，引擎只认数量。**2026-09-28 ③c 实现修订**：原型标签由 `<template>` 改 `<ui-template>`——RmlUi 原生 `<template>` 被其模板注入机制占用（XMLNodeHandlerTemplate，无 `src` 时子元素漏进父容器），属其 datamodel 家族即本 ADR 拒用面）；**响亮失败**（id/field 不匹配 → 控制台错误 + stats 计数 + smoke 断言"零契约错误"——③c 冒烟口径 = 恰好 N 个已知反例、其余零容忍）；`DocumentReloaded` 事件 → C# 重灌数据（热重载后屏幕不空，③c 已实证） |
 | M3 | 事件通道 | `UiEvent{doc, key, type, payload}` 走事件队列（**无回调跨边界**）；click/change/submit/hover…；payload 预留字符串值与**世界坐标位**（M4 依赖，第一波就把事件结构定够宽） |
 | M4 | 拖放 | DragStart / DragEnter / DragLeave / Drop / DragCancel；**边沿触发不逐帧**；落点 = 目标 key **或世界坐标**（摆塔用例）；**UI 载身份、游戏持语义**（拖什么/能否放/放下发生什么全在 C#）；拖拽视觉引擎托管（源元素快照跟随光标）；droppable 目标在文档声明（`data-droppable`），enter/leave 高亮 = RCSS 类引擎自动施加。**波3 实现、契约即冻结** |
 | M5 | 悬停系统 | 引擎托管延迟/跟随/贴边翻转（做一次全品类受益）；内容 = 一次 M2 填充；对比查看 = 悬停面板 + 钉住的普通文档（无专门机制）。**波2 实现** |

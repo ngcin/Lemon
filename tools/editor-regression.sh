@@ -76,6 +76,13 @@ if [ "${MODE}" = "full" ]; then
         "smoke-guid: .* => OK" \
         "${EDITOR}" --smoke-guid --no-reopen
     if [ -f "${SDK}" ]; then
+        grep_step "uirml-chain smoke (RmlUi C# API: ops/clone/click-events/contract + font/asset/hot-reload; M6a-b3c)" \
+            "smoke-uirml: .* => OK" \
+            "${EDITOR}" --script "${SDK}" --smoke-uirml --frames 240 --validate --no-reopen
+    else
+        echo "  SKIP uirml-chain (missing ${SDK})"
+    fi
+    if [ -f "${SDK}" ]; then
         grep_step "script-chain smoke (CoreCLR/spawn/play byte-exact/--validate)" "editor-smoke PASS" \
             "${EDITOR}" --project "${TMP}/script" --script "${SDK}" --smoke --play --frames 240 --validate
     else

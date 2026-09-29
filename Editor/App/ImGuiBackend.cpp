@@ -63,6 +63,10 @@ static VkFormat ToVkFormat(rhi::Format f) { // 引擎侧 ToVk 在 RHI.cpp 内部
     }
 }
 
+// 批③c（M7）：SDL 事件旁听 tap（主线程约定——Window::PollEvents 与主循环同线）
+static std::function<void(const void*)> s_eventTap;
+void ImGuiBackend::SetSdlEventTap(std::function<void(const void*)> tap) { s_eventTap = std::move(tap); }
+
 struct ImGuiBackend::Impl {
     Window* window = nullptr;
     rhi::Device* device = nullptr;
@@ -106,6 +110,8 @@ struct ImGuiBackend::Impl {
     static void EventThunk(const void* sdlEvent, void* userData) {
         (void)userData;
         ImGui_ImplSDL3_ProcessEvent((const SDL_Event*)sdlEvent);
+        // 批③c（M7）：旁听 tap（后喂——ImGui 先吃；TEXT_INPUT/TEXT_EDITING → 游戏 UI）
+        if (s_eventTap) s_eventTap(sdlEvent);
     }
 };
 

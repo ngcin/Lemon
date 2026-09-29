@@ -99,6 +99,7 @@ internal static unsafe class DomainManager
                 // 换域清注册表/事件订阅 + 装配入口约定：GameMain.Configure()（无则无脚本系统）
                 Lemon.Scripting.Reset();
                 Lemon.Events.Reset();
+                Lemon.UI.Reset();
                 Lemon.Behaviours.Reset();
                 Lemon.SceneOps.Reset();
                 Lemon.Time.Reset(); // M5 清障①：新局归零（编辑器重进 Play 走 lemon_time_reset 同语义）
@@ -136,6 +137,7 @@ internal static unsafe class DomainManager
                 s_tickFn = null; s_asm = null; s_alc = null;
                 Lemon.Scripting.Reset();
                 Lemon.Events.Reset();
+                Lemon.UI.Reset();
                 Lemon.Behaviours.Reset();
                 Lemon.SceneOps.Reset();
                 Lemon.Time.Reset();
@@ -187,6 +189,7 @@ internal static unsafe class DomainManager
                 Lemon.Behaviours.Reset(); // 旧实例即弃（类型来自旧域，保着只会 pin）
                 Lemon.Scripting.Reset();
                 Lemon.Events.Reset();
+                Lemon.UI.Reset();
                 Lemon.SceneOps.Reset();
                 Lemon.Time.Reset();
                 s_tickFn = null; s_asm = null; s_alc = null;
