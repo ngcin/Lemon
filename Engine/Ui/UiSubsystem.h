@@ -141,6 +141,13 @@ public:
     /// backend.BeginFrame → ctx Render → backend.EndFrame）
     void Render(rhi::CommandList& cl, uint32_t rtW, uint32_t rtH);
 
+    /// 批③d-1（B1 dp 坐标系）：dp 参考高（px）。ratio = rtH/refH 只作用于 dp 单位
+    /// 属性（px 值不动——既有文档零影响）；0 = 不缩放（默认，px=dp）。Render 内
+    /// 变化才喂 ctx（RmlUi 原生 OnDpRatioChangeRecursive 触发全文档 dp 属性重排）。
+    void SetDpReferenceHeight(uint32_t refH);
+    uint32_t DpReferenceHeight() const; // 冒烟探针
+    float DpRatio() const;              // 冒烟探针（当前生效 ratio；refH=0 → 1）
+
     /// 冒烟探针：实际载入的字体族名（空 = 未初始化）
     const char* LoadedFontFamily() const;
 
@@ -153,6 +160,10 @@ public:
     /// 冒烟探针：条目克隆根中心（画布像素坐标——合成点击注入的落点；查无 = false）
     bool TryGetItemCenter(const char* docName, const char* containerId, const char* itemKey,
                           float* x, float* y) const;
+    /// 冒烟探针：元素 Border 盒尺寸（px；查无 = false）——dp 坐标系端到端断言源
+    /// （批③d-1：期望值 = dp 值 × DpRatio()）
+    bool TryGetElementBox(const char* docName, const char* elementId, float* w,
+                          float* h) const;
 
 private:
     struct Impl;

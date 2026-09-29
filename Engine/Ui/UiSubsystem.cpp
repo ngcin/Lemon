@@ -197,6 +197,12 @@ struct UiSubsystem::Impl {
     rhi::Device* device = nullptr;
     rhi::Device::RecreateCallbackId recreateCb = 0;
     uint32_t ctxW = 0, ctxH = 0;
+    // 批③d-1（B1 dp 坐标系）：参考高（px；0 = 不缩放，ratio 恒 1——px=dp，既有
+    // 文档零影响）。ratio = rtH/refH 只作用于 dp 单位属性；变化才喂 ctx（其
+    // OnDpRatioChangeRecursive 原生触发全文档 DP_SCALABLE_LENGTH 重排——已核
+    // RmlUi 源码，无需 ReloadStyleSheets 兜底）。
+    uint32_t dpRefH = 0;
+    float dpRatio = 1.0f;
     std::string fontFamily;
     bool reloadDocsNextUpdate = false; // 设备丢失 → 延迟到 Update 重载（见 Init 注记）
 
@@ -1011,6 +1017,13 @@ void UiSubsystem::Render(rhi::CommandList& cl, uint32_t rtW, uint32_t rtH) {
         i.ctxH = rtH;
         i.ctx->SetDimensions(Rml::Vector2i((int)rtW, (int)rtH));
     }
+    if (i.dpRefH > 0 && rtH > 0) { // 批③d-1：dp 比率随画布高走（窗口缩放时 UI 物理比例恒定）
+        const float ratio = (float)rtH / (float)i.dpRefH;
+        if (ratio != i.dpRatio) {
+            i.dpRatio = ratio;
+            i.ctx->SetDensityIndependentPixelRatio(ratio);
+        }
+    }
     i.backend->BeginFrame(cl, rtW, rtH);
     i.ctx->Render();
     i.backend->EndFrame();
@@ -1051,6 +1064,32 @@ bool UiSubsystem::TryGetItemCenter(const char* docName, const char* containerId,
     *x = tl.x + sz.x / 2;
     *y = tl.y + sz.y / 2;
     return true;
+}
+
+bool UiSubsystem::TryGetElementBox(const char* docName, const char* elementId, float* w,
+                                   float* h) const {
+    if (!impl_ || !w || !h) return false;
+    auto it = impl_->docs.find(docName);
+    if (it == impl_->docs.end() || !it->second.doc) return false;
+    Rml::Element* el = it->second.doc->GetElementById(Rml::String(elementId));
+    if (!el) return false;
+    const Rml::Vector2f sz = el->GetBox().GetSize(Rml::BoxArea::Border);
+    *w = sz.x;
+    *h = sz.y;
+    return true;
+}
+
+void UiSubsystem::SetDpReferenceHeight(uint32_t refH) {
+    if (!impl_) return;
+    impl_->dpRefH = refH;
+}
+
+uint32_t UiSubsystem::DpReferenceHeight() const {
+    return impl_ ? impl_->dpRefH : 0;
+}
+
+float UiSubsystem::DpRatio() const {
+    return impl_ ? impl_->dpRatio : 1.0f;
 }
 
 } // namespace lemon::ui

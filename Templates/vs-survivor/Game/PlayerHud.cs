@@ -1,20 +1,21 @@
 using Lemon;
 using Lemon.Interop;
 
-/// <summary>HUD（M6a 批⓪ T4 拆分）：四要素行 + 波次横幅。读 GameMain.Run 共享态；
-/// 死亡相位冻结末帧（"over" 结算行由战斗侧写）。</summary>
+/// <summary>HUD（M6b 批③d-1 文档化）：Assets/UI/hud.rml 六行 + 血/经双进度条，
+/// UI.SetText/SetStyle 每帧一次批量提交（UI.Apply——M2 单一口）。配色/字号/
+/// 间距全在 theme.rcss token（换肤 = 改 token 不改代码）；RtUi 通道（Lemon.Ui）
+/// 本屏退役——RmlUi 文档即编辑器 GameView 与 M8 打包的同一呈现者。读
+/// GameMain.Run 共享态；死亡相位冻结末帧（结算标题由战斗侧写入卡片屏）。</summary>
 public sealed class PlayerHud : LemonBehaviour
 {
-    private const uint kColorHp = 0xFF30B0F0u;   // 血条红（ABGR）
-    private const uint kColorXp = 0xFF30D8F0u;   // 经验金
-    private const uint kColorTime = 0xFFF0F0F0u; // 计时白
-    private const uint kColorKill = 0xFF4098F0u; // 击杀橙
-    private const uint kColorWave = 0xFF60E0A0u; // 波次绿
+    private const string kDoc = "Assets/UI/hud.rml";
 
     public PlayerHud()
     {
-        Subscribe(GameEvent.WaveStart, m =>
-            Ui.Set("wave", $"—— 第 {(int)m.P0 + 1} 波 ——", -1f, kColorWave));
+        Subscribe(GameEvent.WaveStart, m => {
+            UI.SetText(kDoc, "wave", $"—— 第 {(int)m.P0 + 1} 波 ——");
+            UI.Apply();
+        });
     }
 
     protected override void Update()
@@ -22,13 +23,18 @@ public sealed class PlayerHud : LemonBehaviour
         if (GameMain.Run.Dead) return;
         var hp = gameObject.GetComponent<Health>();
         var xp = gameObject.GetComponent<XpProgress>();
-        Ui.Set("hp", $"HP {(int)hp.Cur}/{(int)hp.Max}",
-               hp.Max > 0f ? hp.Cur / hp.Max : 0f, kColorHp);
-        Ui.Set("xp", $"LV {xp.Level} {(int)xp.Xp}/{(int)xp.XpToNext}",
-               xp.XpToNext > 0f ? xp.Xp / xp.XpToNext : 0f, kColorXp);
+        UI.SetText(kDoc, "hp-text", $"HP {(int)hp.Cur}/{(int)hp.Max}");
+        UI.SetStyle(kDoc, "hp-fill", "width", Pct(hp.Max > 0f ? hp.Cur / hp.Max : 0f));
+        UI.SetText(kDoc, "xp-text", $"LV {xp.Level} {(int)xp.Xp}/{(int)xp.XpToNext}");
+        UI.SetStyle(kDoc, "xp-fill", "width", Pct(xp.XpToNext > 0f ? xp.Xp / xp.XpToNext : 0f));
         int t = (int)GameMain.Run.Time;
-        Ui.Set("time", $"{t / 60}:{t % 60:00}", -1f, kColorTime);
-        Ui.Set("kills", $"击杀 {GameMain.Run.Kills}", -1f, kColorKill);
-        Ui.Set("best", $"最高纪录 {GameMain.Run.Best}", -1f);
+        UI.SetText(kDoc, "time", $"{t / 60}:{t % 60:00}");
+        UI.SetText(kDoc, "kills", $"击杀 {GameMain.Run.Kills}");
+        UI.SetText(kDoc, "best", $"最高纪录 {GameMain.Run.Best}");
+        UI.Apply();
     }
+
+    /// 进度条填充宽（"0%".."100%"——自定义格式无千分位/空格，RCSS 直接可吃）。
+    private static string Pct(float frac) =>
+        System.Math.Clamp(frac, 0f, 1f).ToString("0%", System.Globalization.CultureInfo.InvariantCulture);
 }

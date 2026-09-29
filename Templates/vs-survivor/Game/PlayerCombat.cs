@@ -7,6 +7,8 @@ using Lemon.Interop;
 ///（固定序轮换，零 RNG）+ 死亡结算/复活（死亡对话框点击）+ 受击表现（批①：
 /// Anim 受击段 Play+Queue 回行走 + Fx 飘字/世界血条）。一局共享态写
 /// GameMain.Run（HUD 读）。
+/// 批③d-1：三选一/死亡对话框迁 .rml 文档（GameMain.ShowCardsDoc——UI.Click
+/// 事件消费式回读，数字键通道退役）。
 /// 批② T4 数值表化（ADR-012）：升级池/武器参数读 Assets/tables/upgrades.tab +
 /// weapons.tab（列头即列契约；缺表 = 空池 + warn——三选一不弹 = 与"无升级"
 /// 语义一致，模板永不因表缺炸 Play）；XP 曲线系数读 balance.tab 写
@@ -96,6 +98,10 @@ public sealed class PlayerCombat : LemonBehaviour
         LoadTables();
         GameMain.Run.Best =
             int.TryParse(Save.GetString("vs.best", Save.Chan.Meta), out var b) ? b : 0; // 上一局纪录（跨局归 meta 档）
+        // 批③d-1：跨局归位对齐——EnterPlay 大扫除已 Hide 上局 stale 卡片文档，
+        // 静态标志此处同步清（待选槽清空防上局残事件复活）
+        GameMain.CardsShown = false;
+        GameMain.CardPickPending = null;
     }
 
     // ---- 批② T4 表载（ADR-012 D1 全字符串格；坏行跳过 + warn、缺表保底——
@@ -199,9 +205,12 @@ public sealed class PlayerCombat : LemonBehaviour
     protected override void Update()
     {
         if (GameMain.Run.Dead) {
-            // 死亡对话框：点击/数字键 1 → CardPick()==0 复活（消费式回读，与升级
-            // 卡片同通道；批④后修④——R 键路径废弃，交互不依赖键盘焦点路由）
-            if (Ui.CardPick() == 0) Revive();
+            // 死亡对话框：点击"复活"卡 → UI.Click 事件（key = "cards/ok"）复活。
+            // 消费式回读（读后即清）与升级卡片同通道；在途升级选择一并丢弃
+            // （Die 已弃置在途卡）；数字键通道已退役（批③d-1 设计定案 5）
+            string? pending = GameMain.CardPickPending;
+            GameMain.CardPickPending = null;
+            if (pending == "cards/ok") Revive();
             return;
         }
         GameMain.Run.Time += Time.DeltaTime;
@@ -233,13 +242,16 @@ public sealed class PlayerCombat : LemonBehaviour
     private void UpdateCards()
     {
         if (_cardsShown) {
-            int pick = Ui.CardPick();
-            if (pick < 0) return;
-            int n = _pickRotation - 1; // ShowCards 时已自增
-            ApplyOption((n + pick * 2) % _upgrades.Count);
+            string? pick = GameMain.CardPickPending; // "cards/<升级 id>"（UI.Click）
+            GameMain.CardPickPending = null;         // 消费式：同一选择只报一次
+            if (pick == null) return;
+            if (pick.StartsWith("cards/")) pick = pick.Substring("cards/".Length);
+            int idx = _upgrades.FindIndex(u => u.Id == pick); // 条目 key = 升级行 id
+            if (idx < 0) return; // 非本池 key（对话框在途等）——忽略，不误吞升级轮次
+            ApplyOption(idx);
             --_pendingLevels;
             _cardsShown = false;
-            Ui.HideCards();
+            GameMain.HideCardsDoc();
             if (_pendingLevels <= 0) Time.Scale = 1f; // 选完恢复（多级连选继续冻结）
             return;
         }
@@ -247,8 +259,11 @@ public sealed class PlayerCombat : LemonBehaviour
             Time.Scale = 0f; // 卡片期间冻结（RNG 不消耗，批① D5 语义）
             int n = _pickRotation++;
             int m = _upgrades.Count;
-            Ui.ShowCards("升级！三选一", _upgrades[n % m].Label,
-                         _upgrades[(n + 2) % m].Label, _upgrades[(n + 4) % m].Label);
+            GameMain.ShowCardsDoc("升级！三选一", new List<UiItem> {
+                new() { Key = _upgrades[n % m].Id,       Fields = { ["label"] = _upgrades[n % m].Label } },
+                new() { Key = _upgrades[(n + 2) % m].Id, Fields = { ["label"] = _upgrades[(n + 2) % m].Label } },
+                new() { Key = _upgrades[(n + 4) % m].Id, Fields = { ["label"] = _upgrades[(n + 4) % m].Label } },
+            });
             _cardsShown = true;
         }
     }
@@ -318,8 +333,10 @@ public sealed class PlayerCombat : LemonBehaviour
         }
         string title = newBest ? $"★ 新纪录 {score} 分！"
                                : $"本局 {score} 分（最高 {GameMain.Run.Best}）";
-        Ui.Set("over", title, -1f, 0xFF5080FFu);
-        Ui.ShowDialog(title, "复活");
+        // 批③d-1：死亡对话框 = 卡片文档单条形态（key "ok" → "cards/ok" 事件回传）
+        GameMain.ShowCardsDoc(title, new List<UiItem> {
+            new() { Key = "ok", Fields = { ["label"] = "复活" } },
+        });
     }
 
     private void Revive()
@@ -330,8 +347,7 @@ public sealed class PlayerCombat : LemonBehaviour
         hp.IFrames = 2f; // 复活无敌 2s（StatSystem 递减）
         gameObject.SetComponent(hp);
         Time.Scale = 1f;
-        Ui.HideCards();
-        Ui.Clear("over");
+        GameMain.HideCardsDoc();
     }
 
     // 热重载状态迁移（数值面，含 GameMain.Run 共享态——静态随域重建必须经包走；

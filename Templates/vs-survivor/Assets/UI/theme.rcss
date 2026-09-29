@@ -1,0 +1,112 @@
+/* theme.rcss — L2 最小默认皮 · 主题 token 单源（M6b 批③d-1，ADR-014 D7）
+ * 换肤 = 只改 token 区（组件区不出现裸色值/裸字号，全引 var()）。
+ * 字号/间距全 dp：ratio = 画布高 / 720（720dp 设计基准画布）；px 值不随 ratio 缩放。 */
+
+body {
+    /* 色板 */
+    --c-bg:     #141a22;    /* 屏底 */
+    --c-panel:  #22303fdd;  /* 面板底（半透明） */
+    --c-border: #5a7a9a;    /* 面板描边 */
+    --c-text:   #e8e8e8;    /* 正文 */
+    --c-dim:    #9aa3ad;    /* 次要文字（hint） */
+    --c-accent: #ffcc44;    /* 强调（标题/hover） */
+    --c-hp:     #e05a56;    /* 血条红 */
+    --c-xp:     #f0c040;    /* 经验金 */
+    --c-time:   #f0f0f0;    /* 计时白 */
+    --c-kill:   #f09840;    /* 击杀橙 */
+    --c-wave:   #60e0a0;    /* 波次绿 */
+    --c-bar-bg: #000000aa;  /* 进度条底 */
+    --c-scrim:  #000000a0;  /* 模态暗罩 */
+
+    /* 品级色（.card.rare/.epic 等 class 消费；③e 图鉴规模化用） */
+    --rarity-common: #9aa3ad;
+    --rarity-rare:   #4d9fff;
+    --rarity-epic:   #b04dff;
+
+    /* 字号（720dp 基准；464px 烟测画布 ×0.644 —— 20dp ≈ 12.9px） */
+    --fs-title: 26dp;
+    --fs-hud:   20dp;
+    --fs-body:  18dp;
+    --fs-hint:  14dp;
+
+    /* 间距 */
+    --sp-1: 4dp;
+    --sp-2: 8dp;
+    --sp-3: 16dp;
+
+    font-family: Noto Sans SC;
+    color: var(--c-text);
+
+    /* 画布约定：body = 定位包含块 + 满画布。RmlUi 偏差——静态 body 下的
+       absolute/fixed 子元素百分比尺寸解析到 RootBox（非盒）= 零包含块（实现期
+       实证 scrim 0×0）；relative 后以 body 盒为包含块。高 720dp × dp 比率
+       （= 画布高/720）恒等于画布全高——全屏覆盖元的标准形态 */
+    position: relative;
+    width: 100%;
+    height: 720dp;
+}
+
+/* ---- L2 组件首件套（样板两屏所需最小集）---- */
+
+.panel {                       /* 居中面板壳（卡片/对话框） */
+    background: var(--c-panel);
+    border: 2dp var(--c-border);
+    padding: var(--sp-3);
+}
+.scrim {                       /* 全屏模态暗罩 + flex 居中（尺寸百分比吃 body 盒——
+                                   见 body 画布约定注记；right/bottom 拉伸 RmlUi 不支持） */
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    left: 0; top: 0;
+    width: 100%; height: 100%;
+    background: var(--c-scrim);
+}
+.title {
+    font-size: var(--fs-title);
+    color: var(--c-accent);
+    text-align: center;
+    margin: var(--sp-1) 0 var(--sp-2) 0;
+}
+.hint {
+    font-size: var(--fs-hint);
+    color: var(--c-dim);
+    text-align: center;
+    margin-top: var(--sp-2);
+}
+
+/* HUD 行（左上纵列：文本 + 可选进度条同行） */
+.hud-row {
+    font-size: var(--fs-hud);
+    margin-bottom: var(--sp-1);
+    display: block;
+}
+.bar {                         /* 进度条（inline-block 随文本行） */
+    display: inline-block;
+    width: 120dp;
+    height: 10dp;
+    margin-left: var(--sp-2);
+    background: var(--c-bar-bg);
+}
+.bar-fill { height: 100%; }
+.bar-fill.hp { background: var(--c-hp); }
+.bar-fill.xp { background: var(--c-xp); }
+
+/* 卡片按钮（升级三选一 / 对话框单条形态） */
+.card {
+    display: block;
+    width: 220dp;
+    height: 64dp;
+    margin: var(--sp-2) 0;
+    padding: var(--sp-2);
+    background: var(--c-panel);
+    border: 2dp var(--rarity-common);
+    color: var(--c-text);
+    font-size: var(--fs-body);
+    text-align: center;
+}
+.card:hover  { border-color: var(--c-accent); background: #2d4056dd; }
+.card:active { border-color: var(--c-accent); background: #35507add; }
+.card.rare { border-color: var(--rarity-rare); }
+.card.epic { border-color: var(--rarity-epic); }

@@ -1,6 +1,6 @@
 # M6b 实施计划 —— 游戏UI产品壳（RmlUi 屏幕层，2026-09-29 自 M6a 批③ 独立）
 
-Status: in-progress（③a–③c done；③d 前置 done 代码面 2026-09-29（真人验收三件余用户）；③d-1/③d-2/③e 待开）
+Status: in-progress（③a–③c done；③d 前置 done 代码面 2026-09-29（真人验收编辑器侧已过用户口述）；**③d-1 done 代码面 2026-09-29**（smoke-template ×2 全绿 + smoke-uirml 双模式 dp 位全绿 + 回归 full 15/15 首跑过；真人验收两屏视觉走查/换肤演示余用户）；③d-2/③e 待开）
 
 > 2026-09-29 重排：UI 线自 M6a 批③ 整体迁入本里程碑（动因：M6a 承载过多——玩法/内容生产/UI 三线并进观感混乱；UI 已长成独立一条线。用户拍板）。**子批编号沿用 ③a–③e 不重编**（文件名与提交史实保留，"b3" 文件前缀 = 原 M6a 批③ 史实）。原 M6b 音频 → M6c、原 M6c Tilemap+TD → M6d（映射见 [08 文首重排注记](../../EngineDesign/08-Development-Roadmap.md)）。里程碑总览页：每批一个文件，开工前分解到文件/行级，完工后批文件内勾销；事件流水与实测数字记 [DevLog](../../DevLog/)。
 
@@ -17,7 +17,7 @@ Status: in-progress（③a–③c done；③d 前置 done 代码面 2026-09-29�
 | ③b | [2026-09-28-b3b-ui-font-asset-channel](./2026-09-28-b3b-ui-font-asset-channel.md) | 字体与资产通道：Noto Sans SC + `.rml/.rcss` 正式资产 + 贴图桥 + 双路热重载 | **done**（2026-09-28，M6a 期内） |
 | ③c | [2026-09-28-b3c-csharp-ui-api](./2026-09-28-b3c-csharp-ui-api.md) | C# API 与波1 机制：`UI.Apply(ops)` + UiEvent 队列 + 契约响亮失败 + M6 资产源 + M7 输入路由 | **done**（2026-09-28，M6a 期内；smoke-uirml 全链 `items=2/1 ev=c1r2 contract=1/textOK` + script-tests 1699 + 回归 15/15 + bench fps=73 + replay 零重录；提交 13d4871；真人验收余 GameView 手感/文本输入两件） |
 | ③d 前置 | [2026-09-29-b3d-pre-uidocument-scene-mount](./2026-09-29-b3d-pre-uidocument-scene-mount.md) | UIDocument 场景挂载：Unity UIDocument 同构粒度（一组件一 .rml）+ 进 Play 自动装载双通道 + EnterPlay 归位 | **done 代码面**（2026-09-29 T1–T6；smoke-uirml 双模式（脚本/无脚本）双通道/层序/stale/零装载全断言 OK + 回归 15/15；实现期发现 = 热重载隐式提层 → showSeq 复排，见批文件；真人验收三件余用户——Hierarchy 建 UIDocument 挂 .rml 进出 Play / 删资产红字 / svr-test 纯 C# 动态屏） |
-| ③d-1 | 开批新建 | 样板批：主题 token 单源（`theme.rcss`，`--token`/`var()`）+ L2 组件库首件 + **dp 坐标系落地** + HUD/卡片两屏样板 + 层序断言 | 待开（③d 前置收口后） |
+| ③d-1 | [2026-09-29-b3d1-sample-screens](./2026-09-29-b3d1-sample-screens.md) | 样板批：主题 token 单源（`theme.rcss`，`--token`/`var()`）+ L2 组件库首件 + **dp 坐标系落地** + HUD/卡片两屏样板 + 层序断言 | **done 代码面**（2026-09-29；ratio 原生重排实证免兜底 / RmlUi 全屏元坑 = body 画布约定 / 合成点击改引擎直灌 / 催命保死亡链余量；smoke-template ×2 全绿 + uirml 双模式 + 回归 15/15；真人验收余视觉走查/换肤两件） |
 | ③d-2 | 开批新建 | 铺量批：余四屏（主菜单/暂停/设置/结算）+ 档1 流程状态机（重开清场清单）+ smoke 随迁 + svr-test 全流程接通 | 待开（③d-1 收口后） |
 | ③e | 开批新建 | 图鉴/收集模板：波1 全量消费者（纸面验证 ①） | 待开 |
 

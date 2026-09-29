@@ -27,3 +27,9 @@ PlayerCombat.cs 头注释；表 GUID 生成期固定（改玩法勿动 .meta）�
 - 三选一池：upgrades.tab 行序（固定序轮换，零 RNG = 回放友好）。
 - 素材引用：.scene 双写 spriteGuid（真源）+ spriteId（进程内号）——
 改名/移位/manifest 重建后打开场景自动归一（M6a 批⓪ T2）。
+- 游戏 UI（M6b 批③d-1）：HUD 六行 + 升级三选一/死亡对话框走 .rml 文档
+（`Assets/UI/`——theme.rcss 主题 token 单源 + hud/cards 两屏；场景
+UI_HUD/UI_Cards 实体挂 UIDocument 声明装载）。**换肤 = 改 theme.rcss 的
+token 区**（色板/字号/间距，全 dp——画布缩放时 UI 物理比例恒定，720dp
+设计基准）；改布局/文案 = 改 .rml/.rcss 资产，引擎零改动。数字键选择
+已退役（点击选择）。主菜单/暂停/设置/结算四屏 ③d-2 铺量。

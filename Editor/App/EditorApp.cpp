@@ -332,6 +332,11 @@ constexpr uint64_t kMonsterHitClip = 0x5bd31a7c20000004ull;
 constexpr uint64_t kWeaponsTab = 0x7e57200000100001ull;  // weapons.tab
 constexpr uint64_t kUpgradesTab = 0x7e57200000100002ull; // upgrades.tab
 constexpr uint64_t kBalanceTab = 0x7e57200000100003ull;  // balance.tab
+// M6b 批③d-1：游戏 UI 文档/样式资产（Assets/UI/；7e5730 段。HUD/卡片两屏样板 +
+// L2 token 单源——六屏其余四屏 ③d-2 铺量）
+constexpr uint64_t kHudRml = 0x7e57300000100001ull;    // hud.rml（HUD 六行）
+constexpr uint64_t kCardsRml = 0x7e57300000100002ull;  // cards.rml（升级三选一/死亡对话）
+constexpr uint64_t kThemeRcss = 0x7e57300000100003ull; // theme.rcss（L2 主题 token 单源）
 
 /// 批①受击段两件套（clip + meta 落 assetsDir；引用 hero/monster 切片表尾帧）
 void WriteHitClips(const std::filesystem::path& assetsDir) {
@@ -410,6 +415,198 @@ void WriteTableAssets(const std::filesystem::path& assetsDir) {
     }
 }
 
+/// M6b 批③d-1：游戏 UI 三资产（Assets/UI/）。theme.rcss = L2 主题 token 单源
+/// （换肤 = 只改 token 区，组件区全引 var()）；hud/cards 两屏 = 六屏中的样板双屏
+///（ADR-014 一屏一文档 + UIDocument 场景挂载）。字号/间距/偏移全 dp（ratio =
+/// 画布高/720，B1 坐标系）；布局 flex/百分比。数字键通道退役——点击选择（设计
+/// 定案 5，批文件落账）。
+void WriteUiAssets(const std::filesystem::path& assets) {
+    namespace fs = std::filesystem;
+    fs::create_directories(assets / "UI");
+    struct Spec {
+        const char* file;
+        uint64_t guid;
+        const char* type;
+        const char* body;
+    };
+    const Spec specs[] = {
+        {"theme.rcss", kThemeRcss, "rcss", R"RCSS(/* theme.rcss — L2 最小默认皮 · 主题 token 单源（M6b 批③d-1，ADR-014 D7）
+ * 换肤 = 只改 token 区（组件区不出现裸色值/裸字号，全引 var()）。
+ * 字号/间距全 dp：ratio = 画布高 / 720（720dp 设计基准画布）；px 值不随 ratio 缩放。 */
+
+body {
+    /* 色板 */
+    --c-bg:     #141a22;    /* 屏底 */
+    --c-panel:  #22303fdd;  /* 面板底（半透明） */
+    --c-border: #5a7a9a;    /* 面板描边 */
+    --c-text:   #e8e8e8;    /* 正文 */
+    --c-dim:    #9aa3ad;    /* 次要文字（hint） */
+    --c-accent: #ffcc44;    /* 强调（标题/hover） */
+    --c-hp:     #e05a56;    /* 血条红 */
+    --c-xp:     #f0c040;    /* 经验金 */
+    --c-time:   #f0f0f0;    /* 计时白 */
+    --c-kill:   #f09840;    /* 击杀橙 */
+    --c-wave:   #60e0a0;    /* 波次绿 */
+    --c-bar-bg: #000000aa;  /* 进度条底 */
+    --c-scrim:  #000000a0;  /* 模态暗罩 */
+
+    /* 品级色（.card.rare/.epic 等 class 消费；③e 图鉴规模化用） */
+    --rarity-common: #9aa3ad;
+    --rarity-rare:   #4d9fff;
+    --rarity-epic:   #b04dff;
+
+    /* 字号（720dp 基准；464px 烟测画布 ×0.644 —— 20dp ≈ 12.9px） */
+    --fs-title: 26dp;
+    --fs-hud:   20dp;
+    --fs-body:  18dp;
+    --fs-hint:  14dp;
+
+    /* 间距 */
+    --sp-1: 4dp;
+    --sp-2: 8dp;
+    --sp-3: 16dp;
+
+    font-family: Noto Sans SC;
+    color: var(--c-text);
+
+    /* 画布约定：body = 定位包含块 + 满画布。RmlUi 偏差——静态 body 下的
+       absolute/fixed 子元素百分比尺寸解析到 RootBox（非盒）= 零包含块（实现期
+       实证 scrim 0×0）；relative 后以 body 盒为包含块。高 720dp × dp 比率
+       （= 画布高/720）恒等于画布全高——全屏覆盖元的标准形态 */
+    position: relative;
+    width: 100%;
+    height: 720dp;
+}
+
+/* ---- L2 组件首件套（样板两屏所需最小集）---- */
+
+.panel {                       /* 居中面板壳（卡片/对话框） */
+    background: var(--c-panel);
+    border: 2dp var(--c-border);
+    padding: var(--sp-3);
+}
+.scrim {                       /* 全屏模态暗罩 + flex 居中（尺寸百分比吃 body 盒——
+                                   见 body 画布约定注记；right/bottom 拉伸 RmlUi 不支持） */
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    left: 0; top: 0;
+    width: 100%; height: 100%;
+    background: var(--c-scrim);
+}
+.title {
+    font-size: var(--fs-title);
+    color: var(--c-accent);
+    text-align: center;
+    margin: var(--sp-1) 0 var(--sp-2) 0;
+}
+.hint {
+    font-size: var(--fs-hint);
+    color: var(--c-dim);
+    text-align: center;
+    margin-top: var(--sp-2);
+}
+
+/* HUD 行（左上纵列：文本 + 可选进度条同行） */
+.hud-row {
+    font-size: var(--fs-hud);
+    margin-bottom: var(--sp-1);
+    display: block;
+}
+.bar {                         /* 进度条（inline-block 随文本行） */
+    display: inline-block;
+    width: 120dp;
+    height: 10dp;
+    margin-left: var(--sp-2);
+    background: var(--c-bar-bg);
+}
+.bar-fill { height: 100%; }
+.bar-fill.hp { background: var(--c-hp); }
+.bar-fill.xp { background: var(--c-xp); }
+
+/* 卡片按钮（升级三选一 / 对话框单条形态） */
+.card {
+    display: block;
+    width: 220dp;
+    height: 64dp;
+    margin: var(--sp-2) 0;
+    padding: var(--sp-2);
+    background: var(--c-panel);
+    border: 2dp var(--rarity-common);
+    color: var(--c-text);
+    font-size: var(--fs-body);
+    text-align: center;
+}
+.card:hover  { border-color: var(--c-accent); background: #2d4056dd; }
+.card:active { border-color: var(--c-accent); background: #35507add; }
+.card.rare { border-color: var(--rarity-rare); }
+.card.epic { border-color: var(--rarity-epic); }
+)RCSS"},
+        {"hud.rml", kHudRml, "rml", R"RML(<rml>
+<head><title>hud</title>
+<link type="text/rcss" rel="stylesheet" href="theme.rcss"/>
+<style>
+/* 屏幕几何（L3 层——组件与配色在 theme.rcss） */
+#hud { position: absolute; display: block; left: 12dp; top: 10dp; }
+#hp  { color: var(--c-hp); }
+#xp  { color: var(--c-xp); }
+#time   { color: var(--c-time); }
+#kills  { color: var(--c-kill); }
+#best   { color: var(--c-dim); }
+#wave   { color: var(--c-wave); }
+</style>
+</head>
+<body>
+<div id="hud">
+  <div id="hp" class="hud-row"><span id="hp-text"/><div id="hp-bar" class="bar"><div id="hp-fill" class="bar-fill hp"/></div></div>
+  <div id="xp" class="hud-row"><span id="xp-text"/><div id="xp-bar" class="bar"><div id="xp-fill" class="bar-fill xp"/></div></div>
+  <div id="time" class="hud-row"/>
+  <div id="kills" class="hud-row"/>
+  <div id="best" class="hud-row"/>
+  <div id="wave" class="hud-row"/>
+</div>
+</body>
+</rml>
+)RML"},
+        {"cards.rml", kCardsRml, "rml", R"RML(<rml>
+<head><title>cards</title>
+<link type="text/rcss" rel="stylesheet" href="theme.rcss"/>
+<style>
+/* 屏幕几何（L3 层）。scrim 全屏暗罩 = 模态标准形态（兼层序观察窗）；
+     死亡对话框 = 同文档 SetItems 单条（纸面验证 ⓪ 单条形态） */
+#cards { display: block; }
+</style>
+</head>
+<body>
+<div id="cards-modal" class="scrim">
+  <div id="cards-panel" class="panel">
+    <div id="cards-title" class="title"/>
+    <div id="cards" data-template="card">
+      <ui-template data-name="card">
+        <button class="card" data-event="pick"><span data-field="label"/></button>
+      </ui-template>
+    </div>
+    <div id="cards-hint" class="hint">点击卡片选择</div>
+  </div>
+</div>
+</body>
+</rml>
+)RML"},
+    };
+    for (const Spec& sp : specs) {
+        {
+            std::ofstream f(assets / "UI" / sp.file, std::ios::trunc);
+            f << sp.body;
+        }
+        std::ofstream m(assets / "UI" / (std::string(sp.file) + ".meta"),
+                        std::ios::trunc);
+        m << "{\n  \"guid\": \"" << AssetDatabase::GuidToHex(sp.guid)
+          << "\",\n  \"type\": \"" << sp.type
+          << "\",\n  \"hash\": 0,\n  \"importedAt\": 0\n}\n";
+    }
+}
+
 /// 程序化小图（16×16：宝石/直射弹/穿透弹/环绕刃）+ 固定 guid meta
 void WriteProceduralAssets(const std::filesystem::path& assets) {
     namespace fs = std::filesystem;
@@ -473,7 +670,8 @@ void WriteGameSources(const std::filesystem::path& game, const std::string& sdkD
     }
     {
         std::ofstream f(game / "GameMain.cs", std::ios::trunc);
-        f << R"CS(using Lemon;
+        f << R"CS(using System.Collections.Generic;
+using Lemon;
 
 public static class GameMain
 {
@@ -488,12 +686,62 @@ public static class GameMain
         public static bool Dead;   // 死亡结算相位（三脚本共用的闸）
     }
 
+    /// <summary>卡片屏文档名（M6b 批③d-1：升级三选一/死亡对话框同一 .rml 文档，
+    /// 单条形态 = 对话框）。UI 资产建后不挪不改名（relPath 寻址约定）。</summary>
+    internal const string CardsDoc = "Assets/UI/cards.rml";
+
+    // ---- 卡片屏文档态（静态：Configure 订阅不持实例；PlayerCombat 写/消费）----
+    internal static string? CardPickPending; // 待选条目 key（"cards/<id>"；读后即清 = 消费式）
+    internal static string CardTitle = "";
+    internal static List<UiItem>? CardItems; // 最近一次条目集（热重载重灌用）
+    internal static bool CardsShown;
+
     public static void Configure()
     {
         // 注册序 = 跨类型 Update 执行序（04 §3.2）：移动 → 战斗 → HUD
         Lemon.Behaviours.Register<PlayerMovement>();
         Lemon.Behaviours.Register<PlayerCombat>();
         Lemon.Behaviours.Register<PlayerHud>();
+        // 批③d-1：UI 事件静态订阅（Configure 每域一次，跨局存活——③c 先例）。
+        // Click(pick) → 待选 key（PlayerCombat.Update 消费式读取）；DocumentReloaded
+        // → shown 态卡片重灌（M2 契约——隐藏态不重放，防凭空亮屏）
+        Lemon.UI.Events.Subscribe(OnUiEvent);
+    }
+
+    private static void OnUiEvent(Lemon.UiEvent e)
+    {
+        if (e.DocStr != CardsDoc) return;
+        if (e.Kind == (byte)Lemon.UiEventKind.Click && e.EvStr == "pick")
+            CardPickPending = e.KeyStr;
+        else if (e.Kind == (byte)Lemon.UiEventKind.DocumentReloaded && CardsShown)
+            ReplayCards();
+    }
+
+    /// <summary>显示卡片屏（模态：模拟已 Time.Scale=0 冻结，M7 游戏侧让出；
+    /// 层序 = 最近 Show 序自然压 HUD）。</summary>
+    internal static void ShowCardsDoc(string title, List<UiItem> items)
+    {
+        CardTitle = title;
+        CardItems = items;
+        CardsShown = true;
+        UI.Show(CardsDoc, modal: true); // Show 先行——同批后续 op 可达（③c 顺序契约）
+        UI.SetText(CardsDoc, "cards-title", title);
+        UI.SetItems(CardsDoc, "cards", "card", items);
+        UI.Apply();
+    }
+
+    internal static void HideCardsDoc()
+    {
+        CardsShown = false;
+        UI.Hide(CardsDoc);
+        UI.Apply();
+    }
+
+    private static void ReplayCards() // 热重载重灌（title + 条目；shown 态保持）
+    {
+        UI.SetText(CardsDoc, "cards-title", CardTitle);
+        if (CardItems != null) UI.SetItems(CardsDoc, "cards", "card", CardItems);
+        UI.Apply();
     }
 }
 )CS";
@@ -535,6 +783,8 @@ using Lemon.Interop;
 ///（固定序轮换，零 RNG）+ 死亡结算/复活（死亡对话框点击）+ 受击表现（批①：
 /// Anim 受击段 Play+Queue 回行走 + Fx 飘字/世界血条）。一局共享态写
 /// GameMain.Run（HUD 读）。
+/// 批③d-1：三选一/死亡对话框迁 .rml 文档（GameMain.ShowCardsDoc——UI.Click
+/// 事件消费式回读，数字键通道退役）。
 /// 批② T4 数值表化（ADR-012）：升级池/武器参数读 Assets/tables/upgrades.tab +
 /// weapons.tab（列头即列契约；缺表 = 空池 + warn——三选一不弹 = 与"无升级"
 /// 语义一致，模板永不因表缺炸 Play）；XP 曲线系数读 balance.tab 写
@@ -624,6 +874,10 @@ public sealed class PlayerCombat : LemonBehaviour
         LoadTables();
         GameMain.Run.Best =
             int.TryParse(Save.GetString("vs.best", Save.Chan.Meta), out var b) ? b : 0; // 上一局纪录（跨局归 meta 档）
+        // 批③d-1：跨局归位对齐——EnterPlay 大扫除已 Hide 上局 stale 卡片文档，
+        // 静态标志此处同步清（待选槽清空防上局残事件复活）
+        GameMain.CardsShown = false;
+        GameMain.CardPickPending = null;
     }
 
     // ---- 批② T4 表载（ADR-012 D1 全字符串格；坏行跳过 + warn、缺表保底——
@@ -727,9 +981,12 @@ public sealed class PlayerCombat : LemonBehaviour
     protected override void Update()
     {
         if (GameMain.Run.Dead) {
-            // 死亡对话框：点击/数字键 1 → CardPick()==0 复活（消费式回读，与升级
-            // 卡片同通道；批④后修④——R 键路径废弃，交互不依赖键盘焦点路由）
-            if (Ui.CardPick() == 0) Revive();
+            // 死亡对话框：点击"复活"卡 → UI.Click 事件（key = "cards/ok"）复活。
+            // 消费式回读（读后即清）与升级卡片同通道；在途升级选择一并丢弃
+            // （Die 已弃置在途卡）；数字键通道已退役（批③d-1 设计定案 5）
+            string? pending = GameMain.CardPickPending;
+            GameMain.CardPickPending = null;
+            if (pending == "cards/ok") Revive();
             return;
         }
         GameMain.Run.Time += Time.DeltaTime;
@@ -761,13 +1018,16 @@ public sealed class PlayerCombat : LemonBehaviour
     private void UpdateCards()
     {
         if (_cardsShown) {
-            int pick = Ui.CardPick();
-            if (pick < 0) return;
-            int n = _pickRotation - 1; // ShowCards 时已自增
-            ApplyOption((n + pick * 2) % _upgrades.Count);
+            string? pick = GameMain.CardPickPending; // "cards/<升级 id>"（UI.Click）
+            GameMain.CardPickPending = null;         // 消费式：同一选择只报一次
+            if (pick == null) return;
+            if (pick.StartsWith("cards/")) pick = pick.Substring("cards/".Length);
+            int idx = _upgrades.FindIndex(u => u.Id == pick); // 条目 key = 升级行 id
+            if (idx < 0) return; // 非本池 key（对话框在途等）——忽略，不误吞升级轮次
+            ApplyOption(idx);
             --_pendingLevels;
             _cardsShown = false;
-            Ui.HideCards();
+            GameMain.HideCardsDoc();
             if (_pendingLevels <= 0) Time.Scale = 1f; // 选完恢复（多级连选继续冻结）
             return;
         }
@@ -775,8 +1035,11 @@ public sealed class PlayerCombat : LemonBehaviour
             Time.Scale = 0f; // 卡片期间冻结（RNG 不消耗，批① D5 语义）
             int n = _pickRotation++;
             int m = _upgrades.Count;
-            Ui.ShowCards("升级！三选一", _upgrades[n % m].Label,
-                         _upgrades[(n + 2) % m].Label, _upgrades[(n + 4) % m].Label);
+            GameMain.ShowCardsDoc("升级！三选一", new List<UiItem> {
+                new() { Key = _upgrades[n % m].Id,       Fields = { ["label"] = _upgrades[n % m].Label } },
+                new() { Key = _upgrades[(n + 2) % m].Id, Fields = { ["label"] = _upgrades[(n + 2) % m].Label } },
+                new() { Key = _upgrades[(n + 4) % m].Id, Fields = { ["label"] = _upgrades[(n + 4) % m].Label } },
+            });
             _cardsShown = true;
         }
     }
@@ -846,8 +1109,10 @@ public sealed class PlayerCombat : LemonBehaviour
         }
         string title = newBest ? $"★ 新纪录 {score} 分！"
                                : $"本局 {score} 分（最高 {GameMain.Run.Best}）";
-        Ui.Set("over", title, -1f, 0xFF5080FFu);
-        Ui.ShowDialog(title, "复活");
+        // 批③d-1：死亡对话框 = 卡片文档单条形态（key "ok" → "cards/ok" 事件回传）
+        GameMain.ShowCardsDoc(title, new List<UiItem> {
+            new() { Key = "ok", Fields = { ["label"] = "复活" } },
+        });
     }
 
     private void Revive()
@@ -858,8 +1123,7 @@ public sealed class PlayerCombat : LemonBehaviour
         hp.IFrames = 2f; // 复活无敌 2s（StatSystem 递减）
         gameObject.SetComponent(hp);
         Time.Scale = 1f;
-        Ui.HideCards();
-        Ui.Clear("over");
+        GameMain.HideCardsDoc();
     }
 
     // 热重载状态迁移（数值面，含 GameMain.Run 共享态——静态随域重建必须经包走；
@@ -893,20 +1157,21 @@ public sealed class PlayerCombat : LemonBehaviour
         f << R"CS(using Lemon;
 using Lemon.Interop;
 
-/// <summary>HUD（M6a 批⓪ T4 拆分）：四要素行 + 波次横幅。读 GameMain.Run 共享态；
-/// 死亡相位冻结末帧（"over" 结算行由战斗侧写）。</summary>
+/// <summary>HUD（M6b 批③d-1 文档化）：Assets/UI/hud.rml 六行 + 血/经双进度条，
+/// UI.SetText/SetStyle 每帧一次批量提交（UI.Apply——M2 单一口）。配色/字号/
+/// 间距全在 theme.rcss token（换肤 = 改 token 不改代码）；RtUi 通道（Lemon.Ui）
+/// 本屏退役——RmlUi 文档即编辑器 GameView 与 M8 打包的同一呈现者。读
+/// GameMain.Run 共享态；死亡相位冻结末帧（结算标题由战斗侧写入卡片屏）。</summary>
 public sealed class PlayerHud : LemonBehaviour
 {
-    private const uint kColorHp = 0xFF30B0F0u;   // 血条红（ABGR）
-    private const uint kColorXp = 0xFF30D8F0u;   // 经验金
-    private const uint kColorTime = 0xFFF0F0F0u; // 计时白
-    private const uint kColorKill = 0xFF4098F0u; // 击杀橙
-    private const uint kColorWave = 0xFF60E0A0u; // 波次绿
+    private const string kDoc = "Assets/UI/hud.rml";
 
     public PlayerHud()
     {
-        Subscribe(GameEvent.WaveStart, m =>
-            Ui.Set("wave", $"—— 第 {(int)m.P0 + 1} 波 ——", -1f, kColorWave));
+        Subscribe(GameEvent.WaveStart, m => {
+            UI.SetText(kDoc, "wave", $"—— 第 {(int)m.P0 + 1} 波 ——");
+            UI.Apply();
+        });
     }
 
     protected override void Update()
@@ -914,15 +1179,20 @@ public sealed class PlayerHud : LemonBehaviour
         if (GameMain.Run.Dead) return;
         var hp = gameObject.GetComponent<Health>();
         var xp = gameObject.GetComponent<XpProgress>();
-        Ui.Set("hp", $"HP {(int)hp.Cur}/{(int)hp.Max}",
-               hp.Max > 0f ? hp.Cur / hp.Max : 0f, kColorHp);
-        Ui.Set("xp", $"LV {xp.Level} {(int)xp.Xp}/{(int)xp.XpToNext}",
-               xp.XpToNext > 0f ? xp.Xp / xp.XpToNext : 0f, kColorXp);
+        UI.SetText(kDoc, "hp-text", $"HP {(int)hp.Cur}/{(int)hp.Max}");
+        UI.SetStyle(kDoc, "hp-fill", "width", Pct(hp.Max > 0f ? hp.Cur / hp.Max : 0f));
+        UI.SetText(kDoc, "xp-text", $"LV {xp.Level} {(int)xp.Xp}/{(int)xp.XpToNext}");
+        UI.SetStyle(kDoc, "xp-fill", "width", Pct(xp.XpToNext > 0f ? xp.Xp / xp.XpToNext : 0f));
         int t = (int)GameMain.Run.Time;
-        Ui.Set("time", $"{t / 60}:{t % 60:00}", -1f, kColorTime);
-        Ui.Set("kills", $"击杀 {GameMain.Run.Kills}", -1f, kColorKill);
-        Ui.Set("best", $"最高纪录 {GameMain.Run.Best}", -1f);
+        UI.SetText(kDoc, "time", $"{t / 60}:{t % 60:00}");
+        UI.SetText(kDoc, "kills", $"击杀 {GameMain.Run.Kills}");
+        UI.SetText(kDoc, "best", $"最高纪录 {GameMain.Run.Best}");
+        UI.Apply();
     }
+
+    /// 进度条填充宽（"0%".."100%"——自定义格式无千分位/空格，RCSS 直接可吃）。
+    private static string Pct(float frac) =>
+        System.Math.Clamp(frac, 0f, 1f).ToString("0%", System.Globalization.CultureInfo.InvariantCulture);
 }
 )CS";
     }
@@ -1112,6 +1382,7 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
         fs::copy(yamiSrc / f, root / "Assets" / f, fs::copy_options::overwrite_existing, ec);
     WriteHitClips(root / "Assets"); // 批①受击段（模板自带，PlayerCombat 受击切段用）
     WriteTableAssets(root / "Assets"); // 批② T4 数值三表（weapons/upgrades/balance）
+    WriteUiAssets(root / "Assets"); // 批③d-1：UI 三资产（theme/hud/cards——样板双屏）
 
     // 2) 程序化小图 + Game/ 脚本工程 + prefab 占位（固定 guid meta 先行——
     //    OpenProject 扫描按 meta 记账，之后覆写 .prefab 内容 guid 不动）
@@ -1161,7 +1432,13 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
              "PlayerCombat.cs 头注释；表 GUID 生成期固定（改玩法勿动 .meta）。\n"
              "- 三选一池：upgrades.tab 行序（固定序轮换，零 RNG = 回放友好）。\n"
              "- 素材引用：.scene 双写 spriteGuid（真源）+ spriteId（进程内号）——\n"
-             "改名/移位/manifest 重建后打开场景自动归一（M6a 批⓪ T2）。\n";
+             "改名/移位/manifest 重建后打开场景自动归一（M6a 批⓪ T2）。\n"
+             "- 游戏 UI（M6b 批③d-1）：HUD 六行 + 升级三选一/死亡对话框走 .rml 文档\n"
+             "（`Assets/UI/`——theme.rcss 主题 token 单源 + hud/cards 两屏；场景\n"
+             "UI_HUD/UI_Cards 实体挂 UIDocument 声明装载）。**换肤 = 改 theme.rcss 的\n"
+             "token 区**（色板/字号/间距，全 dp——画布缩放时 UI 物理比例恒定，720dp\n"
+             "设计基准）；改布局/文案 = 改 .rml/.rcss 资产，引擎零改动。数字键选择\n"
+             "已退役（点击选择）。主菜单/暂停/设置/结算四屏 ③d-2 铺量。\n";
     }
 
     // 3) 打开项目（扫描记账）→ 播种场景 + 覆写 prefab 内容。
@@ -1213,6 +1490,18 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
         def.entryCount = 1;
         def.entries[0] = ecs::WaveEntry{.prefabId = (uint32_t)kBossPf, .count = 1,
                                         .interval = 1.0f, .range = 80.0f};
+    }
+
+    // 批③d-1：UI 两屏场景声明（通道 A——EnterPlay 扫描装载）。HUD 进 Play 即显；
+    // 卡片装载但隐藏（showOnStart=0，C# UI.Show 点亮——升级/死亡动态屏）。运行时
+    // 显隐归 C#（组件字段只承载设计期声明态，Play 期写回不生效——③d 前置铁律）。
+    {
+        ecs::Entity hud = ctx.CreateEntity("UI_HUD");
+        s.Emplace<ecs::UIDocument>(hud,
+                                   ecs::UIDocument{.sourceAssetGuid = kHudRml});
+        ecs::Entity cards = ctx.CreateEntity("UI_Cards");
+        s.Emplace<ecs::UIDocument>(cards, ecs::UIDocument{.sourceAssetGuid = kCardsRml,
+                                                          .showOnStart = 0});
     }
 
     // prefab 内容（scratch 实体 → SaveEntityTree → 覆写 .prefab；导出后销毁）
@@ -1309,9 +1598,20 @@ int g_imguiErrorCount = 0;
 // M5 批④ --smoke-template 证据计数（事件 sink + 帧循环采样写入；verdict 汇总）
 int g_tplWaveStarts = 0, g_tplLevelUps = 0, g_tplDeaths = 0;
 int g_tplGems = 0, g_tplMobs = 0; // 峰值快照（帧内采样）
-bool g_tplUiDocZero = false; // 批③d 前置 T5：无 UIDocument 场景装载恒 0（基准护栏）
+// 批③d 前置 T5 → 批③d-1 随迁：模板场景现挂 2 UIDocument（HUD/cards）——零装载
+// 护栏升级为"通道 A 装载恰 2"（装载点单一性防线的同型收紧；bench 场景仍零装载）
+int g_tplUiLoads = -1;
+// 批③d-1：文档化断言态（原 RtUi 行/卡片探针随迁）+ 层序三拍状态机
+bool g_tplHudDocOk = false;
+int g_tplLayerStage = 0; // 0 基线请求→1 取回→2 等卡片→3 取回→4 等隐藏→5 取回→6 完
+int g_tplHudPixN0 = -1, g_tplHudPixDuring = -1, g_tplHudPixAfter = -1;
+bool g_tplCapReq = false, g_tplCapPending = false;
+int g_tplCapPix = -1;
+int g_tplClickPhase = 0, g_tplClickCooldown = 0; // 直灌点击三帧（定位/down/up）+ 冷却
+bool g_tplPointerHold = false; // 指针保持窗（FeedGameUiInput 让位——Update 建悬停用）
+float g_tplClickX = 0, g_tplClickY = 0;
 char g_tplHudRows[64] = "";
-bool g_tplHudOk = false, g_tplBestLoaded = false, g_tplWaveRow = false;
+bool g_tplBestLoaded = false, g_tplWaveRow = false; // g_tplHudOk → g_tplHudDocOk（批③d-1 随迁）
 // M6a 批①：受击切段链（怪 clipId 曾 = monster-hit 段）+ fx 通道（飘字/血条在场）
 bool g_tplMobHitClip = false, g_tplFxText = false, g_tplFxBar = false;
 bool g_tplCardsSeen = false, g_tplPicked = false, g_tplCardsHidden = false;
@@ -3035,6 +3335,9 @@ int EditorApp::Run(const EditorLaunch& launch) {
             [this](const std::string& rel, std::string& abs) {
                 return ResolveUiDocument(rel, abs);
             });
+        // 批③d-1（B1 dp 坐标系）：L2 皮设计基准 = 720dp 高画布（ratio = gameRT 高/
+        // 720，只缩 dp 单位——px 文档零影响）。项目级覆写登记 ③d-2（工程档）。
+        gameUi_->SetDpReferenceHeight(720);
     } else {
         gameUi_.reset();
     }
@@ -3545,9 +3848,9 @@ int EditorApp::Run(const EditorLaunch& launch) {
     // M5 批④ --smoke-template：EnterPlay 已由上方 playTest 块完成（模板含 Game/、
     // 编译成功才走到这——PlayBlockedByScripts 守卫先行）。此处挂事件计数 sink。
     if (launch.smokeTemplate && ctx_.Playing()) {
-        // 批③d 前置 T5：基准护栏——模板场景无 UIDocument，装载调用恒 0（装载点
-        // 只在 MountSceneUiDocuments 的 EnterPlay 扫描，未进任何通用路径）
-        g_tplUiDocZero = !gameUi_ || gameUi_->DocumentLoadCount() == 0;
+        // 批③d-1：通道 A 装载数（恰 2 = HUD+cards 场景声明；bench 场景零装载口径
+        // 不变——装载点只在 MountSceneUiDocuments 的 EnterPlay 扫描）
+        g_tplUiLoads = gameUi_ ? (int)gameUi_->DocumentLoadCount() : -1;
         ctx_.ActiveWorld().SetEventSink(
             [](ecs::World&, const ecs::EventPacket& p) {
                 if (p.type == ecs::GameEvent::WaveStart) ++g_tplWaveStarts;
@@ -4086,7 +4389,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
             }
         } else {
             ctx_.TickEditor(1.0f / 60.0f); // Essential（销毁提交）+ 空 FixedTick
-            UpdateGameCameraFollow();  // 非 Play：退出跟随时回默认位
+            UpdateGameCameraFollow();  // 非 Play：退出跟随后回默认位
         }
 
         // 冒烟悬停扫掠（M4.5）：逐帧走窗口网格 → 会话内所有可见控件至少被悬停
@@ -5127,6 +5430,15 @@ int EditorApp::Run(const EditorLaunch& launch) {
                 cl.DebugRecordTextureCapture(viewport_->SceneRenderTarget());
             }
         }
+        // 批③d-1：smoke-template 层序三拍捕获（动态时点——证据块状态机置请求位）。
+        // 帧序：证据块（渲染后）置位 → 次帧本块录 gameRT → 同帧尾证据块取回数色
+        if (launch.smokeTemplate && g_tplCapReq) {
+            g_tplCapReq = false;
+            g_tplCapPending = true;
+            cl.DebugRecordCapture();
+            if (viewport_->GameRenderTarget().IsValid())
+                cl.DebugRecordTextureCapture(viewport_->GameRenderTarget());
+        }
 
         bool needRe = false, lost = false;
         device_->EndFrameAndPresent(needRe, lost);
@@ -5206,18 +5518,31 @@ int EditorApp::Run(const EditorLaunch& launch) {
                                 rowsOf(vs_template::kUpgradesTab) == 7 &&
                                 rowsOf(vs_template::kBalanceTab) == 2;
             }
-            const lemon::ecs::RtUiChannel& rt = ctx_.ActiveWorld().RtUi();
-            bool has[6] = {}; // hp/xp/time/kills/best/wave
-            static const char* const kKeys[6] = {"hp", "xp", "time", "kills", "best", "wave"};
-            for (uint32_t i = 0; i < rt.Count(); ++i)
-                for (int k = 0; k < 6; ++k)
-                    if (std::strcmp(rt.At(i).key, kKeys[k]) == 0) {
-                        has[k] = true;
-                        if (k == 4 && std::strstr(rt.At(i).text, "123"))
-                            g_tplBestLoaded = true; // 预置存档 → C# 读回 → HUD 回显
-                    }
-            if (has[0] && has[1] && has[2] && has[3]) g_tplHudOk = true;
-            if (has[5]) g_tplWaveRow = true;
+            // 批③d-1：HUD 文档化断言（原 RtUi 行探针随迁）——六要素文本经
+            // TryGetElementText（DOM 读数，零渲染依赖）；best 含 "123" = 预置存档
+            // → C# 读回 → HUD 回显
+            static const char* const kHudDoc = "Assets/UI/hud.rml";
+            if (gameUi_) {
+                char hudTxt[96] = {};
+                auto hudHas = [&](const char* id) {
+                    return gameUi_->TryGetElementText(kHudDoc, id, hudTxt,
+                                                      sizeof hudTxt) &&
+                           hudTxt[0] != '\0';
+                };
+                if (!g_tplHudDocOk) {
+                    char t4[4][96] = {};
+                    bool ok = true;
+                    const char* const ids[4] = {"hp-text", "xp-text", "time", "kills"};
+                    for (int i = 0; i < 4; ++i)
+                        ok = ok && gameUi_->TryGetElementText(kHudDoc, ids[i], t4[i],
+                                                              sizeof t4[i]) &&
+                             t4[i][0] != '\0';
+                    g_tplHudDocOk = ok;
+                }
+                if (!g_tplBestLoaded && hudHas("best") && std::strstr(hudTxt, "123"))
+                    g_tplBestLoaded = true;
+                if (!g_tplWaveRow && hudHas("wave")) g_tplWaveRow = true;
+            }
             // M6a 批①：受击切段 + fx 通道采样（PlayerCombat.OnHit 写——脚本面端到端）
             if (!g_tplMobHitClip) {
                 ctx_.ActiveScene().View<ecs::Animator2D>().each([&](auto, ecs::Animator2D& a) {
@@ -5230,21 +5555,120 @@ int EditorApp::Run(const EditorLaunch& launch) {
                 if (fx.TextCount() > 0) g_tplFxText = true;
                 if (fx.BarCount() > 0) g_tplFxBar = true;
             }
-            lemon::ecs::RtUiCards& cards = ctx_.ActiveWorld().Cards();
-            if (cards.active) {
-                g_tplCardsSeen = true;
-                if (frame > 120) {
-                    cards.pick = 0; // 自动选择（数字键 1/点击同通道；升级卡与死亡
-                                    // 对话框通用——消费式回读归 C#，逐帧置 0 幂等）
-                    g_tplPicked = true;
+            // 批③d-1：卡片链文档化（原 RtUiCards 探针随迁）。升级卡 3 条 / 死亡对话
+            // 框 1 条（key "ok"）；选择 = **引擎直灌点击**（SetPointer + 两帧
+            // down/up + 指针保持窗——绕 ImGui 悬停链：template 会话里 GameView
+            // IsItemHovered 被压制（mouse 落位正确仍恒假，根因未明），ImGui→RmlUi
+            // 路由链由 smoke-uirml 的 60/61 帧点击独立覆盖）：UiEvent → #16 →
+            // C# 消费 → Hide。三帧状态机：定位（下一帧 Update 建悬停）→ down → up
+            static const char* const kCardsDoc = "Assets/UI/cards.rml";
+            const int cardsN =
+                gameUi_ ? gameUi_->ContainerItemCount(kCardsDoc, "cards") : -1;
+            const bool cardsShown =
+                gameUi_ && gameUi_->IsDocumentShown(kCardsDoc);
+            if (cardsN == 3) g_tplCardsSeen = true;
+            if (g_tplClickCooldown > 0) --g_tplClickCooldown;
+            if (g_tplClickPhase == 1) { // down（本帧 Update 已按保持指针建好悬停）
+                gameUi_->ProcessMouseButton(0, true);
+                g_tplClickPhase = 2;
+            } else if (g_tplClickPhase == 2) { // up（RmlUi click 边沿）
+                gameUi_->ProcessMouseButton(0, false);
+                g_tplClickPhase = 0;
+                g_tplPointerHold = false;
+                g_tplClickCooldown = 15; // 事件往返（→UiEvent→#16→C#→Hide）余量
+                g_tplPicked = true;
+            } else if (gameUi_ && cardsShown && cardsN >= 1 &&
+                       g_tplClickCooldown == 0 && frame > 120) {
+                // 可见卡片逐 key 试探（u0..u5 = 升级池 id；ok = 死亡对话框）——
+                // TryGetItemCenter 只对在场条目返回中心
+                static const char* const kCardKeys[7] = {"u0", "u1", "u2", "u3",
+                                                         "u4", "u5", "ok"};
+                for (const char* key : kCardKeys) {
+                    float cx, cy;
+                    if (gameUi_->TryGetItemCenter(kCardsDoc, "cards", key, &cx, &cy)) {
+                        g_tplClickX = cx;
+                        g_tplClickY = cy;
+                        gameUi_->SetPointer((int)cx, (int)cy, true); // 保持至 up 帧
+                        g_tplPointerHold = true;
+                        g_tplClickPhase = 1;
+                        break;
+                    }
                 }
-            } else if (g_tplPicked) {
-                g_tplCardsHidden = true; // C# 消费 → HideCards
+            }
+            if (g_tplPicked && !cardsShown) g_tplCardsHidden = true; // C# 消费 → Hide
+            // 批③d-1：层序三拍（cards 文档的 scrim 压暗 HUD 文字 = cards 在上的像素
+            // 级证明——若层序颠倒 scrim 盖不住 HUD）。计数 #f0f0f0 近色（time 行白字）。
+            // 帧序：本钩置请求位 → 次帧渲染块录 gameRT → 同帧尾本钩取回
+            if (g_tplCapPending) {
+                std::vector<uint8_t> rt;
+                uint32_t rw = 0, rh = 0;
+                if (device_->DebugFetchTextureCapture(rt, rw, rh)) {
+                    // HUD 文字区（ratio 派生——画布尺寸跨会话可变，px 写死不健壮）：
+                    // 左上 (12dp,10dp) 起 ~230dp × ~110dp（六行纵列，卡片面板居中
+                    // 不入区——只有 scrim 会盖进来）。计 #f0f0f0 近色（time 行白字）
+                    const float ratio = gameUi_ ? gameUi_->DpRatio() : 1.0f;
+                    const uint32_t x1 = (uint32_t)(242.0f * ratio);
+                    const uint32_t y1 = (uint32_t)(120.0f * ratio);
+                    int n = 0;
+                    for (uint32_t y = 0; y < rh && y < y1; ++y)
+                        for (uint32_t x = 0; x < rw && x < x1; ++x) {
+                            const uint8_t* p = &rt[((size_t)y * rw + x) * 4];
+                            if (std::abs((int)p[0] - 240) <= 30 &&
+                                std::abs((int)p[1] - 240) <= 30 &&
+                                std::abs((int)p[2] - 240) <= 30)
+                                ++n;
+                        }
+                    g_tplCapPix = n;
+                }
+                g_tplCapPending = false;
+            }
+            if (g_tplLayerStage == 0 && frame > 100) { // 基线：HUD 已上屏、卡片未到
+                g_tplCapReq = true;
+                g_tplLayerStage = 1;
+            } else if (g_tplLayerStage == 1 && g_tplCapPix >= 0) {
+                g_tplHudPixN0 = g_tplCapPix;
+                g_tplCapPix = -1;
+                g_tplLayerStage = 2;
+            } else if (g_tplLayerStage == 2 && cardsShown) {
+                g_tplCapReq = true;
+                g_tplLayerStage = 3;
+            } else if (g_tplLayerStage == 3 && g_tplCapPix >= 0) {
+                g_tplHudPixDuring = g_tplCapPix;
+                g_tplCapPix = -1;
+                g_tplLayerStage = 4;
+            } else if (g_tplLayerStage == 4 && g_tplPicked && !cardsShown) {
+                g_tplCapReq = true;
+                g_tplLayerStage = 5;
+            } else if (g_tplLayerStage == 5 && g_tplCapPix >= 0) {
+                g_tplHudPixAfter = g_tplCapPix;
+                g_tplCapPix = -1;
+                g_tplLayerStage = 6;
+            }
+            // 批③d-1 催命：文档化卡片的选择有几帧事件往返（原 RtUi 直写同帧），
+            // 局内时序整体后移 → 波 2 刷新走近的余量变薄（实测一轮贴边一轮超时）。
+            // 武装后 50 帧仍未死 = 把追击怪贴脸（保 Hazard 接触真实路径，只省走路）
+            if (frame >= 2150 && !g_tplDeathSeen) {
+                Vec2 ppos{0, 0};
+                bool got = false;
+                ctx_.ActiveScene().View<scripting::ScriptBox>().each(
+                    [&](auto ent, scripting::ScriptBox&) {
+                        const ecs::Entity e = ecs::Scene::FromEntt(ent);
+                        if (const ecs::Transform2D* t =
+                                ctx_.ActiveScene().TryGet<ecs::Transform2D>(e)) {
+                            ppos = t->pos;
+                            got = true;
+                        }
+                    });
+                if (got)
+                    ctx_.ActiveScene().View<ecs::Transform2D, ecs::Chase>().each(
+                        [&](auto, ecs::Transform2D& tf, ecs::Chase&) {
+                            tf.pos = Vec2{ppos.x + 18.0f, ppos.y + 6.0f};
+                        });
             }
             // 批④后修④死亡链回归：kDeathArm 帧起压血到 0.1 + 掐射击（站桩下
             // 自动炮火半路清怪、玩家碰不到怪——停火让怪群近身，Hazard 真路径击杀）
             // → 玩家脚本实体仍在场（View 命中 = 未被销毁）、flags bit0 未置（未被
-            // 异常禁用）→ pick 复活 → 血回满 + 解冻 + 对话框隐藏 = 复活成功
+            // 异常禁用）→ 点击复活 → 血回满 + 解冻 + 卡片文档隐藏 = 复活成功
             if (frame >= 2100 && !g_tplDeathArmed) {
                 g_tplDeathArmed = true;
                 ctx_.ActiveScene().View<scripting::ScriptBox>().each(
@@ -5269,14 +5693,14 @@ int EditorApp::Run(const EditorLaunch& launch) {
                         if (!hp) return;
                         if (hp->cur <= 0.0f) g_tplDeathSeen = true;
                         else if (g_tplDeathSeen && hp->cur >= hp->max &&
-                                 ctx_.ActiveWorld().TimeScale() > 0.0f && !cards.active)
+                                 ctx_.ActiveWorld().TimeScale() > 0.0f && !cardsShown)
                             g_tplRevived = true;
                     });
                 if (!anyScript) g_tplScriptOk = false; // 脚本实体消失（销毁回归锚点）
             }
-            if (frame % 60 == 0) { // 诊断快照（低频）：RtUi 行 + 场内分布
-                std::snprintf(g_tplHudRows, sizeof g_tplHudRows, "hp/xp/time/kills=%d%d%d%d",
-                              has[0], has[1], has[2], has[3]);
+            if (frame % 60 == 0) { // 诊断快照（低频）：文档 HUD 位 + 场内分布
+                std::snprintf(g_tplHudRows, sizeof g_tplHudRows, "doc=%d cards=%d",
+                              g_tplHudDocOk ? 1 : 0, cardsN);
                 ctx_.ActiveScene().View<ecs::Collectible>().each(
                     [](auto, ecs::Collectible&) { ++g_tplGems; });
                 ctx_.ActiveScene().View<ecs::Chase>().each(
@@ -5719,26 +6143,35 @@ int EditorApp::Run(const EditorLaunch& launch) {
         }
         // M5 批④模板链验收：向导复制 → build → Play 全链在跑（能到这 = 前两环已过）；
         // 断言 HUD 四要素 / 存档载入回显 / 波次 / 击杀 / 升级卡片出现-选择-隐藏。
+        // 批③d-1：HUD/卡片断言已随迁文档面（hud(doc)=TryGetElementText / cards 容器
+        // 计数 + 合成点击 + IsDocumentShown）；layer = 层序三拍（scrim 压暗复原）；
+        // uidoc = 通道 A 装载恰 2（HUD+cards 场景声明）。
         if (launch.smokeTemplate) {
-            const bool tplOk = g_tplHudOk && g_tplBestLoaded && g_tplWaveRow &&
+            const bool layerOk = g_tplHudPixN0 > 40 &&
+                                 g_tplHudPixDuring < g_tplHudPixN0 / 2 &&
+                                 g_tplHudPixAfter > g_tplHudPixN0 / 2;
+            const bool tplOk = g_tplHudDocOk && g_tplBestLoaded && g_tplWaveRow &&
                                g_tplDeaths > 0 && g_tplLevelUps > 0 && g_tplCardsSeen &&
                                g_tplPicked && g_tplCardsHidden && g_tplDeathSeen &&
                                g_tplRevived && g_tplScriptOk &&
                                g_tplMobHitClip && g_tplFxText && g_tplFxBar && // 批①
                                g_tplTablesOk && // 批② T4：数值表载入
-                               g_tplUiDocZero; // 批③d 前置：基准护栏（零装载）
-            std::printf("[lemon] smoke-template: hud=%s saveLoad=%s wave(row=%s n=%d) "
-                        "kills=%d levelUps=%d cards(seen=%s pick=%s hidden=%s) "
+                               g_tplUiLoads == 2 && layerOk; // 批③d-1：装载恰 2 + 层序三拍
+            std::printf("[lemon] smoke-template: hud(doc)=%s saveLoad=%s wave(row=%s n=%d) "
+                        "kills=%d levelUps=%d cards(doc seen=%s pick=%s hidden=%s) "
+                        "layer(%d/%d/%d=%s) "
                         "death(seen=%s revive=%s scriptOk=%s) "
-                        "hitClip=%s fx(text=%s bar=%s) tables=%s uidoc=%s => %s\n",
-                        g_tplHudOk ? "YES" : "NO", g_tplBestLoaded ? "YES" : "NO",
+                        "hitClip=%s fx(text=%s bar=%s) tables=%s uidoc=%d => %s\n",
+                        g_tplHudDocOk ? "YES" : "NO", g_tplBestLoaded ? "YES" : "NO",
                         g_tplWaveRow ? "YES" : "NO", g_tplWaveStarts, g_tplDeaths,
                         g_tplLevelUps, g_tplCardsSeen ? "YES" : "NO",
                         g_tplPicked ? "YES" : "NO", g_tplCardsHidden ? "YES" : "NO",
+                        g_tplHudPixN0, g_tplHudPixDuring, g_tplHudPixAfter,
+                        layerOk ? "OK" : "FAIL",
                         g_tplDeathSeen ? "YES" : "NO", g_tplRevived ? "YES" : "NO",
                         g_tplScriptOk ? "YES" : "NO", g_tplMobHitClip ? "YES" : "NO",
                         g_tplFxText ? "YES" : "NO", g_tplFxBar ? "YES" : "NO",
-                        g_tplTablesOk ? "YES" : "NO", g_tplUiDocZero ? "0" : "N",
+                        g_tplTablesOk ? "YES" : "NO", g_tplUiLoads,
                         tplOk ? "OK" : "FAIL");
             std::printf("[lemon] smoke-template: diag %s gems(peak)=%d mobs(peak)=%d\n",
                         g_tplHudRows, g_tplGems, g_tplMobs);
@@ -5972,6 +6405,17 @@ int EditorApp::Run(const EditorLaunch& launch) {
             uiOk = notoFont && panelN > 3000 && titleGN > 20 && bodyBN > 20 && texN > 500 &&
                    oldGoldN < 5 && oldGrayN < 5 && titleTopN >= titleGN * 3 / 4;
         }
+        // 批③d-1（B1 dp 坐标系）：ratio = gameRT 高/720 + dpbox 尺寸 = dp 值 × ratio
+        //（px 定位/dp 尺寸混合元——既有 px 断言不受 ratio 影响的活证）
+        const float dpRatio = gameUi_ ? gameUi_->DpRatio() : 1.0f;
+        float dpW = -1.f, dpH = -1.f;
+        if (gameUi_)
+            gameUi_->TryGetElementBox("Assets/UI/uirml.rml", "dpbox", &dpW, &dpH);
+        const bool dpRatioOk = fetched && rh > 0 &&
+                               std::fabs(dpRatio - (float)rh / 720.0f) < 0.01f;
+        const bool dpBoxOk = fetched &&
+                             std::fabs(dpW - 100.0f * dpRatio) < 1.0f &&
+                             std::fabs(dpH - 50.0f * dpRatio) < 1.0f;
         // 批③c：C# API 全链位（--script 时生效；未带脚本 = n/a 通过——③b 口径
         // 的直跑兼容）。items = 克隆行数（cards 2 + negbox 1 负面行）；text = 探针
         // SetText 后的 title（热重载两段后仍是探针值 = DocumentReloaded 重灌证据）；
@@ -6020,20 +6464,23 @@ int EditorApp::Run(const EditorLaunch& launch) {
                              smokeUiEvictPixN >= 0 && smokeUiEvictPixN < 5;
         std::printf("[lemon] smoke-uirml: doc=%d font=%s panel=%d(>3000) titleG=%d(>20) "
                     "bodyB=%d(>20) tex=%d(>500) old=%d/%d(<5) titleTop=%d/%d(≥3/4) "
+                    "dp(ratio=%.3f box=%.1fx%.1f/%s) "
                     "items=%d/%d ev=c%dr%d contract=%u/%s "
                     "uidoc(a=%d/b=%d/c=%d loads=%u/%u) layer(bTop=%d aTop=%d) "
                     "p2(stale=%d keepC=%d+%dpx dyn=%s del=%d) "
                     "evict2(seed=%d live=%d edit=%d pix=%d) => %s\n",
                     hasDoc ? 1 : 0, gameUi_ ? gameUi_->LoadedFontFamily() : "-",
                     panelN, titleGN, bodyBN, texN, oldGoldN, oldGrayN, titleTopN, titleGN,
+                    dpRatio, dpW, dpH, (dpRatioOk && dpBoxOk) ? "OK" : "BAD",
                     itemsN, negN, evClicks, evReloads, contractN, textOk ? "textOK" : "textBAD",
                     hasDoc ? 1 : 0, hasDocB ? 1 : 0, hasDocC ? 1 : 0, loadsN, smokeUiLoadsP2,
                     smokeUiLayerBTopN, smokeUiLayerATopN,
                     smokeUiStaleOk ? 1 : 0, smokeUiKeepCOk ? 1 : 0, cPrevN,
                     dynTextOk ? "OK" : "BAD", smokeUiDelEvictOk ? 1 : 0,
                     smokeUiEvictSeedOk ? 1 : 0, smokeUiZombiePixN, smokeUiEvictEditOk ? 1 : 0,
-                    smokeUiEvictPixN, (uiOk && uiOk3c && uidocOk) ? "OK" : "FAIL");
-        if (!uiOk || !uiOk3c || !uidocOk) exitCode = 1;
+                    smokeUiEvictPixN,
+                    (uiOk && uiOk3c && uidocOk && dpRatioOk && dpBoxOk) ? "OK" : "FAIL");
+        if (!uiOk || !uiOk3c || !uidocOk || !dpRatioOk || !dpBoxOk) exitCode = 1;
     }
 
     watcher_.Stop();          // 先停 watcher 线程（此后无资产重扫）
@@ -6091,7 +6538,9 @@ void EditorApp::FeedGameUiInput() {
             py = (mp.y - gvCanvasY_) * (float)gvRtH_ / gvCanvasH_;
         }
     }
-    gameUi_->SetPointer((int)px, (int)py, inside);
+    // 批③d-1：模板卡片直灌点击窗——指针保持（Update 建悬停、down/up 两帧间不被
+    // 真实鼠标复位覆盖；证据块状态机置位，见 smoke-template 段注记）
+    if (!g_tplPointerHold) gameUi_->SetPointer((int)px, (int)py, inside);
     // review P2：画布无效（GameView 关闭/未上报）时 W/H 与 RT 均为残 0——0/0 = NaN
     // 会灌进 SDL_SetTextInputArea。守卫 + 恒等中性（锚点 = 光标本位）。
     if (gvCanvasValid_ && gvRtW_ > 0 && gvRtH_ > 0 && gvCanvasW_ > 0.0f && gvCanvasH_ > 0.0f)
@@ -6252,7 +6701,11 @@ void EditorApp::SeedSmokeUiRmlProject() {
              "#dynpanel { position: absolute; left: 400px; top: 300px; width: 160px;\n"
              "    height: 120px; background: #802040; color: #e0c0d0; font-size: 14px; }\n"
              "#editpanel { position: absolute; left: 590px; top: 80px; width: 140px;\n"
-             "    height: 60px; background: #604080; color: #d0c0e8; font-size: 12px; }\n";
+             "    height: 60px; background: #604080; color: #d0c0e8; font-size: 12px; }\n"
+             // 批③d-1：dp 坐标系断言元（角位 #305060 避让全部既有计数色带——px
+             // 定位 + dp 尺寸：期望渲染尺寸 = 100dp/50dp × ratio）
+             "#dpbox { position: absolute; left: 700px; top: 415px; width: 100dp;\n"
+             "    height: 50dp; background: #305060; }\n";
     }
     { // 文档：<link> 引样式 + 三要素 + <img>（热重载中点标题色 → #40ff90 绿）
         std::ofstream f(assets / "uirml.rml", std::ios::trunc);
@@ -6273,7 +6726,10 @@ void EditorApp::SeedSmokeUiRmlProject() {
              "    <ui-template data-name=\"nrow\"><div class=\"nb\"><span data-field=\"lab\"/>"
              "</div></ui-template>\n"
              "  </div>\n"
-             "</div>\n</body>\n</rml>\n";
+             "</div>\n"
+             // 批③d-1：dp 断言元（panel 外右下角——px 定位不扰动面板区像素断言）
+             "<div id=\"dpbox\"/>\n"
+             "</body>\n</rml>\n";
     }
     launchCopy_.projectDir = tmp.string();
     launch_ = &launchCopy_;

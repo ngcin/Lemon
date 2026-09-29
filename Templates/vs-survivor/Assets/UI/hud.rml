@@ -1,0 +1,25 @@
+<rml>
+<head><title>hud</title>
+<link type="text/rcss" rel="stylesheet" href="theme.rcss"/>
+<style>
+/* 屏幕几何（L3 层——组件与配色在 theme.rcss） */
+#hud { position: absolute; display: block; left: 12dp; top: 10dp; }
+#hp  { color: var(--c-hp); }
+#xp  { color: var(--c-xp); }
+#time   { color: var(--c-time); }
+#kills  { color: var(--c-kill); }
+#best   { color: var(--c-dim); }
+#wave   { color: var(--c-wave); }
+</style>
+</head>
+<body>
+<div id="hud">
+  <div id="hp" class="hud-row"><span id="hp-text"/><div id="hp-bar" class="bar"><div id="hp-fill" class="bar-fill hp"/></div></div>
+  <div id="xp" class="hud-row"><span id="xp-text"/><div id="xp-bar" class="bar"><div id="xp-fill" class="bar-fill xp"/></div></div>
+  <div id="time" class="hud-row"/>
+  <div id="kills" class="hud-row"/>
+  <div id="best" class="hud-row"/>
+  <div id="wave" class="hud-row"/>
+</div>
+</body>
+</rml>
