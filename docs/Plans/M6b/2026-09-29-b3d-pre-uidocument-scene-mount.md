@@ -1,7 +1,7 @@
 # 批③d 前置：UIDocument 场景挂载——.rml 文档组件化 + 进 Play 自动装载 + Show 落空兜底
 
 - 日期：2026-09-29
-- Status: **planned（设计定案冻结，待开工）**——本批当前只落本批文件，未写代码。
+- Status: **done 代码面（2026-09-29 T1–T6 全落；真人验收判据 6 三件余用户，不阻塞 ③d 开工）**
 - **2026-09-29 审核修订（开工前解冻再冻结）**：M6b 开工前第三方审核发现三处硬伤 + 两项关联决策拍板，本文件同步修订——①T1 布局字数错误（8B → 16B）+ 补注册 id（=30）；②T3 的 modal 归位缺引擎侧写入口，补 `ShowDocument` 尾加形参任务项；③§3 归位规则与 ③b 双击预览语义打架（C5），落 stale 位口径消歧；④D1 层序路线拍板「甲-轻量：Show 即提层」，落进 T2/T3；⑤关联决策 B1（dp 坐标系）与 D2（③d 两拆）归 [M6b.md 决策注记](./M6b.md)，本批不含 dp。
 - 归属：M6b 游戏UI产品壳（原 M6a 批③，2026-09-29 迁；总览页 [M6b.md](./M6b.md)）
 - 关联：[ADR-014](../../ADR/ADR-014-Game-UI-RmlUi-Integration.md) M1（装载语义补章，T6 落注记）· [批③c](./2026-09-28-b3c-csharp-ui-api.md)（C# API 已交付，本批零改动）· [③b 批文件](./2026-09-28-b3b-ui-font-asset-channel.md)（双击手动通道 = 本批取代对象）
@@ -125,12 +125,43 @@ struct UIDocument {
 
 ## 验收判据（全过才勾销）
 
-1. smoke-uirml 双通道全绿（通道 A 声明装载 + 通道 B 落空装载各有断言），exit 0，验证层零错。
-2. script-tests 1699+（TestUiSdk 不回归；如需 UIDocument 组件镜像断言则新增计数同步）。
-3. 回归 full 15/15（uirml-chain 断言串升级后）。
-4. bench fps 与 replay mismatches=0（基准护栏断言在列）。
-5. Play→Stop→Play 循环：第二局 UI = 场景声明态（机器断言）。
-6. **真人验收**（余用户，不阻塞勾销但阻塞 ③d 开工）：①Hierarchy 建 UI Document → 挂 svr-test 的 .rml → 进 Play 见屏、退 Play 干净、再进 Play 初始态；②删 .rml 后进 Play 得红字（不空屏）；③svr-test 里纯 C# `UI.Show` 动态屏不经场景声明可用。
+1. ✅ smoke-uirml 双通道全绿（通道 A 声明装载 + 通道 B 落空装载各有断言），exit 0，验证层零错——
+   双模式（--script / 无脚本）各一次：`uidoc(a=1/b=1/c=1 loads=4/1) layer(bTop=18409/18180 aTop=0)
+   p2(stale=1 keepC=1+8176px dyn=OK)`（脚本模式另有 items=2/1 ev=c1r4 contract=1/textOK）。
+2. ✅ script-tests 通过（组件计数 30→31 四处同步；C# 镜像布局双向对拍含 UIDocument）。
+3. ✅ 回归 full 15/15（uirml-chain 断言串升级 `uidoc=…` 位后；2026-09-29 首跑 13/15——
+   script-tests 的 TestUiSdk op 计数 4→6 未同步 + smoke-drag 负载抖动（T1 先例），修计数后
+   复跑全绿；smoke-template `uidoc=0` 位随 template-chain 在列）。
+4. ✅ bench/replay 口径：装载点只在 `MountSceneUiDocuments`（EnterPlay 扫描），bench-survivor/
+   bench-scene 进 Play 必经零装载；smoke-template 断言 `uidoc=0`（无 UIDocument 场景装载恒 0）。
+   replay：组件数据入哈希但基准场/模板场零 UIDocument 实例 → 哈希流不变（零重录结构性成立）。
+5. ✅ Play→Stop→Play 循环（smoke 帧 200 Stop / 203 重进）：第二局 UI = 场景声明态机器断言——
+   动态 Show 过的 dyn 被 Hide（装载保留，第二局装载增量恰 1 = 只重装声明文档）、Edit 双击装载的
+   editprev 保持可见（8176px）、A 回 showOnStart 声明态。
+6. ⏳ **真人验收**（余用户，不阻塞勾销但阻塞 ③d 开工）：①Hierarchy 建 UI Document → 挂 svr-test
+   的 .rml → 进 Play 见屏、退 Play 干净、再进 Play 初始态；②删 .rml 后进 Play 得红字（不空屏）；
+   ③svr-test 里纯 C# `UI.Show` 动态屏不经场景声明可用。
+
+## 实现期发现（偏离批文件预设计的落账）
+
+- **文档热重载 = 从 context 根重挂 → 隐式提层**（D1 缺口，smoke 未脚本模式实抓：dyn Show 后
+  frame100 .rml 重载把 A 提到 dyn 之上，"最近 Show 序"被装载序覆写）。修 = `Doc::showSeq`
+  发号器（Show/ShowDocument(show) 发号，Hide/归位清零，新装载归零）+ `ReloadDocument`/
+  `ReloadAllDocuments` 尾部按序 `RestoreDocumentOrder()` 复排——不变量跨热重载成立。脚本模式
+  原本靠 DocumentReloaded → C# 重灌的 Show 自愈，纯引擎文档（无脚本管理）从此不再漂层。
+- **通道 B 兜底成功不应计契约错误**：预设计的"FindDoc 落空即 ContractFail 再兜底"会把每次
+  成功兜底也记一笔（smoke 实测 contract=2）——改 LookupDoc 先行，未命中 → 兜底 → 仍失败才
+  响亮。FindDoc 遂无调用方，删除。
+- **负面契约 op 时点 160 → 210**：EnterPlay 通道 A 重装主文档会 `InvalidateContainers`——160
+  时点（第一局）建的负面容器活不到终帧（negN=-1）。移到第二局内（210 > 203 重进），
+  contract 恰 1 / negN=1 两断言恢复。
+- **uiev 终值捕获 238 → 199**：Play→Stop→Play 往返使第二局 RtUi = 新世界（无点击/无重载 →
+  uiev 槽恒空），终帧读数必须落在第一局尾。
+- **smoke-uirml 夹具改制**：主文档 uirml.rml 改由场景 UIDocument 声明（通道 A 独立验收面），
+  `SeedSmokeUiDocument` 只装载 editprev.rml（Edit 双击装载代表）；新增 dyn.rml（通道 B 面板，
+  场景不声明）。层序断言 = gameRT 中点两捕获（170/190 录、171/191 数色 #802040）：
+  B 后 Show 在上 >500 → 175 重 Show A → <5。gameRT 实测 824×464（默认布局确定性），
+  dyn 覆盖块 (400,300,160,120) 落 A 面板内、editprev (590,80,140,60) 在 A 右侧空带。
 
 ## 风险与既知边界（R1–R12 讨论落账；R1–R3 = 决策记录 2/3/4）
 
