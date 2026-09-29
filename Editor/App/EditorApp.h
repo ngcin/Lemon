@@ -212,6 +212,16 @@ private:
     void LoadProjectFonts(); // 批③b：Assets/ 下字体文件 → RmlUi fallback 注册
     /// M4.5 终验判据场景（向导项目上零代码搭"走地图+刷怪"）：地图/角色/刷怪器
     void SeedJudgementScene(uint64_t spawnGuid);
+    /// --smoke-drag 帧注入状态机（批③c-1 自 Run 外迁 EditorAppSmoke.cpp；
+    /// Run 主循环原位调用——帧号锚定/执行时序逐位不变）
+    void SmokeDragFrame(uint64_t frame);
+    /// --smoke-drag 末帧裁决（分段计数 + 断言行打印；false = 退出码 1）
+    bool SmokeDragVerdict();
+    /// --smoke-ui 帧注入状态机（批③c-2 自 Run 外迁 EditorAppSmoke.cpp；
+    /// Run 原位调用且须在 ui_->BeginFrame 前——注入先于 ImGui 帧消费）
+    void SmokeUiFrame(uint64_t frame);
+    /// --smoke-ui 末帧裁决位（裁决行已在帧 154 块内打印；此处只回退出码）
+    bool SmokeUiVerdict();
     /// 换装判定辅助：Game/*.csproj 路径 + 输出 dll（项目根/.lemon/bin/<名>.dll）
     bool FindGameProject(std::string& csproj, std::string& dll);
     /// Game/ 源码变更检测（FileWatcher 置脏后过滤 .cs，排除 obj/bin）
