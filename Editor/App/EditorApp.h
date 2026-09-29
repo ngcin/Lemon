@@ -222,6 +222,13 @@ private:
     void SmokeUiFrame(uint64_t frame);
     /// --smoke-ui 末帧裁决位（裁决行已在帧 154 块内打印；此处只回退出码）
     bool SmokeUiVerdict();
+    /// --smoke-anim 族五挂点（批③c-3 自 Run 外迁 EditorAppSmoke.cpp；挂点原位
+    /// 逐位不变）：预循环播种 / EnterPlay 后快照断言 / 帧链 / 帧采样 / 末帧裁决
+    void SmokeAnimSeed();
+    void SmokeAnimPlaySetup();
+    void SmokeAnimFrame(uint64_t frame);
+    void SmokeAnimSample(uint64_t frame);
+    bool SmokeAnimVerdict();
     /// 换装判定辅助：Game/*.csproj 路径 + 输出 dll（项目根/.lemon/bin/<名>.dll）
     bool FindGameProject(std::string& csproj, std::string& dll);
     /// Game/ 源码变更检测（FileWatcher 置脏后过滤 .cs，排除 obj/bin）
