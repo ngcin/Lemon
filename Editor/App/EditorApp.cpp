@@ -3220,6 +3220,9 @@ int EditorApp::Run(const EditorLaunch& launch) {
     bool smokeUiStaleOk = false, smokeUiKeepCOk = false; // 第二局动态屏 Hide / Edit 双击保持
     uint32_t smokeUiLoadsP2 = 0; // 第二局装载增量（恰 1 = 只重装声明文档）
     bool smokeUiExitP2 = false; // Play→Stop→Play 往返完成
+    bool smokeUiHasDocB = false; // 220 帧前 dyn 存量（删除播种后终帧恒 false，不能终帧读）
+    bool smokeUiDelEvictOk = false; // 真人验收②回灌：删 .rml → 已装载文档逐出
+    char smokeUiDynText[64] = {}; // 220 帧前 dyntitle 快照（同上——逐出后终帧读恒空）
     Vec2 smokeCreatePt{-1.0e9f, -1.0e9f};
     Vec2 smokePickPt{-1.0e9f, -1.0e9f};
     Vec2 smokeSheetPt{-1.0e9f, -1.0e9f};
@@ -3840,6 +3843,21 @@ int EditorApp::Run(const EditorLaunch& launch) {
                         gameUi_ ? gameUi_->DocumentLoadCount() - loadsBefore : 0;
                 }
             }
+            // 批③d 前置 T5 补（真人验收②回灌）：删 .rml → 已装载文档逐出。220 删
+            // dyn.rml + 直接重扫（watcher 亦到，二次 no-op）→ RescanAssets 的
+            // removed 分支 UnloadDocument；230 断言 docs map 已无该文档。红字另证
+            // （本钩在 Play 中且场景未声明 dyn，通道 A 的 missing 红字源在别处）
+            if (frame == 220 && gameUi_) {
+                smokeUiHasDocB = gameUi_->HasDocument("Assets/UI/dyn.rml");
+                gameUi_->TryGetElementText("Assets/UI/dyn.rml", "dyntitle",
+                                           smokeUiDynText, sizeof(smokeUiDynText));
+                std::error_code ecd;
+                std::filesystem::remove(uiDir / "dyn.rml", ecd);
+                RescanAssets();
+                LEMON_LOG("uirml-smoke: dyn.rml 删除播种（→ UnloadDocument 逐出）");
+            }
+            if (frame == 230 && gameUi_)
+                smokeUiDelEvictOk = !gameUi_->HasDocument("Assets/UI/dyn.rml");
             if (frame == 100) {
                 if (rewriteFile(uiDir / "uirml.rml", "#ffd060", "#40ff90"))
                     LEMON_LOG("uirml-smoke: .rml 热重载播种（标题金→绿）");
@@ -5860,34 +5878,33 @@ int EditorApp::Run(const EditorLaunch& launch) {
         //   layer = D1 层序（B 后 Show 在上 → 171 段 #802040>500；175 重 Show A 后
         //   190 段 <5 = 被盖住）；stale/keepC/p2 = Play→Stop→Play：第二局动态屏被
         //   Hide（装载保留）、Edit 双击装载保持可见、装载增量恰 1（只重装声明文档）
-        const bool hasDocB = gameUi_ && gameUi_->HasDocument("Assets/UI/dyn.rml");
+        // hasDocB 读 220 帧存量快照（220 删除播种后终帧恒 false——逐出本身是断言）
+        const bool hasDocB = smokeUiHasDocB;
         const bool hasDocC = gameUi_ && gameUi_->HasDocument("Assets/UI/editprev.rml");
         const uint32_t loadsN = gameUi_ ? gameUi_->DocumentLoadCount() : 0;
         int cPrevN = 0;
         char dynText[64] = {};
         if (gameUi_ && fetched)
             cPrevN = CountPixelsNear(rt, rw, rh, 96, 64, 128, 30); // #604080 Edit 预览
-        if (gameUi_)
-            gameUi_->TryGetElementText("Assets/UI/dyn.rml", "dyntitle", dynText,
-                                       sizeof(dynText));
+        std::snprintf(dynText, sizeof(dynText), "%s", smokeUiDynText); // 220 快照（逐出后终帧读恒空）
         // scripted：C# 同批 Show+SetText 到刚兜底装载的 dyn（通道 B 顺序契约）
         const bool dynTextOk = !scripted || std::strcmp(dynText, "通道B已装载") == 0;
         const bool uidocOk = hasDoc && hasDocB && hasDocC && smokeUiExitP2 &&
                              smokeUiStaleOk && smokeUiKeepCOk && smokeUiLoadsP2 == 1 &&
                              smokeUiLayerBTopN > 500 && smokeUiLayerATopN < 5 &&
-                             cPrevN > 100 && dynTextOk;
+                             cPrevN > 100 && dynTextOk && smokeUiDelEvictOk;
         std::printf("[lemon] smoke-uirml: doc=%d font=%s panel=%d(>3000) titleG=%d(>20) "
                     "bodyB=%d(>20) tex=%d(>500) old=%d/%d(<5) titleTop=%d/%d(≥3/4) "
                     "items=%d/%d ev=c%dr%d contract=%u/%s "
                     "uidoc(a=%d/b=%d/c=%d loads=%u/%u) layer(bTop=%d aTop=%d) "
-                    "p2(stale=%d keepC=%d+%dpx dyn=%s) => %s\n",
+                    "p2(stale=%d keepC=%d+%dpx dyn=%s del=%d) => %s\n",
                     hasDoc ? 1 : 0, gameUi_ ? gameUi_->LoadedFontFamily() : "-",
                     panelN, titleGN, bodyBN, texN, oldGoldN, oldGrayN, titleTopN, titleGN,
                     itemsN, negN, evClicks, evReloads, contractN, textOk ? "textOK" : "textBAD",
                     hasDoc ? 1 : 0, hasDocB ? 1 : 0, hasDocC ? 1 : 0, loadsN, smokeUiLoadsP2,
                     smokeUiLayerBTopN, smokeUiLayerATopN,
                     smokeUiStaleOk ? 1 : 0, smokeUiKeepCOk ? 1 : 0, cPrevN,
-                    dynTextOk ? "OK" : "BAD",
+                    dynTextOk ? "OK" : "BAD", smokeUiDelEvictOk ? 1 : 0,
                     (uiOk && uiOk3c && uidocOk) ? "OK" : "FAIL");
         if (!uiOk || !uiOk3c || !uidocOk) exitCode = 1;
     }

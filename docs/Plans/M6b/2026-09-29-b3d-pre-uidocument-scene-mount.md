@@ -128,6 +128,9 @@ struct UIDocument {
 1. ✅ smoke-uirml 双通道全绿（通道 A 声明装载 + 通道 B 落空装载各有断言），exit 0，验证层零错——
    双模式（--script / 无脚本）各一次：`uidoc(a=1/b=1/c=1 loads=4/1) layer(bTop=18409/18180 aTop=0)
    p2(stale=1 keepC=1+8176px dyn=OK)`（脚本模式另有 items=2/1 ev=c1r4 contract=1/textOK）。
+   真人验收②回灌追加（同日）：帧 220 删 dyn.rml + 重扫 → 已装载文档逐出（`del=1`）——
+   判据② 的机器面 = 红字（通道 A missing 分支）+ 旧文档不残留（RescanAssets removed →
+   UnloadDocument）双证。
 2. ✅ script-tests 通过（组件计数 30→31 四处同步；C# 镜像布局双向对拍含 UIDocument）。
 3. ✅ 回归 full 15/15（uirml-chain 断言串升级 `uidoc=…` 位后；2026-09-29 首跑 13/15——
    script-tests 的 TestUiSdk op 计数 4→6 未同步 + smoke-drag 负载抖动（T1 先例），修计数后
