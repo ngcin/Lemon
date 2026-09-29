@@ -62,6 +62,10 @@ endif()
 add_executable(lemon-editor
   EditorEntry.cpp
   App/EditorApp.cpp
+  App/EditorAppActions.cpp
+  App/EditorAppChrome.cpp
+  App/EditorAppScripts.cpp
+  App/RecentProjects.cpp
   App/ImGuiBackend.cpp
   Panels/Panels.cpp
   Panels/AnimationPanel.cpp
@@ -71,6 +75,7 @@ add_executable(lemon-editor
   Panels/ProfilerPanel.cpp
   Panels/ViewportPanels.cpp
   Interaction/ViewportRenderer.cpp
+  Templates/VsTemplateGen.cpp
   Tooling/FilePicker.cpp
   Tooling/Theme.cpp)
 target_include_directories(lemon-editor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${stb_SOURCE_DIR})
