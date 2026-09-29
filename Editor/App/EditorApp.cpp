@@ -2358,6 +2358,8 @@ void EditorApp::RescanAssets() {
         for (uint64_t g : cs.removed) uiHandle(g, true);
         if (anyRcss) gameUi_->ReloadStyleSheets();
     }
+    // 状态对账（无条件——cs 空也要跑：被裸 Rescan 吞掉事件的墓碑正是靠这拍自愈）
+    ReconcileUiDocuments();
     db.SaveManifest();
     if (!cs.Empty())
         LEMON_LOG("资产重扫：+%zu ~%zu -%zu", cs.added.size(), cs.modified.size(),
@@ -2844,6 +2846,9 @@ bool EditorApp::TryEnterPlay() {
 // 基准场）装载调用恒 0——装载点只在此扫描处，不进任何通用路径（基准护栏 §5）。
 uint32_t EditorApp::MountSceneUiDocuments() {
     if (!gameUi_) return 0;
+    // 进 Play 对账（形态 C 治愈位）：文件装载文档的 relPath 非健康 .rml 资产 → 逐出。
+    // "本屏不装载"是画面层不变量——事件被裸 Rescan 吞掉的残留在此清场
+    ReconcileUiDocuments();
     AssetDatabase& db = ctx_.Assets();
     uint32_t loaded = 0, missing = 0;
     std::vector<std::string> declared;
@@ -2866,11 +2871,6 @@ uint32_t EditorApp::MountSceneUiDocuments() {
                         "本屏不装载；修复资产或重挂后重进 Play",
                         (unsigned long long)ud.sourceAssetGuid,
                         (unsigned long long)e.id);
-            // 防御纵深（真人验收②二轮）：声明缺失时逐出同名残留装载——watcher 逐出
-            // 未达/时序竞态下，残留文档会在本屏继续渲染（"本屏不装载"语义要求画面
-            // 也无它）。常规路径此处 docs 已无该名 = no-op 静默
-            if (en && gameUi_->UnloadDocument(en->relPath.c_str()))
-                LEMON_LOG("UIDocument：缺失声明的残留装载已逐出：%s", en->relPath.c_str());
             return;
         }
         if (gameUi_->LoadDocumentFromFile(en->relPath.c_str(),
@@ -2887,6 +2887,20 @@ uint32_t EditorApp::MountSceneUiDocuments() {
         LEMON_LOG("UIDocument 装载：%u 成功 / %u 缺失（声明态归位 + stale 清场）",
                   loaded, missing);
     return loaded;
+}
+
+// 状态对账（2026-09-29 根因收口）：见 EditorApp.h 注记。事件驱动路径保留（首拍即逐
+// 出 + 「已卸载」观测日志），对账是兜住"事件被谁吃了"的不变量层——两者幂等共存
+void EditorApp::ReconcileUiDocuments() {
+    if (!gameUi_) return;
+    const AssetDatabase& db = ctx_.Assets();
+    for (const std::string& name : gameUi_->FileBackedDocumentNames()) {
+        const AssetEntry* e = db.FindByPath(name);
+        if (e && !e->missing && e->type == AssetType::Rml) continue;
+        if (gameUi_->UnloadDocument(name.c_str()))
+            LEMON_LOG("UI 文档对账逐出（资产不健康——事件可能被裸重扫吞噬）：%s",
+                      name.c_str());
+    }
 }
 
 void EditorApp::MenuNewProject() { wizOpen_ = true; }
@@ -3925,7 +3939,14 @@ int EditorApp::Run(const EditorLaunch& launch) {
             if (frame == 304) {
                 std::error_code ecd;
                 std::filesystem::remove(uiDir / "editprev.rml", ecd);
-                LEMON_LOG("uirml-smoke: editprev.rml 编辑态删除播种（真人路径）");
+                // 形态 C（事件吞噬）：删除后**同帧**裸 Rescan（= ImportFile/
+                // MakePrefabFrom 的"文件操作后立即重扫"形态）——立墓碑但**不经过**
+                // RescanAssets 的 UI 逐出半边 → removed 事件被吃，后续 watcher 重扫
+                // prev.missing 已真、cs.removed 恒空——事件驱动逐出从此失效，残留
+                // 文档成僵尸。状态对账（ReconcileUiDocuments）在此形态下必须仍治愈
+                ctx_.Assets().Rescan();
+                LEMON_LOG(
+                    "uirml-smoke: editprev.rml 编辑态删除 + 同帧裸 Rescan（事件吞噬）");
             }
             if (frame == 345 && !ctx_.Playing()) {
                 if (TryEnterPlay()) {

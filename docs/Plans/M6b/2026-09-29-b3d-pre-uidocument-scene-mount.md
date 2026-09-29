@@ -184,6 +184,22 @@ struct UIDocument {
   清掉 210 帧建的负面容器，终帧活读恒 -1——改 251 帧快照（断言语义不变：负面 op 在其
   局内确实建了行）。
 
+### 后续二轮（根因收口：事件吞噬 → 状态对账，同日）
+
+- **机器实锤**：形态 C（编辑态删 .rml 后**同帧**裸 `db.Rescan()`——= ImportFile/
+  MakePrefabFrom 的"文件操作后立即重扫"形态）→ 墓碑立、红字路径成立，但 `cs.removed`
+  事件被吃 → 后续 watcher 重扫 `prev.missing` 已真、removed 恒空 → **事件驱动逐出永不
+  发生** → 残留文档持续渲染（pix=8176 复现）直到进程重启。与用户观察完全同构（不重启
+  残留 / 重启消失 = 上下文清空）。裸 Rescan 调用方在正常使用中可达：拖拽导入、Assets
+  导入按钮、CSV 转换、Prefab 化。
+- **修 = 治理范式从"追事件"改"查状态"**：`UiSubsystem::FileBackedDocumentNames()` 枚举
+  面 + `EditorApp::ReconcileUiDocuments()`（relPath 非健康 .rml 资产即逐出）挂两处——
+  `RescanAssets` 尾（**无条件**，cs 空也跑：被吞事件的墓碑靠这拍自愈）+ 
+  `MountSceneUiDocuments` 头（进 Play 不变量）。事件路径保留（首拍即逐出 + 观测日志），
+  两者幂等共存；上一轮的 F-B（仅声明缺失）被对账取代删除。
+- **形态 C 并入 smoke 常驻断言**（f304 同帧裸 Rescan 播种），修复前 `edit=0 pix=8176
+  FAIL` / 修复后 `edit=1 pix=0 OK`——该失败类从此有回归防线。
+
 ## 风险与既知边界（R1–R12 讨论落账；R1–R3 = 决策记录 2/3/4）
 
 | # | 坑 | 处置 |

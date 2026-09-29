@@ -88,6 +88,9 @@ public:
     /// 预览 / 通道 A 声明装载来源，§3 口径）。
     bool ShowDocument(const char* name, bool show, bool modal = false);
     bool HasDocument(const char* name) const;
+    /// 状态对账用（2026-09-29 根因收口）：文件装载文档名全集——编辑器侧对账逐出
+    /// 的枚举面（内存底稿文档不参与：无资产对应，逐出语义不适用）
+    std::vector<std::string> FileBackedDocumentNames() const;
     /// 冒烟探针：文档 shown 态（查无 = false）——stale 归位断言源
     bool IsDocumentShown(const char* name) const;
     /// 批③d 前置（§3 EnterPlay 归位）：声明集之外的文档清理——stale（上局 C#

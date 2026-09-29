@@ -76,7 +76,7 @@ if [ "${MODE}" = "full" ]; then
         "smoke-guid: .* => OK" \
         "${EDITOR}" --smoke-guid --no-reopen
     if [ -f "${SDK}" ]; then
-        grep_step "uirml-chain smoke (RmlUi C# API: ops/clone/click-events/contract + font/asset/hot-reload + uidoc dual-channel/stale/layer/watcher-evict + zombie-render dual-form; M6b-b3d)" \
+        grep_step "uirml-chain smoke (RmlUi C# API: ops/clone/click-events/contract + font/asset/hot-reload + uidoc dual-channel/stale/layer/watcher-evict + zombie-render triple-form + reconcile; M6b-b3d)" \
             "smoke-uirml: .* => OK" \
             "${EDITOR}" --script "${SDK}" --smoke-uirml --frames 400 --validate --no-reopen
     else

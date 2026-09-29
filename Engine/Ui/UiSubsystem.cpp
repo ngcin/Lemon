@@ -792,6 +792,14 @@ bool UiSubsystem::HasDocument(const char* name) const {
     return impl_ && impl_->docs.count(name) > 0;
 }
 
+std::vector<std::string> UiSubsystem::FileBackedDocumentNames() const {
+    std::vector<std::string> out;
+    if (!impl_) return out;
+    for (const auto& [name, d] : impl_->docs)
+        if (!d.sourcePath.empty()) out.push_back(name);
+    return out;
+}
+
 bool UiSubsystem::IsDocumentShown(const char* name) const {
     if (!impl_) return false;
     auto it = impl_->docs.find(name);

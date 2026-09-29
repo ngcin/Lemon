@@ -195,6 +195,12 @@ private:
     /// 随后未声明且 stale 的文档 Hide + 清 stale。装载钩只认 EnterPlay 扫描——
     /// 运行时动态加 UIDocument 不生效（批文件 §5 登记）。返回装载成功数。
     uint32_t MountSceneUiDocuments();
+    /// 状态对账（2026-09-29 根因收口）：文件装载文档 ↔ 资产库健康度——relPath 不再
+    /// 是健康 .rml 资产（墓碑/非 Rml/查无）即逐出。事件驱动逐出依赖 cs.removed 恰好
+    /// 经过 RescanAssets 处理面，裸 Rescan() 调用方（ImportFile/MakePrefabFrom）会立
+    /// 墓碑但吃掉事件 → 逐出永不发生（僵尸渲染，机器复现 pix=8176）。对账挂两处：
+    /// RescanAssets 尾（watcher 每拍自愈）+ MountSceneUiDocuments 头（进 Play 不变量）
+    void ReconcileUiDocuments();
     /// 批③c（M7）：鼠标/键盘/文本输入喂入游戏 UI + InputState 让出门（Play 段、
     /// gameUi_->Update() 前每帧）
     void FeedGameUiInput();
