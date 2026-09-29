@@ -87,6 +87,26 @@ public static unsafe class UI
     private static byte[] s_arena = new byte[4096];
     private static int s_arenaLen;
 
+    // ---- staging 同值去重（批③c-2）：幂等 op 的 setter 级等值早退 ----
+    // 主流 retained GUI 同位标配（UGUI Text / Godot Label / cocos setString 的
+    // if(same) return）——RmlUi SetInnerRML/SetAttribute 无此早退（源码双证），
+    // 每帧同值写全量拆建文本元素。键 = 类型前缀|doc|key|限定名，值 = 载荷串
+    // （原始串比较——引擎侧 EscapeText/GUID 转换是纯函数，同原始串同转换结果）。
+    // 只收幂等值 op：Show/Hide/SetItems 不入表（Show 重复 = D1 层序提顶语义，
+    // SetItems 全量替换非幂等）。失效五处 = 各 s_lastSent.Clear() 点——漏一处
+    // = 静默丢写。
+    private static readonly Dictionary<string, string> s_lastSent = new();
+
+    /// <summary>同值跳过判定（调用方须持 s_lock）：与上次实际入列载荷相同 → true
+    /// （跳过本次入列）；否则记新值返回 false。缓存记的是"已入列"而非"已应用"——
+    /// 凡载荷可能未达引擎的路径（拉取丢弃/重装载）必须整表失效。</summary>
+    private static bool DedupSkip(string cacheKey, string payload)
+    {
+        if (s_lastSent.TryGetValue(cacheKey, out var v) && v == payload) return true;
+        s_lastSent[cacheKey] = payload;
+        return false;
+    }
+
     // ---- 事件订阅（GC 纪律：静态表；实例订阅用 LemonBehaviour.Subscribe 退订）----
     private static readonly List<Action<UiEvent>> s_handlers = new();
     private static readonly object s_evLock = new();
@@ -102,26 +122,44 @@ public static unsafe class UI
     public static void Hide(string doc)
     { lock (s_lock) s_staging.Add(new RawOp { Type = UiOpType.Hide, A = doc }); }
 
-    /// <summary>纯文本填充（key = 元素 id 或 "容器id/条目key" 路径；文本自动转义）。</summary>
+    /// <summary>纯文本填充（key = 元素 id 或 "容器id/条目key" 路径；文本自动转义）。
+    /// 同值跳过（批③c-2）：与上次同串不再入列——HUD 每帧直写即标准姿势。</summary>
     public static void SetText(string doc, string key, string text)
-    { lock (s_lock) s_staging.Add(new RawOp { Type = UiOpType.SetText, A = doc, B = key, C = text }); }
+    { lock (s_lock) {
+          if (DedupSkip("t|" + doc + "|" + key, text)) return;
+          s_staging.Add(new RawOp { Type = UiOpType.SetText, A = doc, B = key, C = text });
+      } }
 
-    /// <summary>属性直写（attr = "src" 时 16 位 GUID hex 自动转 "guid:" 资产协议）。</summary>
+    /// <summary>属性直写（attr = "src" 时 16 位 GUID hex 自动转 "guid:" 资产协议）。
+    /// 同值跳过（progress value/max 每帧驱动的稳态吸收）。</summary>
     public static void SetAttr(string doc, string key, string attr, string value)
-    { lock (s_lock) s_staging.Add(new RawOp { Type = UiOpType.SetAttr, A = doc, B = key, C = attr, D = value }); }
+    { lock (s_lock) {
+          if (DedupSkip("a|" + doc + "|" + key + "|" + attr, value)) return;
+          s_staging.Add(new RawOp { Type = UiOpType.SetAttr, A = doc, B = key, C = attr, D = value });
+      } }
 
-    /// <summary>样式类增删（on = true 加 / false 删；品级色/置灰等状态类）。</summary>
+    /// <summary>样式类增删（on = true 加 / false 删；品级色/置灰等状态类）。同态跳过。</summary>
     public static void SetClass(string doc, string key, string cls, bool on)
-    { lock (s_lock) s_staging.Add(new RawOp { Type = UiOpType.SetClass, A = doc, B = key, C = cls,
-                                              Flags = (byte)(on ? 1 : 0) }); }
+    { lock (s_lock) {
+          if (DedupSkip("c|" + doc + "|" + key + "|" + cls, on ? "1" : "0")) return;
+          s_staging.Add(new RawOp { Type = UiOpType.SetClass, A = doc, B = key, C = cls,
+                                    Flags = (byte)(on ? 1 : 0) });
+      } }
 
-    /// <summary>单条内联样式（prop/value = RCSS 属性名/值）。</summary>
+    /// <summary>单条内联样式（prop/value = RCSS 属性名/值）。同值跳过。</summary>
     public static void SetStyle(string doc, string key, string prop, string value)
-    { lock (s_lock) s_staging.Add(new RawOp { Type = UiOpType.SetStyle, A = doc, B = key, C = prop, D = value }); }
+    { lock (s_lock) {
+          if (DedupSkip("s|" + doc + "|" + key + "|" + prop, value)) return;
+          s_staging.Add(new RawOp { Type = UiOpType.SetStyle, A = doc, B = key, C = prop, D = value });
+      } }
 
-    /// <summary>富文本内嵌（RML 片段——彩色段/内嵌图标；不转义，文档作者负责）。</summary>
+    /// <summary>富文本内嵌（RML 片段——彩色段/内嵌图标；不转义，文档作者负责）。
+    /// 同值跳过。</summary>
     public static void SetInnerRml(string doc, string key, string rml)
-    { lock (s_lock) s_staging.Add(new RawOp { Type = UiOpType.SetInnerRml, A = doc, B = key, C = rml }); }
+    { lock (s_lock) {
+          if (DedupSkip("r|" + doc + "|" + key, rml)) return;
+          s_staging.Add(new RawOp { Type = UiOpType.SetInnerRml, A = doc, B = key, C = rml });
+      } }
 
     /// <summary>模板克隆填充（M2 SetItems）：container = data-template 容器 id；
     /// template = template data-name。全量语义（先清旧行再建）。img 字段值 = 16 位
@@ -268,12 +306,14 @@ public static unsafe class UI
                 int dropped = s_ready.Count;
                 s_ready.Clear();
                 s_arenaLen = 0;
+                s_lastSent.Clear(); // 载荷未达引擎（无钩子宿主）——"已入列"全数作废
                 if (arenaBytes != null) *arenaBytes = 0;
                 return dropped;
             }
             if (s_ready.Count > capOps || s_arenaLen > capArena) {
                 s_ready.Clear();
                 s_arenaLen = 0;
+                s_lastSent.Clear(); // 整批丢弃（-1 契约路径）——同上，缓存不得记谎言
                 if (arenaBytes != null) *arenaBytes = 0;
                 return -1;
             }
@@ -302,6 +342,11 @@ public static unsafe class UI
         }
         for (int i = 0; i < n; i++) {
             var e = src[i];
+            // 批③c-2：DOM 已重灌（热重载）——同值缓存全数作废，重灌写必须可达
+            // （整表清：热重载为开发期低频事件，宁多送一拍；清在 handler 前，
+            // 使 OnUiEvent → Refill 序列通过）
+            if (e.Kind == (byte)UiEventKind.DocumentReloaded)
+                lock (s_lock) s_lastSent.Clear();
             foreach (var h in handlers) {
                 try { h(e); }
                 catch (Exception ex) {
@@ -314,7 +359,8 @@ public static unsafe class UI
     /// <summary>换域清空（DomainManager 调，与 Events.Reset 同点位）。</summary>
     internal static void Reset()
     {
-        lock (s_lock) { s_staging.Clear(); s_ready.Clear(); s_arenaLen = 0; }
+        lock (s_lock) { s_staging.Clear(); s_ready.Clear(); s_arenaLen = 0;
+                        s_lastSent.Clear(); }
         lock (s_evLock) { s_handlers.Clear(); ReceivedCount = 0; }
     }
 
@@ -322,14 +368,16 @@ public static unsafe class UI
     /// 丢弃，把契约做实——防止毒 ready 批每帧重试）。</summary>
     internal static void DiscardPending()
     {
-        lock (s_lock) { s_ready.Clear(); s_arenaLen = 0; }
+        lock (s_lock) { s_ready.Clear(); s_arenaLen = 0;
+                        s_lastSent.Clear(); } // 载荷未达引擎，缓存作废
     }
 
     /// <summary>进 Play 域复位（lemon_play_reset）：清待发与计数，保留订阅表
     /// （静态订阅跨局存活——Events.PlayReset 同语义）。</summary>
     internal static void PlayReset()
     {
-        lock (s_lock) { s_staging.Clear(); s_ready.Clear(); s_arenaLen = 0; }
+        lock (s_lock) { s_staging.Clear(); s_ready.Clear(); s_arenaLen = 0;
+                        s_lastSent.Clear(); } // 新局重灌从零（帧计数归零场景）
         lock (s_evLock) ReceivedCount = 0;
     }
 }

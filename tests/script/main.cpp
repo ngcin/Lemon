@@ -1667,13 +1667,52 @@ void TestUiSdk() {
     for (uint32_t i = 0; i < rtui.Count(); ++i)
         if (std::strcmp(rtui.At(i).key, "uiev") == 0) {
             sawUiev = true;
-            std::snprintf(uievText, sizeof(uievText), "%s", rtui.At(i).text);
+            std::snprintf(uievText, sizeof uievText, "%s", rtui.At(i).text);
         }
     Expect(sawUiev && std::strcmp(uievText, "c1r0") == 0,
            "ui: 注入 Click → C# 订阅回执 → RtUi uiev=c1r0（全链反向）");
 
+    // ---- ③ 批③c-2 staging 同值去重：帧 2 UiDedupProbe 三写（A/同A/B）→
+    //      恰 2 op（同值跳 / 异值过）。DocumentReloaded 复位由 --smoke-uirml
+    //      终帧 title 断言端到端覆盖（fixture 静态值 ≠ 重灌值，误吞必红）----
+    w.Step(0.25f);
+    Expect(s_uiCapOps.size() == 2, "ui-dedup: 三写恰 2 op（同值跳过/异值通过）");
+    if (s_uiCapOps.size() == 2) {
+        const auto& d0 = s_uiCapOps[0];
+        Expect(d0.type == (uint8_t)lemon::ui::UiOpType::SetText, "ui-dedup: op0 = SetText");
+        Expect(std::strcmp(CapStr(d0.s1), "body") == 0 &&
+                   std::strcmp(CapStr(d0.s2), "dedupA") == 0,
+               "ui-dedup: op0 = 首写 A（缓存空必过）");
+        const auto& d1 = s_uiCapOps[1];
+        Expect(d1.type == (uint8_t)lemon::ui::UiOpType::SetText &&
+                   std::strcmp(CapStr(d1.s1), "body") == 0 &&
+                   std::strcmp(CapStr(d1.s2), "dedupB") == 0,
+               "ui-dedup: op1 = 异值 B（同值 A 未入列）");
+    }
+
+    // ---- ④ 批③c-2 DocumentReloaded 复位契约：注入重装载事件 → OnUiEvent →
+    //      UiRefill 同值重写——缓存已清 = 6 op 全发（含被去重过的同值 SetText）；
+    //      缓存未清 = 只发 3（Show×2 + SetItems——永不去重的三条）→ 此处必红 ----
+    s_uiInjectEvent = {};
+    s_uiInjectEvent.kind = (uint8_t)lemon::ui::UiEventKind::DocumentReloaded;
+    std::snprintf(s_uiInjectEvent.doc, sizeof s_uiInjectEvent.doc, "Assets/UI/uirml.rml");
+    s_uiInjectPending = true;
+    // 派发（#16 插 CSharpBatch 后）与本轮 ops 拉取点的先后：事件驱动的重灌入
+    // ready 晚于当轮拉取 → 再步进一步取到（引擎侧事件驱动 UI 写 = 下一帧可见，
+    // 与既有行为一致，非去重引入）
+    w.Step(0.25f);
+    w.Step(0.25f);
+    Expect(s_uiCapOps.size() == 6, "ui-dedup: 重装载后重灌 6 op 全发（缓存复位）");
+    if (s_uiCapOps.size() == 6) {
+        const auto& r1 = s_uiCapOps[1];
+        Expect(r1.type == (uint8_t)lemon::ui::UiOpType::SetText &&
+                   std::strcmp(CapStr(r1.s1), "title") == 0 &&
+                   std::strcmp(CapStr(r1.s2), "升级！三选一") == 0,
+               "ui-dedup: 同值 SetText 在重装载后重新入列（复位契约核心位）");
+    }
+
     lemon::scripting::SetUiHooks({nullptr, nullptr}); // 后续测试零扰动
-    std::printf("script-tests: TestUiSdk OK（ops 6 条字节对拍（含通道 B dyn 2 条） + 事件反向 c1r0）\n");
+    std::printf("script-tests: TestUiSdk OK（ops 6 条字节对拍（含通道 B dyn 2 条） + 事件反向 c1r0 + 去重 3写2过 + 重装载复位 6 op）\n");
 }
 
 int main() {

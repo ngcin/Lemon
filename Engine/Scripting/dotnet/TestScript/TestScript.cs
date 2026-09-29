@@ -92,6 +92,18 @@ public static class GameMain
         Lemon.UI.SetText(UiDocDyn, "dyntitle", "通道B已装载");
         Lemon.UI.Apply();
     }
+
+    /// <summary>批③c-2 去重探针（帧 2，script-tests ② 段断言恰 2 op）：
+    /// 首写 A（缓存空 → 过）→ 同值 A（跳）→ 异值 B（过）。靶 = body 行
+    /// （夹具静态行，两侧冒烟无内容断言——不碰 title，避开 smoke-uirml 终帧
+    /// 契约位）。DocumentReloaded 复位由 smoke-uirml 重灌链端到端覆盖。</summary>
+    internal static void UiDedupProbe()
+    {
+        Lemon.UI.SetText(UiDoc, "body", "dedupA");
+        Lemon.UI.SetText(UiDoc, "body", "dedupA"); // 同值 → 应跳
+        Lemon.UI.SetText(UiDoc, "body", "dedupB"); // 异值 → 应过
+        Lemon.UI.Apply();
+    }
 }
 
 /// <summary>M4.4：Instantiate.Spawn + Assets.SpriteOf（GUID→导入 sprite）刷怪验收。
@@ -627,7 +639,8 @@ public sealed class SaveChanProbeBehaviour : Lemon.LemonBehaviour
 
 /// <summary>M6b 批③c（typeId 17）：Lemon.UI ops 全链验收（编辑器 --smoke-uirml
 /// --script 装配）。帧1 = UiRefill()（Show/SetText/SetItems×2/SetClass + Apply →
-/// 引擎克隆渲染）；此后常驻——帧 100/140 热重载触发 DocumentReloaded → 静态订阅
+/// 引擎克隆渲染）；帧2 = UiDedupProbe()（批③c-2 同值去重——script-tests ② 恰
+/// 2 op 断言）；此后常驻——帧 100/140 热重载触发 DocumentReloaded → 静态订阅
 /// 重灌（M2 契约）。事件计数（合成点击 cards/opt0 → Click）经静态订阅写 RtUi
 /// "uiev"（c点击数r重裝数），C++ 侧终帧断言 c≥1。</summary>
 public sealed class UiProbeBehaviour : Lemon.LemonBehaviour
@@ -635,6 +648,7 @@ public sealed class UiProbeBehaviour : Lemon.LemonBehaviour
     protected override void Update()
     {
         if (Lemon.Time.FrameCount == 1) GameMain.UiRefill();
-        // 常驻到会话尾（重灌回调依赖静态订阅，本体仅首帧播种一次）
+        else if (Lemon.Time.FrameCount == 2) GameMain.UiDedupProbe();
+        // 常驻到会话尾（重灌回调依赖静态订阅，本体仅首两帧播种）
     }
 }
