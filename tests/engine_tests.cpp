@@ -5491,6 +5491,24 @@ void TestAudioBakedRoundtrip() {
     audio::BakedClipInfo info;
     Expect(audio::LoadBakedClip(baked.c_str(), loaded, info), "load LBA1");
     Expect(info.channels == 2, "baked keeps stereo");
+    // 批①：循环点烤制锁（秒 → 帧取整 + 钳界；0/0 端点 = 全曲）
+    {
+        const std::string lp = (dir / "loop.baked").string();
+        Expect(audio::BakeAudioFile(wav.c_str(), lp.c_str(), 0.01f, 0.05f),
+               "bake with loop points");
+        audio::BakedClipInfo li;
+        std::vector<int16_t> lpPcm;
+        Expect(audio::LoadBakedClip(lp.c_str(), lpPcm, li), "load loop baked");
+        Expect(li.loopStart == 480 && li.loopEnd == 2400,
+               "loop secs → 48k frames (0.01s/0.05s)");
+        const std::string clamped = (dir / "clamp.baked").string();
+        Expect(audio::BakeAudioFile(wav.c_str(), clamped.c_str(), 0.0f, 99.0f),
+               "bake with overlong loop end");
+        audio::BakedClipInfo ci;
+        std::vector<int16_t> cPcm;
+        Expect(audio::LoadBakedClip(clamped.c_str(), cPcm, ci), "load clamped baked");
+        Expect(ci.loopEnd == ci.frameCount, "loop end clamped to tail");
+    }
     Expect(info.frameCount >= 4700 && info.frameCount <= 4900,
            "44.1k→48k resampled frame count");
     Expect(info.loopEnd == info.frameCount, "loopEnd defaults to tail");

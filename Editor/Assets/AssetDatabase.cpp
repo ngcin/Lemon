@@ -206,6 +206,29 @@ uint64_t AssetDatabase::HashFile(const std::string& absPath) {
 //   "importer": { "slice": "grid", "cell": [16, 32], "frames": [9, 1] }
 // frames 由作者显式声明（yami .anim hframes/vframes 同款）——DB 零解码即可记账
 // （Rescan 分配连号块）；像素整除/越界校验归 AssetGpuCache（解码侧）。
+// 音频 importer 段（M6c 批①，ADR-015）："loop":[起,止(秒)]（0/0 = 全曲）+
+// "preload":bool。与网格切片同款口径：每次重扫重读，热改 meta 即生效（下次烤制消费）。
+static void ParseAudioImporter(const Json& doc, AssetEntry& e) {
+    e.audioLoopStart = e.audioLoopEnd = 0.0f;
+    e.audioPreload = false;
+    auto it = doc.find("importer");
+    if (it == doc.end() || !it->is_object()) return;
+    const Json& imp = *it;
+    if (auto loop = imp.find("loop"); loop != imp.end() && loop->is_array() && loop->size() == 2) {
+        const Json& a = (*loop)[0];
+        const Json& b = (*loop)[1];
+        if (a.is_number() && b.is_number()) {
+            const double x = a.get<double>(), y = b.get<double>();
+            if (x >= 0 && y >= x) {
+                e.audioLoopStart = (float)x;
+                e.audioLoopEnd = (float)y;
+            }
+        }
+    }
+    if (auto pre = imp.find("preload"); pre != imp.end() && pre->is_boolean())
+        e.audioPreload = pre->get<bool>();
+}
+
 static void ParseGridImporter(const Json& doc, AssetEntry& e) {
     e.cellW = e.cellH = e.gridCols = e.gridRows = 0;
     auto it = doc.find("importer");
@@ -261,7 +284,10 @@ void AssetDatabase::SyncMeta(AssetEntry& e) const {
             else if (g.is_number_unsigned()) got = g.get<uint64_t>();
             if (got != 0 && e.guid == 0) e.guid = got;
         }
-        if (!doc.is_discarded()) ParseGridImporter(doc, e); // 每次重扫重读（热改 meta 即生效）
+        if (!doc.is_discarded()) {
+            ParseGridImporter(doc, e); // 每次重扫重读（热改 meta 即生效）
+            if (e.type == AssetType::Audio) ParseAudioImporter(doc, e);
+        }
     }
     if (e.guid == 0) e.guid = GenerateGuid();
     if (metaExists) return; // 已在档：不重写（500ms 轮询重扫不做写放大）
@@ -271,6 +297,12 @@ void AssetDatabase::SyncMeta(AssetEntry& e) const {
     doc["type"] = AssetTypeName(e.type);
     doc["hash"] = e.hash;
     doc["importedAt"] = (uint64_t)std::time(nullptr);
+    if (e.type == AssetType::Audio) { // 批①：音频默认 importer 段（全曲循环 + 非预载）
+        Json imp;
+        imp["loop"] = {0.0, 0.0};
+        imp["preload"] = false;
+        doc["importer"] = imp;
+    }
     std::ofstream of(metaPath, std::ios::binary | std::ios::trunc);
     of << doc.dump(2);
 }

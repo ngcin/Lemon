@@ -27,7 +27,7 @@ int usageExit(const char* why) {
                 "[--save-scene f.scene] [--play] [--script Game.dll] [--final] "
                 "[--no-reopen] [--smoke-close clean|dirty] [--smoke-drag] "
                 "[--smoke-ui] [--smoke-anim] [--bench-survivor] [--gen-vs-template dir] "
-                "[--smoke-template] [--smoke-guid] [--smoke-uirml]\n");
+                "[--smoke-template] [--smoke-guid] [--smoke-uirml] [--smoke-audio]\n");
     return 2;
 }
 
@@ -84,6 +84,8 @@ int main(int argc, char** argv) {
             launch.genVsTemplate = argv[++i]; // M5 批④：模板生成（开发工具，跑一次）
         else if (!std::strcmp(argv[i], "--smoke-template"))
             launch.smokeTemplate = launch.smoke = launch.playTest = true; // 模板链冒烟
+        else if (!std::strcmp(argv[i], "--smoke-audio"))
+            launch.smokeAudio = true; // M6c 批①：音频资产链（须配 --project）
         else if (!std::strcmp(argv[i], "--smoke-guid"))
             launch.smokeGuid = true; // sprite 引用稳定性链冒烟（M6a 批⓪ T5，无头跑完即退）
         else if (!std::strcmp(argv[i], "--smoke-uirml"))

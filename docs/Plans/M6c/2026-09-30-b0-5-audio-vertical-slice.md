@@ -1,6 +1,6 @@
 # M6c 批⓪.5 竖切 —— yami 素材实弹：.baked 资产通道最小子集 + Lemon.Audio 四槽 + svr-test 全事件接音
 
-Status: done（2026-09-30 当日：无头 `--smoke --play` **8/8 音频装载成功**（mp3 112.59s/wav 单双声道/ogg 全过）+ 命中缓存二次跑只重烤失败件 + 引擎单测 33597 checks + ctest 3/3 + 基础编辑器 smoke PASS。真人听感验收待用户进编辑器跑一局。[DevLog](../../DevLog/2026-09-30-m6c-b0-5-audio-vertical-slice.md)）
+Status: done（2026-09-30 当日：无头 `--smoke --play` **8/8 音频装载成功**（mp3 112.59s/wav 单双声道/ogg 全过）+ 命中缓存二次跑只重烤失败件 + 引擎单测 33597 checks + ctest 3/3 + 基础编辑器 smoke PASS。**真人听感验收已过 2026-09-30**：首轮 Main.scene 确认攻击/死亡/BGM 出声；次轮 MainMenu.scene 完整跑局无异议（音量/密度零调整意见）。[DevLog](../../DevLog/2026-09-30-m6c-b0-5-audio-vertical-slice.md)）
 
 > **同日 review 热修批**（[DevLog](../../DevLog/2026-09-30-m6c-b0-5-audio-review-hotfix.md)）：四修——①`Audio.Play` GUID 改 TryParse（坏常量不再抛异常崩游戏）；②烤制原子写（tmp + RenameReplace）+ 解码流错误判失败（半截 .baked 曾因 mtime 较新永不重烤）；③`ma_device_start` 失败落静音降级 + 红字（此前 init 成功 start 失败 = 无声无提示）；④引擎侧 Play group 防御钳（越界落 Sfx，此前 groupVol[] 越界读）。附带：AudioEngine.cpp 统一 stb_vorbis 声明先含（三 TU 宏视角一致）。回归锁 +6（坏源不落产物/坏组不崩）→ **33603 checks**、ctest 3/3、svr 热跑 8/8 复验。
 
@@ -37,7 +37,7 @@ Status: done（2026-09-30 当日：无头 `--smoke --play` **8/8 音频装载成
 
 - **攻击音/死亡音 ✓ 出声正常；BGM ✓ 能出声**（死亡两次后重开仍响——PlayBgm 链路实证）。
 - **同场报告"再来一局后无画面 + menu.rml 契约红字"——定位为 Main.scene 直开的路径限制，非本批回归**：该场景无 `Flow` 实体（GameFlow 实例在 MainMenu.scene），`EnterRun`（静态，UI 事件路由可达 → BGM 响）清场后无人推进 `State.Spawning` 握手（重挂逻辑在实例 Update 里）→ 永卡 Spawning/Time.Scale=0 = 空场；`GameFlow.Start` 不跑 → menu.rml 未装载 → `UI.Hide` 按契约响亮报红。**设计唯一入口 = MainMenu.scene**（③d-2 拍板；MainMenu 无头复验 errors=0、音频 8/8）。限制登记：Main.scene 直开 = 战斗沙盒（单局可玩可听），不支持死亡重开/菜单流程——守卫提示（无实例时红字引导）批③ 顺手评估。
-- 完整听感验收（BGM 音量/命中密度/发射音冷却/拾取/升级/波次）待从 **MainMenu.scene** 跑完整局。
+- 完整听感验收（BGM 音量/命中密度/发射音冷却/拾取/升级/波次）**已过 2026-09-30**：用户自 MainMenu.scene 完整跑局（含死亡重开流程正常），音量/密度无调整意见——发射音冷却等登记项按"听感无异议"关闭，批① 不带调音。
 
 ## 遗留（归批①/批②，不扩本批；2026-09-30 review 后按发现重排）
 

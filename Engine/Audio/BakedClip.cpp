@@ -13,6 +13,7 @@
 #include "thirdparty/stb_vorbis.c"
 #include "thirdparty/miniaudio.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -54,7 +55,8 @@ uint32_t GetLE32(const uint8_t* p) {
 
 } // namespace
 
-bool BakeAudioFile(const char* srcPath, const char* dstPath) {
+bool BakeAudioFile(const char* srcPath, const char* dstPath, float loopStartSec,
+                   float loopEndSec) {
     ma_decoder_config cfg = ma_decoder_config_init(ma_format_s16, 0, kMixSampleRate);
     ma_decoder dec;
     if (ma_decoder_init_file(srcPath, &cfg, &dec) != MA_SUCCESS) {
@@ -101,9 +103,18 @@ bool BakeAudioFile(const char* srcPath, const char* dstPath) {
     PutLE16(head + 8, 1);                        // format = PCM16
     PutLE16(head + 10, uint16_t(channels));
     PutLE32(head + 12, uint32_t(kMixSampleRate));
+    // 循环点（批①：.meta importer 秒值 → 帧取整钳界；0/0 端点 = 全曲）
+    const uint32_t loopStart =
+        loopStartSec > 0.0f
+            ? std::min(uint32_t(loopStartSec * kMixSampleRate), uint32_t(gotTotal))
+            : 0;
+    const uint32_t loopEnd =
+        loopEndSec > 0.0f
+            ? std::min(uint32_t(loopEndSec * kMixSampleRate), uint32_t(gotTotal))
+            : uint32_t(gotTotal);
     PutLE32(head + 16, uint32_t(gotTotal));      // frameCount
-    PutLE32(head + 20, 0);                       // loopStart
-    PutLE32(head + 24, uint32_t(gotTotal));      // loopEnd = 尾
+    PutLE32(head + 20, loopStart);
+    PutLE32(head + 24, std::max(loopEnd, loopStart));
     PutLE32(head + 28, uint32_t(gotTotal * channels * 2));
 
     // review 2026-09-30：原子写（tmp + RenameReplace）——半截产物 mtime 比源新会被
@@ -134,21 +145,12 @@ bool BakeAudioFile(const char* srcPath, const char* dstPath) {
     return true;
 }
 
-bool LoadBakedClip(const char* path, std::vector<int16_t>& outPcm, BakedClipInfo& outInfo) {
-    outPcm.clear();
-    outInfo = {};
-    FILE* f = std::fopen(path, "rb");
-    if (!f)
-        return false;
-    uint8_t head[sizeof(LbaHeader)];
-    if (std::fread(head, 1, sizeof(head), f) != sizeof(head)) {
-        std::fclose(f);
-        return false;
-    }
+namespace {
+// 头校验 + 字段抽取（Load/Peek 共用）。f 须已定位在文件头；失败返回 false。
+bool ParseLbaHead(const uint8_t* head, const char* path, BakedClipInfo& outInfo) {
     if (std::memcmp(head, "LBA1", 4) != 0 || GetLE16(head + 4) != 1 ||
         GetLE16(head + 6) != sizeof(LbaHeader) || GetLE16(head + 8) != 1) {
         LogMsg(LogLevel::Error, "audio: .baked 头非法（非 LBA1 v1）：%s", path);
-        std::fclose(f);
         return false;
     }
     const uint16_t channels = GetLE16(head + 10);
@@ -158,15 +160,6 @@ bool LoadBakedClip(const char* path, std::vector<int16_t>& outPcm, BakedClipInfo
     if ((channels != 1 && channels != 2) || sampleRate != uint32_t(kMixSampleRate) ||
         frameCount == 0 || payloadBytes != frameCount * channels * 2) {
         LogMsg(LogLevel::Error, "audio: .baked 字段不一致（声道/采样率/载荷）：%s", path);
-        std::fclose(f);
-        return false;
-    }
-    outPcm.resize(payloadBytes / 2);
-    const size_t got = std::fread(outPcm.data(), 2, outPcm.size(), f);
-    std::fclose(f);
-    if (got != outPcm.size()) {
-        LogMsg(LogLevel::Error, "audio: .baked 载荷不足：%s", path);
-        outPcm.clear();
         return false;
     }
     outInfo.frameCount = frameCount;
@@ -174,6 +167,41 @@ bool LoadBakedClip(const char* path, std::vector<int16_t>& outPcm, BakedClipInfo
     outInfo.loopStart = GetLE32(head + 20);
     outInfo.loopEnd = GetLE32(head + 24) ? GetLE32(head + 24) : frameCount;
     return true;
+}
+} // namespace
+
+bool LoadBakedClip(const char* path, std::vector<int16_t>& outPcm, BakedClipInfo& outInfo) {
+    outPcm.clear();
+    outInfo = {};
+    FILE* f = std::fopen(path, "rb");
+    if (!f)
+        return false;
+    uint8_t head[sizeof(LbaHeader)];
+    if (std::fread(head, 1, sizeof(head), f) != sizeof(head) || !ParseLbaHead(head, path, outInfo)) {
+        std::fclose(f);
+        return false;
+    }
+    outPcm.resize(GetLE32(head + 28) / 2);
+    const size_t got = std::fread(outPcm.data(), 2, outPcm.size(), f);
+    std::fclose(f);
+    if (got != outPcm.size()) {
+        LogMsg(LogLevel::Error, "audio: .baked 载荷不足：%s", path);
+        outPcm.clear();
+        return false;
+    }
+    return true;
+}
+
+bool PeekBakedClip(const char* path, BakedClipInfo& outInfo) {
+    outInfo = {};
+    FILE* f = std::fopen(path, "rb");
+    if (!f)
+        return false;
+    uint8_t head[sizeof(LbaHeader)];
+    const bool ok = std::fread(head, 1, sizeof(head), f) == sizeof(head) &&
+                    ParseLbaHead(head, path, outInfo);
+    std::fclose(f);
+    return ok;
 }
 
 } // namespace lemon::audio

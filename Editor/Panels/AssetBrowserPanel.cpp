@@ -12,6 +12,7 @@
 #include <fstream>
 
 #include "App/EditorApp.h"
+#include "Audio/BakedClip.h" // 批①：tooltip Peek .baked 头
 #include "Assets/AssetDatabase.h"
 #include "Assets/Csv.h"
 #include "Core/Log.h"
@@ -40,6 +41,7 @@ uint8_t KindOf(AssetType t) {
         case AssetType::Controller: return 7; // T3d（Inspector AnimGraph 状态机槽）
         case AssetType::Rml: return 8;   // M6b 批③b（暂无拖拽消费者，③c 起 C# 装载）
         case AssetType::Rcss: return 9;  // M6b 批③b（文档 <link> 引用）
+        case AssetType::Audio: return 10; // M6c 批①（试听预览；Inspector AudioSource 槽批② 消费）
         default: return 3;
     }
 }
@@ -122,10 +124,11 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
     // 状态先取快照：按钮点击当帧改 typeFilter_，前后两次判定会失衡 →
     // 只有 Pop 没有配对 Push（"PopStyleColor too many times" 实测报错）
     {
-        static const char* kLabels[10] = {"全部", "图",   "动画", "集",
+        static const char* kLabels[11] = {"全部", "图",   "动画", "集",
                                           "Prefab", "表", "脚本", "状态机",
-                                          "UI 文档", "UI 样式"}; // 批③b 加末两位
-        for (int i = 0; i < 10; ++i) {
+                                          "UI 文档", "UI 样式",
+                                          "音频"}; // 批③b 加末两位；批① 加音频
+        for (int i = 0; i < 11; ++i) {
             if (i) ImGui::SameLine();
             const bool on = typeFilter_ == i;
             if (on) ImGui::PushStyleColor(ImGuiCol_Button, theme::kAccentDim);
@@ -246,6 +249,7 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
             case 7: return t == AssetType::Controller; // T3d（.controller）
             case 8: return t == AssetType::Rml;   // 批③b（.rml）
             case 9: return t == AssetType::Rcss;  // 批③b（.rcss）
+            case 10: return t == AssetType::Audio; // 批①（.wav/.ogg/.mp3/.flac）
             default: return true;
         }
     };
@@ -333,6 +337,7 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
                           : e.type == AssetType::Script ? IconKind::AssetScript
                           : e.type == AssetType::Rml ? IconKind::AssetRml       // 批③b
                           : e.type == AssetType::Rcss ? IconKind::AssetRcss     // 批③b
+                          : e.type == AssetType::Audio ? IconKind::AssetAudio   // 批①
                                                         : IconKind::AssetGeneric;
         app.Viewport().Assets().IconUV(k, u0, v0, u1, v1);
         uv0 = ImVec2(u0, v0);
@@ -340,12 +345,14 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
         // 批③b UI 文档/样式 = 紫罗兰/品红（既有色板外新调，与 Prefab 蓝区分）
         const ImVec4 kRmlTint{0.616f, 0.533f, 0.902f, 1.0f};
         const ImVec4 kRcssTint{0.839f, 0.522f, 0.757f, 1.0f};
+        const ImVec4 kAudioTint{0.361f, 0.804f, 0.769f, 1.0f}; // 青 = 音频（批①）
         tint = e.type == AssetType::Prefab ? theme::kAccent
                : e.type == AssetType::Script ? theme::kTextOk
                : e.type == AssetType::Table ? theme::kTextWarn // 琥珀 = 数据表（M6a 批②）
                : e.type == AssetType::AnimSet ? theme::kAccentDim // 亮蓝灰 = 动画集（T3c）
                : e.type == AssetType::Rml ? kRmlTint
                : e.type == AssetType::Rcss ? kRcssTint
+               : e.type == AssetType::Audio ? kAudioTint
                                             : theme::kTextDim;
     }
     const bool selected = e.guid == selectedGuid_; // 单击选中（M6a 批②：表格区锚点）
@@ -386,6 +393,22 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
         if (e.type == AssetType::AnimSet) dims += "\n双击：动画工作台"; // M6a 批② T3c
         if (e.type == AssetType::Rml) dims += "\n双击：装载到游戏 UI（Play 中显示）"; // 批③b
         if (e.type == AssetType::Rcss) dims += "\n经文档 <link> 引用；改动热重载生效"; // 批③b
+        if (e.type == AssetType::Audio) { // 批①：烤制状态（Peek .baked 头）+ 试听
+            audio::BakedClipInfo bi;
+            char hex[17];
+            std::snprintf(hex, sizeof(hex), "%016llx", (unsigned long long)e.guid);
+            const std::string baked = ctx.Assets().ProjectRoot() + "/.lemon/baked/audio/" +
+                                      hex + ".baked";
+            if (audio::PeekBakedClip(baked.c_str(), bi)) {
+                char dur[48];
+                std::snprintf(dur, sizeof(dur), "已烤 %uch / %.1fs / 48kHz", bi.channels,
+                              float(bi.frameCount) / audio::kMixSampleRate);
+                dims += std::string("\n") + dur;
+            } else {
+                dims += "\n未烤（进 Play / 试听时现烤）";
+            }
+            dims += "\n双击：试听 / 停止";
+        }
         ImGui::SetTooltip("%s\n%s  guid %s\n%s", e.FileName().c_str(), AssetTypeName(e.type),
                           AssetDatabase::GuidToHex(e.guid).c_str(), dims.c_str());
     }
@@ -423,6 +446,9 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
     // 双击 .rml = 装载到游戏 UI（批③b：③c C# 装载通道落地前的手动通道；
     // 文档热重载对账键 = relPath）。.rcss 无独立操作（<link> 消费 + 热重载）。
     if (doubleClicked && e.type == AssetType::Rml) app.LoadUiDocument(e.guid);
+
+    // 双击音频 = 试听/停止切换（批①；Edit 态也可响——EnsureClipLoaded 按需现烤现载）
+    if (doubleClicked && e.type == AssetType::Audio) app.TogglePreviewAudio(e.guid);
 
     // 文件名（截断 12 字符；钉到按钮宽换行——单元格宽确定，网格列距公式才精确；
     // 右键菜单已上移绑缩略图）

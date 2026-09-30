@@ -2,9 +2,15 @@
 // 主循环 = anim-smoke 全链基线外层套 ImGui 帧节奏（M4.0 壳 + UI；World/场景 M4.1 起）。
 #pragma once
 
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <deque>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
+#include <tuple>
 #include <unordered_map>
 #include <vector>
 
@@ -69,6 +75,7 @@ struct EditorLaunch {
     bool smokeTemplate = false; // --smoke-template：M5 批④ 模板链冒烟（向导复制 →
                                 // build → Play → HUD/波次/击杀/升级/卡片断言）
     bool smokeGuid = false;     // --smoke-guid：M6a 批⓪ T5 sprite 引用稳定性链冒烟
+    bool smokeAudio = false;    // --smoke-audio：M6c 批① 音频资产链冒烟（须配 --project）
                                 //（导入插队 + 资产改名 + 删 manifest → 重开逐实体归一断言）
     bool smokeUirml = false;    // --smoke-uirml：M6b 批③a RmlUi 呈现地基冒烟（隐含
                                 // --play；gameRT 像素断言 + 独立裁决链，不并 editor-smoke 门）
@@ -89,6 +96,17 @@ public:
     /// M6c 竖切批：guid 查表 + Play（文件内音频钩子消费；未装载 clip = 0）
     uint32_t AudioPlayByGuid(uint64_t guid, int32_t group, float volume, float pan,
                              int32_t loop);
+    /// M6c 批①：Edit 态试听切换（同 guid 再点 = 停；换 guid 顶停旧曲）
+    void TogglePreviewAudio(uint64_t guid);
+    /// M6c 批①：按需装载单 clip（试听/兜底用；缺烤/陈旧现烤——同步路径）
+    bool EnsureClipLoaded(const AssetEntry& e);
+    /// M6c 批①：后台烤制入队（Rescan 增量 / 开项目预热；线程惰性起）
+    void EnqueueAudioBake(const AssetEntry& e);
+    /// 开项目一次性预热全部音频（批①：导入期烤制——EnterPlay 命中缓存）
+    void WarmAudioBakes();
+    void StopAudioBaker(); // 幂等（Run 尾 + 析构双保险——早退路径靠析构收线程）
+    /// M6c 批①：--smoke-audio 资产链冒烟（导入→meta→后台烤→Peek→试听；须 --project）
+    bool RunSmokeAudioChain();
     EditorLogRing& Log() { return log_; }
     ImGuiBackend& Ui() { return *ui_; }
     rhi::Device& Device() { return *device_; }
@@ -325,7 +343,17 @@ private:
     std::unique_ptr<class ViewportRenderer> viewport_;
     std::unique_ptr<::lemon::ui::UiSubsystem> gameUi_; // 游戏 UI 层（批③a ADR-014；null = 初始化失败降级）
     audio::AudioEngine audio_; // M6c 竖切批：设备/混音（静音降级一等公民，ADR-015 M4）
-    std::unordered_map<uint64_t, uint32_t> audioClips_; // 资产 GUID → clipId（MountPlayAudio 装载）
+    std::unordered_map<uint64_t, uint32_t> audioClips_; // 资产 GUID → clipId（装载产物）
+    // M6c 批①：试听声部（Edit 态可响——EnsureClipLoaded 按需现烤现载）+ 后台烤制
+    //（Rescan/开项目增量 → 工作线程；EnterPlay 只兜缺漏——消除竖切批 230ms 同步顿）
+    uint64_t previewGuid_ = 0;
+    uint32_t previewVoice_ = 0;
+    std::thread audioBakeThread_;
+    std::mutex audioBakeMtx_;
+    std::condition_variable audioBakeCv_;
+    std::deque<std::tuple<uint64_t, std::string, std::string, float, float>> audioBakeQueue_;
+    bool audioBakeStop_ = false;
+    std::atomic<int> audioBakePending_{0};
     std::unique_ptr<scripting::ScriptHost> host_; // C# 宿主（--script/项目 Game；null = 无）
     AssetGpuCache gpuAssets_;
     FileWatcher watcher_;

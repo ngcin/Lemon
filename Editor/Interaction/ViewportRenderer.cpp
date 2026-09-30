@@ -210,6 +210,15 @@ rhi::Texture ProceduralAtlas::BuildIconPage(rhi::Device& device) {
         c.StrokeLine({11, 23}, {13.5f, 23}, 2.0f);
         c.FillCircle({19, 23}, 1.6f); // 行尾选点
     }
+    { // AssetAudio ◩∿（音频 = 扬声器锥 + 两道声波；M6c 批①）
+        IconCanvas& c = cv[(int)IconKind::AssetAudio];
+        c.FillTri({8, 13}, {8, 21}, {13.5f, 17.0f}); // 箱体
+        c.StrokeRect(5, 13, 8, 21, 2.0f);
+        c.StrokeLine({17, 12}, {21.5f, 8.5f}, 2.0f);  // 声波一
+        c.StrokeLine({21.5f, 8.5f}, {25, 12}, 2.0f);
+        c.StrokeLine({19, 19}, {23.5f, 15.5f}, 2.0f); // 声波二
+        c.StrokeLine({23.5f, 15.5f}, {27, 19}, 2.0f);
+    }
     { // Cursor ↖（Select 工具 = 经典箭头光标 + 尾翼）
         IconCanvas& c = cv[(int)IconKind::Cursor];
         c.FillTri({9, 4}, {9, 25}, {15.5f, 18.5f});

@@ -17,11 +17,16 @@ struct BakedClipInfo {
 };
 
 /// 解码 srcPath（miniaudio 内建 wav/mp3/flac/vorbis 四解码器）→ 归一 48k PCM16 →
-/// 写 dstPath（LBA1 容器）。失败 false（日志红字，调用方决定降级）。
-bool BakeAudioFile(const char* srcPath, const char* dstPath);
+/// 写 dstPath（LBA1 容器）。loopStartSec/loopEndSec = .meta importer 声明的循环点
+///（秒；端点 0/0 = 全曲——批① 落地，竖切批恒全曲）。失败 false（红字）。
+bool BakeAudioFile(const char* srcPath, const char* dstPath, float loopStartSec = 0.0f,
+                   float loopEndSec = 0.0f);
 
 /// 装载 LBA1：校验魔数/版本/头长/格式/采样率/载荷字节数后整读 PCM16。
 /// 失败 false（outPcm 保证为空）。
 bool LoadBakedClip(const char* path, std::vector<int16_t>& outPcm, BakedClipInfo& outInfo);
+
+/// 只读头（浏览器 tooltip / smoke 探针用）：不碰载荷。失败 false。
+bool PeekBakedClip(const char* path, BakedClipInfo& outInfo);
 
 } // namespace lemon::audio

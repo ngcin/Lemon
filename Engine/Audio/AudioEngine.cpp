@@ -256,6 +256,22 @@ uint32_t AudioEngine::RegisterClip(const ClipData& data) {
     return static_cast<uint32_t>(impl_->clips.size());
 }
 
+uint32_t AudioEngine::RegisterClip(std::vector<int16_t>&& pcm, uint16_t channels,
+                                   uint32_t frameCount, uint32_t loopStart, uint32_t loopEnd) {
+    if (pcm.empty() || frameCount == 0 || (channels != 1 && channels != 2) ||
+        pcm.size() != size_t(frameCount) * channels)
+        return 0;
+    std::lock_guard<std::mutex> lk(impl_->mtx);
+    Impl::Clip c;
+    c.pcm = std::move(pcm);
+    c.frameCount = frameCount;
+    c.channels = channels;
+    c.loopStart = std::min(loopStart, frameCount);
+    c.loopEnd = loopEnd ? std::min(loopEnd, frameCount) : frameCount;
+    impl_->clips.push_back(std::move(c));
+    return static_cast<uint32_t>(impl_->clips.size());
+}
+
 void AudioEngine::UnregisterClip(uint32_t clipId) {
     std::lock_guard<std::mutex> lk(impl_->mtx);
     if (clipId == 0 || clipId > impl_->clips.size())

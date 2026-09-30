@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <vector>
 
 namespace lemon::audio {
 
@@ -51,6 +52,9 @@ public:
 
     // 声源注册（数据拷入引擎自有存储；线程安全）。返回 clipId，0 = 参数非法。
     uint32_t RegisterClip(const ClipData& data);
+    /// 移动重载（批①：装载 vector 直迁——21MB BGM 免双拷贝瞬时翻峰）
+    uint32_t RegisterClip(std::vector<int16_t>&& pcm, uint16_t channels, uint32_t frameCount,
+                          uint32_t loopStart, uint32_t loopEnd);
     void UnregisterClip(uint32_t clipId); // 引用中的声部当场终止
     void ResetClips();                    // 全清 + 停声（EnterPlay 重装前调——注册表只增不减，防跨局累积）
 

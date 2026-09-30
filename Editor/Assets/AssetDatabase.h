@@ -55,6 +55,11 @@ struct AssetEntry {
     uint32_t sliceBase = 0;  // 0 = 无块
     uint32_t sliceCount = 0; // = gridCols*gridRows（块分配时刻的值）
     bool Sliced() const { return sliceBase != 0 && sliceCount != 0; }
+
+    // ---- 音频 importer（M6c 批①，ADR-015：.meta importer 段；每次重扫重读）----
+    float audioLoopStart = 0.0f; // 秒；烤制期换算帧写 LBA1 头（0/0 = 全曲循环）
+    float audioLoopEnd = 0.0f;
+    bool audioPreload = false;   // true = 整载 RAM（批①b 流式落地前的显式覆盖位）
     /// 切片序号（行优先）→ spriteId（越界 = 0）
     uint32_t SliceSpriteId(uint32_t cell) const {
         return cell < sliceCount ? sliceBase + cell : 0;

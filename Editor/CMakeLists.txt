@@ -68,6 +68,7 @@ add_executable(lemon-editor
   App/EditorAppSmoke.cpp
   App/EditorAppSmokeTpl.cpp
   App/EditorAppSmokeUirml.cpp
+  App/EditorAppSmokeAudio.cpp
   App/EditorAppBench.cpp
   App/EditorAppFinal.cpp
   App/EditorAppUiBridge.cpp

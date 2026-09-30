@@ -44,7 +44,10 @@ static ::lemon::ui::UiSubsystem* s_gameUiForHooks = nullptr;
 namespace lemon::editor {
 
 EditorApp::EditorApp() = default;
-EditorApp::~EditorApp() = default;
+EditorApp::~EditorApp()
+{
+    StopAudioBaker(); // 批①：幂等——早退路径（--gen-vs-template 等）的线程收口兜底
+}
 
 namespace {
 // C# native 资产钩子（M4.4 #8；进程一份——EditorApp 即进程单例）
@@ -290,6 +293,14 @@ int EditorApp::Run(const EditorLaunch& launch) {
         if (!OpenProjectPipeline(launch_->projectDir)) return 1;
         // 批③b：夹具文档装载（项目已开 → 贴图桥 resolver/字体已就位）
         if (launch.smokeUirml && gameUi_) SeedSmokeUiDocument();
+        // 批①：音频导入期预热（后台烤制——EnterPlay 命中缓存，消除 230ms 同步顿）
+        WarmAudioBakes();
+        // 批①：--smoke-audio 资产链冒烟（真项目资产：导入→meta→后台烤→Peek→试听）
+        if (launch.smokeAudio) {
+            const bool ok = RunSmokeAudioChain();
+            std::printf("[smoke-audio] %s\n", ok ? "OK" : "FAILED");
+            return ok ? 0 : 1;
+        }
     }
 
     // ---- 脚本宿主（--script <dll> 显式指定；项目 Game/ 已在管线内装配）----
@@ -1006,6 +1017,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
     host_.reset();            // C# 宿主卸载（无脚本时为空操作）
     device_->WaitIdle(); // ImGui 后端资源（描述符池/采样器）可能被在途帧引用，先等闲
     ui_->Shutdown();
+    StopAudioBaker(); // 批①：后台烤制线程先于 AudioEngine 成员析构收口
     SetLogSink(nullptr, nullptr);
     device_->SavePipelineCache();
     if (gameUi_) { // 批③a：UI 子系统先于 viewport/device 收尾（Rml 收尾仍回调后端 + WaitIdle + 反注册）

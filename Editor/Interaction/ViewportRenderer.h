@@ -35,6 +35,7 @@ enum class IconKind : uint8_t {
     Entity, Sprite, Camera, Script,    // 实体类型（Hierarchy 行前）
     AssetSprite, AssetPrefab, AssetScript, AssetGeneric, // 资产类型
     AssetRml, AssetRcss,               // UI 文档/样式表（M6b 批③b，ADR-014）
+    AssetAudio,                        // 音频源（M6c 批①，ADR-015：扬声器 + 声波）
     Cursor,                            // Select 工具（Godot 式选择模式）
     Magnet,                            // 拖拽吸附开关（Godot 磁铁语义）
     Add, Duplicate, Delete, Rename, Search, // 列表行操作（动画工作台 v3.1 左列图标化）
