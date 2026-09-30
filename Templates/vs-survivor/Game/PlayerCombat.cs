@@ -70,12 +70,16 @@ public sealed class PlayerCombat : LemonBehaviour
         if (meta.Team == 1) { // 怪受击
             Anim.Play(victim, kMobHit, false); // 受击段立即打断
             Anim.Queue(victim, kMobWalk);      // 播完（0.1667s）自动回行走
-            if (victim.TryGetComponent<Transform2D>(out var tf))
+            // 批③d-2 D3：飘字/血条 = 设置开关门控（Settings 档持久化，即时生效）
+            if (GameMain.Settings.FxText &&
+                victim.TryGetComponent<Transform2D>(out var tf))
                 Fx.Text(m.P0, new Vec2(tf.Pos.X - 4f, tf.Pos.Y - 10f), 0xFF5060F0u); // 暖红（RGBA）
-            if (victim.TryGetComponent<Health>(out var hp))
+            if (GameMain.Settings.FxBar &&
+                victim.TryGetComponent<Health>(out var hp))
                 Fx.Bar(victim, hp.Cur / hp.Max, 0xFF30B0F0u, 24f);
         } else if (m.Dst.Id == gameObject.Entity.Id) { // 玩家受击
-            if (gameObject.TryGetComponent<Health>(out var hp))
+            if (GameMain.Settings.FxBar &&
+                gameObject.TryGetComponent<Health>(out var hp))
                 Fx.Bar(gameObject, hp.Cur / hp.Max, 0xFF60D060u, 32f);
         }
     }
@@ -331,12 +335,24 @@ public sealed class PlayerCombat : LemonBehaviour
             Save.SetString("vs.best", score.ToString(), Save.Chan.Meta);
             Save.Flush(); // 立即落盘（ExitPlay 兜底之外的显式路径；全档）
         }
-        string title = newBest ? $"★ 新纪录 {score} 分！"
-                               : $"本局 {score} 分（最高 {GameMain.Run.Best}）";
-        // 批③d-1：死亡对话框 = 卡片文档单条形态（key "ok" → "cards/ok" 事件回传）
-        GameMain.ShowCardsDoc(title, new List<UiItem> {
-            new() { Key = "ok", Fields = { ["label"] = "复活" } },
-        });
+        // 批③d-2 D1：死亡策略归游戏侧——本模板示例 = 每局一次复活（ReviveUsed），
+        // 二死进结算屏（GameFlow 只提供原语；改复活道具/表驱动只动本分叉）
+        if (!GameMain.Run.ReviveUsed) {
+            GameMain.Run.ReviveUsed = true;
+            string title = newBest ? $"★ 新纪录 {score} 分！"
+                                   : $"本局 {score} 分（最高 {GameMain.Run.Best}）";
+            // 批③d-1：死亡对话框 = 卡片文档单条形态（key "ok" → "cards/ok" 事件回传）
+            GameMain.ShowCardsDoc(title, new List<UiItem> {
+                new() { Key = "ok", Fields = { ["label"] = "复活" } },
+            });
+        } else {
+            int sec = (int)GameMain.Run.Time;
+            GameFlow.ShowResults(newBest ? $"★ 新纪录 {score} 分！" : "本局结束",
+                                 score.ToString(),
+                                 $"{sec / 60:D2}:{sec % 60:D2}",
+                                 GameMain.Run.Kills.ToString(),
+                                 GameMain.Run.Best.ToString());
+        }
     }
 
     private void Revive()
@@ -358,6 +374,7 @@ public sealed class PlayerCombat : LemonBehaviour
         bag.Set("kills", GameMain.Run.Kills);
         bag.Set("best", GameMain.Run.Best);
         bag.Set("dead", GameMain.Run.Dead);
+        bag.Set("revive", GameMain.Run.ReviveUsed);
         bag.Set("pending", _pendingLevels);
         bag.Set("rotation", _pickRotation);
         bag.Set("blades", _bladeCount);
@@ -369,6 +386,7 @@ public sealed class PlayerCombat : LemonBehaviour
         if (bag.TryGet("kills", out int k)) GameMain.Run.Kills = k;
         if (bag.TryGet("best", out int b)) GameMain.Run.Best = b;
         if (bag.TryGet("dead", out bool d)) GameMain.Run.Dead = d;
+        if (bag.TryGet("revive", out bool rv)) GameMain.Run.ReviveUsed = rv;
         if (bag.TryGet("pending", out int p)) _pendingLevels = p;
         if (bag.TryGet("rotation", out int r)) _pickRotation = r;
         if (bag.TryGet("blades", out int n)) _bladeCount = n;

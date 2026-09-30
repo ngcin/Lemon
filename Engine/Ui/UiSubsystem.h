@@ -177,9 +177,10 @@ public:
     bool TryGetItemCenter(const char* docName, const char* containerId, const char* itemKey,
                           float* x, float* y) const;
     /// 冒烟探针：元素 Border 盒尺寸（px；查无 = false）——dp 坐标系端到端断言源
-    /// （批③d-1：期望值 = dp 值 × DpRatio()）
+    /// （批③d-1：期望值 = dp 值 × DpRatio()）。批③d-2 增可选 x/y（Border 盒
+    /// 左上，画布像素坐标——菜单/结算等按钮元素的合成点击落点定位）
     bool TryGetElementBox(const char* docName, const char* elementId, float* w,
-                          float* h) const;
+                          float* h, float* x = nullptr, float* y = nullptr) const;
     /// 冒烟探针：元素浮点属性（progress value/max 等；缺属性/缺元素 = false）——
     /// 属性通道接线断言源（T8 后修②：<progress> 原生化后 fill 为引擎定位非 DOM
     /// 子元素，盒断言让位给属性回读 + 轨道盒）

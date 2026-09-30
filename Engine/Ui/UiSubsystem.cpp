@@ -1099,7 +1099,7 @@ bool UiSubsystem::TryGetItemCenter(const char* docName, const char* containerId,
 }
 
 bool UiSubsystem::TryGetElementBox(const char* docName, const char* elementId, float* w,
-                                   float* h) const {
+                                   float* h, float* x, float* y) const {
     if (!impl_ || !w || !h) return false;
     auto it = impl_->docs.find(docName);
     if (it == impl_->docs.end() || !it->second.doc) return false;
@@ -1108,6 +1108,11 @@ bool UiSubsystem::TryGetElementBox(const char* docName, const char* elementId, f
     const Rml::Vector2f sz = el->GetBox().GetSize(Rml::BoxArea::Border);
     *w = sz.x;
     *h = sz.y;
+    if (x || y) { // 批③d-2：绝对偏移（TryGetItemCenter 同款 idiom）
+        const Rml::Vector2f tl = el->GetAbsoluteOffset(Rml::BoxArea::Border);
+        if (x) *x = tl.x;
+        if (y) *y = tl.y;
+    }
     return true;
 }
 

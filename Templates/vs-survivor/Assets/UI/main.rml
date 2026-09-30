@@ -1,0 +1,20 @@
+<rml>
+<head><title>main</title>
+<link type="text/rcss" rel="stylesheet" href="theme.rcss"/>
+<style>
+/* 主菜单 = 实心底全屏（menu-bg；覆盖 HUD——菜单态非叠加态）。按钮 id 供
+     smoke 点击定位（TryGetElementBox 中心直灌） */
+#main { display: flex; }
+</style>
+</head>
+<body>
+<div id="main" class="menu-bg">
+  <div id="main-title" class="menu-title">LEMON SURVIVORS</div>
+  <div id="main-list" class="menu-list">
+    <button id="btn-start" class="btn-lg" data-event="start">开始游戏</button>
+    <button id="btn-msettings" class="btn-lg" data-event="settings">设置</button>
+  </div>
+  <div id="main-hint" class="hint">移动 WASD · 攻击 自动 · 暂停 Esc</div>
+</div>
+</body>
+</rml>

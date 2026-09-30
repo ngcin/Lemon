@@ -42,8 +42,9 @@ namespace {
 struct TplSmokeState {
     int waveStarts = 0, levelUps = 0, deaths = 0;
     int gems = 0, mobs = 0; // 峰值快照（帧内采样）
-    // 批③d 前置 T5 → 批③d-1 随迁：模板场景现挂 2 UIDocument（HUD/cards）——零装载
-    // 护栏升级为"通道 A 装载恰 2"（装载点单一性防线的同型收紧；bench 场景仍零装载）
+    // 批③d 前置 T5 → 批③d-1/③d-2 随迁：模板场景现挂 6 UIDocument（HUD/cards/
+    // main/pause/settings/results）——零装载护栏升级为"通道 A 装载恰 6"（装载点
+    // 单一性防线的同型收紧；bench 场景仍零装载）
     int uiLoads = -1;
     // 批③d-1：文档化断言态（原 RtUi 行/卡片探针随迁）+ 层序三拍状态机
     bool hudDocOk = false;
@@ -68,6 +69,21 @@ struct TplSmokeState {
     // M6a 批② T4：数值表载入断言（weapons 4 行 × upgrades 7 行 × balance 2 行——
     // 含列头行；PlayerCombat.Start 读、EnterPlay 快照建 TableStore）
     bool tablesOk = false;
+    // 批③d-2：流程链（菜单→开局→常规链→二死→结算→重开清场→暂停/设置→回菜单）。
+    // 元素点击 = 引擎直灌三帧同卡片条目路径（clickElDoc/Id 非空 = 下一发目标）
+    bool menuOk = false, runStarted = false;
+    bool death2Armed = false;
+    bool resultsOk = false, restartOk = false;
+    bool pauseOk = false, settingsOk = false, settingsToggled = false;
+    bool resumedOk = false, tomenuOk = false;
+    int flowStage = 0; // 0 等菜单→1 等开局→2 常规链(一死复活)→3 等二死结算→4 等重开
+                       // →5 等暂停→6 等设置→7 等翻转→8 等回暂停→9 等复活后二段暂停→10 等回菜单
+    char clickElDoc[40] = ""; // 元素点击目标（doc relPath；空 = 卡片条目路径）
+    char clickElId[40] = "";
+    bool clickFromCards = false; // 本发点击来源（up 相位回填 picked 用——元素点击不污染卡片链语义位）
+    uint64_t oldPlayerId = 0; // 重开前玩家句柄（清场断言：旧灭新生）
+    int revivedAt = -1;       // 复活帧（二死武装避开复活无敌 2s）
+    bool wantPause = false;   // Esc 注入请求（SmokeTplSteer 写 bit6 一帧）
 };
 TplSmokeState g_tplSmoke; // 批④：单 TU 化（EditorAppSmoke.h 的 extern 共享面退役）
 } // namespace
@@ -135,7 +151,7 @@ bool EditorApp::SmokeTplSeedScene() {
 // 无捕获 lambda 引 g_tplSmoke（文件级存储两刚需之一）；批③c-4 自 Run 外迁）----
 void EditorApp::SmokeTplPlaySetup() {
     if (Launch().smokeTemplate && ctx_.Playing()) {
-    // 批③d-1：通道 A 装载数（恰 2 = HUD+cards 场景声明；bench 场景零装载口径
+    // 批③d-2：通道 A 装载数（恰 6 = 六文档场景声明；bench 场景零装载口径
     // 不变——装载点只在 MountSceneUiDocuments 的 EnterPlay 扫描）
     g_tplSmoke.uiLoads = gameUi_ ? (int)gameUi_->DocumentLoadCount() : -1;
     ctx_.ActiveWorld().SetEventSink(
@@ -151,6 +167,12 @@ void EditorApp::SmokeTplPlaySetup() {
 // 此后站桩送死；批③c-4 自 Run 外迁，挂点原位（ApplyInput 前））----
 void EditorApp::SmokeTplSteer(uint64_t frame, ecs::InputState& in) {
     if (Launch().smokeTemplate && !gameViewFocused_) {
+        // 批③d-2：流程链 Esc 注入（bit6 pause，一帧边沿——GameFlow 侧 prevPause
+        // 边沿检测消费；与转向注入同一 ApplyInput 前挂点）
+        if (g_tplSmoke.wantPause) {
+            in.buttons |= 1ull << 6;
+            g_tplSmoke.wantPause = false;
+        }
         // 模板冒烟注入（批④后修④ 两段）：kDeathArm 前切向环绕风筝（角速
         // 1.2rad/s × 速 240 → 半径 ~200）攒击杀/升级链；此后站桩送死——
         // 近身 Hazard 磨死 → 死亡对话框 → 自动 pick 复活（断言见 tplDeath 段）
@@ -265,7 +287,23 @@ void EditorApp::SmokeTplSample(uint64_t frame) {
             g_tplSmoke.clickPhase = 0;
             g_tplSmoke.pointerHold = false;
             g_tplSmoke.clickCooldown = 15; // 事件往返（→UiEvent→#16→C#→Hide）余量
-            g_tplSmoke.picked = true;
+            if (g_tplSmoke.clickFromCards) g_tplSmoke.picked = true; // 卡片链语义位
+            g_tplSmoke.clickFromCards = false;
+        } else if (g_tplSmoke.clickElDoc[0] != '\0' && gameUi_ &&
+                   g_tplSmoke.clickCooldown == 0) {
+            // 批③d-2：元素点击（流程四屏按钮）——盒中心直灌（定位→down→up
+            // 三帧与卡片条目同机器；盒未就绪则保持目标下帧重试）
+            float w = 0, h = 0, x = 0, y = 0;
+            if (gameUi_->TryGetElementBox(g_tplSmoke.clickElDoc, g_tplSmoke.clickElId,
+                                          &w, &h, &x, &y) &&
+                w > 1.f && h > 1.f) {
+                g_tplSmoke.clickX = x + w * 0.5f;
+                g_tplSmoke.clickY = y + h * 0.5f;
+                gameUi_->SetPointer((int)g_tplSmoke.clickX, (int)g_tplSmoke.clickY, true);
+                g_tplSmoke.pointerHold = true;
+                g_tplSmoke.clickPhase = 1;
+                g_tplSmoke.clickElDoc[0] = '\0'; // 目标消费（成功起灌）
+            }
         } else if (gameUi_ && cardsShown && cardsN >= 1 &&
                    g_tplSmoke.clickCooldown == 0 && frame > 120) {
             // 可见卡片逐 key 试探（u0..u5 = 升级池 id；ok = 死亡对话框）——
@@ -280,6 +318,7 @@ void EditorApp::SmokeTplSample(uint64_t frame) {
                     gameUi_->SetPointer((int)cx, (int)cy, true); // 保持至 up 帧
                     g_tplSmoke.pointerHold = true;
                     g_tplSmoke.clickPhase = 1;
+                    g_tplSmoke.clickFromCards = true;
                     break;
                 }
             }
@@ -311,7 +350,9 @@ void EditorApp::SmokeTplSample(uint64_t frame) {
             }
             g_tplSmoke.capPending = false;
         }
-        if (g_tplSmoke.layerStage == 0 && frame > 100) { // 基线：HUD 已上屏、卡片未到
+        if (g_tplSmoke.layerStage == 0 && frame > 100 && g_tplSmoke.runStarted) {
+            // 基线：已开局（批③d-2 菜单期实底覆盖 HUD——N0 必须等 run 起来）、
+            // 卡片未到
             g_tplSmoke.capReq = true;
             g_tplSmoke.layerStage = 1;
         } else if (g_tplSmoke.layerStage == 1 && g_tplSmoke.capPix >= 0) {
@@ -339,9 +380,12 @@ void EditorApp::SmokeTplSample(uint64_t frame) {
         if (frame >= 2150 && !g_tplSmoke.deathSeen) {
             Vec2 ppos{0, 0};
             bool got = false;
+            // 批③d-2 注：Flow 实体也挂 ScriptBox（无 Health）——传送点按 Health
+            // 过滤锁玩家（否则 ppos 漂到 Flow 的原点，催命失效）
             ctx_.ActiveScene().View<scripting::ScriptBox>().each(
                 [&](auto ent, scripting::ScriptBox&) {
                     const ecs::Entity e = ecs::Scene::FromEntt(ent);
+                    if (!ctx_.ActiveScene().TryGet<ecs::Health>(e)) return;
                     if (const ecs::Transform2D* t =
                             ctx_.ActiveScene().TryGet<ecs::Transform2D>(e)) {
                         ppos = t->pos;
@@ -387,9 +431,182 @@ void EditorApp::SmokeTplSample(uint64_t frame) {
                 });
             if (!anyScript) g_tplSmoke.scriptOk = false; // 脚本实体消失（销毁回归锚点）
         }
+
+        // ---- 批③d-2：流程链驱动（帧锚定见 TplSmokeState.flowStage 注）----
+        // 玩家身份 = ScriptBox && Health（Flow 实体有 ScriptBox 无 Health——
+        // 常驻件与 run 实体的判据）；元素点击复用直灌三帧机器（clickEl 目标）
+        static const char* const kMainDoc = "Assets/UI/main.rml";
+        static const char* const kPauseDoc = "Assets/UI/pause.rml";
+        static const char* const kSettingsDoc = "Assets/UI/settings.rml";
+        static const char* const kResultsDoc = "Assets/UI/results.rml";
+        static const char* const kHudDoc2 = "Assets/UI/hud.rml";
+        const bool menuShown = gameUi_ && gameUi_->IsDocumentShown(kMainDoc);
+        auto playerAlive = [&](uint64_t id) {
+            bool alive = false;
+            ctx_.ActiveScene().View<scripting::ScriptBox>().each(
+                [&](auto ent, scripting::ScriptBox&) {
+                    const ecs::Entity e = ecs::Scene::FromEntt(ent);
+                    if (id != 0 && e.id != id) return;
+                    if (ctx_.ActiveScene().TryGet<ecs::Health>(e)) alive = true;
+                });
+            return alive;
+        };
+        auto requestClick = [&](const char* doc, const char* el) {
+            std::snprintf(g_tplSmoke.clickElDoc, sizeof g_tplSmoke.clickElDoc, "%s",
+                          doc);
+            std::snprintf(g_tplSmoke.clickElId, sizeof g_tplSmoke.clickElId, "%s",
+                          el);
+        };
+        switch (g_tplSmoke.flowStage) {
+        case 0: // 菜单即显（EnterPlay showOnStart=1）→ 点「开始游戏」
+            if (menuShown) {
+                g_tplSmoke.menuOk = true;
+                if (g_tplSmoke.clickCooldown == 0 && frame > 60) {
+                    requestClick(kMainDoc, "btn-start");
+                    g_tplSmoke.flowStage = 1;
+                }
+            }
+            break;
+        case 1: // 开局握手（清场→重挂双 prefab）→ 菜单隐藏 + 玩家在场
+            if (!menuShown && playerAlive(0)) {
+                g_tplSmoke.runStarted = true;
+                g_tplSmoke.flowStage = 2;
+            }
+            break;
+        case 2: // 常规链推进（既有块）；复活过且过 2s 无敌窗 → 武装二死（压血+停火）
+            if (g_tplSmoke.revived && g_tplSmoke.revivedAt < 0)
+                g_tplSmoke.revivedAt = (int)frame;
+            if (g_tplSmoke.revivedAt >= 0 && !g_tplSmoke.death2Armed &&
+                frame >= (uint64_t)(g_tplSmoke.revivedAt + 140)) {
+                g_tplSmoke.death2Armed = true; // 同 2100 段语义（站桩清怪快——停火近身）
+                ctx_.ActiveScene().View<scripting::ScriptBox>().each(
+                    [&](auto ent, scripting::ScriptBox&) {
+                        ecs::Entity e = ecs::Scene::FromEntt(ent);
+                        if (ecs::Health* hp = ctx_.ActiveScene().TryGet<ecs::Health>(e))
+                            hp->cur = 0.1f;
+                        if (ecs::Shooter* sh = ctx_.ActiveScene().TryGet<ecs::Shooter>(e))
+                            sh->interval = 3600.0f;
+                    });
+                g_tplSmoke.flowStage = 3;
+            }
+            break;
+        case 3: // 二死 → 结算屏（得分行非空）→ 记旧句柄 → 点「再战一局」
+            if (gameUi_ && gameUi_->IsDocumentShown(kResultsDoc)) {
+                char t[64] = {};
+                if (gameUi_->TryGetElementText(kResultsDoc, "res-score", t,
+                                                sizeof t) &&
+                    t[0] != '\0') {
+                    g_tplSmoke.resultsOk = true;
+                    ctx_.ActiveScene().View<scripting::ScriptBox>().each(
+                        [&](auto ent, scripting::ScriptBox&) {
+                            const ecs::Entity e = ecs::Scene::FromEntt(ent);
+                            if (g_tplSmoke.oldPlayerId == 0 &&
+                                ctx_.ActiveScene().TryGet<ecs::Health>(e))
+                                g_tplSmoke.oldPlayerId = e.id;
+                        });
+                    requestClick(kResultsDoc, "btn-restart");
+                    g_tplSmoke.flowStage = 4;
+                }
+            }
+            break;
+        case 4: { // 重开完成：旧句柄失效 + 新玩家在场 + 击杀归零 + 结算屏已隐
+            //（T10 后修①：真人验收抓的盲区——restart 位此前漏「结算屏隐藏」断言，
+            // EnterRun 只隐菜单不隐结算 = 残屏盖新局而 smoke 绿）
+            char t[64] = {};
+            const bool killsReset =
+                gameUi_ && gameUi_->TryGetElementText(kHudDoc2, "kills", t,
+                                                      sizeof t) &&
+                std::strcmp(t, "\xe5\x87\xbb\xe6\x9d\x80 0") == 0; // "击杀 0"
+            if (g_tplSmoke.oldPlayerId != 0 && !playerAlive(g_tplSmoke.oldPlayerId) &&
+                playerAlive(0) && killsReset &&
+                !gameUi_->IsDocumentShown(kResultsDoc)) {
+                g_tplSmoke.restartOk = true;
+                g_tplSmoke.wantPause = true;
+                g_tplSmoke.flowStage = 5;
+            }
+            break;
+        }
+        case 5: // Esc（bit6 注入）→ 暂停屏 → 点「设置」
+            if (gameUi_ && gameUi_->IsDocumentShown(kPauseDoc)) {
+                g_tplSmoke.pauseOk = true;
+                requestClick(kPauseDoc, "btn-psettings");
+                g_tplSmoke.flowStage = 6;
+            }
+            break;
+        case 6: // 设置屏 → 点 fxtext 开关
+            if (gameUi_ && gameUi_->IsDocumentShown(kSettingsDoc)) {
+                g_tplSmoke.settingsOk = true;
+                requestClick(kSettingsDoc, "btn-fxtext");
+                g_tplSmoke.flowStage = 7;
+            }
+            break;
+        case 7: { // 文案 开→关（Settings 档落盘在 Stop 后断言）→ 点「返回」
+            char t[64] = {};
+            if (gameUi_ && gameUi_->TryGetElementText(kSettingsDoc, "btn-fxtext",
+                                                      t, sizeof t) &&
+                std::strcmp(t, "\xe5\x85\xb3") == 0) { // "关"
+                g_tplSmoke.settingsToggled = true;
+                requestClick(kSettingsDoc, "btn-back");
+                g_tplSmoke.flowStage = 8;
+            }
+            break;
+        }
+        case 8: // 回暂停（设置隐藏）→ 点「继续」
+            if (gameUi_ && gameUi_->IsDocumentShown(kPauseDoc) &&
+                !gameUi_->IsDocumentShown(kSettingsDoc)) {
+                requestClick(kPauseDoc, "btn-resume");
+                g_tplSmoke.flowStage = 9;
+            }
+            break;
+        case 9: // 恢复运行（解冻 + 暂停隐藏）→ 再注入 Esc
+            if (gameUi_ && !gameUi_->IsDocumentShown(kPauseDoc) &&
+                ctx_.ActiveWorld().TimeScale() > 0.f) {
+                g_tplSmoke.resumedOk = true;
+                g_tplSmoke.wantPause = true;
+                g_tplSmoke.flowStage = 10;
+            }
+            break;
+        case 10: // 二段暂停 → 点「回主菜单」
+            if (gameUi_ && gameUi_->IsDocumentShown(kPauseDoc)) {
+                requestClick(kPauseDoc, "btn-tomenu");
+                g_tplSmoke.flowStage = 11;
+            }
+            break;
+        case 11: // 菜单回归 + run 实体清场（玩家不在场）
+            if (menuShown && !playerAlive(0)) {
+                g_tplSmoke.tomenuOk = true;
+                g_tplSmoke.flowStage = 12;
+            }
+            break;
+        }
+        // 二死催命（同 2150 段：追击怪贴脸保 Hazard 真实路径——按 Health 锁玩家）
+        if (g_tplSmoke.death2Armed && !g_tplSmoke.resultsOk &&
+            g_tplSmoke.revivedAt >= 0 &&
+            frame >= (uint64_t)(g_tplSmoke.revivedAt + 200)) {
+            Vec2 ppos{0, 0};
+            bool got = false;
+            ctx_.ActiveScene().View<scripting::ScriptBox>().each(
+                [&](auto ent, scripting::ScriptBox&) {
+                    const ecs::Entity e = ecs::Scene::FromEntt(ent);
+                    if (!ctx_.ActiveScene().TryGet<ecs::Health>(e)) return;
+                    if (const ecs::Transform2D* tf =
+                            ctx_.ActiveScene().TryGet<ecs::Transform2D>(e)) {
+                        ppos = tf->pos;
+                        got = true;
+                    }
+                });
+            if (got)
+                ctx_.ActiveScene().View<ecs::Transform2D, ecs::Chase>().each(
+                    [&](auto, ecs::Transform2D& tf, ecs::Chase&) {
+                        tf.pos = Vec2{ppos.x + 18.0f, ppos.y + 6.0f};
+                    });
+        }
         if (frame % 60 == 0) { // 诊断快照（低频）：文档 HUD 位 + 场内分布
-            std::snprintf(g_tplSmoke.hudRows, sizeof g_tplSmoke.hudRows, "doc=%d cards=%d",
-                          g_tplSmoke.hudDocOk ? 1 : 0, cardsN);
+            std::snprintf(g_tplSmoke.hudRows, sizeof g_tplSmoke.hudRows,
+                          "doc=%d cards=%d stage=%d menu=%d ph=%d el=%s",
+                          g_tplSmoke.hudDocOk ? 1 : 0, cardsN, g_tplSmoke.flowStage,
+                          menuShown ? 1 : 0, g_tplSmoke.clickPhase,
+                          g_tplSmoke.clickElDoc);
             ctx_.ActiveScene().View<ecs::Collectible>().each(
                 [](auto, ecs::Collectible&) { ++g_tplSmoke.gems; });
             ctx_.ActiveScene().View<ecs::Chase>().each(
@@ -405,6 +622,13 @@ bool EditorApp::SmokeTplVerdict() {
         const bool layerOk = g_tplSmoke.hudPixN0 > 40 &&
                              g_tplSmoke.hudPixDuring < g_tplSmoke.hudPixN0 / 2 &&
                              g_tplSmoke.hudPixAfter > g_tplSmoke.hudPixN0 / 2;
+        // 批③d-2 流程位：菜单→开局→二死结算→重开清场（旧灭新生+击杀归零）→
+        // 暂停→设置翻转→恢复→二段暂停→回菜单清场
+        const bool flowOk = g_tplSmoke.menuOk && g_tplSmoke.runStarted &&
+                            g_tplSmoke.resultsOk && g_tplSmoke.restartOk &&
+                            g_tplSmoke.pauseOk && g_tplSmoke.settingsOk &&
+                            g_tplSmoke.settingsToggled && g_tplSmoke.resumedOk &&
+                            g_tplSmoke.tomenuOk;
         const bool tplOk = g_tplSmoke.hudDocOk && g_tplSmoke.hudBarBox && g_tplSmoke.bestLoaded &&
                            g_tplSmoke.waveRow &&
                            g_tplSmoke.deaths > 0 && g_tplSmoke.levelUps > 0 && g_tplSmoke.cardsSeen &&
@@ -412,12 +636,14 @@ bool EditorApp::SmokeTplVerdict() {
                            g_tplSmoke.revived && g_tplSmoke.scriptOk &&
                            g_tplSmoke.mobHitClip && g_tplSmoke.fxText && g_tplSmoke.fxBar && // 批①
                            g_tplSmoke.tablesOk && // 批② T4：数值表载入
-                           g_tplSmoke.uiLoads == 2 && layerOk; // 批③d-1：装载恰 2 + 层序三拍
+                           g_tplSmoke.uiLoads == 6 && layerOk && flowOk; // 批③d-1/③d-2：装载恰 6 + 层序三拍 + 流程链
         std::printf("[lemon] smoke-template: hud(doc=%s bar=%s) saveLoad=%s wave(row=%s n=%d) "
                     "kills=%d levelUps=%d cards(doc seen=%s pick=%s hidden=%s) "
                     "layer(%d/%d/%d=%s) "
                     "death(seen=%s revive=%s scriptOk=%s) "
-                    "hitClip=%s fx(text=%s bar=%s) tables=%s uidoc=%d => %s\n",
+                    "hitClip=%s fx(text=%s bar=%s) tables=%s uidoc=%d "
+                    "flow(menu=%s start=%s results=%s restart=%s pause=%s "
+                    "set=%s/%s resume=%s tomenu=%s) => %s\n",
                     g_tplSmoke.hudDocOk ? "YES" : "NO",
                     g_tplSmoke.hudBarBox ? "YES" : "NO", g_tplSmoke.bestLoaded ? "YES" : "NO",
                     g_tplSmoke.waveRow ? "YES" : "NO", g_tplSmoke.waveStarts, g_tplSmoke.deaths,
@@ -429,13 +655,19 @@ bool EditorApp::SmokeTplVerdict() {
                     g_tplSmoke.scriptOk ? "YES" : "NO", g_tplSmoke.mobHitClip ? "YES" : "NO",
                     g_tplSmoke.fxText ? "YES" : "NO", g_tplSmoke.fxBar ? "YES" : "NO",
                     g_tplSmoke.tablesOk ? "YES" : "NO", g_tplSmoke.uiLoads,
+                    g_tplSmoke.menuOk ? "YES" : "NO", g_tplSmoke.runStarted ? "YES" : "NO",
+                    g_tplSmoke.resultsOk ? "YES" : "NO", g_tplSmoke.restartOk ? "YES" : "NO",
+                    g_tplSmoke.pauseOk ? "YES" : "NO", g_tplSmoke.settingsOk ? "YES" : "NO",
+                    g_tplSmoke.settingsToggled ? "YES" : "NO",
+                    g_tplSmoke.resumedOk ? "YES" : "NO", g_tplSmoke.tomenuOk ? "YES" : "NO",
                     tplOk ? "OK" : "FAIL");
         std::printf("[lemon] smoke-template: diag %s gems(peak)=%d mobs(peak)=%d\n",
                     g_tplSmoke.hudRows, g_tplSmoke.gems, g_tplSmoke.mobs);
         bool verdictOk = tplOk;
         // ExitPlay 兜底落盘（写路径）：Stop 后 .lemon/saves/ 三档——slot_0 =
         // 旧 game.sav 惰性迁移后落新名（迁移链闭环：内容含种子键）；meta =
-        // vs.best（模板 Chan.Meta）；settings 空档跳过不落文件（Count 0 语义）
+        // vs.best（模板 Chan.Meta）；批③d-2 起 settings 恒存在（GameFlow.Start
+        // 建档 version=1，流程链把 fx.text 关到 0——档内容双断言）
         {
             namespace fs = std::filesystem;
             const fs::path savesDir =
@@ -445,7 +677,6 @@ bool EditorApp::SmokeTplVerdict() {
                 return fs::file_size(savesDir / name, ec) > 16 && !ec;
             };
             const bool slotOk = fileOk("slot_0.sav"), metaOk = fileOk("meta.sav");
-            const bool skipOk = !fs::exists(savesDir / "settings.sav", ec);
             bool migrateOk = false; // slot_0.sav 解码含种子键 vs.best=123
             if (slotOk) {
                 std::ifstream f(savesDir / "slot_0.sav", std::ios::binary);
@@ -457,11 +688,24 @@ bool EditorApp::SmokeTplVerdict() {
                             ch.GetLen("vs.best") == 3 && ch.Get("vs.best", buf, 7) == 3 &&
                             std::memcmp(buf, "123", 3) == 0;
             }
-            const bool savOk = slotOk && metaOk && skipOk && migrateOk;
+            bool settingsOk2 = false; // settings.sav：version=1 + fx.text=0（流程链翻转）
+            if (fileOk("settings.sav")) {
+                std::ifstream f(savesDir / "settings.sav", std::ios::binary);
+                std::vector<uint8_t> b((std::istreambuf_iterator<char>(f)),
+                                       std::istreambuf_iterator<char>());
+                lemon::ecs::SaveChannel ch;
+                char buf[8] = {};
+                settingsOk2 = ch.Decode(b.data(), b.size()) &&
+                              ch.GetLen("version") == 1 &&
+                              ch.Get("version", buf, 7) == 1 && buf[0] == '1' &&
+                              ch.GetLen("fx.text") == 1 &&
+                              ch.Get("fx.text", buf, 7) == 1 && buf[0] == '0';
+            }
+            const bool savOk = slotOk && metaOk && migrateOk && settingsOk2;
             std::printf("[lemon] smoke-template: saves(slot_0=%s meta=%s legacy=%s "
-                        "skipEmpty=%s) => %s\n",
+                        "settings=%s) => %s\n",
                         slotOk ? "YES" : "NO", metaOk ? "YES" : "NO",
-                        migrateOk ? "YES" : "NO", skipOk ? "YES" : "NO",
+                        migrateOk ? "YES" : "NO", settingsOk2 ? "YES" : "NO",
                         savOk ? "OK" : "FAIL");
             verdictOk = verdictOk && savOk;
         }

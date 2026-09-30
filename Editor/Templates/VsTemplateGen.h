@@ -21,6 +21,10 @@ constexpr uint64_t kBulletPf = 0x7e57100000000003ull;     // Bullet.prefab
 constexpr uint64_t kPiercePf = 0x7e57100000000004ull;     // PierceBullet.prefab
 constexpr uint64_t kGemPf = 0x7e57100000000005ull;        // Gem.prefab
 constexpr uint64_t kBladePf = 0x7e57100000000006ull;      // Blade.prefab
+// 批③d-2：流程双 prefab（Player/Director 自场景迁出——重开 = 清场 + 重挂，
+// 脚本/表载/Start 与 WaveDirector 运行态随重挂自然归零）
+constexpr uint64_t kPlayerPf = 0x7e57100000000007ull;     // Player.prefab
+constexpr uint64_t kDirectorPf = 0x7e57100000000008ull;   // Director.prefab
 // yami 素材沿用批③入库 guid（Templates 侧拷贝即引用同源）
 constexpr uint64_t kHeroSheet = 0x5bd31a7c10000001ull;
 constexpr uint64_t kMonsterSheet = 0x5bd31a7c10000003ull;
@@ -41,6 +45,11 @@ constexpr uint64_t kBalanceTab = 0x7e57200000100003ull;  // balance.tab
 constexpr uint64_t kHudRml = 0x7e57300000100001ull;    // hud.rml（HUD 六行）
 constexpr uint64_t kCardsRml = 0x7e57300000100002ull;  // cards.rml（升级三选一/死亡对话）
 constexpr uint64_t kThemeRcss = 0x7e57300000100003ull; // theme.rcss（L2 主题 token 单源）
+// 批③d-2：流程四屏（主菜单/暂停/设置/结算——档1 流程状态机的 .rml 面）
+constexpr uint64_t kMainRml = 0x7e57300000100004ull;      // main.rml（主菜单）
+constexpr uint64_t kPauseRml = 0x7e57300000100005ull;     // pause.rml（暂停）
+constexpr uint64_t kSettingsRml = 0x7e57300000100006ull;  // settings.rml（设置）
+constexpr uint64_t kResultsRml = 0x7e57300000100007ull;   // results.rml（结算）
 
 /// --smoke-guid（M6a 批⓪ T5）：sprite 引用 GUID 稳定性链——插队导入/资产
 /// 改名/删 manifest 三难并发 → 重开逐实体断言（详注见 VsTemplateGen.cpp）

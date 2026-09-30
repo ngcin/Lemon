@@ -153,6 +153,7 @@ body {
     --rarity-epic:   #b04dff;
 
     /* 字号（720dp 基准；464px 烟测画布 ×0.644 —— 20dp ≈ 12.9px） */
+    --fs-huge: 40dp;
     --fs-title: 26dp;
     --fs-hud:   20dp;
     --fs-body:  18dp;
@@ -246,6 +247,71 @@ body {
 .card:active { border-color: var(--c-accent); background: #35507add; }
 .card.rare { border-color: var(--rarity-rare); }
 .card.epic { border-color: var(--rarity-epic); }
+
+/* ---- 批③d-2：流程四屏组件（主菜单/暂停/设置/结算）---- */
+
+.menu-bg {                      /* 主菜单实心底全屏（覆盖 HUD——菜单态非叠加态） */
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    left: 0; top: 0;
+    width: 100%; height: 100%;
+    background: var(--c-bg);
+}
+.menu-title {                   /* 主菜单大标题 */
+    display: block;
+    font-size: var(--fs-huge);
+    color: var(--c-accent);
+    margin-bottom: var(--sp-3);
+}
+.menu-list {                    /* 按钮列容器（主菜单/暂停/结算共用） */
+    display: block;
+}
+.btn-lg {                       /* 流程大按钮（菜单/暂停/结算主操作） */
+    display: block;
+    width: 240dp;
+    height: 52dp;
+    margin: var(--sp-2) 0;
+    background: var(--c-panel);
+    border: 2dp var(--c-border);
+    color: var(--c-text);
+    font-size: var(--fs-body);
+    text-align: center;
+}
+.btn-lg:hover  { border-color: var(--c-accent); background: #2d4056dd; }
+.btn-lg:active { border-color: var(--c-accent); background: #35507add; }
+.set-row {                      /* 设置行：label + 值按钮两端对齐 */
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 300dp;
+    margin: var(--sp-2) 0;
+    font-size: var(--fs-body);
+}
+.set-label { display: block; color: var(--c-text); }
+.btn-set {                      /* 设置开关按钮（文案 [开]/[关]，Click 翻转） */
+    display: block;
+    width: 88dp;
+    height: 40dp;
+    background: var(--c-panel);
+    border: 2dp var(--c-border);
+    color: var(--c-text);
+    font-size: var(--fs-body);
+    text-align: center;
+}
+.btn-set:hover  { border-color: var(--c-accent); }
+.btn-set:active { border-color: var(--c-accent); background: #35507add; }
+.stat-row {                     /* 结算统计行：label 左值右 */
+    display: flex;
+    justify-content: space-between;
+    width: 280dp;
+    margin: var(--sp-1) 0;
+    font-size: var(--fs-body);
+}
+.stat-label { display: block; color: var(--c-dim); }
+.stat-value { display: block; color: var(--c-text); }
 )RCSS"},
         {"hud.rml", kHudRml, "rml", R"RML(<rml>
 <head><title>hud</title>
@@ -292,6 +358,101 @@ body {
       </ui-template>
     </div>
     <div id="cards-hint" class="hint">点击卡片选择</div>
+  </div>
+</div>
+</body>
+</rml>
+)RML"},
+        // 批③d-2：流程四屏。data-event 语义名经 UI.Click 事件（key = 元素 id）；
+        // 值文本（设置开关文案/结算统计）= C# SetText 驱动
+        {"main.rml", kMainRml, "rml", R"RML(<rml>
+<head><title>main</title>
+<link type="text/rcss" rel="stylesheet" href="theme.rcss"/>
+<style>
+/* 主菜单 = 实心底全屏（menu-bg；覆盖 HUD——菜单态非叠加态）。按钮 id 供
+     smoke 点击定位（TryGetElementBox 中心直灌） */
+#main { display: flex; }
+</style>
+</head>
+<body>
+<div id="main" class="menu-bg">
+  <div id="main-title" class="menu-title">LEMON SURVIVORS</div>
+  <div id="main-list" class="menu-list">
+    <button id="btn-start" class="btn-lg" data-event="start">开始游戏</button>
+    <button id="btn-msettings" class="btn-lg" data-event="settings">设置</button>
+  </div>
+  <div id="main-hint" class="hint">移动 WASD · 攻击 自动 · 暂停 Esc</div>
+</div>
+</body>
+</rml>
+)RML"},
+        {"pause.rml", kPauseRml, "rml", R"RML(<rml>
+<head><title>pause</title>
+<link type="text/rcss" rel="stylesheet" href="theme.rcss"/>
+<style>
+/* 暂停 = 半透 scrim 叠加（HUD 在下保留 = 战况可视）。Esc 与「继续」同义 */
+#pause-panel { width: 300dp; }
+</style>
+</head>
+<body>
+<div id="pause-modal" class="scrim">
+  <div id="pause-panel" class="panel">
+    <div id="pause-title" class="title">暂停</div>
+    <div id="pause-list" class="menu-list">
+      <button id="btn-resume" class="btn-lg" data-event="resume">继续</button>
+      <button id="btn-psettings" class="btn-lg" data-event="settings">设置</button>
+      <button id="btn-tomenu" class="btn-lg" data-event="tomenu">回主菜单</button>
+    </div>
+  </div>
+</div>
+</body>
+</rml>
+)RML"},
+        {"settings.rml", kSettingsRml, "rml", R"RML(<rml>
+<head><title>settings</title>
+<link type="text/rcss" rel="stylesheet" href="theme.rcss"/>
+<style>
+/* 设置 = scrim 叠加，入口双源（主菜单/暂停）——返回目标由 GameFlow 记忆。
+     开关 = 按钮翻文案（Click 通道；Change/checkbox 不用——Click 已验证） */
+#settings-panel { width: 360dp; }
+#settings-more { margin-top: var(--sp-3); }
+#btn-back { margin-top: var(--sp-2); }
+</style>
+</head>
+<body>
+<div id="settings-modal" class="scrim">
+  <div id="settings-panel" class="panel">
+    <div id="settings-title" class="title">设置</div>
+    <div class="set-row"><span class="set-label">伤害飘字</span><button id="btn-fxtext" class="btn-set" data-event="toggle-fxtext">开</button></div>
+    <div class="set-row"><span class="set-label">世界血条</span><button id="btn-fxbar" class="btn-set" data-event="toggle-fxbar">开</button></div>
+    <div id="settings-more" class="hint">更多设置随音频（M6c）加入</div>
+    <button id="btn-back" class="btn-lg" data-event="back">返回</button>
+  </div>
+</div>
+</body>
+</rml>
+)RML"},
+        {"results.rml", kResultsRml, "rml", R"RML(<rml>
+<head><title>results</title>
+<link type="text/rcss" rel="stylesheet" href="theme.rcss"/>
+<style>
+/* 结算 = 半透 scrim（末帧 HUD 在下 = 战况定格可视）。统计行 SetText 四路 */
+#results-panel { width: 360dp; }
+#results-list { margin-top: var(--sp-3); }
+</style>
+</head>
+<body>
+<div id="results-modal" class="scrim">
+  <div id="results-panel" class="panel">
+    <div id="results-title" class="title"/>
+    <div class="stat-row"><span class="stat-label">得分</span><span id="res-score" class="stat-value"/></div>
+    <div class="stat-row"><span class="stat-label">存活</span><span id="res-time" class="stat-value"/></div>
+    <div class="stat-row"><span class="stat-label">击杀</span><span id="res-kills" class="stat-value"/></div>
+    <div class="stat-row"><span class="stat-label">最高</span><span id="res-best" class="stat-value"/></div>
+    <div id="results-list" class="menu-list">
+      <button id="btn-restart" class="btn-lg" data-event="restart">再战一局</button>
+      <button id="btn-rtomenu" class="btn-lg" data-event="tomenu">回主菜单</button>
+    </div>
   </div>
 </div>
 </body>
@@ -388,11 +549,25 @@ public static class GameMain
         public static int Kills;   // 本局击杀
         public static int Best;    // 历史最高（Save "vs.best" @ Chan.Meta 持久）
         public static bool Dead;   // 死亡结算相位（三脚本共用的闸）
+        public static bool ReviveUsed; // 批③d-2：复活已用（死亡策略游戏侧示例——每局一次；道具化/表驱动只动 PlayerCombat.Die 分叉）
     }
 
-    /// <summary>卡片屏文档名（M6b 批③d-1：升级三选一/死亡对话框同一 .rml 文档，
-    /// 单条形态 = 对话框）。UI 资产建后不挪不改名（relPath 寻址约定）。</summary>
+    /// <summary>设置态（批③d-2 D3：Settings 档持久化 version=1 + fx.text/fx.bar；
+    /// GameFlow 载入/写回，PlayerCombat.OnHit 消费门控）。静态随域重建——
+    /// GameFlow 热重载代收代还。</summary>
+    public static class Settings
+    {
+        public static bool FxText = true; // 伤害飘字
+        public static bool FxBar = true;  // 世界血条
+    }
+
+    /// <summary>UI 文档名（批③d-1 cards + 批③d-2 流程四屏）。UI 资产建后
+    /// 不挪不改名（relPath 寻址约定）。</summary>
     internal const string CardsDoc = "Assets/UI/cards.rml";
+    internal const string MainDoc = "Assets/UI/main.rml";
+    internal const string PauseDoc = "Assets/UI/pause.rml";
+    internal const string SettingsDoc = "Assets/UI/settings.rml";
+    internal const string ResultsDoc = "Assets/UI/results.rml";
 
     // ---- 卡片屏文档态（静态：Configure 订阅不持实例；PlayerCombat 写/消费）----
     internal static string? CardPickPending; // 待选条目 key（"cards/<id>"；读后即清 = 消费式）
@@ -402,23 +577,34 @@ public static class GameMain
 
     public static void Configure()
     {
-        // 注册序 = 跨类型 Update 执行序（04 §3.2）：移动 → 战斗 → HUD
+        // 注册序 = 跨类型 Update 执行序（04 §3.2）：流程 → 移动 → 战斗 → HUD
+        //（批③d-2：GameFlow 首个——状态闸先于玩法 tick）
+        Lemon.Behaviours.Register<GameFlow>();
         Lemon.Behaviours.Register<PlayerMovement>();
         Lemon.Behaviours.Register<PlayerCombat>();
         Lemon.Behaviours.Register<PlayerHud>();
+        // 档② 清场批量系统（批③d-2：GameFlow.EnterRun/ReturnToMenu 消费）
+        Lemon.Scripting.Register(new RunSweeper());
         // 批③d-1：UI 事件静态订阅（Configure 每域一次，跨局存活——③c 先例）。
         // Click(pick) → 待选 key（PlayerCombat.Update 消费式读取）；DocumentReloaded
-        // → shown 态卡片重灌（M2 契约——隐藏态不重放，防凭空亮屏）
+        // → shown 态重灌（M2 契约——隐藏态不重放，防凭空亮屏）。批③d-2 起流程
+        // 四屏事件（start/resume/settings/...）一并路由 GameFlow
         Lemon.UI.Events.Subscribe(OnUiEvent);
     }
 
     private static void OnUiEvent(Lemon.UiEvent e)
     {
-        if (e.DocStr != CardsDoc) return;
-        if (e.Kind == (byte)Lemon.UiEventKind.Click && e.EvStr == "pick")
-            CardPickPending = e.KeyStr;
-        else if (e.Kind == (byte)Lemon.UiEventKind.DocumentReloaded && CardsShown)
-            ReplayCards();
+        if (e.Kind == (byte)Lemon.UiEventKind.DocumentReloaded) {
+            if (e.DocStr == CardsDoc && CardsShown) ReplayCards();
+            else GameFlow.OnDocReloaded(e.DocStr); // 流程屏 shown 态重放 + 设置标签重灌
+            return;
+        }
+        if (e.Kind != (byte)Lemon.UiEventKind.Click) return;
+        if (e.DocStr == CardsDoc) {
+            if (e.EvStr == "pick") CardPickPending = e.KeyStr;
+        } else {
+            GameFlow.HandleUiEvent(e); // 流程四屏（main/pause/settings/results）
+        }
     }
 
     /// <summary>显示卡片屏（模态：模拟已 Time.Scale=0 冻结，M7 游戏侧让出；
@@ -446,6 +632,276 @@ public static class GameMain
         UI.SetText(CardsDoc, "cards-title", CardTitle);
         if (CardItems != null) UI.SetItems(CardsDoc, "cards", "card", CardItems);
         UI.Apply();
+    }
+}
+)CS";
+    }
+    {
+        std::ofstream f(game / "GameFlow.cs", std::ios::trunc);
+        f << R"CS(using System;
+using Lemon;
+using Lemon.Interop;
+
+/// <summary>流程状态机（M6b 批③d-2 档1：单场景零引擎改动）。只提供流程原语：
+/// EnterRun（清场 + 重挂双 prefab）/ ShowResults / ReturnToMenu / SetPaused——
+/// **死亡策略归游戏侧**（何时复活/何时结算由 PlayerCombat.Die 决定；本模板示例
+/// = 每局一次复活，改复活道具/表驱动只动那一处分叉）。
+/// 重开 = C# 自律清场：RunSweeper 按 tag 扫场销毁 run 实体（SceneOps 命令
+/// 次帧首应用）→ Spawning 握手（SweepObserved）后重挂 Player/Director prefab——
+/// 脚本/表载/Start 与 WaveDirector 运行态随重挂自然归零，无手工复位清单。</summary>
+public sealed class GameFlow : LemonBehaviour
+{
+    // 模板资产 GUID（生成期固定——引用锚点，勿改）
+    private const string kPlayerPrefab = "7e57100000000007";
+    private const string kDirectorPrefab = "7e57100000000008";
+
+    internal enum State { Menu, Spawning, Run, Paused, Results, Settings }
+
+    // ---- 流程态（静态：UI 事件经 GameMain 单点订阅路由，不持实例）----
+    internal static State St = State.Menu;
+    private static State settingsFrom = State.Menu; // 设置屏返回目标（入口双源）
+    private static bool prevPause;                  // Esc 边沿（按住只切一次）
+    // 清场握手：EnterRun/ReturnToMenu 置 Armed → RunSweeper 批扫（同帧或次帧，
+    // 取决于事件派发时点）置 Observed → GameFlow 观察 Observed 后清对、开局。
+    // 命令入队与 spawn 之间恒有 Essential 提交拍（#15 内固定序：Update → 批量）。
+    internal static bool SweepArmed, SweepObserved;
+    // 结算数据（ShowResults 落板 + 热重载重灌）
+    private static string resTitle = "", resScore = "", resTime = "", resKills = "",
+                         resBest = "";
+
+    protected override void Start()
+    {
+        // 进 Play 即菜单（装载与首 tick 间可能有一帧 sim——首波 startTime≥5s 兜底）。
+        // 显式 re-Show：装载通道的 Show 序随场景实体迭代序（EnTT 逆序——先建者
+        // 后显 = 置顶），不重排则 HUD 压住实底菜单；D1 语义下流程屏显隐归本类
+        Time.Scale = 0f;
+        St = State.Menu;
+        UI.Show(GameMain.MainDoc);
+        UI.Apply();
+        LoadSettings();
+    }
+
+    protected override void Update()
+    {
+        bool pauseEdge = Input.Pause && !prevPause; // 边沿语义（按住 Esc 不连切）
+        switch (St) {
+        case State.Menu:
+            if (SweepObserved) { SweepArmed = false; SweepObserved = false; } // 回菜单清场收尾
+            break;
+        case State.Spawning:
+            if (!SweepObserved) break;                 // 清场批未过——等握手
+            SweepArmed = false;
+            SweepObserved = false;
+            Instantiate.Prefab(kPlayerPrefab, new Vec2(0f, 0f));
+            Instantiate.Prefab(kDirectorPrefab, new Vec2(0f, 0f));
+            GameMain.Run.Time = 0f;
+            GameMain.Run.Kills = 0;
+            GameMain.Run.Dead = false;
+            GameMain.Run.ReviveUsed = false;
+            Time.Scale = 1f;
+            St = State.Run;                            // 入口屏已在 EnterRun 即隐
+            break;
+        case State.Run:
+            if (pauseEdge) SetPaused(true);            // Esc/P（bit6，批③d-2 D4）
+            break;
+        case State.Paused:
+            if (pauseEdge) SetPaused(false);
+            break;
+        }
+        prevPause = Input.Pause;
+    }
+
+    // ---- 流程原语（PlayerCombat 死亡分叉 / UI 事件调用）----
+
+    /// <summary>开始/重开一局：清场 →（握手后）重挂双 prefab → Run。入口屏即隐
+    ///（菜单/结算——点击即走，不留残屏盖在新局上）；Spawning 中重入忽略。</summary>
+    internal static void EnterRun()
+    {
+        if (St == State.Spawning) return;
+        SweepArmed = true;
+        SweepObserved = false;
+        St = State.Spawning;
+        Time.Scale = 0f; // 清场期冻结（无玩家在场防导演空转）
+        UI.Hide(GameMain.MainDoc);
+        UI.Hide(GameMain.ResultsDoc);
+        UI.Apply();
+    }
+
+    /// <summary>结算屏（死亡策略的第二半——何时调由游戏侧决定）。</summary>
+    internal static void ShowResults(string title, string score, string time,
+                                     string kills, string best)
+    {
+        resTitle = title; resScore = score; resTime = time;
+        resKills = kills; resBest = best;
+        Time.Scale = 0f;
+        UI.Show(GameMain.ResultsDoc);
+        UI.SetText(GameMain.ResultsDoc, "results-title", title);
+        UI.SetText(GameMain.ResultsDoc, "res-score", score);
+        UI.SetText(GameMain.ResultsDoc, "res-time", time);
+        UI.SetText(GameMain.ResultsDoc, "res-kills", kills);
+        UI.SetText(GameMain.ResultsDoc, "res-best", best);
+        UI.Apply();
+        St = State.Results;
+    }
+
+    /// <summary>回主菜单：清场（在途动态屏一并收）+ 实底菜单。</summary>
+    internal static void ReturnToMenu()
+    {
+        SweepArmed = true;
+        SweepObserved = false;
+        Time.Scale = 0f;
+        UI.Hide(GameMain.PauseDoc);
+        UI.Hide(GameMain.SettingsDoc);
+        UI.Hide(GameMain.ResultsDoc);
+        GameMain.HideCardsDoc();
+        UI.Show(GameMain.MainDoc);
+        UI.Apply();
+        St = State.Menu;
+    }
+
+    /// <summary>暂停对（Run↔Paused；卡片冻结期 Input 已被模态让出，天然不响应）。</summary>
+    internal static void SetPaused(bool on)
+    {
+        if (on) {
+            Time.Scale = 0f;
+            UI.Show(GameMain.PauseDoc);
+            UI.Apply();
+            St = State.Paused;
+        } else {
+            UI.Hide(GameMain.PauseDoc);
+            UI.Apply();
+            Time.Scale = 1f;
+            St = State.Run;
+        }
+    }
+
+    // ---- UI 事件路由（GameMain.OnUiEvent 分发；Click 通道）----
+
+    internal static void HandleUiEvent(Lemon.UiEvent e)
+    {
+        if (e.DocStr == GameMain.MainDoc) {
+            if (e.EvStr == "start") EnterRun();
+            else if (e.EvStr == "settings") OpenSettings(State.Menu);
+        } else if (e.DocStr == GameMain.PauseDoc) {
+            if (e.EvStr == "resume") SetPaused(false);
+            else if (e.EvStr == "settings") OpenSettings(State.Paused);
+            else if (e.EvStr == "tomenu") ReturnToMenu();
+        } else if (e.DocStr == GameMain.SettingsDoc) {
+            if (e.EvStr == "toggle-fxtext") GameMain.Settings.FxText = !GameMain.Settings.FxText;
+            else if (e.EvStr == "toggle-fxbar") GameMain.Settings.FxBar = !GameMain.Settings.FxBar;
+            else if (e.EvStr == "back") { CloseSettings(); return; }
+            else return;
+            SaveSettings(); // 开关翻转即持久化 + 刷新标签
+        } else if (e.DocStr == GameMain.ResultsDoc) {
+            if (e.EvStr == "restart") EnterRun();
+            else if (e.EvStr == "tomenu") ReturnToMenu();
+        }
+    }
+
+    /// <summary>热重载重放（DocumentReloaded——shown 态重放，隐藏态不重放防凭空
+    /// 亮屏；③d-1 卡片同款契约）。设置屏重载 = 标签重灌（SaveSettings 顺带）。</summary>
+    internal static void OnDocReloaded(string doc)
+    {
+        if (doc == GameMain.MainDoc) {
+            if (St == State.Menu) { UI.Show(GameMain.MainDoc); UI.Apply(); }
+        } else if (doc == GameMain.PauseDoc) {
+            if (St == State.Paused) { UI.Show(GameMain.PauseDoc); UI.Apply(); }
+        } else if (doc == GameMain.SettingsDoc) {
+            if (St == State.Settings) { UI.Show(GameMain.SettingsDoc); UI.Apply(); }
+            SaveSettings(); // DOM 重建——开关标签重灌
+        } else if (doc == GameMain.ResultsDoc && St == State.Results) {
+            ShowResults(resTitle, resScore, resTime, resKills, resBest);
+        }
+    }
+
+    // ---- 设置（批③d-2 D3：两真实开关，Settings 档版本化 KV）----
+
+    private static void OpenSettings(State from)
+    {
+        settingsFrom = from;
+        UI.Show(GameMain.SettingsDoc);
+        UI.Apply();
+        St = State.Settings;
+    }
+
+    private static void CloseSettings()
+    {
+        UI.Hide(GameMain.SettingsDoc);
+        UI.Apply();
+        St = settingsFrom; // 底层屏（菜单实底/暂停 scrim）未动——回即见
+    }
+
+    private static void LoadSettings()
+    {
+        GameMain.Settings.FxText = Save.GetString("fx.text", Save.Chan.Settings) != "0";
+        GameMain.Settings.FxBar = Save.GetString("fx.bar", Save.Chan.Settings) != "0";
+        SaveSettings(); // 首开建档（version=1）+ 标签刷新
+    }
+
+    private static void SaveSettings()
+    {
+        Save.SetString("version", "1", Save.Chan.Settings);
+        Save.SetString("fx.text", GameMain.Settings.FxText ? "1" : "0", Save.Chan.Settings);
+        Save.SetString("fx.bar", GameMain.Settings.FxBar ? "1" : "0", Save.Chan.Settings);
+        Save.Flush();
+        UI.SetText(GameMain.SettingsDoc, "btn-fxtext", GameMain.Settings.FxText ? "开" : "关");
+        UI.SetText(GameMain.SettingsDoc, "btn-fxbar", GameMain.Settings.FxBar ? "开" : "关");
+        UI.Apply();
+    }
+
+    // 热重载状态迁移（流程态 + 设置——静态随域重建必须经包走）
+    protected override void OnHotReloadOut(Lemon.StateBag bag)
+    {
+        bag.Set("st", (int)St);
+        bag.Set("from", (int)settingsFrom);
+        bag.Set("fxtext", GameMain.Settings.FxText);
+        bag.Set("fxbar", GameMain.Settings.FxBar);
+    }
+
+    protected override void OnHotReloadIn(Lemon.StateBag bag)
+    {
+        if (bag.TryGet("st", out int st)) St = (State)st;
+        if (bag.TryGet("from", out int from)) settingsFrom = (State)from;
+        if (bag.TryGet("fxtext", out bool ft)) GameMain.Settings.FxText = ft;
+        if (bag.TryGet("fxbar", out bool fb)) GameMain.Settings.FxBar = fb;
+    }
+}
+
+/// <summary>清场批量系统（档②；GameFlow.EnterRun/ReturnToMenu 消费）：SweepArmed
+/// 时按 tag 销毁 run 实体（SceneOps 命令缓冲——次帧首应用；tag 命中集 = 清场
+/// 清单，新 run 内容带 Meta.tag 进集即被清；UI_*/Flow 常驻件不在集 = 天然豁免）。
+/// 常驻注册 + 门控早退：非 armed 拍 C# 零工作（With&lt;Meta&gt; 枚举成本 = C++ 构块，
+/// bench 红线见批文件 T9）。</summary>
+public sealed class RunSweeper : IForEachSystem
+{
+    private static readonly string[] kRunTags = {
+        "Player", "Director", "Mob", "BossMob", "Gem", "Bullet", "PierceBullet", "Blade",
+    };
+
+    public string Name => "RunSweeper";
+    public Query Query => Query.With<Meta>();
+
+    public unsafe void ForEach(ref readonly Chunk chunk)
+    {
+        if (!GameFlow.SweepArmed) return;
+        var meta = chunk.Span<Meta>();
+        for (int i = 0; i < chunk.Length; ++i) {
+            if (TagIs(ref meta[i], kRunTags)) SceneOps.Destroy(chunk.Entities[i]);
+        }
+        GameFlow.SweepObserved = true; // 握手位（GameFlow 观察后清对——本批全块扫完）
+    }
+
+    private static unsafe bool TagIs(ref Meta m, string[] tags)
+    {
+        foreach (string t in tags) {
+            fixed (byte* p = m.Tag) {
+                bool same = true;
+                for (int i = 0; i < t.Length && i < 24; ++i)
+                    if (p[i] != (byte)t[i]) { same = false; break; }
+                if (same && (t.Length >= 24 || p[t.Length] == 0)) return true;
+            }
+        }
+        return false;
     }
 }
 )CS";
@@ -550,12 +1006,16 @@ public sealed class PlayerCombat : LemonBehaviour
         if (meta.Team == 1) { // 怪受击
             Anim.Play(victim, kMobHit, false); // 受击段立即打断
             Anim.Queue(victim, kMobWalk);      // 播完（0.1667s）自动回行走
-            if (victim.TryGetComponent<Transform2D>(out var tf))
+            // 批③d-2 D3：飘字/血条 = 设置开关门控（Settings 档持久化，即时生效）
+            if (GameMain.Settings.FxText &&
+                victim.TryGetComponent<Transform2D>(out var tf))
                 Fx.Text(m.P0, new Vec2(tf.Pos.X - 4f, tf.Pos.Y - 10f), 0xFF5060F0u); // 暖红（RGBA）
-            if (victim.TryGetComponent<Health>(out var hp))
+            if (GameMain.Settings.FxBar &&
+                victim.TryGetComponent<Health>(out var hp))
                 Fx.Bar(victim, hp.Cur / hp.Max, 0xFF30B0F0u, 24f);
         } else if (m.Dst.Id == gameObject.Entity.Id) { // 玩家受击
-            if (gameObject.TryGetComponent<Health>(out var hp))
+            if (GameMain.Settings.FxBar &&
+                gameObject.TryGetComponent<Health>(out var hp))
                 Fx.Bar(gameObject, hp.Cur / hp.Max, 0xFF60D060u, 32f);
         }
     }
@@ -811,12 +1271,24 @@ public sealed class PlayerCombat : LemonBehaviour
             Save.SetString("vs.best", score.ToString(), Save.Chan.Meta);
             Save.Flush(); // 立即落盘（ExitPlay 兜底之外的显式路径；全档）
         }
-        string title = newBest ? $"★ 新纪录 {score} 分！"
-                               : $"本局 {score} 分（最高 {GameMain.Run.Best}）";
-        // 批③d-1：死亡对话框 = 卡片文档单条形态（key "ok" → "cards/ok" 事件回传）
-        GameMain.ShowCardsDoc(title, new List<UiItem> {
-            new() { Key = "ok", Fields = { ["label"] = "复活" } },
-        });
+        // 批③d-2 D1：死亡策略归游戏侧——本模板示例 = 每局一次复活（ReviveUsed），
+        // 二死进结算屏（GameFlow 只提供原语；改复活道具/表驱动只动本分叉）
+        if (!GameMain.Run.ReviveUsed) {
+            GameMain.Run.ReviveUsed = true;
+            string title = newBest ? $"★ 新纪录 {score} 分！"
+                                   : $"本局 {score} 分（最高 {GameMain.Run.Best}）";
+            // 批③d-1：死亡对话框 = 卡片文档单条形态（key "ok" → "cards/ok" 事件回传）
+            GameMain.ShowCardsDoc(title, new List<UiItem> {
+                new() { Key = "ok", Fields = { ["label"] = "复活" } },
+            });
+        } else {
+            int sec = (int)GameMain.Run.Time;
+            GameFlow.ShowResults(newBest ? $"★ 新纪录 {score} 分！" : "本局结束",
+                                 score.ToString(),
+                                 $"{sec / 60:D2}:{sec % 60:D2}",
+                                 GameMain.Run.Kills.ToString(),
+                                 GameMain.Run.Best.ToString());
+        }
     }
 
     private void Revive()
@@ -838,6 +1310,7 @@ public sealed class PlayerCombat : LemonBehaviour
         bag.Set("kills", GameMain.Run.Kills);
         bag.Set("best", GameMain.Run.Best);
         bag.Set("dead", GameMain.Run.Dead);
+        bag.Set("revive", GameMain.Run.ReviveUsed);
         bag.Set("pending", _pendingLevels);
         bag.Set("rotation", _pickRotation);
         bag.Set("blades", _bladeCount);
@@ -849,6 +1322,7 @@ public sealed class PlayerCombat : LemonBehaviour
         if (bag.TryGet("kills", out int k)) GameMain.Run.Kills = k;
         if (bag.TryGet("best", out int b)) GameMain.Run.Best = b;
         if (bag.TryGet("dead", out bool d)) GameMain.Run.Dead = d;
+        if (bag.TryGet("revive", out bool rv)) GameMain.Run.ReviveUsed = rv;
         if (bag.TryGet("pending", out int p)) _pendingLevels = p;
         if (bag.TryGet("rotation", out int r)) _pickRotation = r;
         if (bag.TryGet("blades", out int n)) _bladeCount = n;
@@ -958,10 +1432,12 @@ bool RunGuidSmokeChain(uint32_t spriteIdBase) {
                      sr->spriteId});
         });
     };
-    const Vec2 spawnAt[6] = {{-300, 0}, {300, 0}, {0, -300}, {0, 300}, {-300, -300}, {300, 300}};
-    const uint64_t prefabGuids[6] = {kMobPf,   kBossPf, kBulletPf,
-                                     kPiercePf, kGemPf, kBladePf};
-    for (int i = 0; i < 6; ++i)
+    const Vec2 spawnAt[7] = {{-300, 0}, {300, 0}, {0, -300},
+                             {0, 300},  {-300, -300}, {300, 300}, {0, 0}};
+    const uint64_t prefabGuids[7] = {kMobPf,   kBossPf, kBulletPf,
+                                     kPiercePf, kGemPf, kBladePf,
+                                     kPlayerPf}; // 批③d-2：Player 迁 prefab——第 7 根
+    for (int i = 0; i < 7; ++i)
         if (ctx.InstantiatePrefabAsset(prefabGuids[i], spawnAt[i]).IsNull()) {
             LEMON_ERROR("smoke-guid：prefab %d 实例化失败", i);
             return false;
@@ -972,7 +1448,7 @@ bool RunGuidSmokeChain(uint32_t spriteIdBase) {
     }
     std::vector<Row> base;
     collect(ctx, base);
-    if (base.size() != 7) { // Player + 六 prefab 根
+    if (base.size() != 7) { // 七 prefab 根（批③d-2：Player 自场景迁 prefab）
         LEMON_ERROR("smoke-guid：基线实体数 %zu ≠ 7", base.size());
         return false;
     }
@@ -1104,7 +1580,9 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
     struct Pf { const char* file; uint64_t guid; };
     for (const Pf& pf : {Pf{"Mob.prefab", kMobPf}, Pf{"BossMob.prefab", kBossPf},
                          Pf{"Bullet.prefab", kBulletPf}, Pf{"PierceBullet.prefab", kPiercePf},
-                         Pf{"Gem.prefab", kGemPf}, Pf{"Blade.prefab", kBladePf}}) {
+                         Pf{"Gem.prefab", kGemPf}, Pf{"Blade.prefab", kBladePf},
+                         Pf{"Player.prefab", kPlayerPf},     // 批③d-2：流程双 prefab
+                         Pf{"Director.prefab", kDirectorPf}}) {
         {
             std::ofstream f(root / "Prefabs" / pf.file, std::ios::trunc);
             f << "{\"entities\":[],\"name\":\"tpl\",\"schemaVersion\":1}\n"; // 占位（后覆写）
@@ -1133,9 +1611,16 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
              "  （仓库根 THIRD_PARTY.md 已登记）。\n"
              "- `gem/bullet/pierce/blade.png`：程序化生成（无版权负担）。\n\n"
              "## 玩法锚点\n\n"
-             "- 玩家：`Player` 实体挂三脚本（M6a 批⓪ scripts[]：移动 → 战斗 → HUD，\n"
-             "注册序 = 跨类型 Update 执行序）；一局共享态在 GameMain.Run。\n"
-             "- 波次：`Director` 实体 WaveDirector（Inspector 数组段可调参）。\n"
+             "- 流程（M6b 批③d-2 档1）：**单场景** `Main.scene` 只放常驻件（UI 六文档\n"
+             "+ Flow 实体）；玩家/导演在 `Prefabs/Player.prefab`/`Director.prefab`，\n"
+             "GameFlow 开局/重开时清场重挂（RunSweeper 按 tag 扫场销毁——重开 = C#\n"
+             "自律清场，零引擎改动）。流程 = 主菜单 → 一局 → Esc 暂停/设置 → 死亡\n"
+             "（首死复活对话/二死结算）→ 重开/回主菜单；**死亡策略归游戏侧**（模板\n"
+             "示例 = 每局一次复活，见 PlayerCombat.Die 分叉——改复活道具/表驱动只动\n"
+             "那一处）。\n"
+             "- 玩家：`Player.prefab` 挂三脚本（M6a 批⓪ scripts[]：流程 → 移动 →\n"
+             "战斗 → HUD 注册序 = 跨类型 Update 执行序）；一局共享态在 GameMain.Run。\n"
+             "- 波次：`Director.prefab` WaveDirector（Inspector 数组段可调参）。\n"
              "- 数值表（M6a 批② T4）：升级池/武器参数/XP 曲线在 `Assets/tables/`\n"
              "（upgrades.tab / weapons.tab / balance.tab——PlayerCombat.Start 读，\n"
              "加升级项/换弹种/调环绕参数 = 改表不改代码；Excel/Numbers 改 CSV\n"
@@ -1144,12 +1629,12 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
              "- 三选一池：upgrades.tab 行序（固定序轮换，零 RNG = 回放友好）。\n"
              "- 素材引用：.scene 双写 spriteGuid（真源）+ spriteId（进程内号）——\n"
              "改名/移位/manifest 重建后打开场景自动归一（M6a 批⓪ T2）。\n"
-             "- 游戏 UI（M6b 批③d-1）：HUD 六行 + 升级三选一/死亡对话框走 .rml 文档\n"
-             "（`Assets/UI/`——theme.rcss 主题 token 单源 + hud/cards 两屏；场景\n"
-             "UI_HUD/UI_Cards 实体挂 UIDocument 声明装载）。**换肤 = 改 theme.rcss 的\n"
+             "- 游戏 UI（M6b 批③d-1/③d-2）：六文档全走 .rml（HUD + 升级三选一/\n"
+             "死亡对话 + 主菜单/暂停/设置/结算——`Assets/UI/`，theme.rcss 主题 token\n"
+             "单源；场景 UI_* 实体挂 UIDocument 声明装载）。**换肤 = 改 theme.rcss 的\n"
              "token 区**（色板/字号/间距，全 dp——画布缩放时 UI 物理比例恒定，720dp\n"
              "设计基准）；改布局/文案 = 改 .rml/.rcss 资产，引擎零改动。数字键选择\n"
-             "已退役（点击选择）。主菜单/暂停/设置/结算四屏 ③d-2 铺量。\n";
+             "已退役（点击选择）；设置两开关（飘字/血条）持久化于 Settings 档。\n";
     }
 
     // 3) 打开项目（扫描记账）→ 播种场景 + 覆写 prefab 内容。
@@ -1158,54 +1643,13 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
     ctx.NewScene();
     ecs::Scene& s = ctx.EditScene();
 
-    // 玩家（hero 表 0 帧 + 走路 clip）。M6a 批⓪ T2：guid/id 双写（CreateSpriteEntityByGuid
-    // 携切片表 cell-0 惯例——切片表首帧 = sliceBase，整图 = 本体号）
-    ecs::Entity player = ctx.CreateSpriteEntityByGuid("Player", kHeroSheet);
-    s.Get<ecs::Meta>(player).team = 0;
-    s.Emplace<ecs::Health>(player, ecs::Health{.max = 100.0f, .cur = 100.0f});
-    s.Emplace<ecs::Stats>(player).pickupRadius = 96.0f;
-    s.Emplace<ecs::XpProgress>(player, ecs::XpProgress{.xpToNext = 30.0f});
-    ecs::Shooter& psh = s.Emplace<ecs::Shooter>(player);
-    psh.projectileId = (uint32_t)kBulletPf;
-    psh.interval = 0.12f;
-    psh.range = 2000.0f;
-    psh.targetTeam = 1;
-    s.Emplace<ecs::Animator2D>(player).clipId = (uint32_t)kHeroClip;
-    // M6a 批⓪ T4 三拆：槽序镜像注册序（移动 → 战斗 → HUD）；Game/ 不入资产扫描
-    // → scriptGuid 恒 0（className 是持久键）
-    ctx.AttachScript(player, 0, "PlayerMovement");
-    ctx.AttachScript(player, 0, "PlayerCombat");
-    ctx.AttachScript(player, 0, "PlayerHud");
-
-    // 导演（16 波：15 波小怪递增 + t=565s Boss；后波接管语义下条目都在波内完成）
-    ecs::Entity director = ctx.CreateEntity("Director");
-    ecs::WaveDirector& wd = s.Emplace<ecs::WaveDirector>(director);
-    wd.spawnTeam = 1;
-    wd.capAlive = 300;
-    wd.waveCount = 16;
-    for (int w = 0; w < 15; ++w) {
-        ecs::WaveDef& def = wd.waves[w];
-        def.startTime = 5.0f + 35.0f * (float)w;
-        def.rampMult = 1.0f;
-        def.entryCount = 2;
-        def.entries[0] = ecs::WaveEntry{.prefabId = (uint32_t)kMobPf,
-                                        .count = (uint16_t)(30 + w * 4),
-                                        .interval = 0.6f, .range = 560.0f};
-        def.entries[1] = ecs::WaveEntry{.prefabId = (uint32_t)kMobPf,
-                                        .count = (uint16_t)(15 + w * 2),
-                                        .interval = 0.35f, .range = 320.0f};
-    }
-    {
-        ecs::WaveDef& def = wd.waves[15];
-        def.startTime = 565.0f;
-        def.entryCount = 1;
-        def.entries[0] = ecs::WaveEntry{.prefabId = (uint32_t)kBossPf, .count = 1,
-                                        .interval = 1.0f, .range = 80.0f};
-    }
-
-    // 批③d-1：UI 两屏场景声明（通道 A——EnterPlay 扫描装载）。HUD 进 Play 即显；
-    // 卡片装载但隐藏（showOnStart=0，C# UI.Show 点亮——升级/死亡动态屏）。运行时
-    // 显隐归 C#（组件字段只承载设计期声明态，Play 期写回不生效——③d 前置铁律）。
+    // 批③d-2：场景只留常驻件——玩家/导演迁 Player.prefab/Director.prefab
+    //（EnterRun 时 C# 重挂：重开 = 清场 + 重 spawn，脚本/表载/Start 与
+    // WaveDirector 运行态随重挂自然归零——零手工复位清单）。
+    // UI 六屏场景声明（通道 A——EnterPlay 扫描装载）：HUD/Main 进 Play 即显
+    //（实底菜单覆盖 HUD；暂停/设置/结算 scrim 叠加时 HUD 在下 = 战况可视）；
+    // 其余装载但隐藏（showOnStart=0，C# UI.Show 点亮——动态屏）。运行时显隐
+    // 归 C#（组件字段只承载设计期声明态，Play 期写回不生效——③d 前置铁律）。
     {
         ecs::Entity hud = ctx.CreateEntity("UI_HUD");
         s.Emplace<ecs::UIDocument>(hud,
@@ -1213,12 +1657,32 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
         ecs::Entity cards = ctx.CreateEntity("UI_Cards");
         s.Emplace<ecs::UIDocument>(cards, ecs::UIDocument{.sourceAssetGuid = kCardsRml,
                                                           .showOnStart = 0});
+        ecs::Entity main = ctx.CreateEntity("UI_Main");
+        s.Emplace<ecs::UIDocument>(main,
+                                   ecs::UIDocument{.sourceAssetGuid = kMainRml});
+        ecs::Entity pause = ctx.CreateEntity("UI_Pause");
+        s.Emplace<ecs::UIDocument>(pause,
+                                   ecs::UIDocument{.sourceAssetGuid = kPauseRml,
+                                                   .showOnStart = 0});
+        ecs::Entity settings = ctx.CreateEntity("UI_Settings");
+        s.Emplace<ecs::UIDocument>(settings,
+                                   ecs::UIDocument{.sourceAssetGuid = kSettingsRml,
+                                                   .showOnStart = 0});
+        ecs::Entity results = ctx.CreateEntity("UI_Results");
+        s.Emplace<ecs::UIDocument>(results,
+                                   ecs::UIDocument{.sourceAssetGuid = kResultsRml,
+                                                   .showOnStart = 0});
+        // Flow 实体：档1 流程状态机（GameFlow——Configure 注册序首个 Update）
+        ecs::Entity flow = ctx.CreateEntity("Flow");
+        ctx.AttachScript(flow, 0, "GameFlow");
     }
 
-    // prefab 内容（scratch 实体 → SaveEntityTree → 覆写 .prefab；导出后销毁）
+    // prefab 内容（scratch 实体 → SaveEntityTree → 覆写 .prefab；导出后销毁）。
+    // spriteGuid=0 = 无渲染分路（批③d-2：Director）
     auto exportPrefab = [&](const char* tag, uint32_t team, uint64_t spriteGuid,
                             auto build) -> bool {
-        ecs::Entity e = ctx.CreateSpriteEntityByGuid(tag, spriteGuid);
+        ecs::Entity e = spriteGuid != 0 ? ctx.CreateSpriteEntityByGuid(tag, spriteGuid)
+                                        : ctx.CreateEntity(tag);
         s.Get<ecs::Meta>(e).team = team;
         build(e);
         const std::string json = ecs::SceneArchive::SaveEntityTree(s, e);
@@ -1229,6 +1693,50 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
         f << json;
         return true;
     };
+    // 批③d-2：流程双 prefab（自场景迁出——构造原样移入，Player 含 scripts[]
+    // 三拆；GameFlow EnterRun 经 Instantiate.Prefab 重挂，LoadEntityTree 重放脚本）
+    if (!exportPrefab("Player", 0, kHeroSheet, [&](ecs::Entity e) {
+            s.Emplace<ecs::Health>(e, ecs::Health{.max = 100.0f, .cur = 100.0f});
+            s.Emplace<ecs::Stats>(e).pickupRadius = 96.0f;
+            s.Emplace<ecs::XpProgress>(e, ecs::XpProgress{.xpToNext = 30.0f});
+            ecs::Shooter& psh = s.Emplace<ecs::Shooter>(e);
+            psh.projectileId = (uint32_t)kBulletPf;
+            psh.interval = 0.12f;
+            psh.range = 2000.0f;
+            psh.targetTeam = 1;
+            s.Emplace<ecs::Animator2D>(e).clipId = (uint32_t)kHeroClip;
+            // M6a 批⓪ T4 三拆：槽序镜像注册序（移动 → 战斗 → HUD）；Game/ 不入资产扫描
+            // → scriptGuid 恒 0（className 是持久键）
+            ctx.AttachScript(e, 0, "PlayerMovement");
+            ctx.AttachScript(e, 0, "PlayerCombat");
+            ctx.AttachScript(e, 0, "PlayerHud");
+        }))
+        return false;
+    if (!exportPrefab("Director", 0, 0, [&](ecs::Entity e) {
+            // 16 波：15 波小怪递增 + t=565s Boss；后波接管语义下条目都在波内完成
+            ecs::WaveDirector& wd = s.Emplace<ecs::WaveDirector>(e);
+            wd.spawnTeam = 1;
+            wd.capAlive = 300;
+            wd.waveCount = 16;
+            for (int w = 0; w < 15; ++w) {
+                ecs::WaveDef& def = wd.waves[w];
+                def.startTime = 5.0f + 35.0f * (float)w;
+                def.rampMult = 1.0f;
+                def.entryCount = 2;
+                def.entries[0] = ecs::WaveEntry{.prefabId = (uint32_t)kMobPf,
+                                                .count = (uint16_t)(30 + w * 4),
+                                                .interval = 0.6f, .range = 560.0f};
+                def.entries[1] = ecs::WaveEntry{.prefabId = (uint32_t)kMobPf,
+                                                .count = (uint16_t)(15 + w * 2),
+                                                .interval = 0.35f, .range = 320.0f};
+            }
+            ecs::WaveDef& def = wd.waves[15];
+            def.startTime = 565.0f;
+            def.entryCount = 1;
+            def.entries[0] = ecs::WaveEntry{.prefabId = (uint32_t)kBossPf, .count = 1,
+                                            .interval = 1.0f, .range = 80.0f};
+        }))
+        return false;
     if (!exportPrefab("Mob", 1, kMonsterSheet, [&](ecs::Entity e) {
             s.Emplace<ecs::Health>(e, ecs::Health{.max = 20.0f, .cur = 20.0f});
             s.Emplace<ecs::Knockback>(e);

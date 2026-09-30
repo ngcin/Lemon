@@ -16,9 +16,16 @@
 
 ## 玩法锚点
 
-- 玩家：`Player` 实体挂三脚本（M6a 批⓪ scripts[]：移动 → 战斗 → HUD，
-注册序 = 跨类型 Update 执行序）；一局共享态在 GameMain.Run。
-- 波次：`Director` 实体 WaveDirector（Inspector 数组段可调参）。
+- 流程（M6b 批③d-2 档1）：**单场景** `Main.scene` 只放常驻件（UI 六文档
++ Flow 实体）；玩家/导演在 `Prefabs/Player.prefab`/`Director.prefab`，
+GameFlow 开局/重开时清场重挂（RunSweeper 按 tag 扫场销毁——重开 = C#
+自律清场，零引擎改动）。流程 = 主菜单 → 一局 → Esc 暂停/设置 → 死亡
+（首死复活对话/二死结算）→ 重开/回主菜单；**死亡策略归游戏侧**（模板
+示例 = 每局一次复活，见 PlayerCombat.Die 分叉——改复活道具/表驱动只动
+那一处）。
+- 玩家：`Player.prefab` 挂三脚本（M6a 批⓪ scripts[]：流程 → 移动 →
+战斗 → HUD 注册序 = 跨类型 Update 执行序）；一局共享态在 GameMain.Run。
+- 波次：`Director.prefab` WaveDirector（Inspector 数组段可调参）。
 - 数值表（M6a 批② T4）：升级池/武器参数/XP 曲线在 `Assets/tables/`
 （upgrades.tab / weapons.tab / balance.tab——PlayerCombat.Start 读，
 加升级项/换弹种/调环绕参数 = 改表不改代码；Excel/Numbers 改 CSV
@@ -27,9 +34,9 @@ PlayerCombat.cs 头注释；表 GUID 生成期固定（改玩法勿动 .meta）�
 - 三选一池：upgrades.tab 行序（固定序轮换，零 RNG = 回放友好）。
 - 素材引用：.scene 双写 spriteGuid（真源）+ spriteId（进程内号）——
 改名/移位/manifest 重建后打开场景自动归一（M6a 批⓪ T2）。
-- 游戏 UI（M6b 批③d-1）：HUD 六行 + 升级三选一/死亡对话框走 .rml 文档
-（`Assets/UI/`——theme.rcss 主题 token 单源 + hud/cards 两屏；场景
-UI_HUD/UI_Cards 实体挂 UIDocument 声明装载）。**换肤 = 改 theme.rcss 的
+- 游戏 UI（M6b 批③d-1/③d-2）：六文档全走 .rml（HUD + 升级三选一/
+死亡对话 + 主菜单/暂停/设置/结算——`Assets/UI/`，theme.rcss 主题 token
+单源；场景 UI_* 实体挂 UIDocument 声明装载）。**换肤 = 改 theme.rcss 的
 token 区**（色板/字号/间距，全 dp——画布缩放时 UI 物理比例恒定，720dp
 设计基准）；改布局/文案 = 改 .rml/.rcss 资产，引擎零改动。数字键选择
-已退役（点击选择）。主菜单/暂停/设置/结算四屏 ③d-2 铺量。
+已退役（点击选择）；设置两开关（飘字/血条）持久化于 Settings 档。

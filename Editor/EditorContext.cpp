@@ -1,4 +1,5 @@
 // Lemon 编辑器 — EditorContext 实现（场景 IO / 实体操作 / 选择集）
+#include <functional>
 #include "EditorContext.h"
 
 #include <algorithm>
@@ -475,6 +476,34 @@ ecs::Entity EditorContext::InstantiatePrefabAsset(uint64_t prefabGuid, Vec2 pos)
     ecs::Scene& s = ActiveScene(); // Play 中脚本 Instantiate.Prefab 落 Play World
     ecs::Entity root = InstantiatePrefabJson(s, json, prefabGuid, pos);
     if (root.IsNull()) return root;
+    // 批③d-2：Play 态 spawn 的 prefab 若带 scripts[]，槽实例在此挂载——与
+    // EnterPlay 装配同款解析（LoadEntityTree 只落槽不建实例；Unity Instantiate
+    // 重放 behaviour 的等价路径。首例消费者 = vs 模板 Player.prefab 重开重挂；
+    // 此前运行时 spawn 的 prefab 均无脚本，该路径从未被走过）
+    if (Playing() && scripts_) {
+        ecs::World& w = ActiveWorld();
+        std::function<void(ecs::Entity)> resolveTree = [&](ecs::Entity e) {
+            if (scripting::ScriptBox* sb = s.TryGet<scripting::ScriptBox>(e))
+                for (uint32_t i = 0; i < sb->count; ++i) {
+                    scripting::ScriptSlot& sl = sb->slots[i];
+                    if (sl.typeId >= 0) continue;
+                    int id = ResolveScriptTypeId(sl.className);
+                    if (id < 0) {
+                        LEMON_WARN("Prefab spawn：脚本类型未注册（跳过）'%s'",
+                                   sl.className);
+                        continue;
+                    }
+                    scripts_->ResolveSlotBehaviour(w, s, e, i, id);
+                }
+            if (const ecs::Hierarchy* h = s.TryGet<ecs::Hierarchy>(e))
+                for (ecs::Entity c = h->firstChild; !c.IsNull(); ) {
+                    const ecs::Entity next = s.Get<ecs::Hierarchy>(c).next;
+                    resolveTree(c);
+                    c = next;
+                }
+        };
+        resolveTree(root);
+    }
     // M6a 批⓪ T2：编辑态落地才解析（prefab 档可能带跨进程/改名后漂移 id；
     // Play 态 = 同进程 spawn，id 即真值，热路径零扫表）
     if (!Playing()) ResolveSpriteRefs();

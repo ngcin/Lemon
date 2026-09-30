@@ -102,9 +102,9 @@ if [ "${MODE}" = "full" ]; then
     grep_step "anim-chain smoke (grid slice + clip + animator frame mapping; M5-b3)" \
         "smoke-anim: .* => OK" \
         "${EDITOR}" --project "${TMP}/anim" --smoke-anim --frames 120 --no-reopen
-    grep_step "template-chain smoke (wizard copy + build + play hud/cards/save/death-revive; M5-b4)" \
+    grep_step "template-chain smoke (wizard copy + build + play menu/run/cards/death/revive/results/restart/pause/settings/tomenu; M5-b4+M6b-b3d2)" \
         "smoke-template: .* => OK" \
-        "${EDITOR}" --smoke-template --frames 3000 --no-reopen
+        "${EDITOR}" --smoke-template --frames 3400 --no-reopen
     grep_step "guid-chain smoke (insert+rename+manifest-wipe -> reopen per-entity resolve; M6a-b0)" \
         "smoke-guid: .* => OK" \
         "${EDITOR}" --smoke-guid --no-reopen

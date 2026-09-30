@@ -24,6 +24,7 @@ body {
     --rarity-epic:   #b04dff;
 
     /* 字号（720dp 基准；464px 烟测画布 ×0.644 —— 20dp ≈ 12.9px） */
+    --fs-huge: 40dp;
     --fs-title: 26dp;
     --fs-hud:   20dp;
     --fs-body:  18dp;
@@ -117,3 +118,68 @@ body {
 .card:active { border-color: var(--c-accent); background: #35507add; }
 .card.rare { border-color: var(--rarity-rare); }
 .card.epic { border-color: var(--rarity-epic); }
+
+/* ---- 批③d-2：流程四屏组件（主菜单/暂停/设置/结算）---- */
+
+.menu-bg {                      /* 主菜单实心底全屏（覆盖 HUD——菜单态非叠加态） */
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    left: 0; top: 0;
+    width: 100%; height: 100%;
+    background: var(--c-bg);
+}
+.menu-title {                   /* 主菜单大标题 */
+    display: block;
+    font-size: var(--fs-huge);
+    color: var(--c-accent);
+    margin-bottom: var(--sp-3);
+}
+.menu-list {                    /* 按钮列容器（主菜单/暂停/结算共用） */
+    display: block;
+}
+.btn-lg {                       /* 流程大按钮（菜单/暂停/结算主操作） */
+    display: block;
+    width: 240dp;
+    height: 52dp;
+    margin: var(--sp-2) 0;
+    background: var(--c-panel);
+    border: 2dp var(--c-border);
+    color: var(--c-text);
+    font-size: var(--fs-body);
+    text-align: center;
+}
+.btn-lg:hover  { border-color: var(--c-accent); background: #2d4056dd; }
+.btn-lg:active { border-color: var(--c-accent); background: #35507add; }
+.set-row {                      /* 设置行：label + 值按钮两端对齐 */
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 300dp;
+    margin: var(--sp-2) 0;
+    font-size: var(--fs-body);
+}
+.set-label { display: block; color: var(--c-text); }
+.btn-set {                      /* 设置开关按钮（文案 [开]/[关]，Click 翻转） */
+    display: block;
+    width: 88dp;
+    height: 40dp;
+    background: var(--c-panel);
+    border: 2dp var(--c-border);
+    color: var(--c-text);
+    font-size: var(--fs-body);
+    text-align: center;
+}
+.btn-set:hover  { border-color: var(--c-accent); }
+.btn-set:active { border-color: var(--c-accent); background: #35507add; }
+.stat-row {                     /* 结算统计行：label 左值右 */
+    display: flex;
+    justify-content: space-between;
+    width: 280dp;
+    margin: var(--sp-1) 0;
+    font-size: var(--fs-body);
+}
+.stat-label { display: block; color: var(--c-dim); }
+.stat-value { display: block; color: var(--c-text); }

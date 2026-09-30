@@ -538,6 +538,10 @@ int EditorApp::Run(const EditorLaunch& launch) {
                 in.ay = ay;
                 if (ImGui::IsKeyDown(ImGuiKey_Space)) in.buttons |= 1u << 4; // bit4 attack
                 if (ImGui::IsKeyDown(ImGuiKey_R)) in.buttons |= 1u << 5;     // bit5 confirm（M5 批④：模板重开/确认）
+                // 批③d-2 bit6 pause：Esc/P（Esc 与 ImGui 弹窗争键面 = 各面板自身
+                // widget 活动态，GameView 聚焦门控下互斥；P 别名保底）
+                if (ImGui::IsKeyDown(ImGuiKey_Escape) || ImGui::IsKeyDown(ImGuiKey_P))
+                    in.buttons |= 1u << 6;
             }
             if (playDiag_ && frame >= 60 && frame < 120)
                 in.ax = 1.0f; // 诊断注入：D 键右走（自动化无真人点击，不经聚焦门）
@@ -894,9 +898,11 @@ int EditorApp::Run(const EditorLaunch& launch) {
                         (w == 96 && h == 48) ? "YES" : (launch.playTest ? "NO" : "n/a"),
                         assetsOk ? "OK" : "FAIL");
         }
-        // M4.4 脚本链验收：--script + --play → SpawnerBehaviour 每帧刷怪（36 只）
+        // M4.4 脚本链验收：--script + --play → SpawnerBehaviour 每帧刷怪（36 只）。
+        // 批③d-2：模板模式豁免——菜单先行使 Stop 时点（回菜单态）无 run 实体，
+        // spawn 证明由 smoke-template 流程链（重开重挂/mobs/gems 峰值）承接
         bool scriptOk = true;
-        if (host_ && launch.playTest && !launch.finalTest) {
+        if (host_ && launch.playTest && !launch.finalTest && !launch.smokeTemplate) {
             scriptOk = playAliveAtStop > smokeSeeded_ + 10;
             std::printf("[lemon] editor-smoke script-spawn: playAlive=%u seeded=%u => %s\n",
                         playAliveAtStop, smokeSeeded_, scriptOk ? "OK" : "FAIL");
