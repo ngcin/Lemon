@@ -15,7 +15,8 @@ namespace lemon::scripting {
 /// 进程退出即回收——ADR-010：域卸载只针对用户脚本 ALC，由 DomainManager 管）。
 class CoreCLRHost {
 public:
-    /// dotnetRoot 为空时依次取 $LEMON_DOTNET_ROOT、/usr/local/share/dotnet。
+    /// dotnetRoot 为空时依次取 $LEMON_DOTNET_ROOT、$DOTNET_ROOT（CI setup-dotnet）、
+    /// /usr/local/share/dotnet（brew 默认）。
     /// runtimeConfigPath = 入口程序集的 runtimeconfig（手工模板）；entryAssemblyPath = 入口 DLL。
     bool Load(const char* dotnetRoot, const char* runtimeConfigPath, const char* entryAssemblyPath);
 

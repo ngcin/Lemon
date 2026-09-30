@@ -57,15 +57,22 @@ std::vector<long long> VersionKey(const std::string& v) {
     return parts;
 }
 
+// fxr 根解析链：显式参 → $LEMON_DOTNET_ROOT（引擎专用覆写）→ $DOTNET_ROOT（dotnet
+// 官方变量；actions/setup-dotnet 等 CI 装配即设此——runner 的 dotnet 装在临时目录，
+// 只认 brew 默认路径会静默哑火，CI 首跑实证 2026-09-30）→ /usr/local/share/dotnet。
+std::filesystem::path DotnetRootFromEnv() {
+    for (const char* var : {"LEMON_DOTNET_ROOT", "DOTNET_ROOT"})
+        if (const char* v = getenv(var); v && *v)
+            return std::filesystem::path(v);
+    return std::filesystem::path("/usr/local/share/dotnet");
+}
+
 bool LoadHostfxr(HostfxrApi& api, const char* dotnetRoot) {
-    std::filesystem::path root = (dotnetRoot && *dotnetRoot)
-                                     ? std::filesystem::path(dotnetRoot)
-                                     : (getenv("LEMON_DOTNET_ROOT")
-                                            ? std::filesystem::path(getenv("LEMON_DOTNET_ROOT"))
-                                            : std::filesystem::path("/usr/local/share/dotnet"));
+    std::filesystem::path root =
+        (dotnetRoot && *dotnetRoot) ? std::filesystem::path(dotnetRoot) : DotnetRootFromEnv();
     std::filesystem::path fxrDir = root / "host" / "fxr";
     if (!std::filesystem::exists(fxrDir)) {
-        LEMON_WARN("no dotnet fxr dir at %s (brew install dotnet-sdk / set LEMON_DOTNET_ROOT)",
+        LEMON_WARN("no dotnet fxr dir at %s (brew install dotnet-sdk / set LEMON_DOTNET_ROOT 或 DOTNET_ROOT)",
                    fxrDir.string().c_str());
         return false;
     }
