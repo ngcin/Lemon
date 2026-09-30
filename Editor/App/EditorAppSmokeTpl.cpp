@@ -1,11 +1,13 @@
 // Lemon 编辑器 — --smoke-template 冒烟族（批③c-4 自 EditorApp.cpp Run 外迁：
 // 预循环播种×2 / 事件 sink 装配 / 循环内转向注入 / 帧采样 / 末帧裁决。
-// 模式同批③c-1..3：状态收敛 TplSmokeState（定义共享于 EditorAppSmoke.h）+
+// 模式同批③c-1..3：状态收敛 TplSmokeState + 批④ 单 TU 化（结构体退回本 TU
+// 匿名命名空间，EditorAppSmoke.h 共享面退役）+
 // 挂点原位、帧号锚定/执行时序逐位不变。EditorAppSmoke.cpp 已 1900 行超软
 // 上限 → 本族独立成 TU。
+// 批④ 增两读点收口：SmokeTplCapture（Run 渲染段 capReq 块挂点化）+
+// SmokeTplPointerHold()（FeedGameUiInput 随 UI 桥外迁后的指针保持窗读点）。
 
 #include "App/EditorApp.h"
-#include "App/EditorAppSmoke.h"
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -53,7 +55,45 @@
 
 namespace lemon::editor {
 
-TplSmokeState g_tplSmoke; // 批③c-4 随函数族迁入（extern 声明在 EditorAppSmoke.h）
+namespace {
+// ---- M5 批④ --smoke-template 证据状态（批③b 文件级 g_tpl* 标量收敛为单结构体
+// 实例；批③c-4 随函数族外迁共享于 EditorAppSmoke.h；批④ 单 TU 化收口：结构体
+// 退回本 TU 匿名命名空间——Run 渲染段 capReq 块收口为 SmokeTplCapture 挂点、
+// FeedGameUiInput 指针保持窗经 SmokeTplPointerHold() 读，TU 外零引用。无捕获
+// event sink lambda 的计数改写（SmokeTplPlaySetup 装配）仍在本 TU，文件级
+// 存储刚需不变）----
+struct TplSmokeState {
+    int waveStarts = 0, levelUps = 0, deaths = 0;
+    int gems = 0, mobs = 0; // 峰值快照（帧内采样）
+    // 批③d 前置 T5 → 批③d-1 随迁：模板场景现挂 2 UIDocument（HUD/cards）——零装载
+    // 护栏升级为"通道 A 装载恰 2"（装载点单一性防线的同型收紧；bench 场景仍零装载）
+    int uiLoads = -1;
+    // 批③d-1：文档化断言态（原 RtUi 行/卡片探针随迁）+ 层序三拍状态机
+    bool hudDocOk = false;
+    int layerStage = 0; // 0 基线请求→1 取回→2 等卡片→3 取回→4 等隐藏→5 取回→6 完
+    int hudPixN0 = -1, hudPixDuring = -1, hudPixAfter = -1;
+    bool capReq = false, capPending = false;
+    int capPix = -1;
+    int clickPhase = 0, clickCooldown = 0; // 直灌点击三帧（定位/down/up）+ 冷却
+    bool pointerHold = false; // 指针保持窗（FeedGameUiInput 让位——Update 建悬停用）
+    float clickX = 0, clickY = 0;
+    char hudRows[64] = "";
+    bool bestLoaded = false, waveRow = false; // g_tplHudOk → g_tplHudDocOk（批③d-1 随迁）
+    // T8 后修：进度条断言（文本探针测不出"样式写了布局没生效"——bar-fill 曾因
+    // RmlUi 默认 inline 宽高被忽略而恒 0，文本六行全绿）。后修② 条改原生 progress：
+    // 断言 = 轨道盒（120dp×10dp×ratio）+ value 属性回读对文本行数值
+    bool hudBarBox = false;
+    // M6a 批①：受击切段链（怪 clipId 曾 = monster-hit 段）+ fx 通道（飘字/血条在场）
+    bool mobHitClip = false, fxText = false, fxBar = false;
+    bool cardsSeen = false, picked = false, cardsHidden = false;
+    bool deathSeen = false, revived = false, scriptOk = true; // 批④后修④死亡链
+    bool deathArmed = false; // 压血一shot（站桩下自动炮火清怪快于刷怪，磨不死）
+    // M6a 批② T4：数值表载入断言（weapons 4 行 × upgrades 7 行 × balance 2 行——
+    // 含列头行；PlayerCombat.Start 读、EnterPlay 快照建 TableStore）
+    bool tablesOk = false;
+};
+TplSmokeState g_tplSmoke; // 批④：单 TU 化（EditorAppSmoke.h 的 extern 共享面退役）
+} // namespace
 
 // ---- --smoke-template 向导复制播种（M5 批④；批③c-4 自 Run 外迁，挂点原位）----
 bool EditorApp::SmokeTplSeedProject() {
@@ -491,5 +531,22 @@ bool EditorApp::SmokeTplVerdict() {
 #endif
     return verdictOk;
 }
+
+// ---- --smoke-template 层序三拍捕获（批③d-1：动态时点——SmokeTplSample 证据
+// 块状态机置请求位）；批④ 自 Run 渲染段外迁：挂点原位、帧序与时序逐位不变
+//（证据块（渲染后）置位 → 次帧本挂点录 gameRT → 同帧尾证据块取回数色）----
+void EditorApp::SmokeTplCapture(rhi::CommandList& cl) {
+    if (Launch().smokeTemplate && g_tplSmoke.capReq) {
+        g_tplSmoke.capReq = false;
+        g_tplSmoke.capPending = true;
+        cl.DebugRecordCapture();
+        if (viewport_->GameRenderTarget().IsValid())
+            cl.DebugRecordTextureCapture(viewport_->GameRenderTarget());
+    }
+}
+
+// ---- --smoke-template 指针保持窗读点（批④：FeedGameUiInput 随 UI 桥外迁
+// EditorAppUiBridge.cpp 后，跨族读经此访问器——g_tplSmoke 不再出 TU）----
+bool EditorApp::SmokeTplPointerHold() const { return g_tplSmoke.pointerHold; }
 
 } // namespace lemon::editor

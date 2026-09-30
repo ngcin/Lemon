@@ -241,6 +241,11 @@ private:
     void SmokeTplSteer(uint64_t frame, ecs::InputState& in);
     void SmokeTplSample(uint64_t frame);
     bool SmokeTplVerdict();
+    /// 批④ 收口（g_tplSmoke 单 TU 化——结构体退回 EditorAppSmokeTpl.cpp）：Run
+    /// 渲染段层序捕获块挂点化（挂点原位、时序逐位不变）+ FeedGameUiInput 的
+    /// 指针保持窗读点（随 UI 桥外迁后经此访问器读）
+    void SmokeTplCapture(rhi::CommandList& cl);
+    bool SmokeTplPointerHold() const;
     /// --smoke-uirml 族三挂点（批③c-5 自 Run 外迁 EditorAppSmokeUirml.cpp；挂点
     /// 原位逐位不变）：独立进 Play（守卫留原位）/ 帧链 / 末帧裁决
     bool SmokeUirmlEnterPlay();

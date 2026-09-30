@@ -237,6 +237,10 @@ bool SeedBenchSurvivorScene(EditorContext& ctx) {
     return true;
 }
 
+// 批③b：--smoke-uirml 资产夹具（temp 项目，幂等清残留；夹具纪律 = 空目录自播种）。
+// 三件套：uirml.rml（面板/标题/正文 + <img>）/ uirml.rcss（<link> 样式）/ tex.png
+// （96×96 特征色贴图——贴图桥像素断言源）。热重载中点改写 .rml/.rcss（帧循环钩子）
+//（批④ 自 EditorApp.cpp 迁回——函数批③a 外迁时注释遗留原处）
 void EditorApp::SeedSmokeUiRmlProject() {
     namespace fs = std::filesystem;
     std::error_code ec;
