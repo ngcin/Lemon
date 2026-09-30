@@ -3,10 +3,10 @@
 // WriteAnimSheetAssets/SeedBenchSurvivorScene 自由函数）。批③a 2026-09-29 自
 // EditorApp.cpp 机械外迁：成员函数跨 TU 定义（类定义 App/EditorApp.h 零改动），
 // 代码逐行原样；夹具常量见 App/EditorAppSmoke.h。
+#include "App/EditorApp.h" // 显式类头（本批修正：原经 Panels/BuiltInPanels.h 传递拿到）
 #include "App/EditorAppSmoke.h"
 
 #include <algorithm>
-#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -14,44 +14,27 @@
 #include <fstream>
 #include <functional>
 #include <iterator>
-#include <sstream>
 #include <vector>
 
-#include <nlohmann/json.hpp>
-
 #include "stb_image_write.h"
-
-#include <SDL3/SDL.h>
 
 #include "App/ImGuiBackend.h"
 #include "Assets/AssetDatabase.h"
 #include "Assets/ClipEdit.h" // M6a 批② T3：smoke-anim clip 编辑链（面板数据面同款）
 #include "Assets/ControllerEdit.h" // T3d：smoke-anim graph 链（controller 数据面）
-#include "Assets/ProjectWizard.h"
 #include "Interaction/ViewportRenderer.h"
-#include "Templates/VsTemplateGen.h"
-#include "App/RecentProjects.h"
-#include "Tooling/Icons.h"
-#include "Tooling/Theme.h"
-#include "Tooling/ThumbCache.h"
 #include "Components/BehaviorComponents.h"
 #include "Components/CoreComponents.h"
 #include "Components/GameplayComponents.h"
 #include "Components/RenderComponents.h"
-#include "Components/UiComponents.h"
 #include <unistd.h> // getpid（bench-survivor tempdir）
 #include "ECS/Hierarchy.h"
 #include "Core/Log.h"
 #include "EditorContext.h"
-#include "Panels/BuiltInPanels.h"
-#include "Platform/Window.h"
-#include "Renderer/RHI.h"
+#include "Panels/BuiltInPanels.h" // SceneViewPanel 完整类型（smoke-drag/ui 注入走 scenePanel_-> 方法；标记表只认类型名漏了成员名）
 #include "Ui/UiSubsystem.h" // 批③a（ADR-014）：游戏 UI 层（RmlUi）
-#include "Scripting/ScriptHost.h"
-#include "Serialization/SceneArchive.h"
 #include "imgui.h"
 #include "imgui_internal.h" // DockBuilder（docking 分支布局编程 API）+ FindWindowByName
-#include "misc/cpp/imgui_stdlib.h" // InputText(std::string*) 重载（Layout 命名等）
 #include "Tooling/TestHooks.h"
 
 namespace lemon::editor {

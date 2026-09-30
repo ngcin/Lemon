@@ -7,19 +7,12 @@
 // 2026-09-29 批①：vs-survivor 模板生成器外迁 Templates/VsTemplateGen.{h,cpp}（机械搬移零行为变化）
 #include "App/EditorApp.h"
 
-#include <algorithm>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
-#include <fstream>
-#include <functional>
-#include <iterator>
-#include <sstream>
 #include <vector>
-
-#include <nlohmann/json.hpp>
 
 #include "stb_image_write.h"
 
@@ -27,27 +20,16 @@
 // UiHooks 是 C 函数指针，不能捕 this）
 static ::lemon::ui::UiSubsystem* s_gameUiForHooks = nullptr;
 
-
 #include <SDL3/SDL.h>
 
 #include "App/ImGuiBackend.h"
 #include "Assets/AssetDatabase.h"
-#include "Assets/ClipEdit.h" // M6a 批② T3：smoke-anim clip 编辑链（面板数据面同款）
-#include "Assets/ControllerEdit.h" // T3d：smoke-anim graph 链（controller 数据面）
-#include "Assets/ProjectWizard.h"
 #include "Interaction/ViewportRenderer.h"
 #include "Templates/VsTemplateGen.h"
 #include "App/RecentProjects.h"
 #include "App/EditorAppSmoke.h"
-#include "Tooling/Icons.h"
-#include "Tooling/Theme.h"
-#include "Tooling/ThumbCache.h"
-#include "Components/BehaviorComponents.h"
 #include "Components/CoreComponents.h"
-#include "Components/GameplayComponents.h"
 #include "Components/RenderComponents.h"
-#include "Components/UiComponents.h"
-#include <unistd.h> // getpid（bench-survivor tempdir）
 #include "ECS/Hierarchy.h"
 #include "Core/Log.h"
 #include "EditorContext.h"
@@ -56,11 +38,8 @@ static ::lemon::ui::UiSubsystem* s_gameUiForHooks = nullptr;
 #include "Renderer/RHI.h"
 #include "Ui/UiSubsystem.h" // 批③a（ADR-014）：游戏 UI 层（RmlUi）
 #include "Scripting/ScriptHost.h"
-#include "Serialization/SceneArchive.h"
 #include "imgui.h"
 #include "imgui_internal.h" // DockBuilder（docking 分支布局编程 API）+ FindWindowByName
-#include "misc/cpp/imgui_stdlib.h" // InputText(std::string*) 重载（Layout 命名等）
-#include "Tooling/TestHooks.h"
 
 namespace lemon::editor {
 
