@@ -119,9 +119,12 @@ public sealed class GameFlow : LemonBehaviour
         St = State.Menu;
     }
 
-    /// <summary>暂停对（Run↔Paused；死亡冻结期无输入消费，天然不响应）。</summary>
+    /// <summary>暂停对（Run↔Paused；死亡冻结期无输入消费，天然不响应）。
+    /// M6c 批② D5：显式音频暂停（循环/BGM 挂起、UI 组免疫）——引擎不自动映射
+    /// Time.Scale，菜单/选卡/清场等流程冻结不误停 BGM。</summary>
     internal static void SetPaused(bool on)
     {
+        Audio.Paused = on; // 先挂起再冻结（恢复反向：先解冻再续响）
         if (on) {
             Time.Scale = 0f;
             UI.Show(GameMain.PauseDoc);

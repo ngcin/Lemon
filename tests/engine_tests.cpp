@@ -8,10 +8,12 @@
 #include <cstdint>
 #include <algorithm>
 
+#include "Audio/AudioChannel.h" // M6c 批②：命令通道（World.h 链亦达，显式声明测试意图）
 #include "Audio/AudioEngine.h"
 #include "Audio/BakedClip.h"
 #include "Core/Guid.h"
 #include "Core/Math.h"
+#include "Components/AudioComponents.h" // M6c 批②：AudioSource
 #include "Components/CoreComponents.h"
 #include "ECS/Hierarchy.h"
 #include "Renderer/Atlas.h"
@@ -729,7 +731,7 @@ void TestWorldServices() {
 void TestComponentRegistry() {
     RegisterAllComponents();
     auto& reg = ComponentRegistry::Instance();
-    Expect(reg.Count() == 31, "catalog count (5 core + 4 render + 12 behavior + 6 gameplay + M5 批② WaveDirector + T3d AnimGraph/AnimParams + M6b 批③d 前置 UIDocument)");
+    Expect(reg.Count() == 32, "catalog count (5 core + 4 render + 12 behavior + 6 gameplay + M5 批② WaveDirector + T3d AnimGraph/AnimParams + M6b 批③d 前置 UIDocument + M6c 批② AudioSource)");
 
     // 按 name 可查、id 稳定
     const ComponentMeta* tf = reg.Find("Transform2D");
@@ -778,7 +780,7 @@ void TestVerifyWorldAutoRegistersCatalog() {
     // ISSUE-9 回归：World 构造即登记组件目录——bench-sim 曾漏调 RegisterAllComponents，
     // StateHash 遍历空注册表逐帧恒等，M2 回放验收恒真空转（M3-0 修复，2026-09-19）
     World world;
-    Expect(ComponentRegistry::Instance().Count() == 31, "world ctor auto-registers catalog");
+    Expect(ComponentRegistry::Instance().Count() == 32, "world ctor auto-registers catalog");
 }
 
 } // namespace
@@ -1033,30 +1035,32 @@ void TestSystemPipelineOrder() {
     world.InstallDefaultSystems();
     auto& p = world.Pipeline();
 
-    Expect(p.Systems().size() == 19, "19 systems installed（T3d 批② +AnimGraphSystem；A 档 +TweenSystem）");
+    Expect(p.Systems().size() == 20, "20 systems installed（T3d 批② +AnimGraphSystem；A 档 +TweenSystem；M6c 批② +AudioSystem）");
     // Essential 阶段只有 DestroyCommit；FixedTick 按表序
     // （#9 Pickup = M5 批①；T3d 批② AnimGraph 插在 CSharpBatch 后——图评估读当
     // tick 脚本参数，写段由下一 tick Animator 消费，与脚本直写 Play 同拍；
     // A 档补间 Tween 插在 AnimGraph 后、事件派发前——脚本当 tick 发起即首写、
-    // 存活补间拥有字段、完成事件当帧派发）
+    // 存活补间拥有字段、完成事件当帧派发；M6c 批② Audio 插在 Tween 后、事件
+    // 派发前——C# 当 tick staging 的音频命令本 tick 落地、零 RNG/零 ECS 写）
     const char* expected[] = {"InputSnapshot", "Director",    "Spawn",
                               "AI",            "Navigation",  "Separation",
                               "Movement",      "SpatialHashRebuild", "Pickup",
                               "Hitbox",        "Trigger",     "Stat",
                               "Animator",      "ProjectileLifetime", "CSharpBatch",
-                              "AnimGraph",     "Tween",       "ScriptEventDispatch"};
+                              "AnimGraph",     "Tween",       "Audio",
+                              "ScriptEventDispatch"};
     uint32_t fi = 0;
     for (const auto& s : p.Systems()) {
         if (s->Stage() == SystemStage::Essential) {
             Expect(std::string_view(s->Name()) == "DestroyCommit", "essential is destroy");
         } else {
-            Expect(fi < 18 && std::string_view(s->Name()) == expected[fi],
+            Expect(fi < 19 && std::string_view(s->Name()) == expected[fi],
                    "fixedtick order");
             ++fi;
         }
     }
-    Expect(fi == 18, "18 fixedtick systems");
-    Expect(p.Profiles().size() == 19, "profiles allocated");
+    Expect(fi == 19, "19 fixedtick systems");
+    Expect(p.Profiles().size() == 20, "profiles allocated");
 }
 
 void TestSimulationEndToEnd() {
@@ -5557,6 +5561,215 @@ void TestAudioBakedRoundtrip() {
     fs::remove_all(dir, ec);
 }
 
+// ------------------------------------------------ M6c 批②：命令通道/包络/空间化/组件声源 ----
+void TestAudioFadeEnvelope() {
+    // D4 包络：fadeIn 逐样本爬升；FadeVoice→0 + stopWhenDone 到点终结；
+    // 静音模式 AdvanceSilentFrames 同径推进（逻辑记账 = 有声模式）
+    audio::AudioEngine eng;
+    Expect(eng.Init({.forceSilent = true}), "silent init");
+    std::vector<int16_t> pcm(4800 * 2, 8000); // 0.1s 恒幅 stereo
+    const uint32_t clip = eng.RegisterClip(std::move(pcm), 2, 4800, 0, 0);
+    Expect(clip != 0, "clip registered");
+
+    // fadeIn 0.05s：混 1200 帧（0.025s）后包络约半幅（等功率中心声像 0.707 计入）
+    const uint32_t v1 = eng.Play(clip, {.volume = 1.0f, .fadeInSec = 0.05f});
+    Expect(v1 != 0, "fade-in voice");
+    float out[4800 * 2];
+    eng.MixOffline(out, 1200);
+    float peak = 0;
+    for (int i = 0; i < 1200 * 2; ++i) peak = std::max(peak, std::fabs(out[i]));
+    const float full = (8000.0f / 32768.0f) * 0.7071f; // 恒幅 × 中心声像
+    Expect(peak > full * 0.30f && peak < full * 0.60f, "fade-in midpoint ~half");
+    eng.MixOffline(out, 2400); // 淡入完成段
+    peak = 0;
+    for (int i = 0; i < 2400 * 2; ++i) peak = std::max(peak, std::fabs(out[i]));
+    Expect(peak > full * 0.9f, "fade-in reached full");
+
+    // FadeVoice→0 + stopWhenDone：0.05s 后声部终结（一次性 clip 0.1s 未放完即被终结）
+    Expect(eng.FadeVoice(v1, 0.0f, 0.05f, true), "fade-out accepted");
+    eng.MixOffline(out, 4800); // 足够跑完 0.1s
+    Expect(!eng.VoiceAlive(v1), "voice dead after fade to zero");
+    Expect(eng.ActiveVoiceCount() == 0, "no active voices left");
+
+    // 硬切（seconds<=0 + stop）：立即终结
+    const uint32_t v2 = eng.Play(clip, {.volume = 1.0f});
+    Expect(eng.FadeVoice(v2, 0.0f, 0.0f, true), "hard fade accepted");
+    Expect(!eng.VoiceAlive(v2), "hard fade kills at once");
+
+    // 静音记账同径：fadeIn 中 AdvanceSilentFrames 推进包络，到 0+stop 终结
+    const uint32_t v3 = eng.Play(clip, {.volume = 1.0f, .fadeInSec = 0.01f});
+    eng.AdvanceSilentFrames(480); // 0.01s = 淡入完成
+    Expect(eng.VoiceAlive(v3), "silent fade-in completes alive");
+    Expect(eng.FadeVoice(v3, 0.0f, 0.02f, true), "silent fade-out");
+    eng.AdvanceSilentFrames(960); // 0.02s
+    Expect(!eng.VoiceAlive(v3), "silent fade-out completes dead");
+}
+
+void TestAudioSpatialMath() {
+    // ADR-015 M5：线性衰减钳界 + 声像半宽归一（纯函数，无需引擎）
+    audio::AudioListener l{{0, 0}, 640.0f};
+    float g = -1, p = 2;
+    audio::ComputeSpatial({0, 0}, l, 256, 1024, g, p);
+    Expect(g == 1.0f && std::fabs(p) < 1e-6f, "at listener: full gain, center pan");
+    audio::ComputeSpatial({640, 0}, l, 256, 1024, g, p); // 屏幕右缘（衰减中点）
+    Expect(g > 0.45f && g < 0.55f && p == 1.0f, "screen edge: mid gain, full right");
+    audio::ComputeSpatial({-640, 0}, l, 256, 1024, g, p);
+    Expect(p == -1.0f, "full left pan");
+    audio::ComputeSpatial({0, 1024}, l, 256, 1024, g, p); // y 轴远端：衰减满、pan 中
+    Expect(g == 0.0f && std::fabs(p) < 1e-6f, "beyond maxDist: zero gain");
+    audio::ComputeSpatial({0, 128}, l, 256, 1024, g, p);
+    Expect(g == 1.0f, "within refDist: full gain");
+    audio::ComputeSpatial({2000, 0}, l, 256, 1024, g, p);
+    Expect(g == 0.0f && p == 1.0f, "far right: zero gain clamped pan");
+    // maxDist<=refDist 退化 = 全程可闻（防 0 除钳）
+    audio::ComputeSpatial({500, 0}, l, 256, 256, g, p);
+    Expect(g == 1.0f, "degenerate ref==max audible");
+}
+
+void TestAudioChannelCommands() {
+    // 命令通道：staging 同步发号 / Stop 保序（未提交撤销、已提交停引擎）/
+    // BGM 单槽换曲淡出 / StopAll 清记账 + 僵尸播放防线 / 提交期死条目回收
+    audio::AudioEngine eng;
+    Expect(eng.Init({.forceSilent = true}), "silent init");
+    std::vector<int16_t> pcm(48000 * 2, 6000); // 1s 循环体
+    const uint32_t clip = eng.RegisterClip(std::move(pcm), 2, 48000, 0, 0);
+    const uint32_t clip2 = eng.RegisterClip(std::vector<int16_t>(48000 * 2, 6000), 2,
+                                            48000, 0, 0);
+    audio::AudioListener l{{0, 0}, 640.0f};
+
+    // 未提交撤销：同 tick Play + Stop → Submit 后无声部
+    audio::AudioChannel ch;
+    const uint32_t v = ch.StagePlay(clip, 1, 1.0f, 0, true);
+    Expect(v != 0, "staging returns nonzero id");
+    Expect(ch.StageStop(v), "stop pending play hit");
+    ch.Submit(&eng, l);
+    Expect(ch.LogicalAlive(v) == false, "cancelled play leaves no entry");
+    Expect(eng.ActiveVoiceCount() == 0, "cancelled play never started");
+
+    // 正常路径 + 引擎拒绝（坏 clipId staging 即返 0）
+    Expect(ch.StagePlay(0, 1, 1, 0, false) == 0, "bad clip rejected at staging");
+    const uint32_t v2 = ch.StagePlay(clip, 1, 1.0f, 0, true);
+    ch.Submit(&eng, l);
+    Expect(eng.ActiveVoiceCount() == 1, "submitted voice active");
+    ch.Submit(&eng, l); // 空提交幂等
+    Expect(eng.ActiveVoiceCount() == 1, "empty submit idempotent");
+
+    // 已提交停：Stop 命令经提交落地
+    Expect(ch.StageStop(v2), "stop submitted voice staged");
+    ch.Submit(&eng, l);
+    Expect(eng.ActiveVoiceCount() == 0, "submitted voice stopped");
+
+    // BGM 单槽：换曲 = 旧淡出新 fadeIn；槽位记账翻新
+    Expect(ch.StageBgm(clip, 0.5f, 0.5f) == 1, "bgm accepted");
+    ch.Submit(&eng, l);
+    const uint32_t bgm1 = ch.bgmVoice();
+    Expect(bgm1 != 0, "bgm slot occupied");
+    eng.AdvanceSilentFrames(48000); // 放 1s（淡入完成，循环中）
+    Expect(ch.StageBgm(clip2, 0.5f, 0.5f) == 1, "bgm change accepted");
+    ch.Submit(&eng, l);
+    Expect(ch.bgmVoice() != bgm1, "bgm slot rotated");
+    Expect(eng.ActiveVoiceCount() == 2, "crossfade: old fading + new active");
+    eng.AdvanceSilentFrames(48000); // 旧曲 0.5s 淡完终结
+    ch.Submit(&eng, l);             // 回收死条目
+    Expect(eng.ActiveVoiceCount() == 1, "old bgm faded out");
+
+    // StopAll：清记账 + 同 tick 后续 Play 不被清（顺序语义）
+    ch.StageStopAll();
+    const uint32_t v3 = ch.StagePlay(clip, 1, 1.0f, 0, false);
+    Expect(v3 != 0, "play after stopall stages");
+    ch.Submit(&eng, l);
+    Expect(eng.ActiveVoiceCount() == 1, "post-stopall play survives (order kept)");
+    Expect(ch.bgmVoice() == 0, "bgm slot cleared by stopall");
+
+    // null 引擎：纯记账（无声宿主不崩、发号照常）
+    audio::AudioChannel ch2;
+    const uint32_t v4 = ch2.StagePlay(clip, 1, 1, 0, false);
+    Expect(v4 != 0, "null engine still allocates id");
+    ch2.Submit(nullptr, l);
+    Expect(ch2.LogicalAlive(v4) == false, "null engine entry dies at submit");
+
+    // 组/主音量/暂停命令提交落地
+    ch2.StageGroupVolume(0, 0.25f);
+    ch2.StageMasterVolume(0.5f);
+    ch2.StageSetPaused(true);
+    ch2.Submit(&eng, l);
+    Expect(std::fabs(eng.GroupVolume(audio::Group::Bgm) - 0.25f) < 1e-6f, "group vol applied");
+    Expect(std::fabs(eng.MasterVolume() - 0.5f) < 1e-6f, "master vol applied");
+    // BGM 循环声部被挂起（ADR M4；一次性不挂）
+    const uint32_t lv = ch2.StagePlay(clip, 0, 1.0f, 0, true);
+    ch2.Submit(&eng, l);
+    (void)lv;
+    const uint32_t pausedLoop = ch2.StagePlay(clip, 0, 1.0f, 0, true);
+    ch2.Submit(&eng, l);
+    eng.AdvanceSilentFrames(4800); // 暂停声部游标不动（放完一帧都不该退役）
+    Expect(eng.ActiveVoiceCount() >= 2, "paused loops still occupy slots");
+}
+
+void TestAudioSourceLifecycle() {
+    // AudioSource 组件 → AudioSystem 绑定生命周期：playOnStart 起播一次/实体亡停/
+    // 换片重绑/监听器空间热更（静音引擎，走管线逐 tick）
+    audio::AudioEngine eng;
+    Expect(eng.Init({.forceSilent = true}), "silent init");
+    World world;
+    Scene& s = world.CreateScene("audio-src");
+    world.SetActiveScene(&s);
+    world.InstallDefaultSystems();
+    // guid→clip 解析桩（map 单条）
+    std::vector<int16_t> pcm(48000 * 2, 6000);
+    const uint32_t clipA = eng.RegisterClip(std::move(pcm), 2, 48000, 0, 0);
+    const uint32_t clipB = eng.RegisterClip(std::vector<int16_t>(48000 * 2, 6000), 2,
+                                            48000, 0, 0);
+    struct Ctx {
+        uint64_t guidA, guidB;
+        uint32_t a, b;
+    } ctx{0xAAAA, 0xBBBB, clipA, clipB};
+    world.SetAudioBackend(&eng, [](uint64_t guid, void* p) -> uint32_t {
+        const Ctx* c = static_cast<const Ctx*>(p);
+        if (guid == c->guidA) return c->a;
+        if (guid == c->guidB) return c->b;
+        return 0;
+    }, &ctx);
+    world.SetAudioListener({{0, 0}, 640.0f});
+
+    Entity e = s.Create();
+    s.Emplace<Transform2D>(e, Transform2D{Vec2{100, 0}});
+    AudioSource src{};
+    src.clipGuid = 0xAAAA;
+    s.Emplace<AudioSource>(e, src); // 默认 flags = playOnStart
+
+    world.Step(1.0f / 60.0f);
+    Expect(eng.ActiveVoiceCount() == 1, "playOnStart starts on first tick");
+
+    // 空间热更：实体移到远端（gain→0 区）→ 声部仍在（loop），参数被推
+    s.Get<Transform2D>(e).pos = {2000, 0};
+    world.Step(1.0f / 60.0f);
+    Expect(eng.ActiveVoiceCount() == 1, "far source still alive (loop)");
+
+    // 换片：clipGuid 变 → 停旧起新
+    s.Get<AudioSource>(e).clipGuid = 0xBBBB;
+    world.Step(1.0f / 60.0f);
+    Expect(eng.ActiveVoiceCount() == 1, "rebound voice replaces old");
+
+    // 实体亡 → 声部停、绑定回收
+    s.Destroy(e);
+    world.Step(1.0f / 60.0f); // 两阶段销毁提交（Essential）
+    world.Step(1.0f / 60.0f); // AudioSystem 下一次扫描回收
+    Expect(eng.ActiveVoiceCount() == 0, "voice stops on entity death");
+
+    // playOnStart 关（flags=0）→ 不起播
+    Entity e2 = s.Create();
+    AudioSource quiet{};
+    quiet.clipGuid = 0xAAAA;
+    quiet.flags = 0;
+    s.Emplace<AudioSource>(e2, quiet);
+    world.Step(1.0f / 60.0f);
+    Expect(eng.ActiveVoiceCount() == 0, "no playOnStart flag = silent");
+
+    // 零 ECS 写验证：AudioSource 原值未被动（哈希面免疫的机械证据）
+    Expect(s.Get<AudioSource>(e2).clipGuid == 0xAAAA && s.Get<AudioSource>(e2).flags == 0,
+           "audio system never writes component");
+}
+
 int main() {
     TestVec2();
     TestMat3x2();
@@ -5668,6 +5881,10 @@ int main() {
     TestAudioDeviceInitNoCrash(); // M6c 批⓪：真初始化三路径不崩（设备/null/降级）
     TestAudioBench100Sfx();   // M6c 批⓪：100 并发 SFX 模拟侧 ≤0.5ms
     TestAudioBakedRoundtrip(); // M6c 竖切批：LBA1 烤制/装载（44.1k→48k 重采样）
+    TestAudioFadeEnvelope();   // M6c 批② D4：起播淡入/FadeVoice 到零即停/静音记账同径
+    TestAudioSpatialMath();    // M6c 批② M5：线性衰减钳界 + 声像半宽归一
+    TestAudioChannelCommands();// M6c 批②：staging/保序 Stop/BGM 单槽换曲/StopAll/null 引擎记账
+    TestAudioSourceLifecycle();// M6c 批②：playOnStart/实体亡停/换片重绑/零 ECS 写
     LEMON_LOG("engine-tests: %d checks OK", g_checks);
     return 0;
 }

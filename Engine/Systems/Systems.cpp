@@ -4,11 +4,14 @@
 #include <algorithm>
 #include <cmath>
 
+#include "Components/AudioComponents.h"
 #include "Components/BehaviorComponents.h"
 #include "Components/CoreComponents.h"
 #include "Components/GameplayComponents.h"
 #include "Components/RenderComponents.h"
+#include "Audio/AudioEngine.h"
 #include "Core/Log.h"
+#include "ECS/Hierarchy.h"
 #include "ECS/Scene.h"
 #include "ECS/World.h"
 #include "Physics2D/SpatialHash.h"
@@ -1277,6 +1280,100 @@ void TweenSystem::Tick(World& world, Scene& scene, float dt) {
     world.Tweens().Advance(world, scene, dt); // 空表内部早退（基准场零成本零漂移）
 }
 
+// ------------------------------------- #16.7 音频通道提交 + 2D 声源空间化 --------
+namespace {
+// 源世界位（父链异常兜底本地位——相机跟随同款口径）
+Vec2 AudioSourceWorldPos(Scene& scene, Entity e) {
+    if (!scene.Has<Transform2D>(e)) return Vec2{0, 0};
+    WorldTransform2D wt{};
+    if (ComputeWorldTransform(scene, e, wt)) return wt.pos;
+    return scene.Get<Transform2D>(e).pos;
+}
+
+// 起一个组件声源声部（起播/换片共用）：当前监听器快照定初始空间参数
+uint32_t StartSourceVoice(World& world, Scene& scene, audio::AudioEngine& engine,
+                          const audio::AudioListener& listener, Entity e,
+                          const AudioSource& src) {
+    const uint32_t clipId = world.ResolveAudioClip(src.clipGuid);
+    if (clipId == 0) return 0;
+    audio::PlayParams p;
+    p.group = src.group < audio::kGroupCount ? static_cast<audio::Group>(src.group)
+                                             : audio::Group::Sfx;
+    p.loop = (src.flags & kAudioLoop) != 0;
+    p.volume = src.volume;
+    float gain = 1.0f, pan = 0.0f;
+    audio::ComputeSpatial(AudioSourceWorldPos(scene, e), listener, src.refDist,
+                          src.maxDist, gain, pan);
+    p.volume = src.volume * gain;
+    p.pan = pan;
+    return engine.Play(clipId, p);
+}
+} // namespace
+
+void AudioSystem::Tick(World& world, Scene& scene, float dt) {
+    (void)dt;
+    // ① 命令提交：C# 当 tick staging 的播放/控制/BGM 槽/暂停统一落地
+    //（engine null = 纯记账，无声宿主全降级——AudioChannel 头说明）
+    world.Audio().Submit(world.AudioSink(), world.AudioListener());
+
+    audio::AudioEngine* engine = world.AudioSink();
+    const audio::AudioListener& listener = world.AudioListener();
+
+    // ② AudioSource 扫描：起播（playOnStart 一次）/换片重绑/空间参数热更（只读）
+    for (auto [ent, src] : scene.View<AudioSource>().each()) {
+        const Entity e = Scene::FromEntt(ent);
+        AudioSystem::SourceBinding* b = nullptr;
+        for (auto& x : bindings_)
+            if (x.e == e) {
+                b = &x;
+                break;
+            }
+        if (!b) {
+            if (src.clipGuid == 0 || !(src.flags & kAudioPlayOnStart)) continue;
+            const uint32_t clipId = world.ResolveAudioClip(src.clipGuid);
+            if (clipId == 0) { // 坏 guid = 作者错误（音频装载先于首 tick）；不绑 = 修正后下一 tick 起播
+                if (!warnedClipMiss_) {
+                    warnedClipMiss_ = true;
+                    LEMON_WARN("AudioSource clipGuid %016llx 未注册（资产未装载/GUID 手误），该声源静默",
+                               (unsigned long long)src.clipGuid);
+                }
+                continue;
+            }
+            if (!engine) continue; // 无声宿主：不建绑定（引擎后接 = 下一 tick 起播）
+            const uint32_t eid = StartSourceVoice(world, scene, *engine, listener, e, src);
+            if (eid == 0) continue; // 池满等：下 tick 再试
+            bindings_.push_back({e, eid, src.clipGuid});
+            b = &bindings_.back();
+        } else if (b->clipGuid != src.clipGuid) {
+            // 换片：停旧起新（运行时改 guid = 明确意图，与 playOnStart 无关）
+            if (engine && b->engineVoice) engine->Stop(b->engineVoice);
+            b->engineVoice = 0;
+            b->clipGuid = src.clipGuid;
+            if (src.clipGuid != 0 && engine)
+                b->engineVoice = StartSourceVoice(world, scene, *engine, listener, e, src);
+        }
+        // 空间参数热更：监听器移动/组件调参逐 tick 生效（D7：组件声源跟随实体）
+        if (engine && b && b->engineVoice) {
+            float gain = 1.0f, pan = 0.0f;
+            audio::ComputeSpatial(AudioSourceWorldPos(scene, e), listener, src.refDist,
+                                  src.maxDist, gain, pan);
+            engine->SetVoiceParams(b->engineVoice, src.volume * gain, pan);
+        }
+    }
+
+    // ③ 绑定回收：实体亡/组件摘 → 停声部解绑（绑定 = "已起播"记账，playOnStart
+    // 不复活；一次性放完的声部留记账至实体消亡——重触发语义见类注）
+    bindings_.erase(std::remove_if(bindings_.begin(), bindings_.end(),
+                                   [&](SourceBinding& x) {
+                                       if (scene.Alive(x.e) && scene.Has<AudioSource>(x.e))
+                                           return false;
+                                       if (engine && x.engineVoice)
+                                           engine->Stop(x.engineVoice);
+                                       return true;
+                                   }),
+                    bindings_.end());
+}
+
 // ---------------------------------------------------- #16 事件派发 --------
 void ScriptEventDispatchSystem::Tick(World& world, Scene& scene, float dt) {
     (void)scene; (void)dt;
@@ -1341,6 +1438,10 @@ void World::InstallDefaultSystems() {
     // A 档补间（2026-09-28）：同位置尾插——脚本当 tick 发起的补间本 tick 即首写、
     // 完成事件当帧派发；不消费 RNG，其后系统（事件派发/销毁提交）不消费，零影响。
     p.AddSystem(std::make_unique<TweenSystem>());
+    // M6c 批②（ADR-015 M3）：音频通道提交 + 2D 声源空间化。同位置尾插——C# 当
+    // tick staging 的音频命令本 tick 落地；不消费 RNG、零 ECS 写（绑定表 = 系统
+    // 局部）→ 自身零哈希漂移；基准场零 AudioSource/零音频调用 = 空转零成本。
+    p.AddSystem(std::make_unique<AudioSystem>());
     p.AddSystem(std::make_unique<ScriptEventDispatchSystem>());
     p.AddSystem(std::make_unique<DestroyCommitSystem>()); // Essential 阶段
     p.ResolveOrder();

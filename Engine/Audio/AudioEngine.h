@@ -32,6 +32,7 @@ struct PlayParams {
     float pan = 0.0f;           // -1..1，等功率声像
     Group group = Group::Sfx;
     bool loop = false;          // true 时循环区间 = clip 的 [loopStart, loopEnd)
+    float fadeInSec = 0.0f;     // M6c 批②（D4）：起播 0 增益线性爬到 volume；<=0 = 直起
 };
 
 struct InitOptions {
@@ -62,6 +63,14 @@ public:
     uint32_t Play(uint32_t clipId, const PlayParams& p = {});
     bool Stop(uint32_t voiceId);
     void StopAll();
+
+    // M6c 批②（ADR-015 M4/D4）：声部音量包络——seconds 内从当前有效音量线性到
+    // targetVolume；stopWhenDone 且到 0 = 声部终结（BGM 交叉淡出走此径）。
+    // seconds<=0 = 硬切立即到位。在途包络期间 SetVoiceParams 的 volume 于包络
+    // 终态后生效（BGM 不吃空间更新，实际无交互）。
+    bool FadeVoice(uint32_t voiceId, float targetVolume, float seconds, bool stopWhenDone);
+    /// M6c 批②：活声部参数热更（AudioSystem 逐 tick 空间化：volume*衰减 + 声像）
+    bool SetVoiceParams(uint32_t voiceId, float volume, float pan);
 
     void SetGroupVolume(Group g, float v);
     void SetMasterVolume(float v);

@@ -12,6 +12,7 @@
 #include "Core/JobSystem.h"
 #include "Core/Random.h"
 #include "Core/RingQueue.h"
+#include "Audio/AudioChannel.h"
 #include "ECS/ClipTable.h"
 #include "ECS/ControllerTable.h"
 #include "ECS/Events.h"
@@ -165,6 +166,25 @@ public:
     TweenTable& Tweens() { return tweens_; }
     const TweenTable& Tweens() const { return tweens_; }
 
+    // ---- 音频命令通道（M6c 批②，ADR-015 M3；AudioChannel 头说明——C# Lemon.Audio
+    // 当帧 staging，AudioSystem #20 统一提交；BGM 单槽在表内（热重载随 World 存活）。
+    // 非 ECS 不入 StateHash = 零重录通道族第八员，EnterPlay 新建 World 自清零）----
+    audio::AudioChannel& Audio() { return audioChannel_; }
+    const audio::AudioChannel& Audio() const { return audioChannel_; }
+
+    // ---- 音频后端注入（宿主装配期：编辑器 EnterPlay / M7a 运行时；引擎指针 null
+    // = 无声宿主全记账，script-tests/无头口径）。resolver = guid→clipId（staging 期
+    // 解析，0 = 未注册；ctx 归宿主——编辑器 = audioClips_ map 成员地址稳定）----
+    void SetAudioBackend(audio::AudioEngine* engine,
+                         uint32_t (*resolveClip)(uint64_t guid, void* ctx), void* ctx);
+    audio::AudioEngine* AudioSink() const { return audioSink_; }
+    uint32_t ResolveAudioClip(uint64_t guid) const; // clipId；0 = 未注册/未装后端
+
+    // ---- 音频监听器（宿主每帧推活动相机世界位 + 视口半宽；一帧延迟口径 =
+    // FeedGameUiInput 先例；AudioSystem 空间化消费）----
+    void SetAudioListener(const audio::AudioListener& l) { audioListener_ = l; }
+    const audio::AudioListener& AudioListener() const { return audioListener_; }
+
     // ---- HUD 三选一卡片（上方 RtUiCards 说明）----
     RtUiCards& Cards() { return cards_; }
     const RtUiCards& Cards() const { return cards_; }
@@ -241,6 +261,11 @@ private:
                                            // （档常量与键约定见 SaveChannel.h）
     TableStore tables_; // M6a 批②：.tab 配置表（Tables()；非 ECS 通道，零重录）
     TweenTable tweens_; // A 档补间（Tweens()；指令态通道，零重录）
+    audio::AudioChannel audioChannel_; // M6c 批②：音频命令表（Audio()；零重录）
+    audio::AudioEngine* audioSink_ = nullptr;       // 宿主注入（非拥有）
+    uint32_t (*audioResolve_)(uint64_t, void*) = nullptr; // guid→clipId（宿主注入）
+    void* audioResolveCtx_ = nullptr;
+    audio::AudioListener audioListener_{};
     uint64_t tick_ = 0;
     float timeScale_ = 1.0f;
     float xpCurveK_ = 1.25f; // ADR-012 D3：默认 = 原 StatSystem 硬编码值（零重录）

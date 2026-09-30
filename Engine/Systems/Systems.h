@@ -260,6 +260,27 @@ public:
     void Tick(World& world, Scene& scene, float dt) override;
 };
 
+/// #16.7 音频通道提交 + 2D 声源空间化（M6c 批②，ADR-015 M3/M5）：World.Audio
+/// 命令统一提交 AudioEngine（C# 当 tick staging 的播放/控制/BGM 槽/暂停在此
+/// 落地）；AudioSource 组件绑定生命周期（playOnStart 起播一次/实体亡或组件摘
+/// 停/换片重绑）+ 逐 tick 监听器衰减声像热更。只读 AudioSource+Transform+World
+/// 监听器/命令表——零 RNG（不占子流，尾插不移位既有 id）、零 ECS 写（绑定表 =
+/// 系统局部）→ 自身零哈希漂移；基准场零 AudioSource/零音频调用 = 空转零成本。
+class AudioSystem final : public ISystem {
+public:
+    const char* Name() const override { return "Audio"; }
+    void Tick(World& world, Scene& scene, float dt) override;
+
+private:
+    struct SourceBinding {
+        Entity e{};
+        uint32_t engineVoice = 0; // 0 = 已停/一次性放完（记账防 playOnStart 重触发）
+        uint64_t clipGuid = 0;
+    };
+    std::vector<SourceBinding> bindings_; // 系统局部（非 ECS 非 World 通道，不入 StateHash）
+    bool warnedClipMiss_ = false;         // clipGuid 解析失败告警一次（作者错误）
+};
+
 /// #17 事件派发：帧末批量派发给事件汇后清空（M3 换 C# 桥端）
 class ScriptEventDispatchSystem final : public ISystem {
 public:

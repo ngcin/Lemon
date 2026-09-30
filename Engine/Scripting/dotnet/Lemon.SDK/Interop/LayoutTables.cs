@@ -289,6 +289,16 @@ public static unsafe class LayoutTables
             F("modal", FieldTypeCode.UInt8, 0, O(p, &p->Modal)),
             F("reserved", FieldTypeCode.UInt16, 0, O(p, &p->_reserved)) }); }
 
+        // ---- M6c 批②（id 31；登记表尾追加，禁重排）----
+        { AudioSource t = default; AudioSource* p = &t;
+          Add<AudioSource>("AudioSource", (uint)sizeof(AudioSource), new[] {
+            F("clipGuid", FieldTypeCode.UInt64, 0, O(p, &p->ClipGuid)),
+            F("volume", FieldTypeCode.Float, 0, O(p, &p->Volume)),
+            F("refDist", FieldTypeCode.Float, 0, O(p, &p->RefDist)),
+            F("maxDist", FieldTypeCode.Float, 0, O(p, &p->MaxDist)),
+            F("flags", FieldTypeCode.UInt16, 0, O(p, &p->Flags)),
+            F("group", FieldTypeCode.UInt8, 0, O(p, &p->Group)) }); }
+
         // ---- 数组段（元素字段行挂 Fields 尾部；对照 ArraySegMeta）----
         var segs = new List<SegLayoutRow>();
         { StatusEffects t = default; StatusEffects* p = &t;

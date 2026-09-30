@@ -1,9 +1,10 @@
-// Lemon.SDK — 音频播放门面（M6c 竖切批，ADR-015；引擎侧 AudioEngine + AudioHooks）
-// -------------------------------------------------------------------------------
-// 语义：clip 引用 = 资产 GUID（16 位 hex，prefab 同款口径）；竖切批四槽 =
-// Play/Stop/SetGroupVolume/StopAll——非空间、无淡入淡出（批② 正式化补 PlayAt
-// 衰减声像 + BGM 交叉淡出 D4 + AudioChannel 命令表）。旧宿主未注册尾槽 = 判空
-// 降级 no-op（同 Lemon.Tween 口径）。音频状态不入 StateHash——金回放零重录。
+// Lemon.SDK — 音频播放门面（M6c 批② 正式化，ADR-015；引擎侧 AudioChannel 命令表
+// + AudioSystem 提交） ------------------------------------------------------------------------------
+// 语义：clip 引用 = 资产 GUID（16 位 hex，prefab 同款口径）；Play/PlayAt 返回逻辑
+// voiceId（单调不回收；0 = 失败：未装载/旧宿主）。命令当帧 staging、AudioSystem
+// 统一提交——BGM 单槽在引擎侧 World.AudioChannel（热重载换域不丢，竖切 C# 静态
+// _bgm 孤儿声部已根除）。暂停 = 显式 Audio.Paused（D5：引擎不自动映射 TimeScale
+//——菜单/选卡/清场等流程冻结不误停 BGM）。音频状态不入 StateHash——金回放零重录。
 using System;
 
 namespace Lemon;
@@ -18,10 +19,8 @@ public enum AudioGroup : int
 
 public static class Audio
 {
-    private static uint _bgm; // BGM 单槽（新 PlayBgm 顶停旧曲；批② 换交叉淡出）
-
-    /// <summary>按资产 GUID 播放。返回 voiceId（0 = 失败：未装载/池满/旧宿主）。
-    /// loop = true 时循环区间 = clip 全曲（竖切批口径）。</summary>
+    /// <summary>按资产 GUID 播放（非空间）。返回逻辑 voiceId（0 = 失败：未装载/
+    /// 池满/旧宿主）。loop = true 时循环区间 = clip 烤制期 loop 点（meta importer）。</summary>
     public static unsafe uint Play(string clipGuidHex, float volume = 1f,
                                    AudioGroup group = AudioGroup.Sfx, float pan = 0f,
                                    bool loop = false)
@@ -42,20 +41,45 @@ public static class Audio
                                    AudioGroup group = AudioGroup.Sfx)
         => Play(clipGuidHex, volume, group, 0f, false);
 
-    /// <summary>BGM 单槽循环（Bgm 组；新曲顶停旧曲——竖切批硬切，批② 淡出）。</summary>
-    public static void PlayBgm(string clipGuidHex, float volume = 0.55f)
+    /// <summary>2D 空间播放（ADR-015 M5）：worldPos 触发时快照定衰减/声像（D7：
+    /// 静态位，Unity PlayClipAtPoint 同构；移动声源用 AudioSource 组件）。衰减线性
+    /// refDist 全增益 → maxDist 归零；默认 256/1024 对表模板相机。</summary>
+    public static unsafe uint PlayAt(string clipGuidHex, Vec2 worldPos, float volume = 1f,
+                                     AudioGroup group = AudioGroup.Sfx,
+                                     float refDist = 256f, float maxDist = 1024f,
+                                     bool loop = false)
     {
-        if (_bgm != 0) Stop(_bgm);
-        _bgm = Play(clipGuidHex, volume, AudioGroup.Bgm, 0f, true);
+        if (Native.Api.AudioPlayAt == null || clipGuidHex == null)
+            return 0;
+        if (!ulong.TryParse(clipGuidHex,
+                            System.Globalization.NumberStyles.HexNumber,
+                            System.Globalization.CultureInfo.InvariantCulture, out ulong guid))
+            return 0;
+        return Native.Api.AudioPlayAt(guid, worldPos.X, worldPos.Y, volume, (int)group,
+                                      refDist, maxDist, loop ? 1 : 0);
     }
 
-    /// <summary>停 BGM（幂等）。</summary>
-    public static void StopBgm()
+    /// <summary>BGM 单槽换曲（Bgm 组循环；D4：旧曲与新曲 fadeSec 交叉淡出，0 = 硬切）。
+    /// 槽在引擎侧——热重载/连播不叠曲。</summary>
+    public static unsafe void PlayBgm(string clipGuidHex, float volume = 0.55f,
+                                      float fadeSec = 0.5f)
     {
-        if (_bgm != 0) { Stop(_bgm); _bgm = 0; }
+        if (Native.Api.AudioBgm == null || clipGuidHex == null)
+            return;
+        if (!ulong.TryParse(clipGuidHex,
+                            System.Globalization.NumberStyles.HexNumber,
+                            System.Globalization.CultureInfo.InvariantCulture, out ulong guid))
+            return;
+        Native.Api.AudioBgm(guid, volume, fadeSec);
     }
 
-    /// <summary>停指定声部（Play 返回的 voiceId）。返回是否停到。</summary>
+    /// <summary>停 BGM（幂等；D4 fadeSec 淡出，0 = 硬切）。</summary>
+    public static unsafe void StopBgm(float fadeSec = 0.5f)
+    {
+        if (Native.Api.AudioBgmStop != null) Native.Api.AudioBgmStop(fadeSec);
+    }
+
+    /// <summary>停指定声部（Play/PlayAt 返回的逻辑 voiceId）。返回是否停到。</summary>
     public static unsafe bool Stop(uint voiceId)
         => voiceId != 0 && Native.Api.AudioStop != null && Native.Api.AudioStop(voiceId) != 0;
 
@@ -66,10 +90,31 @@ public static class Audio
             Native.Api.AudioSetGroupVolume((int)group, volume);
     }
 
+    /// <summary>主音量 0..1（D6 get/set 对称）。写走 staging（当帧提交期落地引擎），
+    /// get 直读引擎现值——同帧写读 = 旧值（异步语义，跨帧往返为准）。</summary>
+    public static unsafe float MasterVolume
+    {
+        get => Native.Api.AudioMasterVolGet != null ? Native.Api.AudioMasterVolGet() : 1f;
+        set
+        {
+            if (Native.Api.AudioMasterVol != null) Native.Api.AudioMasterVol(value);
+        }
+    }
+
+    /// <summary>显式暂停（D5）：true = 循环声源/BGM 声部级挂起（一次性放完、Ui 组
+    /// 免疫——ADR-015 M4）。游戏暂停态自调；引擎不自动映射 Time.Scale（流程冻结
+    /// 误停防线）。</summary>
+    public static unsafe bool Paused
+    {
+        set
+        {
+            if (Native.Api.AudioSetPaused != null) Native.Api.AudioSetPaused(value ? 1 : 0);
+        }
+    }
+
     /// <summary>全停（场景切换/结算清场；编辑器 StopPlay 引擎侧同款）。</summary>
     public static unsafe void StopAll()
     {
-        _bgm = 0;
         if (Native.Api.AudioStopAll != null) Native.Api.AudioStopAll();
     }
 }

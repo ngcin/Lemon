@@ -68,20 +68,9 @@ void HookSaveFlush(ecs::World& w) {
     for (uint8_t ch = 0; ch < ecs::kSaveChannelCount; ++ch)
         g_app->Ctx().WriteSaveFile(ch, w.Saves(ch));
 }
-// M6c 竖切批（ADR-015）：C# Lemon.Audio 四桥 → AudioEngine + guid→clip 表
-//（MountPlayAudio 装载产物；未装载/无项目 = play 返回 0，同资产钩子降级语义）
-uint32_t HookAudioPlay(uint64_t guid, int32_t group, float volume, float pan, int32_t loop) {
-    return g_app ? g_app->AudioPlayByGuid(guid, group, volume, pan, loop) : 0;
-}
-int32_t HookAudioStop(uint32_t voiceId) {
-    return g_app ? (g_app->Audio().Stop(voiceId) ? 1 : 0) : 0;
-}
-void HookAudioSetGroupVolume(int32_t group, float volume) {
-    if (g_app) g_app->Audio().SetGroupVolume(audio::Group(group), volume);
-}
-void HookAudioStopAll() {
-    if (g_app) g_app->Audio().StopAll();
-}
+// M6c 批②：音频播放路径退役四桥（HookAudio*）——C# 命令走 g_world->Audio()
+// staging + AudioSystem #20 提交（ADR-015 M3）；guid→clipId 解析壳在
+// EditorAppScripts.cpp（TryEnterPlay 同 TU 注入 World::SetAudioBackend）。
 
 // ImGui 错误汇（1.92 内部回调口；DockBuilder 同源引用 imgui_internal）：ID 冲突/
 // 空标签等程序员错误在这里现形——冒烟断言清零（M4.5 修复 Inspector ##v 撞号后
@@ -221,10 +210,9 @@ int EditorApp::Run(const EditorLaunch& launch) {
     }
 
     // M6c 竖切批（ADR-015 M4）：音频引擎——gameUi_ 段后装配（同为"失败红字不
-    // 阻断"降级服务）；AudioHooks 注入 = C# Lemon.Audio 通道（未装宿主 play 返回 0）
+    // 阻断"降级服务）。批② 起 C# 命令通道 = World.AudioChannel（SetAudioHooks
+    // 退役；Play World 后端注入在 TryEnterPlay，试听走引擎直呼不变）
     audio_.Init();
-    scripting::SetAudioHooks(
-        {HookAudioPlay, HookAudioStop, HookAudioSetGroupVolume, HookAudioStopAll});
 
     // M5 批④：--gen-vs-template <dir>（开发工具：产出模板项目文件后退出——
     // 不进渲染主循环；产物入库 Templates/vs-survivor 随仓库管理）。须在 viewport
@@ -359,6 +347,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
         if (!ctx_.EnterPlay()) return 1;
         MountSceneUiDocuments(); // 批③d 前置（通道 A）：--play/--final 程序化路径
         MountPlayAudio();        // M6c 竖切批：烤制/装载音频资产（guid→clip）
+        WirePlayAudioBackend();  // M6c 批②：程序化路径同款后端注入（漏 = 无头 --play 全哑）
     }
     // 批③a（ADR-014）：--smoke-uirml 独立进 Play——playTest 的"进/出往返"语义与
     // smoke 门绑定（上方块），本模式只需"Play 中持续渲染 UI"一态（Stop 由循环后
@@ -596,6 +585,17 @@ int EditorApp::Run(const EditorLaunch& launch) {
             constexpr float kPlayFixedDt = 1.0f / 60.0f;
             constexpr float kPlayMaxAcc = kPlayFixedDt * 5.0f; // 追帧上限（死亡螺旋钳）
             constexpr int kPlayMaxSteps = 5;
+            // M6c 批②：音频监听器每帧推给 Play World（活动相机位 + gameRT 视口半宽；
+            // 上一帧跟随值——一帧延迟口径 = FeedGameUiInput 先例，空间化无感）
+            {
+                const Camera2D& gc = viewport_->GameCam();
+                const uint32_t rtW = viewport_->RenderTargetWidth(1),
+                              rtH = viewport_->RenderTargetHeight(1);
+                audio::AudioListener l;
+                l.center = gc.center;
+                l.halfWidth = rtH > 0 ? gc.HalfWidth((float)rtW / (float)rtH) : gc.halfHeight;
+                ctx_.ActiveWorld().SetAudioListener(l);
+            }
             int playSteps = 0;
             if (!playPaced) {
                 ctx_.TickPlay(paused_ && !singleStep_ ? 0.0f : kPlayFixedDt);

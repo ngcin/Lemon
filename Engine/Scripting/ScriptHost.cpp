@@ -8,6 +8,7 @@
 
 #include "Components/CoreComponents.h"
 #include "Components/RenderComponents.h"
+#include "Audio/AudioEngine.h" // NativeAudioMasterVolGet 直读引擎态（M6c 批②）
 #include "Core/Log.h"
 #include "ECS/ComponentRegistry.h"
 #include "Systems/Systems.h" // SeparationSystem 完整定义（调参下放通道）
@@ -167,19 +168,50 @@ void NativeSaveFlush() {
     }
 }
 
-// ---- M6c 竖切批（音频四桥：AudioHooks 注入；未装 = 0/no-op 降级同上）----
-static AudioHooks g_audioHooks;
+// ---- M6c 批②（音频命令通道：Lemon.Audio → g_world->Audio() 当帧 staging，
+// Save 同款域 tick 窗口约定；guid→clipId 桥内经 World::ResolveAudioClip 解析，
+// 0 = 未注册即失败。引擎提交归 AudioSystem #20；AudioHooks 退役）----
 uint32_t NativeAudioPlay(uint64_t guid, int32_t group, float volume, float pan, int32_t loop) {
-    return g_audioHooks.play ? g_audioHooks.play(guid, group, volume, pan, loop) : 0;
+    if (!g_world) return 0;
+    const uint32_t clip = g_world->ResolveAudioClip(guid);
+    if (clip == 0) return 0;
+    return g_world->Audio().StagePlay(clip, group, volume, pan, loop != 0);
+}
+uint32_t NativeAudioPlayAt(uint64_t guid, float x, float y, float volume, int32_t group,
+                           float refDist, float maxDist, int32_t loop) {
+    if (!g_world) return 0;
+    const uint32_t clip = g_world->ResolveAudioClip(guid);
+    if (clip == 0) return 0;
+    return g_world->Audio().StagePlayAt(clip, x, y, volume, group, refDist, maxDist,
+                                        loop != 0);
 }
 int32_t NativeAudioStop(uint32_t voiceId) {
-    return g_audioHooks.stop ? g_audioHooks.stop(voiceId) : 0;
+    return g_world && voiceId != 0 && g_world->Audio().StageStop(voiceId) ? 1 : 0;
+}
+int32_t NativeAudioBgm(uint64_t guid, float volume, float fadeSec) {
+    if (!g_world) return 0;
+    const uint32_t clip = g_world->ResolveAudioClip(guid);
+    if (clip == 0) return 0;
+    return g_world->Audio().StageBgm(clip, volume, fadeSec);
+}
+void NativeAudioBgmStop(float fadeSec) {
+    if (g_world) g_world->Audio().StageBgmStop(fadeSec);
 }
 void NativeAudioSetGroupVolume(int32_t group, float volume) {
-    if (g_audioHooks.setGroupVolume) g_audioHooks.setGroupVolume(group, volume);
+    if (g_world) g_world->Audio().StageGroupVolume(group, volume);
 }
 void NativeAudioStopAll() {
-    if (g_audioHooks.stopAll) g_audioHooks.stopAll();
+    if (g_world) g_world->Audio().StageStopAll();
+}
+void NativeAudioMasterVol(float volume) {
+    if (g_world) g_world->Audio().StageMasterVolume(volume);
+}
+float NativeAudioMasterVolGet() {
+    // 引擎态直读（命令表不镜像音量——设置类低频，get 走源不走去重）
+    return g_world && g_world->AudioSink() ? g_world->AudioSink()->MasterVolume() : 1.0f;
+}
+void NativeAudioSetPaused(int32_t on) {
+    if (g_world) g_world->Audio().StageSetPaused(on != 0);
 }
 
 void NativeRtUiClear(const char* key) {
@@ -371,12 +403,16 @@ const NativeApiVtable kNativeApi{NativeIsAlive,
                                  NativeSaveGetLenEx,
                                  NativeSaveGetEx,
                                  NativeAudioPlay,
+                                 NativeAudioPlayAt,
                                  NativeAudioStop,
+                                 NativeAudioBgm,
+                                 NativeAudioBgmStop,
                                  NativeAudioSetGroupVolume,
-                                 NativeAudioStopAll};
+                                 NativeAudioStopAll,
+                                 NativeAudioMasterVol,
+                                 NativeAudioMasterVolGet,
+                                 NativeAudioSetPaused};
 } // namespace
-
-void SetAudioHooks(const AudioHooks& hooks) { g_audioHooks = hooks; }
 
 void SetScriptIoHooks(const ScriptIoHooks& hooks) { g_scriptIo = hooks; }
 

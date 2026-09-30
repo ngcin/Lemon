@@ -93,6 +93,10 @@ public:
     // ---- 面板可读的共享状态（EditorContext = §3.3 状态模型）----
     EditorContext& Ctx() { return ctx_; }
     audio::AudioEngine& Audio() { return audio_; } // M6c 竖切批：混音面板/调音消费
+    /// M6c 批②：guid→clipId 只读查表（World::SetAudioBackend 解析壳消费）
+    uint32_t AudioClipOfGuid(uint64_t guid) const;
+    /// M6c 批②：Play World 音频后端装配（TryEnterPlay 与 --play 双挂点）
+    void WirePlayAudioBackend();
     /// M6c 竖切批：guid 查表 + Play（文件内音频钩子消费；未装载 clip = 0）
     uint32_t AudioPlayByGuid(uint64_t guid, int32_t group, float volume, float pan,
                              int32_t loop);

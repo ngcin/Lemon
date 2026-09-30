@@ -357,6 +357,22 @@ public struct UIDocument : IComponent  // 16B（u64+u8+u8+u16，自然对齐 siz
     internal ushort _reserved;    // C++ reserved 衬齐（尾加纪律）
 }
 
+// ---- M6c 批②（id 31；登记表尾追加，与 ComponentCatalog 同步）----
+
+[StructLayout(LayoutKind.Sequential)]
+public struct AudioSource : IComponent  // 24B（u64+f32×3+u16+u8+u8 自然对齐；字段序
+{                                       // = ADR-015 M3 勘误后口径，见 AudioComponents.h）
+    public ulong ClipGuid;   // 音频资产 GUID（0 = 无片静默）
+    public float Volume;
+    public float RefDist;    // 全增益半径（线性衰减起点）
+    public float MaxDist;    // 衰减到 0 半径
+    public ushort Flags;     // bit0 循环 bit1 进 Play 自动起播。注意：C++ 默认
+                             // PlayOnStart(0x2)，C# default = 0——整写须显式置位
+                             //（UIDocument.ShowOnStart 同款镜像默认值坑）
+    public byte Group;       // 混音组 0 Bgm/1 Sfx/2 Ui
+    internal byte _pad;      // C++ pad_ 衬齐（尾加纪律）
+}
+
 // ---- 事件包镜像（Events.h：48B 固定布局，桥侧 blittable）----
 public enum GameEvent : ushort
 {

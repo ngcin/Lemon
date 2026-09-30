@@ -108,16 +108,25 @@ struct NativeApiVtable {
     int32_t (*saveGetLenEx)(const char* key, uint8_t ch); // -1 = 无此键
     int32_t (*saveGetEx)(const char* key, void* out, uint32_t cap,
                          uint8_t ch); // 返回拷贝数（-2 = cap 不足）
-    // ---- M6c 竖切批（音频：Lemon.Audio → AudioHooks 注入；表尾追加同上约定。
-    // group = AudioGroup（0 Bgm/1 Sfx/2 Ui）；audioPlay 返回 voiceId，0 = 失败
-    //（钩子未装/无此 clip/池满拒绝）。音频状态不入 StateHash——基准场零调用 =
-    // 零漂移、金回放零重录（M5 批④ vtable 尾追同款口径）。批② 正式化为
-    // AudioChannel 命令表 + 空间化（PlayAt/衰减），本四槽语义保持子集）----
+    // ---- M6c 批②（音频命令通道正式化，ADR-015 M3/M6：Lemon.Audio → g_world->Audio()
+    // 当帧 staging（Save 同款域 tick 窗口约定），AudioSystem #20 统一提交。guid→clipId
+    // 在桥内经 World::ResolveAudioClip 解析（staging 期），0 = 未注册即失败。逻辑
+    // voiceId 单调不回收（Stop 亦为保序命令）。音频状态不入 StateHash——基准场零
+    // 调用 = 零漂移、金回放零重录（M5 批④ vtable 尾追同款口径）。竖切四槽签名
+    // 不变、语义原位升级；AudioHooks 退役（World::SetAudioBackend 取代）----
     uint32_t (*audioPlay)(uint64_t clipGuid, int32_t group, float volume, float pan,
                           int32_t loop);
+    uint32_t (*audioPlayAt)(uint64_t clipGuid, float x, float y, float volume,
+                            int32_t group, float refDist, float maxDist,
+                            int32_t loop); // D7：提交期按当帧监听器快照定衰减/声像
     int32_t (*audioStop)(uint32_t voiceId);        // 0/1
+    int32_t (*audioBgm)(uint64_t clipGuid, float volume, float fadeSec); // 1=受理 0=clip 无效
+    void (*audioBgmStop)(float fadeSec);           // D4：淡出后停（<=0 硬切）
     void (*audioSetGroupVolume)(int32_t group, float volume);
     void (*audioStopAll)(void);                    // 场景切换/退 Play 清场
+    void (*audioMasterVol)(float volume);
+    float (*audioMasterVolGet)(void);              // D6：get/set 对称（引擎态直读）
+    void (*audioSetPaused)(int32_t on);            // D5：显式暂停（引擎不自动映射 TimeScale）
 };
 
 /// 编辑器资产钩子（M4.4：编辑器宿主装配期经 SetEditorAssetHooks 注入；
@@ -135,18 +144,6 @@ struct ScriptIoHooks {
     void (*saveFlush)(ecs::World& world); // 全量落盘（幂等）
 };
 void SetScriptIoHooks(const ScriptIoHooks& hooks);
-
-/// 音频桥钩子（M6c 竖切批：编辑器宿主装配期注入——AudioEngine + guid→clip 表；
-/// 纯运行时/测试宿主不装 = audioPlay 返回 0 / 其余 no-op，同 EditorAssetHooks
-/// 降级语义。批② 正式化时随 AudioChannel 迁 World 侧）
-struct AudioHooks {
-    uint32_t (*play)(uint64_t clipGuid, int32_t group, float volume, float pan,
-                     int32_t loop);
-    int32_t (*stop)(uint32_t voiceId);
-    void (*setGroupVolume)(int32_t group, float volume);
-    void (*stopAll)();
-};
-void SetAudioHooks(const AudioHooks& hooks);
 
 /// UI 桥钩子（M6b 批③c，ADR-014 D2 M2/M3）：ops 应用方与事件抽干方。编辑器装配期
 /// 经 SetUiHooks 注入（applyOps → UiSubsystem::ApplyOps / drainEvents → DrainEvents）；

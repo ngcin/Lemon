@@ -76,6 +76,18 @@ Scene& World::CreateScene(const char* name) {
     return *scenes_.back();
 }
 
+// ---- 音频后端（M6c 批②；头文件口径说明）----
+void World::SetAudioBackend(audio::AudioEngine* engine,
+                             uint32_t (*resolveClip)(uint64_t guid, void* ctx), void* ctx) {
+    audioSink_ = engine;
+    audioResolve_ = resolveClip;
+    audioResolveCtx_ = ctx;
+}
+
+uint32_t World::ResolveAudioClip(uint64_t guid) const {
+    return audioResolve_ ? audioResolve_(guid, audioResolveCtx_) : 0;
+}
+
 void World::Step(float fixedDt) {
     if (!active_) return; // 无活动场景 = 空步（不崩；tick 不推进）
     // 时间缩放（M5 批①）：全 FixedTick 系统吃缩放 dt（C# Time.DeltaTime 同值）；

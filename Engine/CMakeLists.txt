@@ -5,6 +5,7 @@ add_library(lemon-engine STATIC
   Core/FileOps.cpp
   Core/JobSystem.cpp
   Core/Log.cpp
+  Audio/AudioChannel.cpp
   Audio/AudioEngine.cpp
   Audio/BakedClip.cpp
   Audio/MiniAudioImpl.c

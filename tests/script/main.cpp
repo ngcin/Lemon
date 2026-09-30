@@ -17,6 +17,7 @@
 #include "Components/CoreComponents.h"
 #include "Components/GameplayComponents.h"
 #include "Components/RenderComponents.h"
+#include "Audio/AudioEngine.h" // M6c 批②：TestAudioSdk 静音引擎
 #include "Core/Random.h"
 #include "ECS/ComponentRegistry.h"
 #include "ECS/ControllerTable.h" // T3d：ControllerDef/AnimParamKind（AnimGraph 探针）
@@ -81,14 +82,14 @@ int (*lemonEventPacketLayout)(uint16_t*, uint16_t*, uint16_t*, uint16_t*, uint16
 void TestLayoutAgainstRegistry() {
     lemon::ecs::RegisterAllComponents();
     auto& reg = lemon::ecs::ComponentRegistry::Instance();
-    Expect(reg.Count() == 31, "registry count 31（M5 批② WaveDirector + T3d AnimGraph/AnimParams + M6b 批③d 前置 UIDocument）");
+    Expect(reg.Count() == 32, "registry count 32（M5 批② WaveDirector + T3d AnimGraph/AnimParams + M6b 批③d 前置 UIDocument + M6c 批② AudioSource）");
 
     std::vector<CompLayoutRow> comps(64);
     std::vector<FieldLayoutRow> fields(256);
     std::vector<SegLayoutRow> segs(8);
     int n = lemonSdkLayout(comps.data(), (int)comps.size(), fields.data(), (int)fields.size(),
                            segs.data(), (int)segs.size());
-    Expect(n == 31, "sdk layout comp count");
+    Expect(n == 32, "sdk layout comp count");
 
     uint32_t totalFields = 0;
     for (int i = 0; i < n; i++) {
@@ -328,7 +329,7 @@ void TestDomainManager() {
         auto listFn = (int (*)(char*, int))GetExport("lemon_behaviours_list");
         char buf[4096];
         int n = listFn ? listFn(buf, (int)sizeof buf) : -1;
-        Expect(n == 18, "behaviours list after hot reload (+M11/M15/F-08.2/T3/b1/b2/T3c/T3d/A档tween/T5存档档/b3c UI probes)");
+        Expect(n == 19, "behaviours list after hot reload (+M11/M15/F-08.2/T3/b1/b2/T3c/T3d/A档tween/T5存档档/b3c UI/M6c b2 audio probes)");
         // M4.6 回归（用户实测闪退根因）：相对路径进 dm_reload 曾抛 ArgumentException
         // 逃逸 UnmanagedCallersOnly → coreclr abort。拦截层必须转 0 返回且进程存活
         // （本断言能跑到 = 进程没死）。换装失败后旧域已弃——再换一次真路径恢复。
@@ -522,6 +523,77 @@ void TestBehaviourAndStructuralOps() {
         for (int i = 0; i < 3; i++) w2.Step(0.25f); // 帧1 重新报 250（FrameCount 从 1 重计）
         Expect(dtSeenAgain == 1, "time reset: new session restarts at FrameCount 1");
     }
+}
+
+// M6c 批②：Lemon.Audio 全 API 面（AudioProbeBehaviour typeId 18 装配——静音引擎 +
+// guid 0x1111 单 clip + resolver）。断言：staging 返回值语义（Play/PlayAt 非零、
+// 坏 guid = 0）/ Stop 真值序（已提交真、二次假）/ MasterVolume 往返（D6）/
+// BGM 槽引擎侧对拍（受理 → 硬切释放）/ StopAll 清场；**ComputeStateHash 跨帧
+// 逐位不变** = 音频调用零哈希面的机械反例（零重录纪律，09 §6.8）。
+void TestAudioSdk() {
+    using namespace lemon::ecs;
+    auto opsSubmit = (void (*)(unsigned char, unsigned char, uint64_t))GetExport("lemon_ops_submit");
+    auto timeResetFn = (void (*)())GetExport("lemon_time_reset");
+    Expect(opsSubmit && timeResetFn, "ops/time exports resolved");
+    timeResetFn(); // 本测试 = 新一局（AudioProbe 按 FrameCount 分段）
+
+    lemon::audio::AudioEngine eng;
+    Expect(eng.Init({.forceSilent = true}), "silent engine for audio sdk test");
+    std::vector<int16_t> pcm(4800 * 2, 4000); // 0.1s 恒幅
+    const uint32_t clip = eng.RegisterClip(std::move(pcm), 2, 4800, 0, 0);
+    struct AudCtx {
+        uint32_t clip;
+    } actx{clip};
+    WorldDesc d;
+    d.threadCount = 1;
+    World w(d);
+    Scene& s = w.CreateScene("AudT");
+    w.SetActiveScene(&s);
+    w.SetScriptBackend(&g_sh);
+    // 最小管线（AudioSystem 必在——staging 命令的统一提交点）
+    w.Pipeline().AddSystem(std::make_unique<DestroyCommitSystem>());
+    w.Pipeline().AddSystem(std::make_unique<CSharpBatchSystem>());
+    w.Pipeline().AddSystem(std::make_unique<AudioSystem>());
+    w.Pipeline().AddSystem(std::make_unique<ScriptEventDispatchSystem>());
+    w.Pipeline().ResolveOrder();
+    w.SetAudioBackend(&eng,
+                      [](uint64_t g, void* p) -> uint32_t {
+                          return g == 0x1111ull ? static_cast<AudCtx*>(p)->clip : 0;
+                      },
+                      &actx);
+    w.SetAudioListener({{0, 0}, 640.0f});
+
+    const uint64_t h0 = ComputeStateHash(s); // 空场基准
+    int mark1 = 0, mark2 = 0, mark3 = 0;
+    w.SetEventSink([&](World&, const EventPacket& p) {
+        if (p.type != GameEvent::Custom) return;
+        if (p.user >= 1300 && p.user < 1320) mark1 = (int)p.user - 1300;
+        else if (p.user >= 1320 && p.user < 1340) mark2 = (int)p.user - 1320;
+        else if (p.user >= 1340) mark3 = (int)p.user - 1340;
+    });
+
+    opsSubmit(0, 0, 0x800000000000A001ull);            // Create
+    opsSubmit(2, 0 /*Transform2D*/, 0x800000000000A001ull); // 组件在场 = 哈希非平凡
+    opsSubmit(4, 18 /*AudioProbeBehaviour*/, 0x800000000000A001ull);
+
+    w.Step(0.25f); // 帧1：Play/PlayAt/Bgm + 坏 guid
+    Expect(mark1 == 7, "probe f1: play+at nonzero, bad guid zero");
+    Expect(w.Audio().bgmVoice() != 0, "bgm slot occupied (accepted)");
+    Expect(eng.ActiveVoiceCount() == 3, "play + playat + bgm voices active");
+    const uint64_t h1 = ComputeStateHash(s); // 探针实体 + Transform 在场
+
+    w.Step(0.25f); // 帧2：Stop 真 + MasterVolume 写 + StopBgm(0) + Paused 对
+    Expect(mark2 == 1, "probe f2: stop submitted voice true");
+    Expect(w.Audio().bgmVoice() == 0, "bgm slot released (hard stop)");
+    Expect(eng.ActiveVoiceCount() == 1, "only playat remains after stops");
+    Expect(ComputeStateHash(s) == h1,
+           "audio calls never touch state hash (zero-replay counterexample)");
+
+    w.Step(0.25f); // 帧3：二次 Stop 假 + MasterVolume 上帧写已落地 + StopAll + 自毁
+    Expect(mark3 == 3, "probe f3: second stop false + master roundtrip (next frame)");
+    Expect(eng.ActiveVoiceCount() == 0, "stopall cleared engine voices");
+    w.Step(0.25f); // 销毁提交 + 派发
+    Expect(ComputeStateHash(s) == h0, "scene back to empty after destroy");
 }
 
 // M5 批①：Time.Scale（native 表往返 + 缩放 dt 链到 Time.DeltaTime）与
@@ -1772,6 +1844,7 @@ int main() {
     TestTweenSdk();     // A 档补间（2026-09-28 用户插入项）：Lemon.Tween 通道端到端
     TestSaveChannels(); // M6a 批② T5：Lemon.Save × Chan 分档通道端到端
     TestUiSdk();        // M6b 批③c：Lemon.UI 线格式对拍 + 事件反向直灌
+    TestAudioSdk();     // M6c 批②：Lemon.Audio 全 API 面 + 哈希免疫反例
 
     // M4.6 探针（编辑器切项目场景）：同进程二次 ScriptHost 生命周期。CoreCLR 运行时
     // 进程单例——第二次 Initialize 的真实行为必须钉板（成功/失败都合法，崩 = 缺陷）。

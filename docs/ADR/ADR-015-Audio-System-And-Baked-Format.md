@@ -52,7 +52,7 @@
 ### M3 播放面双轨：AudioChannel（零重录）+ AudioSource 组件 id 31（一次性重录）
 
 - **命令通道 = World 持有 `AudioChannel` 命令表**（非 ECS，不入 StateHash——Tween/Fx 先例）：C# 侧所有播放/控制命令当帧 staging，`AudioSystem` 统一提交 `AudioEngine`。**金回放零影响**。
-- **持续声源 = `AudioSource` 组件（id 31，表尾追加）**：挂实体随 Transform 移动的循环/环境声（Unity AudioSource 同构粒度）。字段 24B 冻结：`u64 clipGuid; f32 volume; f32 refDist; f32 maxDist; u8 group; u16 flags(bit0 loop, bit1 playOnStart); u8 pad;`。**代价 = 三档金回放一次性重录**（组件名入哈希流，UIDocument 先例），批② 内闭环（重录 → 全绿同批勾销）。
+- **持续声源 = `AudioSource` 组件（id 31，表尾追加）**：挂实体随 Transform 移动的循环/环境声（Unity AudioSource 同构粒度）。字段 24B 冻结：`u64 clipGuid; f32 volume; f32 refDist; f32 maxDist; u16 flags(bit0 loop, bit1 playOnStart); u8 group; u8 pad;`（**2026-09-30 批② 勘误**：原字段序 `u8 group; u16 flags` 自然对齐下为 25→32B，调序为 u16 flags 在前、u8 group 衬其后方保 24B；语义不变，批文件 §5 为准）。**代价 = 三档金回放一次性重录**（组件名入哈希流，UIDocument 先例），批② 内闭环（重录 → 全绿同批勾销）。
 - **`AudioSystem`**：`InstallDefaultSystems` 插 Tween 后、ScriptEventDispatch 前（`Systems.cpp:1338-1343` 尾插纪律），**零 RNG 子流、零 ECS 写**（只读 AudioSource+Transform 与相机）→ 自身不引入哈希漂移。职责：监听器（相机位）采样、逐持续声源算衰减/声像、AudioChannel 命令提交。
 - 同步动作清单（批②，UIDocument 同款四处）：计数断言 31→32（`tests/engine_tests.cpp:728,777` + `tests/script/main.cpp:84,91`）+ C# 镜像 struct（`Interop/Components.cs` 头注记 + 新行）+ `LayoutTables.cs` 行。
 
@@ -61,7 +61,7 @@
 - **设备回调线程混音**（miniaudio device callback）：活跃声部逐样本 f32 累加 → 组增益 → 主增益 → 输出。voice 池 **kMaxVoices = 64**，满时偷最旧一次性声部。
 - **命令/参数跨线程 = 单小临界区**：主线程 staging 进 AudioChannel → 每帧一次锁提交；音频回调每块一次锁取走。争用可忽略（256 帧块 @48k ≈ 5.3ms 一锁）。TSAN 进 09 登记项（CI 侧后手）。
 - **组模型 = Master + BGM/SFX/UI 三组固定**（音量各自 0..1，D3 拍板确认）。BGM = 单独声部槽，同时仅一条；新 `PlayBgm` 对旧曲交叉淡出（默认 0.5s，参数可 0 = 硬切，D4 拍板确认）。
-- **暂停语义**（对齐 M6b bit6 Pause）：循环声源（BGM/loop SFX）声部级挂起，一次性 SFX 自然放完，**UI 组不挂起**（暂停菜单按钮音仍可响）。设备级 `ma_device_pause` 不用（会连 UI 音一起哑）。
+- **暂停语义**（对齐 M6b bit6 Pause）：循环声源（BGM/loop SFX）声部级挂起，一次性 SFX 自然放完，**UI 组不挂起**（暂停菜单按钮音仍可响）。设备级 `ma_device_pause` 不用（会连 UI 音一起哑）。（**2026-09-30 批② D5 拍板（用户"按建议开工"）**：触发源 = 显式 SDK `Audio.Paused`（游戏暂停态自调），**引擎不自动映射 TimeScale==0**——svr-test 里 Scale=0 大量用于菜单/Spawning/选卡/死亡/清场非暂停态，自动映射会误挂起这些场景的 BGM。）
 - **静音降级 = 一等公民**：`AudioEngine::Init` 失败（无设备/CI 无头）→ 静音模式——设备不建、混音跳过、**逻辑声部照常记账**（voice 计数/生命周期与有声模式一致，冒烟断言可用）、所有 API 成功返回。环境变量 `LEMON_AUDIO=off` 强制静音（CI 确定性）。编辑器装配点 = `EditorApp::Run` 的 gameUi_ 段之后（同为"失败红字不阻断"降级服务，UiSubsystem 同款纪律）。
 
 ### M5 2D 空间化（坚决不做 3D/DSP 图）
@@ -73,7 +73,7 @@
 
 ### M6 C#/C++ 边界：vtable 尾加 7 槽 + `Lemon.Audio`
 
-- `NativeApiVtable` 表尾追加（旧宿主零扰动，animParamSlot/Tween×4/Save×3 先例；现 36 槽 → 43）：`audioPlay / audioPlayAt / audioStop / audioBgm / audioBgmStop / audioGroupVol / audioMasterVol`（精确签名批② 批文件定稿）。
+- `NativeApiVtable` 表尾追加（旧宿主零扰动，animParamSlot/Tween×4/Save×3 先例；~~现 36 槽 → 43~~ **2026-09-30 勘误**：竖切批已 36→40（audioStopAll 为 ADR 集合外增件），批② 尾加 6 槽 → **46 落定**（D5/D6 用户拍板均按建议）：`audioPlayAt / audioBgm / audioBgmStop / audioMasterVol / audioMasterVolGet(D6) / audioSetPaused(D5)`；AudioHooks 四函数退役为 `World::SetAudioBackend(engine, resolverFn, ctx)`——签名实况见[批② 批文件](../Plans/M6c/2026-09-30-b2-source-and-csharp-api.md) §6）。
 - SDK `Lemon.SDK/Audio.cs` 静态类（一域一文件惯例）：
 
 ```csharp

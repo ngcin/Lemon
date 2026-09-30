@@ -160,6 +160,19 @@ bool EditorApp::PlayBlockedByScripts() {
     return FindGameProject(csproj, dll); // 带 Game/ 工程而无宿主 = 启动期编译/装配失败
 }
 
+// M6c 批②：World::SetAudioBackend 的 guid→clipId 解析壳（ctx = EditorApp*）
+namespace {
+uint32_t ResolveAudioClipThunk(uint64_t guid, void* ctx) {
+    return static_cast<const EditorApp*>(ctx)->AudioClipOfGuid(guid);
+}
+} // namespace
+
+// Play World 音频后端装配（交互侧 TryEnterPlay 与程序化 --play 双挂点——竖切批
+// MountPlayAudio 同款双点纪律；ctx = this，成员地址稳定）
+void EditorApp::WirePlayAudioBackend() {
+    ctx_.ActiveWorld().SetAudioBackend(&audio_, ResolveAudioClipThunk, this);
+}
+
 bool EditorApp::TryEnterPlay() {
     if (PlayBlockedByScripts()) {
         playBlockedOpen_ = true;
@@ -170,6 +183,7 @@ bool EditorApp::TryEnterPlay() {
     if (!ctx_.EnterPlay()) return false;
     MountSceneUiDocuments(); // 批③d 前置（通道 A）：场景声明装载 + EnterPlay 归位
     MountPlayAudio();        // M6c 竖切批：烤制/装载音频资产（guid→clip）
+    WirePlayAudioBackend();  // M6c 批②：命令表提交引擎 + guid 解析（AudioSystem #20 消费）
     return true;
 }
 
@@ -321,15 +335,20 @@ void EditorApp::StopAudioBaker() {
     if (audioBakeThread_.joinable()) audioBakeThread_.join();
 }
 
+uint32_t EditorApp::AudioClipOfGuid(uint64_t guid) const {
+    const auto it = audioClips_.find(guid);
+    return it != audioClips_.end() ? it->second : 0;
+}
+
 uint32_t EditorApp::AudioPlayByGuid(uint64_t guid, int32_t group, float volume, float pan,
                                     int32_t loop) {
-    const auto it = audioClips_.find(guid);
-    if (it == audioClips_.end()) return 0; // 未装载（无项目/烤制失败/非音频 guid）
+    const uint32_t clipId = AudioClipOfGuid(guid);
+    if (clipId == 0) return 0; // 未装载（无项目/烤制失败/非音频 guid）
     if (group < 0 || group >= audio::kGroupCount) group = 1; // 越界落 Sfx（防御钳）
-    return audio_.Play(it->second, {.volume = volume,
-                                    .pan = pan,
-                                    .group = audio::Group(group),
-                                    .loop = loop != 0});
+    return audio_.Play(clipId, {.volume = volume,
+                                .pan = pan,
+                                .group = audio::Group(group),
+                                .loop = loop != 0});
 }
 
 void EditorApp::MenuNewProject() { wizOpen_ = true; }

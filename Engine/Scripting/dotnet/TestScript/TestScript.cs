@@ -51,6 +51,10 @@ public static class GameMain
         Lemon.Behaviours.Register<SaveChanProbeBehaviour>();
         // M6b 批③c：Lemon.UI 全链（typeId 17，表尾注册同上约定）
         Lemon.Behaviours.Register<UiProbeBehaviour>();
+        // M6c 批②：Lemon.Audio 全 API 面（typeId 18，表尾注册同上约定——
+        // script-tests TestAudioSdk 消费：staging 返回值/Stop 真值序/主音量往返/
+        // 坏 guid 降级；引擎侧对拍 bgm 槽与活跃声部计数）
+        Lemon.Behaviours.Register<AudioProbeBehaviour>();
         // 批③c 静态订阅（Configure 期一次，跨局存活）：UI 事件计数经 RtUi 回读
         // （编辑器 --smoke-uirml --script 断言链）；DocumentReloaded → Refill
         // （M2 契约：热重载后 C# 重灌——不灌则屏幕空回夹具初值）
@@ -650,5 +654,48 @@ public sealed class UiProbeBehaviour : Lemon.LemonBehaviour
         if (Lemon.Time.FrameCount == 1) GameMain.UiRefill();
         else if (Lemon.Time.FrameCount == 2) GameMain.UiDedupProbe();
         // 常驻到会话尾（重灌回调依赖静态订阅，本体仅首两帧播种）
+    }
+}
+
+/// <summary>M6c 批②（typeId 18）：Lemon.Audio 全 API 验收（script-tests TestAudioSdk
+/// 装配——宿主注册静音引擎 + guid 0x1111 单 clip + resolver）。帧1 = Play/PlayAt
+/// 返回非零 + 坏 guid 返 0 + PlayBgm 受理（引擎侧对拍 bgm 槽）；帧2 = Stop 真值 +
+/// MasterVolume set/get 往返 + StopBgm(0) 硬切 + Paused 对拍（引擎侧对拍组音量/
+/// 暂停声部占槽）；帧3 = 二次 Stop 假 + StopAll 清场 + 自毁。C++ 侧断言
+/// ComputeStateHash 跨帧不变（音频调用零哈希面反例——零重录纪律机械证据）。</summary>
+public sealed class AudioProbeBehaviour : Lemon.LemonBehaviour
+{
+    private const string Clip = "0000000000001111"; // 宿主侧注册的 guid（16 位 hex）
+    private uint played_;
+
+    private void Mark(ushort id)
+        => Lemon.Events.Push(Lemon.Interop.GameEvent.Custom, id, default, default);
+
+    protected override void Update()
+    {
+        var fc = Lemon.Time.FrameCount;
+        if (fc == 1) {
+            played_ = Lemon.Audio.Play(Clip, 0.5f);
+            var at = Lemon.Audio.PlayAt(Clip, new Lemon.Vec2(300f, 0f), 0.8f,
+                                        Lemon.AudioGroup.Sfx, 256f, 1024f);
+            var bad = Lemon.Audio.Play("nothex"); // 坏 guid：TryParse 失败 = 0，不崩
+            Lemon.Audio.PlayBgm(Clip, 0.55f, 0.5f); // D4 交叉淡出参（受理经引擎侧槽位对拍）
+            Mark((ushort)(1300 + (played_ != 0 ? 1 : 0) + (at != 0 ? 2 : 0)
+                          + (bad == 0 ? 4 : 0)));
+        } else if (fc == 2) {
+            Lemon.Audio.MasterVolume = 0.5f; // D6 写（staging——当帧提交期落地引擎）
+            var stopped = Lemon.Audio.Stop(played_);     // 已提交声部：真
+            Lemon.Audio.StopBgm(0f);                     // 硬切（D4 fadeSec=0）
+            Lemon.Audio.Paused = true;                   // D5 显式暂停对（提交期引擎落地）
+            Lemon.Audio.Paused = false;
+            Mark((ushort)(1320 + (stopped ? 1 : 0)));
+        } else if (fc == 3) {
+            var mget = Lemon.Audio.MasterVolume == 0.5f; // 上帧提交已落地（set 异步
+                                                         // 语义：同帧写读 = 旧值）
+            var stoppedAgain = Lemon.Audio.Stop(played_); // 上帧已停：假（条目已回收）
+            Lemon.Audio.StopAll();
+            Mark((ushort)(1340 + (stoppedAgain ? 0 : 1) + (mget ? 2 : 0)));
+            gameObject.Destroy();
+        }
     }
 }

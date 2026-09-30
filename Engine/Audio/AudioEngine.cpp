@@ -57,6 +57,18 @@ struct AudioEngine::Impl {
         bool loop = false;
         bool done = false;     // 一次性播完 / 被停 / clip 注销，待 Tick 回收
         bool paused = false;
+        // M6c 批②（D4）：音量包络——fadeDur 内 fadeFrom 线性到 fadeTo（绝对音量域，
+        // 逐样本推进）；到点后 volume=fadeTo、包络退役；stopAtFadeEnd 且到 0 = 终结
+        float fadeFrom = 1.0f, fadeTo = 1.0f;
+        float fadeElapsed = 0.0f, fadeDur = 0.0f; // fadeDur<=0 = 无在途包络
+        bool stopAtFadeEnd = false;
+
+        /// 当前有效音量（在途包络取插值；终态化由推进侧调用 FinalizeFadeLocked）
+        float EffectiveVolume() const {
+            if (fadeDur <= 0.0f) return volume;
+            const float t = fadeElapsed / fadeDur;
+            return fadeFrom + (fadeTo - fadeFrom) * std::clamp(t, 0.0f, 1.0f);
+        }
     };
 
     mutable std::mutex mtx;
@@ -116,20 +128,34 @@ struct AudioEngine::Impl {
         v.loop = p.loop;
         v.done = false;
         v.paused = pausedAll && group != Group::Ui && (p.loop || group == Group::Bgm);
+        // D4 起播淡入：包络从 0 爬到 volume（fadeDur<=0 = 直起，包络退役态）
+        v.fadeFrom = 0.0f;
+        v.fadeTo = v.volume;
+        v.fadeDur = std::max(p.fadeInSec, 0.0f);
+        v.fadeElapsed = 0.0f;
+        v.stopAtFadeEnd = false;
         return v.id;
     }
 
     // ---- 混音核心（调用方持锁；设备回调与 MixOffline 共用）----
     void MixVoices(float* out, uint32_t frames) {
         std::memset(out, 0, sizeof(float) * frames * kMixChannels);
+        constexpr float kInvRate = 1.0f / static_cast<float>(kMixSampleRate);
         for (Voice& v : voices) {
             if (v.id == 0 || v.done || v.paused)
                 continue;
             const Clip& c = clips[v.clipRef - 1];
             const uint32_t loopEnd = c.loopEnd ? std::min(c.loopEnd, c.frameCount) : c.frameCount;
             const uint32_t end = v.loop ? loopEnd : c.frameCount;
-            const float gL = v.volume * groupVol[static_cast<int>(v.group)] * masterVol * v.panL;
-            const float gR = v.volume * groupVol[static_cast<int>(v.group)] * masterVol * v.panR;
+            const float gv = groupVol[static_cast<int>(v.group)] * masterVol;
+            const bool fading = v.fadeDur > 0.0f;
+            float gL0 = v.volume * gv * v.panL, gR0 = v.volume * gv * v.panR;
+            if (fading) { // 包络期首帧取当前插值（后续逐帧推进）
+                const float ve = v.EffectiveVolume();
+                gL0 = ve * gv * v.panL;
+                gR0 = ve * gv * v.panR;
+            }
+            float gL = gL0, gR = gR0;
             for (uint32_t f = 0; f < frames;) {
                 if (v.cursor >= end) {
                     if (v.loop && loopEnd > c.loopStart) {
@@ -138,6 +164,20 @@ struct AudioEngine::Impl {
                     }
                     v.done = true; // 一次性播完（区间退化 loopEnd<=loopStart 视同不循环）
                     break;
+                }
+                if (fading) { // D4：逐样本推进包络；到点终态化（到 0 且 stop = 终结）
+                    v.fadeElapsed += kInvRate;
+                    if (v.fadeElapsed >= v.fadeDur) {
+                        v.volume = v.fadeTo;
+                        v.fadeDur = 0.0f;
+                        if (v.stopAtFadeEnd && v.fadeTo <= 0.0f) {
+                            v.done = true;
+                            break;
+                        }
+                    }
+                    const float ve = v.EffectiveVolume();
+                    gL = ve * gv * v.panL;
+                    gR = ve * gv * v.panR;
                 }
                 const int16_t* frm = c.pcm.data() + static_cast<size_t>(v.cursor) * c.channels;
                 if (c.channels == 1) {
@@ -159,9 +199,22 @@ struct AudioEngine::Impl {
     }
 
     void AdvanceLocked(uint32_t frames) {
+        const float dt = static_cast<float>(frames) / static_cast<float>(kMixSampleRate);
         for (Voice& v : voices) {
             if (v.id == 0 || v.done || v.paused)
                 continue;
+            // D4：静音模式包络同径推进（逻辑记账与有声模式一致——降级路径的一部分）
+            if (v.fadeDur > 0.0f) {
+                v.fadeElapsed += dt;
+                if (v.fadeElapsed >= v.fadeDur) {
+                    v.volume = v.fadeTo;
+                    v.fadeDur = 0.0f;
+                    if (v.stopAtFadeEnd && v.fadeTo <= 0.0f) {
+                        v.done = true;
+                        continue;
+                    }
+                }
+            }
             const Clip& c = clips[v.clipRef - 1];
             const uint32_t loopEnd = c.loopEnd ? std::min(c.loopEnd, c.frameCount) : c.frameCount;
             const uint32_t end = v.loop ? loopEnd : c.frameCount;
@@ -312,6 +365,47 @@ void AudioEngine::StopAll() {
     for (auto& v : impl_->voices)
         if (v.id != 0)
             v.done = true;
+}
+
+bool AudioEngine::FadeVoice(uint32_t voiceId, float targetVolume, float seconds,
+                            bool stopWhenDone) {
+    if (voiceId == 0)
+        return false;
+    std::lock_guard<std::mutex> lk(impl_->mtx);
+    for (auto& v : impl_->voices) {
+        if (v.id != voiceId || v.done)
+            continue;
+        const float to = std::clamp(targetVolume, 0.0f, 4.0f);
+        if (seconds <= 0.0f) { // 硬切：立即到位（D4 fadeSec=0 语义）
+            v.volume = to;
+            v.fadeDur = 0.0f;
+            if (stopWhenDone && to <= 0.0f)
+                v.done = true;
+            return true;
+        }
+        // 起点 = 当前有效音量（接续在途包络不跳变）
+        v.fadeFrom = v.EffectiveVolume();
+        v.fadeTo = to;
+        v.fadeElapsed = 0.0f;
+        v.fadeDur = seconds;
+        v.stopAtFadeEnd = stopWhenDone;
+        return true;
+    }
+    return false;
+}
+
+bool AudioEngine::SetVoiceParams(uint32_t voiceId, float volume, float pan) {
+    if (voiceId == 0)
+        return false;
+    std::lock_guard<std::mutex> lk(impl_->mtx);
+    for (auto& v : impl_->voices) {
+        if (v.id != voiceId || v.done)
+            continue;
+        v.volume = std::clamp(volume, 0.0f, 4.0f);
+        PanGains(pan, v.panL, v.panR);
+        return true;
+    }
+    return false;
 }
 
 void AudioEngine::SetGroupVolume(Group g, float v) {
