@@ -31,8 +31,11 @@ inline bool WriteFileAtomic(const std::string& path, const std::string& s) {
 // 条件 + 参数表；World 级 ControllerTable，AnimGraphSystem #16 消费）
 // Rml/Rcss = 游戏 UI 文档/样式表（M6b 批③b，ADR-014：一屏 = 一文档；.rcss 经
 // <link> 引用；双击 .rml 装载到游戏 UI，热重载走 Rescan ChangeSet 消费）
+// Audio = 音频源（M6c 竖切批，ADR-015：.wav/.ogg/.mp3/.flac → 烤制 .lemon/baked/
+// audio/ 的 LBA1；浏览器过滤/图标/试听随批① 正式落）
 enum class AssetType
-    : uint8_t { Sprite, Prefab, Script, Clip, Table, AnimSet, Controller, Rml, Rcss, Generic };
+    : uint8_t { Sprite, Prefab, Script, Clip, Table, AnimSet, Controller, Rml, Rcss, Audio,
+                Generic };
 
 const char* AssetTypeName(AssetType t);
 struct AssetEntry {

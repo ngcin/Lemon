@@ -16,7 +16,9 @@
 | RmlUi | 6.3 | MIT | CPM 锁 tag（`lemon-engine` 经 `Engine/Renderer/RmlUiBackend.cpp` + `Engine/Ui/UiSubsystem.cpp` 正式消费；spike/04-rmlui 保留为验收壳） | 运行时 UI（M5 ADR-008 spike 三判据验收 → **M6a 批③a 转正式依赖**，ADR-014；自研 RenderInterface over RHI） | M5→M6a③a |
 | FreeType | 2.14.3（系统 brew） | FreeType License (MIT 兼容) | find_package(Freetype)（RmlUi 依赖） | 字体光栅（RmlUi FreeType 引擎） | M5 |
 | yami-rpg-editor 默认素材（第一批） | arpg-ts-chinese 模板（源树拷贝） | MIT（资产随模板再分发） | `Samples/Assets/yami-dungeon/`（5 精灵表 + 3 clip；06 §7） | 素材包底包（M5 批③起；模板/压测共用） | M5 |
+| yami-rpg-editor 音频素材（第二批） | 同上（`Assets/音频/正在使用的音频` + `Assets/UI/标题画面`；文件名去 yami 哈希缀） | MIT（同上） | `demo/svr-test/Assets/Audio/` 8 件（bgm.mp3=watery_cave + 6 wav SE + 1 ogg SE） | M6c 竖切批实测素材（注意：同仓 `音乐/Royalty Free Music Loops OGG` 为 **CC BY 4.0** 不在 MIT 面内，未取用） | M6c 批⓪.5 |
 | Noto Sans SC（Regular，SubsetOTF 8.3MB） | notofonts/noto-cjk main（2026-09-28 取） | SIL OFL 1.1 | `Engine/Ui/Fonts/NotoSansSC-Regular.otf` + 同目录 `OFL.txt`（随仓库版本管理） | 引擎 UI 正字（M6a 批③b，ADR-014：RmlUi 主/fallback 字体，系统字体链降级兜底） | M6a③b |
+| miniaudio（含 stb_vorbis v1.22） | 0.11.25 | 公有领域（Unlicense）或 MIT-0 双许可择一（全文 `Engine/Audio/thirdparty/LICENSE`；stb_vorbis 亦公有领域） | vendored 四件（`Engine/Audio/thirdparty/`：miniaudio.h 4.1MB + miniaudio.c + stb_vorbis.c（Vorbis 外供件，同包 extras）+ LICENSE；源自 GitHub mackron/miniaudio tag 0.11.25 zip——网络持续阻断 CPM 不可行，用户手备包，ADR-015 M1） | 音频后端：设备/混音/解码（WAV/MP3/FLAC 内建 + Vorbis 经外供 stb_vorbis；烤制期消费，运行时零解码） | M6c 批⓪ |
 
 ## 保留的第三方版权声明
 
@@ -41,8 +43,11 @@
 - **Noto Sans SC（SIL OFL 1.1）**：Copyright 2014-2021 Adobe，Noto 是 Google Inc. 商标 ——
   `Engine/Ui/Fonts/`（OFL 全文同目录 `OFL.txt`；OFL 要求随字体再分发许可证文本，
   打包线归 M8 落）。
+- **miniaudio（Public Domain / MIT-0）**：David Reid — 无署名义务；`Engine/Audio/`
+  消费（miniaudio 类型不出 `AudioEngine.cpp`，Pimpl 纪律同 Window/RHI）；致谢页列出
+  以示尊重（其内嵌 stb_vorbis 亦为公有领域，Sean Barrett）。
 - **Luma (MIT)**：JobSystem 队列/窃取结构移植自 `Event/JobSystem.{h,cpp}`，源文件头
   保留来源标注；发布物致谢页保留。
 
-> 设计文档中规划、尚未引入：ImGui（M4）、miniaudio（M5）、Tracy（视调优需要）、
-> steamworks（M7）。引入时在此追加行。
+> 设计文档中规划、尚未引入：Tracy（视调优需要）、
+> steamworks（M7）。引入时在此追加行。（miniaudio 已于 M6c 批⓪ 转正式，见上表。）

@@ -65,6 +65,20 @@ void HookSaveFlush(ecs::World& w) {
     for (uint8_t ch = 0; ch < ecs::kSaveChannelCount; ++ch)
         g_app->Ctx().WriteSaveFile(ch, w.Saves(ch));
 }
+// M6c 竖切批（ADR-015）：C# Lemon.Audio 四桥 → AudioEngine + guid→clip 表
+//（MountPlayAudio 装载产物；未装载/无项目 = play 返回 0，同资产钩子降级语义）
+uint32_t HookAudioPlay(uint64_t guid, int32_t group, float volume, float pan, int32_t loop) {
+    return g_app ? g_app->AudioPlayByGuid(guid, group, volume, pan, loop) : 0;
+}
+int32_t HookAudioStop(uint32_t voiceId) {
+    return g_app ? (g_app->Audio().Stop(voiceId) ? 1 : 0) : 0;
+}
+void HookAudioSetGroupVolume(int32_t group, float volume) {
+    if (g_app) g_app->Audio().SetGroupVolume(audio::Group(group), volume);
+}
+void HookAudioStopAll() {
+    if (g_app) g_app->Audio().StopAll();
+}
 
 // ImGui 错误汇（1.92 内部回调口；DockBuilder 同源引用 imgui_internal）：ID 冲突/
 // 空标签等程序员错误在这里现形——冒烟断言清零（M4.5 修复 Inspector ##v 撞号后
@@ -203,6 +217,12 @@ int EditorApp::Run(const EditorLaunch& launch) {
         gameUi_.reset();
     }
 
+    // M6c 竖切批（ADR-015 M4）：音频引擎——gameUi_ 段后装配（同为"失败红字不
+    // 阻断"降级服务）；AudioHooks 注入 = C# Lemon.Audio 通道（未装宿主 play 返回 0）
+    audio_.Init();
+    scripting::SetAudioHooks(
+        {HookAudioPlay, HookAudioStop, HookAudioSetGroupVolume, HookAudioStopAll});
+
     // M5 批④：--gen-vs-template <dir>（开发工具：产出模板项目文件后退出——
     // 不进渲染主循环；产物入库 Templates/vs-survivor 随仓库管理）。须在 viewport
     // 就绪后执行：spriteIdBase 用与 OpenProjectPipeline 同一规则
@@ -327,6 +347,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
         }
         if (!ctx_.EnterPlay()) return 1;
         MountSceneUiDocuments(); // 批③d 前置（通道 A）：--play/--final 程序化路径
+        MountPlayAudio();        // M6c 竖切批：烤制/装载音频资产（guid→clip）
     }
     // 批③a（ADR-014）：--smoke-uirml 独立进 Play——playTest 的"进/出往返"语义与
     // smoke 门绑定（上方块），本模式只需"Play 中持续渲染 UI"一态（Stop 由循环后
@@ -549,6 +570,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
             SmokeTplSteer(frame, in);
             ctx_.ActiveWorld().ApplyInput(in);
             bPump = BenchClock::now(); // 段界：pump（轮询/watcher/自动备份）结束 = sim 开始
+            audio_.Tick(ImGui::GetIO().DeltaTime); // M6c 竖切批：声部回收 + 静音模式游标推进
             // 固定步长累加器（2026-09-29 复审 2a/2b）：模拟速率此前 = 渲染帧率
             //（vsync Fifo 下 144Hz 屏跑 2.4 倍速）。交互 Play 改墙钟进账 → N × 1/60
             // 出账（追帧上限 5 步，停顿后不快进），余账/步长 = 渲染插值 alpha

@@ -1,11 +1,15 @@
-// Lemon 引擎单测 — 纯逻辑层（数学/批键/图集 UV/相机/粒子池）
+// Lemon 引擎单测 — 纯逻辑层（数学/批键/图集 UV/相机/粒子池/音频混音）
 // 断言风格：LEMON_ASSERT 失败即 abort，进程退出码非 0 = 测试失败。
 #include "Core/Log.h"
 
+#include <chrono>
+#include <cstdio>
 #include <cmath>
 #include <cstdint>
 #include <algorithm>
 
+#include "Audio/AudioEngine.h"
+#include "Audio/BakedClip.h"
 #include "Core/Guid.h"
 #include "Core/Math.h"
 #include "Components/CoreComponents.h"
@@ -5244,6 +5248,297 @@ void TestAutosaveRecovery() {
 }
 #endif // LEMON_EDITOR_CORE
 
+// ---- M6c 批⓪：音频核心（ADR-015；静音模式 = 无设备确定性）----
+
+void TestAudioMixerMath() {
+    audio::AudioEngine eng;
+    Expect(eng.Init({.forceSilent = true}), "audio init (forced silent)");
+    Expect(eng.silent(), "forced silent engaged");
+
+    // 单声道 0.5 满幅常数 clip：pan 中心 = 等功率 -3dB（L=R=0.7071）
+    std::vector<int16_t> mono(4800, 16384);
+    const uint32_t clip = eng.RegisterClip({mono.data(), 4800, 1, 0, 0});
+    Expect(clip != 0, "register mono clip");
+    Expect(eng.RegisterClip({nullptr, 100, 1, 0, 0}) == 0, "null pcm rejected");
+    Expect(eng.RegisterClip({mono.data(), 100, 3, 0, 0}) == 0, "3ch rejected");
+
+    uint32_t v = eng.Play(clip, {.volume = 1.0f, .pan = 0.0f});
+    Expect(v != 0, "play mono");
+    float out[8];
+    eng.MixOffline(out, 4);
+    ExpectNear(out[0], 0.5f * 0.70710678f, 1e-4f, "pan center L");
+    ExpectNear(out[1], 0.5f * 0.70710678f, 1e-4f, "pan center R");
+    eng.Stop(v);
+
+    // 声像 +1：L≈0，R≈源
+    v = eng.Play(clip, {.pan = 1.0f});
+    eng.MixOffline(out, 4);
+    ExpectNear(out[0], 0.0f, 1e-4f, "pan right L silent");
+    ExpectNear(out[1], 0.5f, 1e-4f, "pan right R full");
+    eng.Stop(v);
+
+    // 立体声 clip 通道路由
+    std::vector<int16_t> stereo(9600); // 4800 帧 × 2ch
+    for (uint32_t f = 0; f < 4800; ++f) {
+        stereo[f * 2] = 16384;
+        stereo[f * 2 + 1] = -16384;
+    }
+    const uint32_t clip2 = eng.RegisterClip({stereo.data(), 4800, 2, 0, 0});
+    v = eng.Play(clip2, {});
+    eng.MixOffline(out, 4);
+    ExpectNear(out[0], 0.5f * 0.70710678f, 1e-4f, "stereo L routed");
+    ExpectNear(out[1], -0.5f * 0.70710678f, 1e-4f, "stereo R routed");
+    eng.Stop(v);
+
+    // 两声部线性叠加（f32 累加，先钳位后断言）
+    const uint32_t va = eng.Play(clip, {});
+    const uint32_t vb = eng.Play(clip, {});
+    eng.MixOffline(out, 4);
+    ExpectNear(out[0], 2 * 0.5f * 0.70710678f, 1e-4f, "two voices sum linearly");
+    eng.Stop(va);
+    eng.Stop(vb);
+
+    // 组音量 / 主音量乘法
+    eng.SetGroupVolume(audio::Group::Sfx, 0.5f);
+    ExpectNear(eng.GroupVolume(audio::Group::Sfx), 0.5f, 1e-6f, "group vol get");
+    v = eng.Play(clip, {});
+    eng.MixOffline(out, 4);
+    ExpectNear(out[0], 0.5f * 0.5f * 0.70710678f, 1e-4f, "group gain applied");
+    eng.Stop(v);
+    eng.SetGroupVolume(audio::Group::Sfx, 1.0f);
+    eng.SetMasterVolume(0.25f);
+    v = eng.Play(clip, {});
+    eng.MixOffline(out, 4);
+    ExpectNear(out[0], 0.25f * 0.5f * 0.70710678f, 1e-4f, "master gain applied");
+    eng.Stop(v);
+    eng.SetMasterVolume(1.0f);
+
+    // review 2026-09-30 热修回归锁：越界 group 防御钳落 Sfx（此前 groupVol[] 越界读）
+    eng.SetGroupVolume(audio::Group::Sfx, 0.25f);
+    v = eng.Play(clip, {.group = static_cast<audio::Group>(99)});
+    Expect(v != 0, "bad group clamped and plays");
+    eng.MixOffline(out, 4);
+    ExpectNear(out[0], 0.25f * 0.5f * 0.70710678f, 1e-4f, "bad group falls back to Sfx gain");
+    eng.Stop(v);
+    eng.SetGroupVolume(audio::Group::Sfx, 1.0f);
+}
+
+void TestAudioLifecycle() {
+    audio::AudioEngine eng;
+    eng.Init({.forceSilent = true});
+
+    // 一次性声部恰好在末帧混完 → 当场终止，Tick 回收
+    std::vector<int16_t> pcm100(100, 16384);
+    const uint32_t c1 = eng.RegisterClip({pcm100.data(), 100, 1, 0, 0});
+    const uint32_t v1 = eng.Play(c1, {});
+    Expect(eng.VoiceAlive(v1), "oneshot alive at start");
+    float out[256]; // 契约：out 容纳 frames×2 个 float（下方最大 99 帧）
+    eng.MixOffline(out, 1);
+    eng.MixOffline(out, 99);
+    Expect(!eng.VoiceAlive(v1), "oneshot done exactly at end frame");
+    eng.Tick();
+    Expect(eng.ActiveVoiceCount() == 0, "voice reaped by tick");
+
+    // 循环回卷：ramp clip 循环区间 [0,2400)——混满区间后下一帧采到 ramp[0]=0
+    std::vector<int16_t> ramp(4800);
+    for (int i = 0; i < 4800; ++i)
+        ramp[i] = static_cast<int16_t>(i);
+    const uint32_t c2 = eng.RegisterClip({ramp.data(), 4800, 1, 0, 2400});
+    const uint32_t v2 = eng.Play(c2, {.loop = true});
+    std::vector<float> big(2400 * 2);
+    eng.MixOffline(big.data(), 2400);
+    eng.MixOffline(out, 1);
+    ExpectNear(out[0], 0.0f, 1e-6f, "loop wraps to loopStart");
+    ExpectNear(big[2399 * 2], 2399 / 32768.0f * 0.70710678f, 1e-4f, "last loop frame mixed");
+    Expect(eng.VoiceAlive(v2), "loop voice stays alive");
+    Expect(eng.Stop(v2), "stop loop voice");
+    Expect(!eng.VoiceAlive(v2), "stopped voice dead");
+    Expect(!eng.Stop(v2), "double stop returns false");
+    Expect(!eng.Stop(999999), "stop unknown id false");
+
+    // voiceId 单调发号、永不复用
+    const uint32_t a = eng.Play(c1, {});
+    const uint32_t b = eng.Play(c1, {});
+    Expect(b > a, "voice ids monotonic");
+    eng.Stop(a);
+    const uint32_t c = eng.Play(c1, {});
+    Expect(c > b, "voice id never reused");
+    eng.StopAll();
+    Expect(eng.ActiveVoiceCount() == 0, "stopall clears");
+
+    // 池满偷最旧一次性声部；全循环占满则拒绝（ADR-015 M4）
+    // （clip 注册表每实例私有——eng2/eng3 须各自注册，跨实例 clipId 查无）
+    audio::AudioEngine eng2;
+    eng2.Init({.forceSilent = true});
+    const uint32_t d1 = eng2.RegisterClip({pcm100.data(), 100, 1, 0, 0});
+    const uint32_t d2 = eng2.RegisterClip({ramp.data(), 4800, 1, 0, 2400});
+    uint32_t firstId = 0;
+    for (int i = 0; i < audio::kMaxVoices; ++i) {
+        const uint32_t id = eng2.Play(d1, {});
+        if (i == 0)
+            firstId = id;
+    }
+    Expect(eng2.ActiveVoiceCount() == audio::kMaxVoices, "pool full");
+    Expect(eng2.Play(d1, {}) != 0, "steal succeeds when full");
+    Expect(!eng2.VoiceAlive(firstId), "oldest oneshot stolen");
+    Expect(eng2.ActiveVoiceCount() == audio::kMaxVoices, "count stays at cap");
+    eng2.StopAll();
+    for (int i = 0; i < audio::kMaxVoices; ++i)
+        eng2.Play(d2, {.loop = true});
+    Expect(eng2.Play(d2, {.loop = true}) == 0, "all-loop full pool refuses");
+
+    // 暂停语义（ADR-015 M4）：Sfx 循环挂起、Ui 组（含循环）不挂起，恢复后双声部齐鸣
+    audio::AudioEngine eng3;
+    eng3.Init({.forceSilent = true});
+    const uint32_t p1 = eng3.RegisterClip({pcm100.data(), 100, 1, 0, 0});
+    const uint32_t lp = eng3.Play(p1, {.loop = true});                       // Sfx 循环
+    const uint32_t ui = eng3.Play(p1, {.loop = true, .group = audio::Group::Ui});
+    Expect(lp != 0 && ui != 0, "pause-test voices started");
+    eng3.SetPaused(true);
+    eng3.MixOffline(out, 1);
+    ExpectNear(out[0], 0.5f * 0.70710678f, 1e-4f, "paused: only Ui loop sounds");
+    eng3.AdvanceSilentFrames(5000); // lp 冻结不推进不退役；ui 循环照常
+    Expect(eng3.VoiceAlive(lp) && eng3.VoiceAlive(ui), "both alive while paused");
+    eng3.SetPaused(false);
+    eng3.MixOffline(out, 1);
+    ExpectNear(out[0], 2 * 0.5f * 0.70710678f, 1e-4f, "resume: both sound again");
+}
+
+void TestAudioDeviceInitNoCrash() {
+    // 真初始化（不强静音）：本机设备 / CI null 后端 / 无设备降级——三条路径都不崩，
+    // 播放控制全部可用（08 §2 M6c "无音频设备不崩"判据的引擎侧证明）
+    audio::AudioEngine eng;
+    Expect(eng.Init(), "real init succeeds (device or silent fallback)");
+    std::vector<int16_t> pcm(4800, 12000);
+    const uint32_t c = eng.RegisterClip({pcm.data(), 4800, 1, 0, 0});
+    const uint32_t v = eng.Play(c, {.loop = true});
+    Expect(v != 0 && eng.VoiceAlive(v), "play works with real backend");
+    eng.Tick(1.0f / 60.0f);
+    eng.StopAll();
+    float out[2];
+    eng.MixOffline(out, 1); // 设备模式红字拒绝（游标归音频线程）；静音模式照常——两路都不崩
+    eng.UnregisterClip(c);
+    Expect(!eng.VoiceAlive(v), "unregister kills referencing voices");
+    eng.Shutdown();
+    Expect(!eng.inited(), "shutdown idempotent state");
+    eng.Shutdown(); // 二次 Shutdown 无害
+}
+
+void TestAudioBench100Sfx() {
+    // 08 §2 M6c 判据：100 并发 SFX 模拟侧（staging + Tick 应用）≤ 0.5ms
+    audio::AudioEngine eng;
+    eng.Init({.forceSilent = true});
+    std::vector<int16_t> pcm(2400, 16384);
+    const uint32_t c = eng.RegisterClip({pcm.data(), 2400, 1, 0, 0});
+    using clock = std::chrono::steady_clock;
+    const auto t0 = clock::now();
+    for (int i = 0; i < 100; ++i)
+        eng.Play(c, {.pan = (i % 2 != 0) ? 0.5f : -0.5f});
+    eng.Tick(1.0f / 60.0f);
+    const auto t1 = clock::now();
+    const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    LEMON_LOG("audio: 100 并发 SFX 模拟侧（staging+Tick）= %.4f ms", ms);
+    Expect(ms < 0.5, "100 SFX sim-side <= 0.5ms (08 M6c)");
+    Expect(eng.ActiveVoiceCount() == audio::kMaxVoices, "capped at pool size after steal");
+}
+
+void TestAudioBakedRoundtrip() {
+    // M6c 竖切批：LBA1 烤制/装载全链——合成 44.1k 立体声 WAV（烤制期须重采样到
+    // 48k）→ BakeAudioFile → LoadBakedClip → RegisterClip/Play/MixOffline。
+    // wav 头手写（44B RIFF），无外部夹具依赖。
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "lemon-audio-bake-test";
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+    const std::string wav = (dir / "in.wav").string();
+    const std::string baked = (dir / "out.baked").string();
+
+    constexpr uint32_t kSrcRate = 44100;
+    constexpr uint32_t kFrames = 4410; // 0.1s → 48k 后 ≈ 4800 帧
+    std::vector<int16_t> pcm(kFrames * 2);
+    for (uint32_t i = 0; i < kFrames; ++i) {
+        pcm[i * 2] = (int16_t)(12000.0f * std::sin(i * 0.05f));     // L 正弦
+        pcm[i * 2 + 1] = (int16_t)(-12000.0f * std::sin(i * 0.05f)); // R 反相
+    }
+    {
+        FILE* f = std::fopen(wav.c_str(), "wb");
+        Expect(f != nullptr, "wav fixture open");
+        const uint32_t dataBytes = kFrames * 2 * 2;
+        const uint32_t riffSize = 36 + dataBytes;
+        std::fwrite("RIFF", 1, 4, f);
+        std::fwrite(&riffSize, 4, 1, f);
+        std::fwrite("WAVEfmt ", 1, 8, f);
+        const uint32_t fmtSize = 16;
+        const uint16_t fmt = 1, ch = 2, bits = 16;
+        const uint32_t byteRate = kSrcRate * ch * bits / 8;
+        const uint16_t blockAlign = (uint16_t)(ch * bits / 8);
+        std::fwrite(&fmtSize, 4, 1, f);
+        std::fwrite(&fmt, 2, 1, f);
+        std::fwrite(&ch, 2, 1, f);
+        std::fwrite(&kSrcRate, 4, 1, f);
+        std::fwrite(&byteRate, 4, 1, f);
+        std::fwrite(&blockAlign, 2, 1, f);
+        std::fwrite(&bits, 2, 1, f);
+        std::fwrite("data", 1, 4, f);
+        std::fwrite(&dataBytes, 4, 1, f);
+        std::fwrite(pcm.data(), 2, pcm.size(), f);
+        std::fclose(f);
+    }
+
+    Expect(audio::BakeAudioFile(wav.c_str(), baked.c_str()), "bake 44.1k wav → LBA1");
+    std::vector<int16_t> loaded;
+    audio::BakedClipInfo info;
+    Expect(audio::LoadBakedClip(baked.c_str(), loaded, info), "load LBA1");
+    Expect(info.channels == 2, "baked keeps stereo");
+    Expect(info.frameCount >= 4700 && info.frameCount <= 4900,
+           "44.1k→48k resampled frame count");
+    Expect(info.loopEnd == info.frameCount, "loopEnd defaults to tail");
+    Expect(loaded.size() == info.frameCount * 2, "payload size consistent");
+    // 反相立体声经混音 pan 中心 → L/R 相消为零（重采样是线性的，能量守恒近似）
+    audio::AudioEngine eng;
+    eng.Init({.forceSilent = true});
+    const uint32_t clip = eng.RegisterClip(
+        {loaded.data(), info.frameCount, info.channels, info.loopStart, info.loopEnd});
+    Expect(clip != 0, "register baked clip");
+    const uint32_t v = eng.Play(clip, {});
+    Expect(v != 0, "play baked clip");
+    float out[8];
+    eng.MixOffline(out, 4);
+    Expect(std::fabs(out[0]) < 1e-2f && std::fabs(out[1]) < 1e-2f,
+           "antiphase stereo cancels at center pan");
+    // 坏头拒绝：截断的 LBA1
+    {
+        FILE* f = std::fopen(baked.c_str(), "rb");
+        std::vector<uint8_t> head(32);
+        Expect(std::fread(head.data(), 1, 32, f) == 32, "read head for corrupt test");
+        std::fclose(f);
+        head[3] = 'X'; // 破坏魔数
+        const std::string bad = (dir / "bad.baked").string();
+        f = std::fopen(bad.c_str(), "wb");
+        std::fwrite(head.data(), 1, 32, f);
+        std::fclose(f);
+        std::vector<int16_t> junk;
+        audio::BakedClipInfo ji;
+        Expect(!audio::LoadBakedClip(bad.c_str(), junk, ji), "corrupt magic rejected");
+    }
+    // review 2026-09-30 热修回归锁：坏源判失败且不落任何产物（半截 .baked 的
+    // mtime 比源新会被缓存判定永不重烤——原子写 + 流错误判失败的双保险）
+    {
+        const std::string garbage = (dir / "garbage.wav").string();
+        const std::string outG = (dir / "garbage.baked").string();
+        FILE* f = std::fopen(garbage.c_str(), "wb");
+        Expect(f != nullptr, "garbage fixture open");
+        std::fwrite("NOTAWAVFILEJUSTGARBAGEBYTES", 1, 28, f);
+        std::fclose(f);
+        Expect(!audio::BakeAudioFile(garbage.c_str(), outG.c_str()), "garbage source fails bake");
+        std::error_code ec2;
+        Expect(!fs::exists(outG, ec2), "failed bake leaves no product");
+        Expect(!fs::exists(outG + ".tmp", ec2), "failed bake leaves no tmp");
+    }
+    fs::remove_all(dir, ec);
+}
+
 int main() {
     TestVec2();
     TestMat3x2();
@@ -5350,6 +5645,11 @@ int main() {
     TestPlaySpawnPrefab();
     TestRecentScenesAliasSafety();
 #endif
+    TestAudioMixerMath();     // M6c 批⓪：混音数学（等功率声像/通道路由/叠加/组与主增益）
+    TestAudioLifecycle();     // M6c 批⓪：一次性退役/循环回卷/偷声部/暂停语义/voiceId 不复用
+    TestAudioDeviceInitNoCrash(); // M6c 批⓪：真初始化三路径不崩（设备/null/降级）
+    TestAudioBench100Sfx();   // M6c 批⓪：100 并发 SFX 模拟侧 ≤0.5ms
+    TestAudioBakedRoundtrip(); // M6c 竖切批：LBA1 烤制/装载（44.1k→48k 重采样）
     LEMON_LOG("engine-tests: %d checks OK", g_checks);
     return 0;
 }

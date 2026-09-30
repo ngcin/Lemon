@@ -7,6 +7,7 @@
 #include "App/EditorApp.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -14,6 +15,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "Audio/BakedClip.h" // M6c 竖切批：LBA1 烤制/装载
 #include "Assets/AssetDatabase.h"
 #include "Assets/ProjectWizard.h"
 #include "Interaction/ViewportRenderer.h"
@@ -162,10 +164,12 @@ bool EditorApp::TryEnterPlay() {
     }
     if (!ctx_.EnterPlay()) return false;
     MountSceneUiDocuments(); // 批③d 前置（通道 A）：场景声明装载 + EnterPlay 归位
+    MountPlayAudio();        // M6c 竖切批：烤制/装载音频资产（guid→clip）
     return true;
 }
 
 bool EditorApp::StopPlay() {
+    audio_.StopAll(); // M6c 竖切批：声部清场（clip 注册表保留——重进 Play 全量重装）
     if (!ctx_.ExitPlay()) return false;
     // 形态 D 清场（2026-09-29）：Unity「Stop = 运行时态归零」同构——Scene/CSharp
     // 来源文档 Hide（装载保留免 IO）；Edit 双击预览豁免（③b 跨 Play 保持）。
@@ -177,6 +181,75 @@ bool EditorApp::StopPlay() {
     }
     tabFocusPending_ = -1;
     return true;
+}
+
+// ---- M6c 竖切批（ADR-015）：进 Play 音频装载 ----
+// 扫全部 Audio 资产：缺烤/源新于产物 → 现烤（.lemon/baked/audio/<guidHex>.baked，
+// LBA1 = 48k PCM16）→ 装载注册 → guid→clipId。失败红字跳过（无声不炸 Play）；
+// 重进 Play 全量重装（ResetClips 防注册表跨局累积——id 只增不减）。
+uint32_t EditorApp::MountPlayAudio() {
+    namespace fs = std::filesystem;
+    audio_.StopAll();
+    audio_.ResetClips();
+    audioClips_.clear();
+    const std::string root = ctx_.Assets().ProjectRoot();
+    if (root.empty()) return 0; // 无项目 = 零资产零装载
+    const fs::path bakeDir = fs::path(root) / ".lemon" / "baked" / "audio";
+    std::error_code ec;
+    fs::create_directories(bakeDir, ec);
+    uint32_t ok = 0, baked = 0, failed = 0;
+    char hex[17];
+    for (const AssetEntry& e : ctx_.Assets().Entries()) {
+        if (e.type != AssetType::Audio || e.missing) continue;
+        std::snprintf(hex, sizeof(hex), "%016llx", (unsigned long long)e.guid);
+        const fs::path dst = bakeDir / (std::string(hex) + ".baked");
+        const fs::path src = ctx_.Assets().AbsolutePath(e);
+        bool stale = !fs::exists(dst, ec);
+        if (!stale) {
+            const auto srcT = fs::last_write_time(src, ec);
+            const bool srcOk = !ec;
+            const auto dstT = fs::last_write_time(dst, ec);
+            stale = srcOk && !ec && srcT > dstT;
+        }
+        if (stale) {
+            if (!audio::BakeAudioFile(src.string().c_str(), dst.string().c_str())) {
+                ++failed;
+                continue;
+            }
+            ++baked;
+        }
+        std::vector<int16_t> pcm;
+        audio::BakedClipInfo info;
+        if (!audio::LoadBakedClip(dst.string().c_str(), pcm, info)) {
+            ++failed;
+            continue;
+        }
+        const uint32_t clipId = audio_.RegisterClip(
+            {pcm.data(), info.frameCount, info.channels, info.loopStart, info.loopEnd});
+        if (clipId != 0) {
+            audioClips_[e.guid] = clipId;
+            ++ok;
+        } else {
+            ++failed;
+        }
+    }
+    if (ok)
+        LEMON_LOG("进 Play 音频装载：%u 成功（现烤 %u）%s", ok, baked,
+                  failed ? "" : "，全部就绪");
+    else if (failed)
+        LEMON_WARN("进 Play 音频装载：0 成功 / %u 失败（详见上方红字）", failed);
+    return ok;
+}
+
+uint32_t EditorApp::AudioPlayByGuid(uint64_t guid, int32_t group, float volume, float pan,
+                                    int32_t loop) {
+    const auto it = audioClips_.find(guid);
+    if (it == audioClips_.end()) return 0; // 未装载（无项目/烤制失败/非音频 guid）
+    if (group < 0 || group >= audio::kGroupCount) group = 1; // 越界落 Sfx（防御钳）
+    return audio_.Play(it->second, {.volume = volume,
+                                    .pan = pan,
+                                    .group = audio::Group(group),
+                                    .loop = loop != 0});
 }
 
 void EditorApp::MenuNewProject() { wizOpen_ = true; }

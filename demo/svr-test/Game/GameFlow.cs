@@ -21,6 +21,9 @@ public sealed class GameFlow : LemonBehaviour
     internal static State St = State.Menu;
     private static State settingsFrom = State.Menu; // 设置屏返回目标（入口双源）
     private static bool prevPause;                  // Esc 边沿（按住只切一次）
+    // M6c 竖切批：战斗 BGM（Assets/Audio/bgm.mp3 = yami watery_cave；Bgm 组单槽循环）
+    private const string kBgm = "6a6d100000000001";
+
     // 清场握手：EnterRun/ReturnToMenu 置 Armed → RunSweeper 批扫置 Observed →
     // GameFlow 观察后清对、开局（命令入队与 spawn 间恒有 Essential 提交拍）
     internal static bool SweepArmed, SweepObserved;
@@ -79,6 +82,7 @@ public sealed class GameFlow : LemonBehaviour
         UI.Hide(GameMain.MainDoc);
         UI.Hide(GameMain.ResultsDoc);
         UI.Apply();
+        Audio.PlayBgm(kBgm, 0.55f); // M6c 竖切批：开战 BGM（单槽顶停旧曲；清场冻结不挂起——BGM 循环声部级暂停待批②）
     }
 
     /// <summary>结算屏（死亡策略的第二半——何时调由游戏侧决定）。</summary>

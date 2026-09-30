@@ -62,7 +62,7 @@ MyGame/                                   # 用户项目（升级永不触碰）
 |---|---|---|---|
 | sprite | png/jpg | 纹理 + 切片（自动/网格/手动，Prowl `TextureImporter` 思路） | 切片 GUID 稳定匹配（重导入不漂移） |
 | atlas | 目录/手选集 | 图集页 + sprite 重定向表（MaxRects，Prowl2D M0 实现移植思想） | §5 |
-| audio | ogg/wav | 解码缓存 + 元数据（循环点/预载标记） | miniaudio |
+| audio | wav/ogg | PCM16 预解码缓存（`.meta` importer 记循环点/预载；烘焙入 **.baked** 容器 v1，[ADR-015](../ADR/ADR-015-Audio-System-And-Baked-Format.md)；运行时零解码器） | miniaudio（**M6c**，2026-09-30 设计定形；原表 2026-09-24 行改号 M6b 已过时，双行收敛） |
 | font | ttf/otf | 位图字体页(v1)/SDF 图集(v2) | 02 §7 |
 | clip2d | json | 帧动画资产（**.anim**，T3d 批④前 .clip） | AnimationEditor 产出 |
 | animset | json | 动画集/每角色绑定（**.override**，批④前 .ani；段名→clip 引用清单） | AnimationEditor 产出 |
@@ -71,7 +71,6 @@ MyGame/                                   # 用户项目（升级永不触碰）
 | particles | json | 发射器资产 | ParticleEditor 产出 |
 | tileset | png + json | 图集 + 碰撞标志 + 自动瓦片变体表 | 05 §7 |
 | curve/data | json | 曲线、Team 表、波次表 | 数据资产 |
-| audio | wav/ogg | 2D 声源（预解码缓存 + 流式 BGM；烘焙入 .baked） | **M6b**（2026-09-24 登记，原 M6.5 前移改号，08 §M6b） |
 
 - **热重载**：`FileWatcher`（线程轮询，Luma 同款）触发增量导入 → 按依赖图通知（纹理变更 → 重建图集页 → 受影响场景视口刷新标记）。运行中 Play 的资产热替换（贴图/参数即时生效，音效不中断）。
 

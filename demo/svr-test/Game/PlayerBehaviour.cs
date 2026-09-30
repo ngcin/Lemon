@@ -36,6 +36,16 @@ public sealed class PlayerBehaviour : LemonBehaviour
     private static readonly uint kMobWalk = Anim.ClipId("5bd31a7c20000002");
     private static readonly uint kMobHit = Anim.ClipId("5bd31a7c20000004");
 
+    // M6c 竖切批：音效资产 GUID（Assets/Audio/；meta 预写固定号——模板锚点同款
+    // 纪律。BGM 常量在 GameFlow kBgm）
+    private const string kSfxHit = "6a6d100000000002";     // 怪受击（Body Hit Hard）
+    private const string kSfxKill = "6a6d100000000003";    // 击杀（Fire Ball Hit）
+    private const string kSfxPickup = "6a6d100000000004";  // 拾取宝石（SE Trade）
+    private const string kSfxLevelUp = "6a6d100000000005"; // 升级（Holy Word）
+    private const string kSfxWave = "6a6d100000000006";    // 波次横幅（SE Confirm）
+    private const string kSfxDash = "6a6d100000000007";    // 冲刺（Sword Swoosh）
+    private const string kSfxShoot = "6a6d100000000008";   // 主弹发射（Arrow Shoot）
+
     // 飘字/血条色（Fx 通道是 RGBA 序——Ui.Set 的 ABGR 惯例色不能直接搬）
     private const uint kFxTextMob = 0xFF5060F0u;    // 怪受伤害字：暖红
     private const uint kFxTextPlayer = 0xFFF0F060u; // 玩家受伤字：警示黄
@@ -117,8 +127,12 @@ public sealed class PlayerBehaviour : LemonBehaviour
         // Subscribe 助手（M15）：实例销毁自动退订（裸 Events.Subscribe 只增不删，
         // 死亡→复活重挂会逐局累积订阅）
         Subscribe(GameEvent.LevelUp, m => {
-            if (m.Src.Id == gameObject.Entity.Id) ++_pendingLevels;
+            if (m.Src.Id != gameObject.Entity.Id) return;
+            ++_pendingLevels;
+            Audio.PlayOneShot(kSfxLevelUp, 0.7f); // M6c 竖切批：升级音
         });
+        // M6c 竖切批：拾取音（宝石吸附即响；fire-and-forget，无状态）
+        Subscribe(GameEvent.Pickup, _ => Audio.PlayOneShot(kSfxPickup, 0.5f));
         Subscribe(GameEvent.Death, OnDeath);
         // M6a 批① 受击表现（模板 PlayerCombat.OnHit 同款链路）：Hit 事件在低频
         // 命中率场景安全（本场景量级 ~20/s；万怪级压测请走 Battle.scene 的
@@ -128,8 +142,10 @@ public sealed class PlayerBehaviour : LemonBehaviour
         // → 当前散射弹种时沿主弹方向 ±angle/2 补 count-1 枚（C# Instantiate 不触发
         // Spawn 事件 = 无递归；引擎零改动的纯脚本扇形）
         Subscribe(GameEvent.Spawn, OnSpawn);
-        Subscribe(GameEvent.WaveStart, m =>
-            Ui.Set("wave", $"—— 第 {(int)m.P0 + 1} 波 ——", -1f, kColorWave));
+        Subscribe(GameEvent.WaveStart, m => {
+            Ui.Set("wave", $"—— 第 {(int)m.P0 + 1} 波 ——", -1f, kColorWave);
+            Audio.PlayOneShot(kSfxWave, 0.6f); // M6c 竖切批：波次横幅音
+        });
     }
 
     /// <summary>受击表现（弹道 Hit payload [0]=伤害 [1][2]=位置；Hazard Hit 只带
@@ -139,6 +155,7 @@ public sealed class PlayerBehaviour : LemonBehaviour
         var victim = GameObject.From(m.Dst);
         if (!victim.Alive || !victim.TryGetComponent<Meta>(out var meta)) return;
         if (meta.Team == 1) { // 怪受击：受击段立即打断、播完自动回行走 + 飘字 + 显伤条
+            Audio.PlayOneShot(kSfxHit, 0.45f); // M6c 竖切批：受击音（高命中率小音量）
             Anim.Play(victim, kMobHit, false);
             Anim.Queue(victim, kMobWalk);
             // 批③d-2：飘字/血条 = 设置开关门控（GameFlow 设置屏，Settings 档持久）
@@ -180,6 +197,7 @@ public sealed class PlayerBehaviour : LemonBehaviour
         if (!src.Alive || !src.TryGetComponent<Meta>(out var meta)) return;
         if (meta.Team == 1) {
             ++_kills;
+            Audio.PlayOneShot(kSfxKill, 0.6f); // M6c 竖切批：击杀音
             if (src.TryGetComponent<Transform2D>(out var tf)) // 两阶段销毁：当帧可读
                 Instantiate.Prefab(kGemPrefab, new Vec2(tf.Pos.X, tf.Pos.Y));
         } else if (m.Src.Id == gameObject.Entity.Id) {
@@ -193,7 +211,9 @@ public sealed class PlayerBehaviour : LemonBehaviour
     /// Instantiate（编辑器资产钩子 → Play World），不触发 Spawn 事件 = 无递归。</summary>
     private void OnSpawn(GameEventMsg m)
     {
-        if (_scatterCount <= 1f || m.Dst.Id != gameObject.Entity.Id) return;
+        if (m.Dst.Id != gameObject.Entity.Id) return;
+        Audio.PlayOneShot(kSfxShoot, 0.3f); // M6c 竖切批：主弹发射音（Shooter 间隔节流）
+        if (_scatterCount <= 1f) return;
         var sh = gameObject.GetComponent<Shooter>();
         if (sh.ProjectileId != _scatterPrefabLow) return; // 只在散射弹种激活期
         var main = GameObject.From(m.Src);
@@ -361,6 +381,7 @@ public sealed class PlayerBehaviour : LemonBehaviour
             _dashLeft = kDashDist;
             _dashCd = kDashCooldown;
             _ghostAcc = kGhostInterval; // 当帧即出第一枚残影
+            Audio.PlayOneShot(kSfxDash, 0.5f); // M6c 竖切批：冲刺破空音
         }
         _attackPrev = attack;
 

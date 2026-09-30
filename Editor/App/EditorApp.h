@@ -5,8 +5,10 @@
 #include <chrono>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
+#include "Audio/AudioEngine.h"
 #include "Assets/AssetGpuCache.h"
 #include "Assets/FileWatcher.h"
 #include "EditorContext.h"
@@ -83,6 +85,10 @@ public:
 
     // ---- 面板可读的共享状态（EditorContext = §3.3 状态模型）----
     EditorContext& Ctx() { return ctx_; }
+    audio::AudioEngine& Audio() { return audio_; } // M6c 竖切批：混音面板/调音消费
+    /// M6c 竖切批：guid 查表 + Play（文件内音频钩子消费；未装载 clip = 0）
+    uint32_t AudioPlayByGuid(uint64_t guid, int32_t group, float volume, float pan,
+                             int32_t loop);
     EditorLogRing& Log() { return log_; }
     ImGuiBackend& Ui() { return *ui_; }
     rhi::Device& Device() { return *device_; }
@@ -203,6 +209,10 @@ private:
     /// 随后未声明且 stale 的文档 Hide + 清 stale。装载钩只认 EnterPlay 扫描——
     /// 运行时动态加 UIDocument 不生效（批文件 §5 登记）。返回装载成功数。
     uint32_t MountSceneUiDocuments();
+    /// M6c 竖切批（ADR-015）：EnterPlay 成功后调用——扫全部 Audio 资产：缺烤/源
+    /// 新于产物 → 烤制（.lemon/baked/audio/&lt;guidHex&gt;.baked）→ 装载注册 →
+    /// guid→clipId 表。烤制/解码失败红字跳过（游戏无声不炸 Play）。返回装载成功数。
+    uint32_t MountPlayAudio();
     /// 状态对账（2026-09-29 根因收口）：文件装载文档 ↔ 资产库健康度——relPath 不再
     /// 是健康 .rml 资产（墓碑/非 Rml/查无）即逐出。事件驱动逐出依赖 cs.removed 恰好
     /// 经过 RescanAssets 处理面，裸 Rescan() 调用方（ImportFile/MakePrefabFrom）会立
@@ -314,6 +324,8 @@ private:
     std::unique_ptr<ImGuiBackend> ui_;
     std::unique_ptr<class ViewportRenderer> viewport_;
     std::unique_ptr<::lemon::ui::UiSubsystem> gameUi_; // 游戏 UI 层（批③a ADR-014；null = 初始化失败降级）
+    audio::AudioEngine audio_; // M6c 竖切批：设备/混音（静音降级一等公民，ADR-015 M4）
+    std::unordered_map<uint64_t, uint32_t> audioClips_; // 资产 GUID → clipId（MountPlayAudio 装载）
     std::unique_ptr<scripting::ScriptHost> host_; // C# 宿主（--script/项目 Game；null = 无）
     AssetGpuCache gpuAssets_;
     FileWatcher watcher_;

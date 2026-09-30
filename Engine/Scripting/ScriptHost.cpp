@@ -167,6 +167,21 @@ void NativeSaveFlush() {
     }
 }
 
+// ---- M6c 竖切批（音频四桥：AudioHooks 注入；未装 = 0/no-op 降级同上）----
+static AudioHooks g_audioHooks;
+uint32_t NativeAudioPlay(uint64_t guid, int32_t group, float volume, float pan, int32_t loop) {
+    return g_audioHooks.play ? g_audioHooks.play(guid, group, volume, pan, loop) : 0;
+}
+int32_t NativeAudioStop(uint32_t voiceId) {
+    return g_audioHooks.stop ? g_audioHooks.stop(voiceId) : 0;
+}
+void NativeAudioSetGroupVolume(int32_t group, float volume) {
+    if (g_audioHooks.setGroupVolume) g_audioHooks.setGroupVolume(group, volume);
+}
+void NativeAudioStopAll() {
+    if (g_audioHooks.stopAll) g_audioHooks.stopAll();
+}
+
 void NativeRtUiClear(const char* key) {
     if (g_world) g_world->RtUi().Clear(key);
 }
@@ -354,8 +369,14 @@ const NativeApiVtable kNativeApi{NativeIsAlive,
                                  NativeSetXpCurveK,
                                  NativeSaveSetEx,
                                  NativeSaveGetLenEx,
-                                 NativeSaveGetEx};
+                                 NativeSaveGetEx,
+                                 NativeAudioPlay,
+                                 NativeAudioStop,
+                                 NativeAudioSetGroupVolume,
+                                 NativeAudioStopAll};
 } // namespace
+
+void SetAudioHooks(const AudioHooks& hooks) { g_audioHooks = hooks; }
 
 void SetScriptIoHooks(const ScriptIoHooks& hooks) { g_scriptIo = hooks; }
 

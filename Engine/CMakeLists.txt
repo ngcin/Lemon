@@ -5,6 +5,9 @@ add_library(lemon-engine STATIC
   Core/FileOps.cpp
   Core/JobSystem.cpp
   Core/Log.cpp
+  Audio/AudioEngine.cpp
+  Audio/BakedClip.cpp
+  Audio/MiniAudioImpl.c
   ECS/Hierarchy.cpp
   ECS/ClipTable.cpp
   ECS/ControllerTable.cpp
@@ -37,6 +40,10 @@ add_library(lemon-engine STATIC
 target_include_directories(lemon-engine
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Scripting/host) # hostfxr 头只供 CoreCLRHost.cpp
+
+# vendor 代码警告静音（M6c 批⓪/竖切批）：第三方编译噪音不进构建输出。
+# MiniAudioImpl.c = 实现 TU（stb_vorbis.c 全量 + miniaudio 实现）。
+set_source_files_properties(Audio/MiniAudioImpl.c PROPERTIES COMPILE_OPTIONS "-w")
 target_compile_features(lemon-engine PUBLIC cxx_std_20)
 target_link_libraries(lemon-engine
   PRIVATE SDL3::SDL3 Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator nlohmann_json::nlohmann_json

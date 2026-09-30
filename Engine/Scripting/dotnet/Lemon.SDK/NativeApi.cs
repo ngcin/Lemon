@@ -49,6 +49,10 @@ public unsafe struct NativeApi
     public delegate* unmanaged<byte*, void*, uint, byte, int> SaveSetEx;       // M6a 批② T5：分档 Set（ch 见 Save.Chan；旧宿主 = null 走单档）
     public delegate* unmanaged<byte*, byte, int> SaveGetLenEx;                 // M6a 批② T5：分档长度；-1 = 无此键
     public delegate* unmanaged<byte*, void*, uint, byte, int> SaveGetEx;       // M6a 批② T5：分档读；返回拷贝数（-2 = cap 不足）
+    public delegate* unmanaged<ulong, int, float, float, int, uint> AudioPlay; // M6c 竖切批：clip GUID → voiceId（0 = 失败）
+    public delegate* unmanaged<uint, int> AudioStop;                           // M6c 竖切批：停声部；0/1
+    public delegate* unmanaged<int, float, void> AudioSetGroupVolume;          // M6c 竖切批：组音量（group 见 Lemon.AudioGroup）
+    public delegate* unmanaged<void> AudioStopAll;                             // M6c 竖切批：全停（场景清场）
 }
 
 internal static unsafe class Native

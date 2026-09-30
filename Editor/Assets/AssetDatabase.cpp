@@ -180,6 +180,8 @@ AssetType AssetDatabase::TypeOf(const std::string& relPath) {
     if (ext == ".controller") return AssetType::Controller; // T3d 动画状态机
     if (ext == ".rml") return AssetType::Rml;     // M6b 批③b UI 文档（ADR-014）
     if (ext == ".rcss") return AssetType::Rcss;   // M6b 批③b UI 样式表
+    if (ext == ".wav" || ext == ".ogg" || ext == ".mp3" || ext == ".flac")
+        return AssetType::Audio; // M6c 竖切批：音频源（ADR-015 D1 四格式）
     return AssetType::Generic;
 }
 
