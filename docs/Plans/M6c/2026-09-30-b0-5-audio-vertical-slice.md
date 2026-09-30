@@ -33,6 +33,12 @@ Status: done（2026-09-30 当日：无头 `--smoke --play` **8/8 音频装载成
 2. `ma_decoder_read_pcm_frames` 0.11.25 签名带 `ma_uint64* pFramesRead` 出参（批⓪ 按旧 API 写的被编译器拦下）；输出声道经 `dec.outputChannels` 字段直读。
 3. meta 预写固定 GUID 策略可行：`{guid, type:"audio", hash:0, importedAt:0}` 与 sprite meta 同 schema，Rescan 读优先不覆盖——C# 常量与资产号一次对齐，免去"首扫后回填 GUID"两步。
 
+## 真人听感验收首轮（2026-09-30，Main.scene 直开）
+
+- **攻击音/死亡音 ✓ 出声正常；BGM ✓ 能出声**（死亡两次后重开仍响——PlayBgm 链路实证）。
+- **同场报告"再来一局后无画面 + menu.rml 契约红字"——定位为 Main.scene 直开的路径限制，非本批回归**：该场景无 `Flow` 实体（GameFlow 实例在 MainMenu.scene），`EnterRun`（静态，UI 事件路由可达 → BGM 响）清场后无人推进 `State.Spawning` 握手（重挂逻辑在实例 Update 里）→ 永卡 Spawning/Time.Scale=0 = 空场；`GameFlow.Start` 不跑 → menu.rml 未装载 → `UI.Hide` 按契约响亮报红。**设计唯一入口 = MainMenu.scene**（③d-2 拍板；MainMenu 无头复验 errors=0、音频 8/8）。限制登记：Main.scene 直开 = 战斗沙盒（单局可玩可听），不支持死亡重开/菜单流程——守卫提示（无实例时红字引导）批③ 顺手评估。
+- 完整听感验收（BGM 音量/命中密度/发射音冷却/拾取/升级/波次）待从 **MainMenu.scene** 跑完整局。
+
 ## 遗留（归批①/批②，不扩本批；2026-09-30 review 后按发现重排）
 
 - 浏览器面（过滤钮/图标/双击试听/tooltip）+ meta importer loop 段（循环点/预载）→ 批①；
