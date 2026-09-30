@@ -1,6 +1,6 @@
 # M6a 批③c —— C# API 与波1 机制：UI.Apply(ops) + UiEvent 队列 + 契约响亮失败 + M1/M2/M3/M6 资产源/M7 + 提交制文本输入
 
-Status: done（代码面 2026-09-28 勾销：smoke-uirml 全链 OK + script-tests 1699 checks + 回归 full 15/15；真人验收余 GameView 手感/文本输入）
+Status: done（2026-09-28 代码面勾销：smoke-uirml 全链 OK + script-tests 1699 checks + 回归 full 15/15；真人验收判据 6 已过 2026-09-30，[DevLog](../../DevLog/2026-09-30-acceptance-b3c-input-events.md)；光标闪烁复测确认正常——前轮未观察到位系 0.7s 闪烁灭相时机，非回归）
 
 > [ADR-014](../../ADR/ADR-014-Game-UI-RmlUi-Integration.md) 五子批第三件（D1 ③c / D2 契约 M1-M3+M6 资产源+M7 / D6 波1）。③a/③b 交付呈现与资产通道；本批把 C# 脚本接上：**单一 `UI.Apply(ops)` 提交口（M2）+ UiEvent 事件队列（M3，无回调跨边界）+ 屏幕栈（M1）+ GUID 贴图源（M6 波1）+ 输入路由与让出（M7）+ 提交制文本输入（D4，T7 已证 RmlUi 自带 `<input>` 过关）**。模板迁移（③d）与图鉴（③e）不在本批。
 > 前置门槛 T7 文本输入微 spike ✅ 2026-09-28（三判据一次过，[DevLog](../../DevLog/2026-09-28-m6a-b3a-t7-text-input-spike.md)）。
@@ -125,7 +125,7 @@ struct UiEventC {         // 152B 固定 blittable；UI 事件低频（点击级
    + DocumentReloaded 重灌×2 回读；契约错误恰 1 = 负面 op 直灌；③b 旧六位不回归）+ exit 0。
 4. ✅ 回归 `tools/editor-regression.sh` full：**15/15 PASS**（uirml-chain 第 15 步新增）。
 5. ✅ 基准面零漂移：bench-survivor **fps=73 PASS**（fx 饱和口径，≥55 门）+ bench-sim 录制/回放 `replay=PASS mismatches=0`；架构位 = UI 通道不入 StateHash/输入快照、基准场零调用（Tween/Table 先例同款证明）。
-6. ⏳ 真人验收（余用户，不阻塞代码面勾销）：GameView 内点击 data-event 按钮的事件回传手感 + 起名框打中文（候选窗贴光标——T7 机制面的编辑器形态）。
+6. ✅ 真人验收（2026-09-30 过，[DevLog](../../DevLog/2026-09-30-acceptance-b3c-input-events.md)）：GameView 内点击按钮的事件回传手感（Click → C# 日志实证）+ 起名框打中文（字上屏、候选窗贴光标、Change 值回传）。
 
 ## 实现期发现（偏离批文件预设计的落账）
 

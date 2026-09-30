@@ -80,7 +80,7 @@ Status: done（主体 2026-09-28 勾销；T7 收尾同日过——③c 开工门
   - **② 候选窗贴光标**：聚焦即 ActivateKeyboard，光标坐标随打字推进（1052→1084→1116，行高 19），锚点 (1100,278.8) 落输入框 (1040,269) 344×39 内；失焦 DeactivateKeyboard 成对；
   - **③ 事件不串**：裸 KEY_DOWN('N') 不插字（字只能走 TEXT_INPUT 通道）/ RETURN 的 `'\n'`（平台层 key_down 分支转 `ProcessTextInput('\n')`）被单行 input 吞 / ←→ 只移光标 / 退格恰删一字 / 点按钮失焦出 change。
 - **结论（ADR-014 D4 定案）**：RmlUi 自带 `<input>` 质量过关，③c 提交制文本输入直接吃核心控件，**M8 自定义元素兜底不触发**。
-- 对 ③c 的两条白送发现：**change 在每个提交边界派发**（每次文本落定 + 回车，非只 blur）——M3 的 change/submit 映射有现成语义底座（注意过滤"逐键 change"，D4 语义是提交制）；**光标每次移动都重发 ActivateKeyboard**——候选窗跟随光标是核心自带行为，引擎无需自建机制。真人 IME 视觉确认（候选窗实贴光标）余用户，机制面已全部机器化。
+- 对 ③c 的两条白送发现：**change 在每个提交边界派发**（每次文本落定 + 回车，非只 blur）——M3 的 change/submit 映射有现成语义底座（注意过滤"逐键 change"，D4 语义是提交制）；**光标每次移动都重发 ActivateKeyboard**——候选窗跟随光标是核心自带行为，引擎无需自建机制。真人 IME 视觉确认（候选窗实贴光标）✅ 2026-09-30（随 ③c 真人验收覆盖，[DevLog](../../DevLog/2026-09-30-acceptance-b3c-input-events.md)），机制面已全部机器化。
 
 ## 验收判据（全过才勾销）
 
@@ -88,7 +88,7 @@ Status: done（主体 2026-09-28 勾销；T7 收尾同日过——③c 开工门
 2. ✅ `./build/mac/Editor/lemon-editor --smoke-uirml --frames 180 --validate`：VERDICT OK（panel=102652(>3000) title=791(>20) body=374(>20)，font=Hiragino Sans GB）+ **验证层零错误** + exit 0。
 3. ✅ 既有回归 `tools/editor-regression.sh` 14/14 不回归（**复跑全绿**；首跑 13/14——`--save-scene` 早退路径触发 UiSubsystem 析构断言崩溃，改防御性收尾修复，见 [DevLog](../../DevLog/2026-09-28-m6a-b3a-rmlui-renderer.md)）。
 4. ✅ `--smoke-uirml --screenshot` 目检（**真人验收 ✅ 2026-09-28**：首轮抓到纵向翻转 → 热修 `025c221` → 二次目检通过"看着正常了"；上半幅集中断言机器化防复发，详见 [DevLog 追记](../../DevLog/2026-09-28-m6a-b3a-rmlui-renderer.md)）。
-5. ✅ T7 文本输入微 spike（2026-09-28 收尾）：`lemon-spike-rmlui` 一次过，VERDICT `doc=OK font=OK click=3 text=OK(ime=OK route=OK) => PASS` + exit 0；全量构建零波及（spike 目标隔离，其余目标 no work to do）；真人 IME 视觉确认余用户（见 T7 节）。
+5. ✅ T7 文本输入微 spike（2026-09-28 收尾）：`lemon-spike-rmlui` 一次过，VERDICT `doc=OK font=OK click=3 text=OK(ime=OK route=OK) => PASS` + exit 0；全量构建零波及（spike 目标隔离，其余目标 no work to do）；真人 IME 视觉确认 ✅ 2026-09-30（随 ③c 真人验收覆盖）。
 
 ### 实现期发现（偏离批文件预设计的落账）
 

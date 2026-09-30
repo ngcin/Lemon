@@ -1,8 +1,8 @@
 # M6a 批② T3d：动画控制面——绑定、.controller 状态机、帧事件、资产族定名（2026-09-27）
 
 Status: **done**（四小批一次落地 + ani.scene 双怪对决终验通过，2026-09-27；
-[DevLog](../../DevLog/2026-09-27-m6a-b2-t3d-anim-controller.md)。余真人验收：编辑器
-打开 svr-test/Scenes/ani.scene 进 Play 观战 + Inspector AnimGraph 绑定槽实操。
+[DevLog](../../DevLog/2026-09-27-m6a-b2-t3d-anim-controller.md)。真人验收两件已过
+2026-09-30——ani.scene 观战 + Inspector AnimGraph 绑定槽，[DevLog](../../DevLog/2026-09-30-acceptance-t3d-tween.md)。
 执行偏差三条记录在 DevLog：①金回放三档**重录**（加组件入哈希流，M5 批②同款
 先例——原计划"零重录"论证只覆盖字段不覆盖新组件）；②附带解堵 kMaxTextureSlots
 与 ImGui 描述符池 64→256（M6c 图集打包前过渡）；③手写 GUID 低位撞号返工一次

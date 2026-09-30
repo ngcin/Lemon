@@ -79,7 +79,9 @@
 
 ## 遗留
 
-- 真人验收：模板里加一次受击闪白（Color tween）+ 拾取缩放弹跳（Scale
-  OutBack）的手感体验——代码面无阻塞。
+- 真人验收 ✅ 2026-09-30（[DevLog](../../DevLog/2026-09-30-acceptance-t3d-tween.md)）：验收载体
+  = svr-test/ani.scene（DuelBehaviour 受击 Tween.Color 闪红回程 + TweenDemo 宝石
+  Scale OutBack 周期弹出）；"闪白"落地为"闪红"——底色纯白乘法混色下提亮不可见，
+  同打击感语义。过程中确认 A/B 受击次数不对称 = T3d 缺绑/全绑演示的设计内行为。
 - B 档（关键帧属性动画 + dope sheet 编辑器）明确不立项（用户 2026-09-28
   拍板）；本批的缓动纯函数与字段寻址是将来 B 档可直接复用的地皮。

@@ -1,7 +1,7 @@
 # 批③d-1：样板批——dp 坐标系 + theme token 单源 + L2 首件 + HUD/卡片两屏
 
 - 日期：2026-09-29
-- Status: **代码面收口（T1–T7 done 2026-09-29；smoke-template ×2 全绿 + smoke-uirml dp 位全绿 + 回归见验收判据 3；真人验收判据 6 余用户，不阻塞 ③d-2 开工）**
+- Status: **done（T1–T7 done 2026-09-29；smoke-template ×2 全绿 + smoke-uirml dp 位全绿 + 回归见验收判据 3；真人验收判据 6 已过 2026-09-30——视觉走查含 T8 后修二轮确认 + 换肤演示，[DevLog](../../DevLog/2026-09-30-acceptance-m5-uidoc-d1.md)）**
 - 归属：M6b 游戏UI产品壳（总览页 [M6b.md](./M6b.md)；D2 两拆的样板半批——高风险新约定隔离在最小批，过了 ③d-2 再铺量）
 - 关联：[ADR-014](../../ADR/ADR-014-Game-UI-RmlUi-Integration.md)（D3 L2 层 / D7 范围红线 / 出口判据②）· [③d 前置](./2026-09-29-b3d-pre-uidocument-scene-mount.md)（装载双通道 = 本批消费面）· [纸面验证 ⓪](../../Reports/2026-09-28-game-ui-l1-paper-validation.md)（升级三选一卡片 = 本批验收样例底稿）· [③c C# API](./2026-09-28-b3c-csharp-ui-api.md)（M2 ops 全集已交付，本批零引擎 API 新增除 dp）
 - 性质：三个新约定的首证批——**dp 坐标系**（B1 拍板）、**层序语义在真实两屏上的验证**（D1 甲-轻量）、**theme token 单源**（出口判据② "换肤 = 改单一 theme.rcss"）；交付 vs-survivor 模板六屏中的前两屏（HUD + 卡片/死亡对话）。
@@ -116,7 +116,7 @@
 3. ✅ 回归 full 15/15（2026-09-29 首跑全绿，零抖动）。
 4. ✅ bench/replay 零改动口径成立（装载点只在 EnterPlay 扫描；模板场景装载恰 2；bench 自播种场景零 UIDocument）。
 5. ✅ 模板再生成 diff 干净（+Assets/UI/ 三件 ×2 文件、场景 +2 实体、Game/ 三文件；prefab/meta guid 时间戳噪声为历次再生成固有）。
-6. ⏳ 真人验收（T8，余用户）。
+6. ✅ 真人验收（2026-09-30 过：两屏视觉走查（含 T8 后修二轮确认）+ 换肤演示，[DevLog](../../DevLog/2026-09-30-acceptance-m5-uidoc-d1.md)）。
 
 ## 实现期发现（偏离批文件预设计的落账）
 

@@ -1,7 +1,7 @@
 # 批③d 前置：UIDocument 场景挂载——.rml 文档组件化 + 进 Play 自动装载 + Show 落空兜底
 
 - 日期：2026-09-29
-- Status: **done 代码面（2026-09-29 T1–T6 全落；真人验收判据 6 三件余用户，不阻塞 ③d 开工）**
+- Status: **done（2026-09-29 T1–T6 全落；真人验收判据 6 三件已过 2026-09-30，[DevLog](../../DevLog/2026-09-30-acceptance-m5-uidoc-d1.md)）**
 - **2026-09-29 审核修订（开工前解冻再冻结）**：M6b 开工前第三方审核发现三处硬伤 + 两项关联决策拍板，本文件同步修订——①T1 布局字数错误（8B → 16B）+ 补注册 id（=30）；②T3 的 modal 归位缺引擎侧写入口，补 `ShowDocument` 尾加形参任务项；③§3 归位规则与 ③b 双击预览语义打架（C5），落 stale 位口径消歧；④D1 层序路线拍板「甲-轻量：Show 即提层」，落进 T2/T3；⑤关联决策 B1（dp 坐标系）与 D2（③d 两拆）归 [M6b.md 决策注记](./M6b.md)，本批不含 dp。
 - 归属：M6b 游戏UI产品壳（原 M6a 批③，2026-09-29 迁；总览页 [M6b.md](./M6b.md)）
 - 关联：[ADR-014](../../ADR/ADR-014-Game-UI-RmlUi-Integration.md) M1（装载语义补章，T6 落注记）· [批③c](./2026-09-28-b3c-csharp-ui-api.md)（C# API 已交付，本批零改动）· [③b 批文件](./2026-09-28-b3b-ui-font-asset-channel.md)（双击手动通道 = 本批取代对象）
@@ -141,9 +141,10 @@ struct UIDocument {
 5. ✅ Play→Stop→Play 循环（smoke 帧 200 Stop / 203 重进）：第二局 UI = 场景声明态机器断言——
    动态 Show 过的 dyn 被 Hide（装载保留，第二局装载增量恰 1 = 只重装声明文档）、Edit 双击装载的
    editprev 保持可见（8176px）、A 回 showOnStart 声明态。
-6. ⏳ **真人验收**（余用户，不阻塞勾销但阻塞 ③d 开工）：①Hierarchy 建 UI Document → 挂 svr-test
-   的 .rml → 进 Play 见屏、退 Play 干净、再进 Play 初始态；②删 .rml 后进 Play 得红字（不空屏）；
-   ③svr-test 里纯 C# `UI.Show` 动态屏不经场景声明可用。
+6. ✅ **真人验收**（已过 2026-09-30，[DevLog](../../DevLog/2026-09-30-acceptance-m5-uidoc-d1.md)）：①Hierarchy 建 UI Document → 挂 svr-test
+   的 .rml → 进 Play 见屏、退 Play 干净、再进 Play 初始态；②删 .rml 后进 Play 得红字（不空屏）——
+   原序列复验（挂→Play→删→Play）随三轮删除残留热修 + 僵尸渲染双防线后闭环；③svr-test 里纯 C#
+   `UI.Show` 动态屏不经场景声明可用。
 
 ## 实现期发现（偏离批文件预设计的落账）
 

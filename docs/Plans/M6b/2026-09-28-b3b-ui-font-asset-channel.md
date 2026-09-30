@@ -1,6 +1,6 @@
 # M6a 批③b —— UI 字体与资产通道：Noto 入库 + .rml/.rcss 资产化 + 贴图桥 + 文档热重载
 
-Status: done（代码面 2026-09-28 勾销；真人截图走查余用户——`.lemon/uirml-b3b-screenshot.png`）
+Status: done（2026-09-28 代码面勾销；真人验收已全过 2026-09-30——截图目检判据 4 + 双击装载/热重载手感随 ③d 前置①与 ③d-1 换肤演示覆盖，[DevLog](../../DevLog/2026-09-30-acceptance-b3ab-screenshot-ime.md)）
 
 > [ADR-014](../../ADR/ADR-014-Game-UI-RmlUi-Integration.md) 五子批第二件。③a 交付了呈现地基（RmlUiBackend over RHI +
 > UiSubsystem + gameRT 冒烟）；本批把 UI 从"内存文档 + 系统字体 + 无图"升级为
@@ -114,11 +114,11 @@ Status: done（代码面 2026-09-28 勾销；真人截图走查余用户——`.
    （doc=1 font=Noto Sans SC panel=111648 titleG=994 bodyB=725 tex=9216 old=0/0
    titleTop=981/994）+ **验证层零错误** + exit 0。
 3. ✅ 既有回归 `tools/editor-regression.sh` full：**14/14 PASS（首跑全绿）**。
-4. ⏳ `--smoke-uirml --screenshot` 目检（追记 2026-09-28：用户报首版截图只见 Scene——
+4. ✅ `--smoke-uirml --screenshot` 目检（追记 2026-09-28：用户报首版截图只见 Scene——
    ③a 独立进 Play 漏设翻页标志 + ImGui 1.92 `FocusWindow` 的 dock tab 选择段被上游
    注释（#2304）双重根因，已修（`NextSelectedTabId` 显式翻页）+ 自动另出
    `<名>-gamert.png`（gameRT 原像素）；交换链截图已见 GameView+UI（机器目检过），
-   真人复验余用户）。
+   **真人复验 ✅ 2026-09-30**——整屏 GameView 有 UI + gamert 原像素面板/中文字形正常）。
 
 ## 实现期发现（偏离批文件预设计的落账）
 
