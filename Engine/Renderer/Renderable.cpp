@@ -158,6 +158,12 @@ std::span<const SpritePacket> RenderableManager::Extract(const AtlasRegistry& at
                 // 降图集/混合/层组合数；丢弃数记 stats_.droppedSprites
                 if (slotCount_ >= kMaxSpriteKeys) {
                     ++stats_.droppedSprites;
+                    if (!dropWarned_) { // 只响一次：超限是场景级状态，逐帧刷屏无信息量
+                        dropWarned_ = true;
+                        LEMON_WARN("sprite key table full (%u combos) — extra sprites "
+                                   "dropped from render (see stats.droppedSprites)",
+                                   kMaxSpriteKeys);
+                    }
                     continue;
                 }
                 slots_[si].key = MakeBatchKey(spr.atlasIndex, (BlendKind)e.desc.blend,

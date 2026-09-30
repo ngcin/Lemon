@@ -43,6 +43,11 @@ public:
     /// 必须在 cl.BeginPass() 与 cl.EndPass() 之间调用（动态渲染约定）。
     void Render(rhi::CommandList& cl);
 
+    /// 弃帧（评审 D2 修复配套）：BeginFrame 之后因交换链重建等原因本帧不渲染时，
+    /// 用 EndFrame 干净收掉已开的 ImGui 帧——否则下一轮 NewFrame 撞
+    /// "Forgot to call Render() or EndFrame()"（Release 无断言则状态损坏）
+    void SkipFrame();
+
     /// 当前显示缩放（= SDL 窗口像素密度；1.0 = 标准 DPI，2.0 = Retina）
     float DisplayScale() const;
     /// CJK 字体是否加载成功（冒烟断言项：失败 = 回退 ProggyClean，中文显示为问号）

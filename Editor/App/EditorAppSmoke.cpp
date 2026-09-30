@@ -27,7 +27,7 @@
 #include "Components/CoreComponents.h"
 #include "Components/GameplayComponents.h"
 #include "Components/RenderComponents.h"
-#include <unistd.h> // getpid（bench-survivor tempdir）
+#include "Core/Process.h" // CurrentProcessId（tempdir 唯一名；Windows 阻断项①，07 §3.6）
 #include "ECS/Hierarchy.h"
 #include "Core/Log.h"
 #include "EditorContext.h"
@@ -107,7 +107,7 @@ bool SeedBenchSurvivorScene(EditorContext& ctx) {
     namespace fs = std::filesystem;
     std::error_code ec;
     const fs::path root = fs::temp_directory_path() /
-                          ("lemon-bench-survivor-" + std::to_string(::getpid()));
+                          ("lemon-bench-survivor-" + std::to_string(lemon::CurrentProcessId()));
     fs::remove_all(root, ec);
     // M5 批③动画化：程序化 4 帧表 + clip 先落盘（OpenProject 扫描即切片记账/导入）
     // ——万怪 Animator2D 帧映射进压测口径（Animator 系统成本进 09 §6.10 台账）
@@ -228,7 +228,7 @@ void EditorApp::SeedSmokeUiRmlProject() {
     namespace fs = std::filesystem;
     std::error_code ec;
     const fs::path tmp =
-        fs::temp_directory_path() / ("lemon-uirml-" + std::to_string(::getpid()));
+        fs::temp_directory_path() / ("lemon-uirml-" + std::to_string(lemon::CurrentProcessId()));
     fs::remove_all(tmp, ec);
     const fs::path assets = tmp / "Assets" / "UI";
     fs::create_directories(assets, ec);

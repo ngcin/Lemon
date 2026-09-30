@@ -15,7 +15,7 @@ ISystem& SystemPipeline::AddSystem(std::unique_ptr<ISystem> sys) {
     LEMON_ASSERT(sys != nullptr, "null system");
     // [ISSUE-3] 重名防线查 systems_（原查 profiles_，ResolveOrder 前恒空 → 空转）
     for (const auto& existing : systems_)
-        LEMON_ASSERT(__builtin_strcmp(existing->Name(), sys->Name()) != 0,
+        LEMON_ASSERT(std::strcmp(existing->Name(), sys->Name()) != 0,
                      "duplicate system: %s", sys->Name());
     systems_.push_back(std::move(sys));
     return *systems_.back();
@@ -38,7 +38,7 @@ void SystemPipeline::ResolveOrder() {
             int32_t depIdx = -1;
             if (after) {
                 for (uint32_t j = 0; j < n; ++j)
-                    if (__builtin_strcmp(systems_[j]->Name(), after) == 0) {
+                    if (std::strcmp(systems_[j]->Name(), after) == 0) {
                         depIdx = (int32_t)j;
                         break;
                     }
@@ -85,7 +85,7 @@ void SystemPipeline::RunStage(World& world, Scene& scene, SystemStage stage, flo
 
 const SystemProfile* SystemPipeline::FindProfile(const char* name) const {
     for (const SystemProfile& p : profiles_)
-        if (__builtin_strcmp(p.name, name) == 0) return &p;
+        if (std::strcmp(p.name, name) == 0) return &p;
     return nullptr;
 }
 

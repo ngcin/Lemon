@@ -132,6 +132,12 @@ std::span<const SpritePacket> ParticleSystem::Extract(const AtlasRegistry& atlas
             // 丢弃数记 stats_.droppedParticles
             if (slotCount >= kMaxParticleKeys) {
                 ++stats_.droppedParticles;
+                if (!dropWarned_) { // 只响一次：超限是场景级状态，逐帧刷屏无信息量
+                    dropWarned_ = true;
+                    LEMON_WARN("particle key table full (%u combos) — extra particles "
+                               "dropped from render (see stats.droppedParticles)",
+                               kMaxParticleKeys);
+                }
                 continue;
             }
             const SpriteInfo& spr = atlas.GetSprite(p.spriteId);

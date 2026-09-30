@@ -2,6 +2,7 @@
 # 纪律（AGENTS / 01 文档）：Vulkan/VMA 类型只允许出现在 Renderer 的 .cpp；
 #   头文件一律自有句柄。Core = 无渲染依赖的基础层；Platform = SDL3 封装（Pimpl）。
 add_library(lemon-engine STATIC
+  Core/FileOps.cpp
   Core/JobSystem.cpp
   Core/Log.cpp
   ECS/Hierarchy.cpp
@@ -54,6 +55,24 @@ lemon_embed_shader(lemon-engine Renderer/Shaders/sprite.frag)
 lemon_embed_shader(lemon-engine Renderer/Shaders/rmlui.vert)
 lemon_embed_shader(lemon-engine Renderer/Shaders/rmlui_color.frag)
 lemon_embed_shader(lemon-engine Renderer/Shaders/rmlui_texture.frag)
+
+# 常量同源护栏（评审 D10）：sprite.frag 的 uAtlases 数组长度必须与 RHI.h 的
+# kMaxTextureSlots 相等——slot ≥ 数组长度的采样是未定义行为，两侧漂移此前无任何
+# 编译期信号（64 vs 256 静默越界）。改任一侧不同步 = configure 期 FATAL_ERROR
+file(READ ${CMAKE_CURRENT_SOURCE_DIR}/Renderer/Shaders/sprite.frag LEMON_SPRITE_FRAG)
+file(READ ${CMAKE_CURRENT_SOURCE_DIR}/Renderer/RHI.h LEMON_RHI_H)
+string(REGEX MATCH "uAtlases\\[([0-9]+)\\]" LEMON_ATLAS_DECL "${LEMON_SPRITE_FRAG}")
+if(NOT CMAKE_MATCH_1)
+  message(FATAL_ERROR "D10 guard: uAtlases array not found in sprite.frag")
+endif()
+set(LEMON_ATLAS_N "${CMAKE_MATCH_1}")
+string(REGEX MATCH "kMaxTextureSlots = ([0-9]+)" LEMON_SLOTS_DECL "${LEMON_RHI_H}")
+if(NOT CMAKE_MATCH_1)
+  message(FATAL_ERROR "D10 guard: kMaxTextureSlots not found in RHI.h")
+endif()
+if(NOT "${LEMON_ATLAS_N}" STREQUAL "${CMAKE_MATCH_1}")
+  message(FATAL_ERROR "D10 guard: sprite.frag uAtlases[${LEMON_ATLAS_N}] != RHI.h kMaxTextureSlots = ${CMAKE_MATCH_1}")
+endif()
 
 if(MSVC)
   target_compile_options(lemon-engine PRIVATE /utf-8 /permissive-)

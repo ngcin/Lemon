@@ -25,6 +25,7 @@
 #include <vk_mem_alloc.h>
 #pragma clang diagnostic pop
 
+#include "Core/FileOps.h"
 #include "Core/Log.h"
 
 namespace lemon::rhi {
@@ -859,6 +860,9 @@ bool Device::CreateSwapchain(const SwapchainDesc& desc) {
 bool Device::RecreateSwapchain() {
     vkDeviceWaitIdle(m->device);
     m->DestroySwapchainObjects();
+    // 哨兵（评审 D2，2026-09-30）：新链尚未 acquire，旧 imageIndex 指向已销毁链的
+    // 图像/信号量下标；EndFrameAndPresent 的断言靠它把"未取图即 present"变成响亮失败
+    m->imageIndex = UINT32_MAX;
     return m->CreateSwapchainObjects();
 }
 
@@ -1250,6 +1254,9 @@ CommandList& Device::BeginFrame() {
 void Device::EndFrameAndPresent(bool& needsRecreateOut, bool& deviceLostOut) {
     needsRecreateOut = false;
     deviceLostOut = false;
+    // 重建后未重新 acquire 就 present = 用未获所有权的图像 + 越界 semaphore（评审 D2）
+    LEMON_ASSERT(m->imageIndex != UINT32_MAX && m->imageIndex < m->presentSemaphores.size(),
+                 "present without acquire (stale imageIndex after swapchain recreate)");
     uint32_t fi = (uint32_t)(m->frameCounter % kFramesInFlight);
     auto& slot = m->slots[fi];
     VK_CHECK(vkEndCommandBuffer(slot.cmd));
@@ -1343,9 +1350,8 @@ void Device::SavePipelineCache() {
         std::filesystem::remove(tmp, ec);
         return;
     }
-    std::filesystem::rename(tmp, p, ec);
-    if (ec) {
-        LEMON_WARN("pipeline cache rename failed: %s", ec.message().c_str());
+    if (!RenameReplace(tmp.string(), p.string())) { // 覆盖语义见 FileOps（07 §3.6⑤）
+        LEMON_WARN("pipeline cache rename failed: %s", m->desc.pipelineCachePath);
         std::filesystem::remove(tmp, ec);
         return;
     }

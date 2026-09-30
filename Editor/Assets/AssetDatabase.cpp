@@ -11,6 +11,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "Core/FileOps.h"
 #include "Core/Guid.h"
 #include "Core/Log.h"
 #include "Assets/Csv.h"
@@ -48,9 +49,14 @@ bool WriteFileAtomic(const std::string& path, const void* data, size_t n) {
             return false;
         }
     } // 析构 close
-    std::error_code ec;
-    fs::rename(tmp, path, ec); // POSIX rename 覆盖既有目标 = 原子替换；Windows 归 M7 抽象
-    return !ec;
+    // RenameReplace：覆盖语义钉在助手内（Windows 阻断项⑤，07 §3.6），不再依赖各
+    // STL 对 fs::rename 覆盖目标的实现定义行为
+    if (!RenameReplace(tmp, path)) {
+        std::error_code rm;
+        fs::remove(tmp, rm);
+        return false;
+    }
+    return true;
 }
 
 std::string AssetEntry::FileName() const {

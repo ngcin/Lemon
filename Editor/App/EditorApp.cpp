@@ -710,7 +710,13 @@ int EditorApp::Run(const EditorLaunch& launch) {
 
         rhi::AcquireResult acq = device_->AcquireNextImage();
         if (acq.deviceLost || acq.needsRecreate) {
-            if (acq.deviceLost || !device_->RecreateSwapchain()) continue;
+            // OUT_OF_DATE 重建成功也必须跳过本帧（评审 D2）：旧 imageIndex 属于已销毁
+            // 的链——落下去 = present 未 acquire 的图像 + 旧下标取新信号量表。下一帧
+            // AcquireNextImage 会取新索引。ui_->BeginFrame 已开 ImGui 帧，跳帧前须
+            // EndFrame 收掉（否则下一轮 NewFrame 撞未关帧断言）
+            if (!acq.deviceLost) device_->RecreateSwapchain();
+            ui_->SkipFrame();
+            continue;
         }
         rhi::CommandList& cl = device_->BeginFrame();
         bAcq = BenchClock::now(); // 段界：acquire+BeginFrame 结束 = 场景渲染开始

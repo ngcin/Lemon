@@ -171,7 +171,7 @@ Neighbors(pos, radius, cb)                  // 分离力专用（迭代器形式
 > 组件（§3.3；场景/prefab 档即数据源，Inspector 可编辑数组段即编辑面），导演直接
 > 经 `World::GetSpawnFn()` 出生（与 SpawnSystem 平行的第二条刷怪通道；Spawner 保留
 > 常驻环境刷怪语义，互不派发）。理由：数组段机制零新基建；配额派发需按 prefabId
-> 跨实体匹配、语义绕；两通道各司其职，M6c TD 模板波次同消费导演。原 `budgetCurve`
+> 跨实体匹配、语义绕；两通道各司其职，M9 TD 模板（编号沿革 M6c→M6d→M9）波次同消费导演。原 `budgetCurve`
 > 由波表自身表达（波表 startTime/rampMult/count 即强度曲线）；独立 `.asset` 数据
 > 通道随批③ clip 一并定，`onRagePhase`（狂暴相位）留后续波。波次表编辑器（并入
 > M6a 批② 配置表 ADR，2026-09-24 重排）在组件数据上盖专业 UI（增删波/条目、

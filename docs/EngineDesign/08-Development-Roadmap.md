@@ -2,7 +2,7 @@
 
 > 前提：单人全职（每周 5 天 × 6–8 有效小时）；总盘 9–12 个月到"两个可玩模板 demo + 一键出包"。
 > 纪律（继承 Prowl2D 教训）：**每个里程碑必须有 GUI 级可验收产物**——"单测全绿但编辑器不可用"不算完成。
-> **2026-09-24 重排**：M6 拆为 **M6a 玩法完善+幸存者产品化（4–6 周）→ M6b 音频（原 M6.5 前移改号）→ M6c Tilemap+TD 模板**。动因：原 M6 大半为 TD 专属件，却把幸存者向产品所需的通用件（多脚本/动画控制/GUID/配置表/产品壳）一并阻塞到 TD 之后；前置后**用户幸存者游戏即刻并行开工**（`demo/svr-test` 为工作项目，引擎卡点 DevLog 登记，M6a 验收以该游戏为准）。ARPG 模板暂缓决策（2026-09-24 用户），M6c 后按 RmlUi 升级触发条件（06 §8 v1.x）再议。历史文件中"挂 M6"字样按此映射读取。**2026-09-28 注记：RmlUi 触发条件已提前成立（用户游戏富排版 + 文本输入需求），正式接入重排至 M6a 批③，见 [ADR-014](../ADR/ADR-014-Game-UI-RmlUi-Integration.md)。** **2026-09-29 重排：UI 线（原 M6a 批③）独立为 M6b 游戏UI产品壳（M6a 三线并进观感混乱，用户拍板；子批号 ③a–③e 与批文件随迁沿用）；音频 M6b → M6c、Tilemap+TD M6c → M6d。历史文件中"挂 M6b/M6c"字样按此映射读取。**
+> **2026-09-24 重排**：M6 拆为 **M6a 玩法完善+幸存者产品化（4–6 周）→ M6b 音频（原 M6.5 前移改号）→ M6c Tilemap+TD 模板**。动因：原 M6 大半为 TD 专属件，却把幸存者向产品所需的通用件（多脚本/动画控制/GUID/配置表/产品壳）一并阻塞到 TD 之后；前置后**用户幸存者游戏即刻并行开工**（`demo/svr-test` 为工作项目，引擎卡点 DevLog 登记，M6a 验收以该游戏为准）。ARPG 模板暂缓决策（2026-09-24 用户），M6c 后按 RmlUi 升级触发条件（06 §8 v1.x）再议。历史文件中"挂 M6"字样按此映射读取。**2026-09-28 注记：RmlUi 触发条件已提前成立（用户游戏富排版 + 文本输入需求），正式接入重排至 M6a 批③，见 [ADR-014](../ADR/ADR-014-Game-UI-RmlUi-Integration.md)。** **2026-09-29 重排：UI 线（原 M6a 批③）独立为 M6b 游戏UI产品壳（M6a 三线并进观感混乱，用户拍板；子批号 ③a–③e 与批文件随迁沿用）；音频 M6b → M6c、Tilemap+TD M6c → M6d。历史文件中"挂 M6b/M6c"字样按此映射读取。** **2026-09-30 重排（Windows/出包优先，用户三拍板）：M6d Tilemap+TD → 新增档位 M9（路线图原止于 M8），M6b ③e 图鉴随迁（游戏玩法内容，与 TD 模板同批消费更贴）；M6c 音频确认先于 M7 出包主体（.baked 音频类型随 M6c 定形，packager 一次做全类型）；M7 拆两段——M7a 独立运行时+最简出包先行（`Engine/Assets` 运行时资产层 + GameEntry/lemon-game，[评审建议书](../Reports/2026-09-30-engineering-recommendations.md) R1），Steam/安装器/云档等发行侧后置（真包后再议）。历史文件中"挂 M6d"字样按 M9 读取。决策记录见 [DevLog](../DevLog/2026-09-30-roadmap-reorder-windows-first.md)。**
 
 ---
 
@@ -20,11 +20,11 @@
 | **M4.8 编辑器收官批** | 组件级重置 + File 最近场景 + 冒烟状态隔离（ini 漂移根治）+ 30 分钟零文档走查收官（触发：手测指南 C–L 段全量走查，修复批 `bd3ad93` 之后） | 2–4 天（a/b/c ✅ 2026-09-22；走查待用户执行） | 走查全绿 + smoke-drag 连跑 10 次全绿 + 回归 11/11（[M4.8 计划](../Plans/M4/2026-09-22-m4.8-closeout.md)） |
 | **M5 玩法 + VS 模板** | 技能/弹幕/命中/拾取/导演/HUD/存档 + vs-survivor 模板；**实体多脚本**（ScriptBox 多实例 + `.scene` `scripts[]` + Inspector 列表 + SDK `AddComponent<LemonBehaviour>` 路由，2026-09-22 用户实测登记；**批④ 未落地**——模板以单 PlayerBehaviour 规避，挂 M6 重排）；**编辑器后置项随消费者**：字段级重置（先补字段默认值元数据）、tag 资产化+下拉（等 FindByTag 用法）、Select 工具多选组操作、dotnet build 异步化（观察项转正评估） | 6–8 周 | **10 分钟完整一局可玩**（批④ 2026-09-23 代码面完成：vs-survivor 模板 + `--smoke-template` 机械链 PASS；真人 10 分钟一局验收待用户执行）；**压测 B 达标**（1 万怪 ≥45fps ✅）；**Play 调参 ADR**（ADR-011 显式不回灌 + Inspector 横幅 ✅） |
 | **M6a 玩法完善 + 幸存者产品化** | M5 余项收口（`scripts[]` 多脚本、Animator `Play`/`CrossFade`）＋ sprite 引用 GUID 化 ＋ 打击感（位图数字/飘字/世界血条）＋ 内容生产（配置表外置 ADR、AnimationEditor 最小版、技能路径数据化、存档分档）。（原含产品壳 RmlUi 线——**2026-09-29 拆出独立 M6b**：③a–③c 已于 M6a 期内完成，余量与批文件随线迁 [M6b](../Plans/M6b/M6b.md)） | 4–6 周（批⓪ ✅ 批① ✅ 2026-09-24：多脚本/GUID 化/SDK 双路由/模板三拆 + 打击感（Anim 换段/Fx 飘字血条）；批② ✅ 2026-09-28：配置表双轨 ADR-012（.tab/CSV 导入/内嵌表格+浮动编辑）+ 动画工作台 v3.1（T3→T3-UX2 四轮）+ ADR-013 状态机 + 数值表双面落地（模板+svr-test 验收② 演示）+ 存档三档 slot_0/settings/meta（键约定：settings 版本化 KV / meta 收集条目）；[批⓪](../Plans/M6a/2026-09-24-b0-multiscript-guid.md) [批①](../Plans/M6a/2026-09-24-b1-combat-feel.md) [批②](../Plans/M6a/2026-09-25-b2-content-production.md)） | **用户幸存者项目全流程零 C++ 可玩**（主菜单→≥10 分钟一局→死亡结算→重开/回菜单；UI 屏部分由 M6b 承接）；新武器/敌人纯 prefab+C#+配置表；动画状态 Play 可切（T3d 升格：.controller 状态机/参数黑板/帧事件，ADR-013，ani.scene 双怪对决终验 ✅ 2026-09-27）；飘字/血条开启 bench-survivor ≥45fps；GUID 改名/manifest 重建引用稳定（批⓪ `--smoke-guid` ✅） |
-| **M6b 游戏UI产品壳**（2026-09-29 自 M6a 批③ 独立；[ADR-014](../ADR/ADR-014-Game-UI-RmlUi-Integration.md)） | RmlUi 地基 + 屏幕层五子批（③a–③c ✅ M6a 期内：渲染地基/字体资产/C# API 波1 机制——smoke-uirml 全链 + script-tests 1699 + 回归 15/15）→ ③d 前置 UIDocument 场景挂载（Unity 同构粒度 + 进 Play 自动装载双通道 + 归位，planned）→ ③d 模板迁移（六屏 → `.rml` + L2 默认皮）→ ③e 图鉴；流程状态机档1（单场景零引擎改动）+ LoadScene 档2 评估 | 3–4 周（③a–③c ✅；③d 前置 planned；[M6b.md](../Plans/M6b/M6b.md)） | vs-survivor 六屏全走 `.rml` + UIDocument 挂载；L2 换皮零代码；图鉴 500 条 ADR-008 预算内；与 M6a 验收① 合流：svr-test 主菜单→一局→结算→重开全流程 UI 层零 C++ |
+| **M6b 游戏UI产品壳**（2026-09-29 自 M6a 批③ 独立；[ADR-014](../ADR/ADR-014-Game-UI-RmlUi-Integration.md)） | RmlUi 地基 + 屏幕层五子批（③a–③c ✅ M6a 期内：渲染地基/字体资产/C# API 波1 机制——smoke-uirml 全链 + script-tests 1699 + 回归 15/15）→ ③d 前置 UIDocument 场景挂载（Unity 同构粒度 + 进 Play 自动装载双通道 + 归位，planned）→ ③d 模板迁移（六屏 → `.rml` + L2 默认皮）→ ③e 图鉴（**2026-09-30 迁 M9**）；流程状态机档1（单场景零引擎改动）+ LoadScene 档2 评估 | 3–4 周（③a–③c ✅；③d 前置 planned；[M6b.md](../Plans/M6b/M6b.md)） | vs-survivor 六屏全走 `.rml` + UIDocument 挂载；L2 换皮零代码；图鉴 500 条 ADR-008 预算内；与 M6a 验收① 合流：svr-test 主菜单→一局→结算→重开全流程 UI 层零 C++ |
 | **M6c 音频系统**（原 M6.5 → M6b 前移 → 2026-09-29 改号 M6c） | miniaudio 后端 + 2D 定位声源（SFX 一次性/BGM 循环）+ 音频资产（`.wav`/`.ogg` 导入 → `.baked`）+ C# `Lemon.Audio` + 编辑器试听/Inspector 槽 + 主/组音量 | 2–3 周 | VS/TD 模板全程有声（命中/击杀/拾取/升级/BGM/波次横幅）；100 并发 SFX 模拟侧 ≤ 0.5ms（解码不占主线程）；无音频设备/静音输出不崩（无头 CI 可跑） |
-| **M6d Tilemap + TD 模板**（2026-09-29 自 M6c 改号） | Tilemap/自动瓦片/FlowField/A*/摆塔状态机 + tower-defense 模板（波次表编辑器并入 M6a 配置表 ADR 定形，本里程碑只消费产出） | 5–7 周 | TD 模板 10 波通关；千怪走流场 CPU ≤ 2ms |
-| **M7 发布管线** | packager + .baked + Steam + 存档云同步 | 4 周 | vs-survivor 一键出 Win 包 + Steam depot 上传成功；安装即玩 |
+| **M7 发布管线**（2026-09-30 拆 M7a/M7b，见 §2） | **M7a 独立运行时+最简出包**（`Engine/Assets` 运行时资产层 + GameEntry/lemon-game + 目录拷贝式 packager）→ **M7b 发行侧**（Steam/云档/安装器/资源校验，真包后再议） | 4 周 | M7a：干净 mac+Win 机 `lemon-game --project demo/svr-test` 跑满 60 帧全流程零 C++、`git clean -xfd` 后无需 `.lemon/` 缓存；M7b：depot 上传成功、安装即玩 |
 | **M8 光照与打磨** | 光照裁剪版 + 后处理 + 性能终测（压测 A + **2h soak 长时稳定**）+ incremental 模板（若余量） | 4 周 | 压测 A 全绿（10k 怪 + 50k 弹 + 100k 粒 @60fps）；soak 2 小时内存曲线平/零崩溃（崩溃转储登记） |
+| **M9 Tilemap + TD 模板**（2026-09-30 自 M6d 后移新增档位） | Tilemap/自动瓦片/FlowField/A*/摆塔状态机 + tower-defense 模板（波次表编辑器并入 M6a 配置表 ADR 定形，本里程碑只消费产出）+ 图鉴/收集模板（M6b ③e 随迁） | 5–7 周 | TD 模板 10 波通关；千怪走流场 CPU ≤ 2ms；图鉴 500 条 ADR-008 预算内（随迁判据） |
 
 累计：**48–59 周（约 11–14 个月）**；用户游戏内容开发自 M6a 起与引擎并行，日历增量小于工时增量。M0–M3（内核+脚本）约 4 个月是硬风险区；M4–M7（编辑器+模板+产品化）是体验交付区。
 
@@ -132,25 +132,30 @@ CoreCLRHost 全量（域线程模型，ADR-010）→ SDK 核心子集（~50 导�
 
 五子批（子批号沿用；批文件与总览页落 `Plans/M6b/`，[M6b.md](../Plans/M6b/M6b.md)）：③a 渲染地基 ✅ → ③b 字体与资产通道 ✅ → ③c C# API 与波1 机制 ✅（均 M6a 期内完成）→ **③d 前置 UIDocument 场景挂载**（planned：Unity UIDocument 同构粒度——一组件挂一 `.rml` + 进 Play 自动装载双通道 + EnterPlay 归位；[批文件](../Plans/M6b/2026-09-29-b3d-pre-uidocument-scene-mount.md)）→ ③d 模板迁移（卡片/对话/HUD/主菜单/暂停/设置/结算转文档 + L2 最小默认皮 + smoke 随迁）→ ③e 图鉴/收集模板（波1 全量消费者）；流程状态机**档1 = 单场景零引擎改动**，**档2 = LoadScene 独立评估**（档1 不够用再开工，ADR 定夺）。
 **验收**：六屏全走 `.rml` + UIDocument 挂载；L2 换皮零代码；图鉴 500 条 ADR-008 预算内；与 M6a 验收① 合流（svr-test 全流程 UI 层零 C++）。
+> **2026-09-30：③e 图鉴迁出至 M9**（用户拍板：游戏玩法内容，与 TD 模板同批消费更贴）；M6b 以 ③d-2 + 真人验收收官，验收中"图鉴 500 条预算内"随迁 M9。
 
 ### M6c 音频系统（2–3 周，原 M6.5 前移 → 2026-09-29 自 M6b 改号）
 
 miniaudio 后端（00 选型表既定；引入时登记 `THIRD_PARTY.md` + 07 矩阵行）→ 音频资产类型（`.wav`/`.ogg` 导入、GUID/`.meta`、烘焙入 `.baked`——06 §2 类型表补行）→ 2D 声源（距离衰减 + 声像；一次性 SFX + BGM 循环，解码在音频线程/预解码）→ C# `Lemon.Audio`（Play/Stop/音量/分组，批量边界纪律同 04）→ 编辑器集成（AssetBrowser 试听、AudioSource 组件 Inspector 槽、Play 内混音面板最小版）。
 **验收**：总表判据 + 模板一局全程有声 + 无音频设备不崩（CI 无头可跑）。
+> **2026-09-30 排序确认（用户拍板）**：音频先于 M7 出包主体开工（对调原建议的第 1/2 批）——.baked 音频资产类型随本里程碑定形，M7 packager 一次做全类型。
 > **2026-09-24 登记**（[全栈审查](../Reports/2026-09-24-code-review-546a755.md) §7 缺口）：此前 M0–M8 无任何音频引擎侧条目——00 选型表仅一句 miniaudio、风险 #6 仅素材侧提及，属规划外缺口。范围裁剪（不做 DSP 图/中间件/3D 空间化）与砍单顺序 §4 一致。
 > **2026-09-24 前移改号**：原排 M6 与 M7 之间（M7 packager 依赖音频资产类型先行，该依赖不变）；重排后提前至当时 M6b——幸存者产品（M6a 产出）与 TD 模板两个消费者都在其后拿到声音。**2026-09-29 再改号 M6c**：UI 线独立占用 M6b（见文首重排注记）。
 
-### M6d Tilemap + tower-defense 模板（5–7 周，2026-09-29 自 M6c 改号）
+### M9 Tilemap + tower-defense 模板（5–7 周，2026-09-30 自 M6d 后移；原 2026-09-29 自 M6c 改号）
 
-Tilemap 数据 + chunk 烘焙渲染 → 碰撞层 → 自动瓦片 + TilePalette/笔刷 → FlowField + A* → 放置状态机（塔防摆塔）→ TD 模板整合。
-**验收**：TD 10 波通关；千怪流场 ≤ 2ms；自动瓦片 47 变体正确。
+Tilemap 数据 + chunk 烘焙渲染 → 碰撞层 → 自动瓦片 + TilePalette/笔刷 → FlowField + A* → 放置状态机（塔防摆塔）→ TD 模板整合 + 图鉴/收集模板（自 M6b ③e 迁入）。
+**验收**：TD 10 波通关；千怪流场 ≤ 2ms；自动瓦片 47 变体正确；图鉴 500 条 ADR-008 预算内（随迁判据）。
 > **2026-09-24 重排注**：自原 M6 拆出（通用件归 M6a/M6b）；"波次表编辑器"并入 M6a 批② 配置表 ADR 定形，本里程碑只消费其产出；bench-survivor"直接用默认素材"接轨（06 §7 注记）随本里程碑 tileset 素材与模板打包落地。
+> **2026-09-30 后移注**：Windows + 独立二进制 + 出包优先（[评审建议书](../Reports/2026-09-30-engineering-recommendations.md) R1——"能跑起来的独立 demo"边际收益最高）。历史文件中"挂 M6d"字样按 M9 读取。
 
-### M7 发布管线（4 周）
+### M7 发布管线（4 周，2026-09-30 拆 M7a/M7b）
 
-packager（烘焙/打包/安装器）→ Steam 集成（steamworks 动态加载 + 云档 + 成就）→ .baked + 资源校验 → 安装包回归（干净 Win 虚拟机）。
-**验收**：vs-survivor 出包上传 depot 成功；干净机安装即玩；云档冲突策略生效。
-> **开工前置（Gate C，2026-09-24 登记——[全栈审查](../Reports/2026-09-24-code-review-546a755.md) F-13/F-11）**：① CI 落地（09 §9：macOS runner 先行，push 全量逻辑测试 + 每日编辑器回归与性能基线门）；② Windows 编译阻断项清零（07 §3.6 清单——"补一个 win preset 就能编"不成立）。两条此前均被本表 §3/风险 #2/#7 当前提引用却从未排期/登记。
+**M7a 独立运行时 + 最简出包（先）**：`Engine/Assets` 运行时资产层（stb_image 解码换 TU 编入 `lemon-engine`、图集烘焙 `.baked` 读写、GUID/manifest 运行时只读——[评审](../Reports/2026-09-30-architecture-and-defect-review.md) §5.4：当前运行时零 PNG 解码能力，资产库住在 lemon-editor-core，本里程碑的真实前置不是打包脚本）→ `Engine/Entry/GameEntry` + `add_executable(lemon-game)`（ADR-005 同源双入口兑现；Play 从"运行游戏的唯一方式"降级为编辑器特权）→ packager 最简形态（目录拷贝 + manifest，不做压缩/加密/增量）。缺陷第二批（数据完整性：D6/D7/D8/M21/M22–M25）随本段穿插。
+**M7b 发行侧（后，真包后再议）**：Steam 集成（steamworks 动态加载 + 云档 + 成就）→ .baked 资源校验 → 安装器 → 安装包回归（干净 Win 虚拟机）。
+**验收**：M7a——干净 mac+Win 机 `lemon-game --project demo/svr-test` 跑满 60 帧、四屏全流程零 C++、`git clean -xfd` 后无需 `.lemon/` 缓存（[评审建议书](../Reports/2026-09-30-engineering-recommendations.md) R1 判据）；M7b——出包上传 depot 成功；干净机安装即玩；云档冲突策略生效。
+> **开工前置（Gate C，2026-09-24 登记——[全栈审查](../Reports/2026-09-24-code-review-546a755.md) F-13/F-11）**：① CI 落地（09 §9：macOS runner 先行，push 全量逻辑测试 + 每日编辑器回归与性能基线门）；② Windows 编译阻断项清零（07 §3.6 清单——"补一个 win preset 就能编"不成立）。**2026-09-30 第 0 批处置**：macOS push 门禁 workflow 落 `.github/workflows/ci.yml`（每日回归/性能基线门禁与 Windows runner 仍待）；07 §3.6 五条阻断全数清 + `win` preset 入 CMakePresets——**真机 Windows 编译验证仍待首次**（macOS 侧只能保证不回归）。明细见 [DevLog](../DevLog/2026-09-30-b0-gate-c-and-defect-batch1.md)。
+> **排序约束（2026-09-30 用户拍板）**：M6c 音频先于 M7a 开工。
 
 ### M8 光照与打磨（4 周）
 
@@ -213,7 +218,7 @@ CI 每日跑 bench-mow/bench-sim，数字写入构建报告（性能回退 > 10%
 | M6a | 04（多脚本）、05 §7（AnimationEditor）、06 §7/§10（模板/存档） |
 | M6b（UI） | 06 §8（UI 恒定原则/触发注记）、ADR-014 |
 | M6c（音频） | 06 §2（音频资产类型）、07（第三方登记） |
-| M6d | 03 §7（寻路）、05 §7、06 §5 |
+| M9（Tilemap+TD） | 03 §7（寻路）、05 §7、06 §5 |
 | M7 | 06 §6（发布） |
 | M8 | 02 §8（光照） |
 

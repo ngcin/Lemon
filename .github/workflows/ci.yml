@@ -1,0 +1,34 @@
+# Lemon CI — push/PR 逻辑面门禁（09 §9 最小落地，M7 批⓪ 2026-09-30）
+# macOS runner 无独显交互（GPU 不可用假设）：构建 + ctest 三项（engine-tests /
+# imgui-isolation / script-tests）。每日编辑器回归 + 性能基线门禁 + Windows runner
+# 随 M7a 批补齐（09 §9 全量口径）。runner 首跑调通前的观察项见
+# docs/DevLog/2026-09-30-b0-gate-c-and-defect-batch1.md 尾巴 2。
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  mac-build-test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: brew install molten-vk vulkan-loader vulkan-headers glslang ninja
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Configure
+        run: cmake --preset mac
+
+      - name: Build
+        run: cmake --build --preset mac
+
+      - name: Test
+        run: ctest --test-dir build/mac --output-on-failure

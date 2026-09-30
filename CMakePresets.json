@@ -18,10 +18,34 @@
       "inherits": "mac",
       "binaryDir": "${sourceDir}/build/mac-debug",
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "win",
+      "displayName": "Windows (VS2022 + Vulkan, Release)",
+      "generator": "Visual Studio 17 2022",
+      "architecture": { "value": "x64", "strategy": "set" },
+      "binaryDir": "${sourceDir}/build/win",
+      "cacheVariables": {
+        "CMAKE_CONFIGURATION_TYPES": "Release;Debug",
+        "LEMON_BUILD_SPIKES": "ON"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "win-debug",
+      "displayName": "Windows (VS2022 + Vulkan, Debug)",
+      "inherits": "win",
+      "binaryDir": "${sourceDir}/build/win-debug"
     }
   ],
   "buildPresets": [
     { "name": "mac", "configurePreset": "mac" },
-    { "name": "mac-debug", "configurePreset": "mac-debug" }
+    { "name": "mac-debug", "configurePreset": "mac-debug" },
+    { "name": "win", "configurePreset": "win", "configuration": "Release" },
+    { "name": "win-debug", "configurePreset": "win-debug", "configuration": "Debug" }
   ]
 }

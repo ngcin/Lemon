@@ -8,6 +8,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstring> // std::strcmp（MSVC 无 __builtin_*；Windows 阻断项③，07 §3.6）
 #include <vector>
 
 #include "Core/Log.h"
@@ -151,7 +152,7 @@ inline uint16_t ComponentRegistry::Register(const ComponentMeta& meta) {
 
 inline const ComponentMeta* ComponentRegistry::Find(const char* name) const {
     for (const ComponentMeta& m : metas_)
-        if (__builtin_strcmp(m.name, name) == 0) return &m;
+        if (std::strcmp(m.name, name) == 0) return &m;
     return nullptr;
 }
 

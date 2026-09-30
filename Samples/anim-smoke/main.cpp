@@ -330,7 +330,8 @@ int main(int argc, char** argv) {
 
         rhi::AcquireResult acq = device->AcquireNextImage();
         if (acq.deviceLost || acq.needsRecreate) {
-            if (acq.deviceLost || !device->RecreateSwapchain()) continue;
+            if (!acq.deviceLost) device->RecreateSwapchain(); // 重建后跳过本帧（评审 D2）
+            continue;
         }
         rhi::CommandList& cl = device->BeginFrame();
         const uint32_t w = device->SwapchainWidth(), h = device->SwapchainHeight();

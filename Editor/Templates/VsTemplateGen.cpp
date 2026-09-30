@@ -18,7 +18,7 @@
 
 #include "stb_image_write.h"
 
-#include <unistd.h> // getpid（smoke-guid tempdir）
+#include "Core/Process.h" // CurrentProcessId（tempdir 唯一名；Windows 阻断项①，07 §3.6）
 
 #include "Assets/AssetDatabase.h"
 #include "Assets/ProjectWizard.h"
@@ -1393,7 +1393,7 @@ bool RunGuidSmokeChain(uint32_t spriteIdBase) {
     using ecs::Entity;
     std::error_code ec;
     const fs::path tmp = fs::temp_directory_path() /
-                         ("lemon-smoke-guid-" + std::to_string(::getpid()));
+                         ("lemon-smoke-guid-" + std::to_string(lemon::CurrentProcessId()));
     fs::remove_all(tmp, ec);
     ProjectDesc d;
     d.parentDir = tmp.string();

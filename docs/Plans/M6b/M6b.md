@@ -1,6 +1,6 @@
 # M6b 实施计划 —— 游戏UI产品壳（RmlUi 屏幕层，2026-09-29 自 M6a 批③ 独立）
 
-Status: in-progress（③a–③c done；**③c-2 同值去重微批 done 2026-09-29**（T8 后续卫生批：SDK staging setter 级等值早退 + 失效五处 + script-tests ③④ 段真阴性，回归 full 16/16）；③d 前置 done 2026-09-29（真人验收三件已过 2026-09-30，[DevLog](../../DevLog/2026-09-30-acceptance-m5-uidoc-d1.md)）；**③d-1 done 2026-09-29**（smoke-template ×2 全绿 + smoke-uirml 双模式 dp 位全绿 + 回归 full 15/15 首跑过；真人验收视觉走查/换肤两件已过 2026-09-30（同 DevLog）；当日 T8 后修双联 5f9566b——display 显式化 + 进度条原生 progress 化）；**③d-2 done 代码面 2026-09-30**（批文件 [2026-09-30-b3d2-four-screens-flow](./2026-09-30-b3d2-four-screens-flow.md)：余四屏 + 档1 流程状态机（重开 = 清场 + prefab 重挂）+ svr-test 接通；四设计点用户拍板；实现期发现 = EnTT 逆序 Show 序（GameFlow re-Show 修）+ prefab scripts[] Play 态实例挂载真缺口（InstantiatePrefabAsset 补）；smoke ×2 逐位一致 + 回归 16/16 + bench fps=78 + svr 无头验放；[DevLog](../../DevLog/2026-09-30-m6b-b3d2-four-screens-flow.md)；真人验收余用户；③e 待开）
+Status: in-progress（③a–③c done；**③c-2 同值去重微批 done 2026-09-29**（T8 后续卫生批：SDK staging setter 级等值早退 + 失效五处 + script-tests ③④ 段真阴性，回归 full 16/16）；③d 前置 done 2026-09-29（真人验收三件已过 2026-09-30，[DevLog](../../DevLog/2026-09-30-acceptance-m5-uidoc-d1.md)）；**③d-1 done 2026-09-29**（smoke-template ×2 全绿 + smoke-uirml 双模式 dp 位全绿 + 回归 full 15/15 首跑过；真人验收视觉走查/换肤两件已过 2026-09-30（同 DevLog）；当日 T8 后修双联 5f9566b——display 显式化 + 进度条原生 progress 化）；**③d-2 done 代码面 2026-09-30**（批文件 [2026-09-30-b3d2-four-screens-flow](./2026-09-30-b3d2-four-screens-flow.md)：余四屏 + 档1 流程状态机（重开 = 清场 + prefab 重挂）+ svr-test 接通；四设计点用户拍板；实现期发现 = EnTT 逆序 Show 序（GameFlow re-Show 修）+ prefab scripts[] Play 态实例挂载真缺口（InstantiatePrefabAsset 补）；smoke ×2 逐位一致 + 回归 16/16 + bench fps=78 + svr 无头验放；[DevLog](../../DevLog/2026-09-30-m6b-b3d2-four-screens-flow.md)；真人验收已过 2026-09-30（T10 后修①复测过，[回执](../../DevLog/2026-09-30-acceptance-b3d2-flow.md)）；**③e 迁出 M9，M6b 收官（2026-09-30 路线图重排，用户拍板：图鉴=游戏玩法内容，与 TD 模板同批消费更贴）**）
 
 > 2026-09-29 重排：UI 线自 M6a 批③ 整体迁入本里程碑（动因：M6a 承载过多——玩法/内容生产/UI 三线并进观感混乱；UI 已长成独立一条线。用户拍板）。**子批编号沿用 ③a–③e 不重编**（文件名与提交史实保留，"b3" 文件前缀 = 原 M6a 批③ 史实）。原 M6b 音频 → M6c、原 M6c Tilemap+TD → M6d（映射见 [08 文首重排注记](../../EngineDesign/08-Development-Roadmap.md)）。里程碑总览页：每批一个文件，开工前分解到文件/行级，完工后批文件内勾销；事件流水与实测数字记 [DevLog](../../DevLog/)。
 
@@ -20,7 +20,7 @@ Status: in-progress（③a–③c done；**③c-2 同值去重微批 done 2026-0
 | ③c-2 | [2026-09-29-b3c2-ui-ops-staging-dedup](./2026-09-29-b3c2-ui-ops-staging-dedup.md) | T8 后续卫生批：staging 同值去重（幂等五 op setter 级早退 + 失效五处） | **done**（2026-09-29；script-tests ③ 恰 2-op + ④ 重装载复位 6-op 真阴性；smoke-template 数值逐位一致 = 零漂移；回归 full 16/16；发现：事件驱动写下一帧可见 / 终帧三局 Play 会洗掉中途重装载断言——真阴须事件注入） |
 | ③d-1 | [2026-09-29-b3d1-sample-screens](./2026-09-29-b3d1-sample-screens.md) | 样板批：主题 token 单源（`theme.rcss`，`--token`/`var()`）+ L2 组件库首件 + **dp 坐标系落地** + HUD/卡片两屏样板 + 层序断言 | **done 代码面**（2026-09-29；ratio 原生重排实证免兜底 / RmlUi 全屏元坑 = body 画布约定 / 合成点击改引擎直灌 / 催命保死亡链余量；smoke-template ×2 全绿 + uirml 双模式 + 回归 15/15；真人验收视觉走查/换肤两件已过 2026-09-30（走查含 T8 后修二轮确认），[DevLog](../../DevLog/2026-09-30-acceptance-m5-uidoc-d1.md)） |
 | ③d-2 | [2026-09-30-b3d2-four-screens-flow](./2026-09-30-b3d2-four-screens-flow.md) | 铺量批：余四屏（主菜单/暂停/设置/结算）+ 档1 流程状态机（重开清场清单）+ smoke 随迁 + svr-test 全流程接通 | **done**（2026-09-30 终验关闭：四设计点用户拍板——死亡策略归游戏侧（模板示例 = 每局一次复活）/svr MainMenu.scene 唯一入口/设置两真实开关/暂停 bit6；重开 = 清场 + Player/Director prefab 重挂零手工复位；引擎三小增量（bit6/盒探针 x/y/**prefab scripts[] Play 态实例挂载缺口**）；smoke ×2 逐位一致 + 回归 16/16 + bench fps=78 + svr 无头验放；真人验收过（T10 后修①「再战一局」残屏已修 + 阴性验证 + 复测过，[回执](../../DevLog/2026-09-30-acceptance-b3d2-flow.md)）——判据① uidoc=6 机器证明） |
-| ③e | 开批新建 | 图鉴/收集模板：波1 全量消费者（纸面验证 ①） | 待开 |
+| ③e | —（迁出） | 图鉴/收集模板：波1 全量消费者（纸面验证 ①）——**2026-09-30 迁 M9**（随 M6d 后移；图鉴判据"500 条 ADR-008 预算内"随迁） | 迁出（M6b 以 ③d-2 收官） |
 
 批次顺序理由：③d 前置先行（装载/显隐管理是六屏的公共地基）；③d **两拆**（2026-09-29 拍板 D2）——③d-1 先以两屏样板验证 dp 坐标系、层序语义与 token 单源三个新约定，过了 ③d-2 再铺量（高风险项隔离在最小批）；③d → ③e 依序（图鉴消费全套机制，是波1 的规模化验收）。
 
@@ -29,7 +29,7 @@ Status: in-progress（③a–③c done；**③c-2 同值去重微批 done 2026-0
 1. vs-survivor 模板**六文档**（卡片（死亡对话 = 卡片文档的单条形态）/HUD/主菜单/暂停/设置/结算——2026-09-29 审核修正口径：原「六屏列 7 项」名实不符）全走 `.rml` 文档 + UIDocument 挂载；RtUiCards 兼容层去留在 M8 前定案（ADR-014 D5）；
 2. L2 最小默认皮落地（纯 `.rml/.rcss` 资产，换肤 = 改单一 `theme.rcss` 的主题 token（RCSS 自定义属性 `--token`/`var()`，RmlUi 6.3 原生支持）不写代码；**字号/间距全 dp 单位**——ctx `SetDensityIndependentPixelRatio(gameRT 高/参考高)`，窗口缩放时 UI 物理比例恒定，布局用百分比/flex）；
 3. 流程状态机档1 落地（单场景零引擎改动：主菜单/暂停/设置/结算→重开/回菜单）并接通 svr-test 全流程（与 M6a 出口判据① 合流）。**重开 = C# 自律清场**（Destroy run 实体使 tween 自清 / 常驻实体逐个 `KillAll` / 各屏 `SetItems` 重灌 + `SetText` 复位清单随 ③d-2 批文件落账），session-reset op 登记后手不实现；svr-test 存档档位随批对齐（`vs.best` → meta 已改，`svr.*` 诊断键 → ③d-2 统一处置）；
-4. 图鉴屏（100~500 条 SetItems）实测 ADR-008 预算内（>3ms 再启虚拟化评估）**+ 单帧 UI ops arena 实耗 < 64 KiB 断言**（500 条实耗 ≈ 50KB ≈ 77% 占用贴边——2026-09-29 审核余值；`EstimateBytes` ×3 为上界仅用于 C# 预扩容，勿当实耗读）；
+4. 图鉴屏（100~500 条 SetItems）实测 ADR-008 预算内（>3ms 再启虚拟化评估；**2026-09-30 随 ③e 迁 M9**）**+ 单帧 UI ops arena 实耗 < 64 KiB 断言**（500 条实耗 ≈ 50KB ≈ 77% 占用贴边——2026-09-29 审核余值；`EstimateBytes` ×3 为上界仅用于 C# 预扩容，勿当实耗读）；
 5. smoke 全链绿 + 回归 full（uirml-chain 断言随迁移升级）；
 6. LoadScene 档2 评估结论落 ADR（档1 不够用再开工）。
 

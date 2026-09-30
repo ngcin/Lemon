@@ -236,7 +236,9 @@ int main(int argc, char** argv) {
         AcquireResult acq = device->AcquireNextImage();
         if (acq.deviceLost || acq.needsRecreate) {
             ++recreateEvents;
-            if (acq.deviceLost || !device->RecreateSwapchain()) { ++skippedFrames; continue; }
+            if (!acq.deviceLost) device->RecreateSwapchain(); // 重建后跳过本帧（评审 D2）
+            ++skippedFrames;
+            continue;
         }
         CommandList& cl = device->BeginFrame();
 

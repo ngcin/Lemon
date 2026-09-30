@@ -23,7 +23,7 @@
 #include "Components/BehaviorComponents.h"
 #include "Components/CoreComponents.h"
 #include "Components/RenderComponents.h"
-#include <unistd.h> // getpid（bench-survivor tempdir）
+#include "Core/Process.h" // CurrentProcessId（tempdir 唯一名；Windows 阻断项①，07 §3.6）
 #include "Core/Log.h"
 #include "EditorContext.h"
 #include "Renderer/RHI.h"
@@ -98,7 +98,7 @@ bool EditorApp::SmokeTplSeedProject() {
     namespace fs = std::filesystem;
     std::error_code ec;
     const fs::path tmp = fs::temp_directory_path() /
-                         ("lemon-smoke-template-" + std::to_string(::getpid()));
+                         ("lemon-smoke-template-" + std::to_string(lemon::CurrentProcessId()));
     fs::remove_all(tmp, ec);
     ProjectDesc d;
     d.parentDir = tmp.string();
@@ -730,7 +730,7 @@ bool EditorApp::SmokeTplVerdict() {
             namespace fs = std::filesystem;
             const fs::path tmp2 =
                 fs::temp_directory_path() /
-                ("lemon-smoke-template2-" + std::to_string(::getpid()));
+                ("lemon-smoke-template2-" + std::to_string(lemon::CurrentProcessId()));
             std::error_code ec2;
             fs::remove_all(tmp2, ec2);
             ProjectDesc d2;

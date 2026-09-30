@@ -274,18 +274,32 @@ int ProjectWizard::BuildGameProject(const std::string& csprojAbs, const std::str
     // （编译错误行是 Console 解析原料；-v q 只剩错误/警告，量小）。
     std::string cmd = "dotnet build \"" + csprojAbs + "\" -c Release --nologo -v q -o \"" +
                       outDir + "\" 2>&1";
+    // Windows 阻断项④（07 §3.6）过渡口径：MSVC CRT 的 _popen 编译等价（cmd.exe 同样
+    // 支持 "..." 引用与 2>&1 重定向）。中文路径的 codepage 行为归 Windows 真机首调
+    // 验证（届时按 07 原方案换 CreateProcessW 进程抽象）
+#if defined(_MSC_VER)
+    #define LEMON_POPEN _popen
+    #define LEMON_PCLOSE _pclose
+#else
+    #define LEMON_POPEN popen
+    #define LEMON_PCLOSE pclose
+#endif
     int rc = -1;
-    if (FILE* pipe = popen(cmd.c_str(), "r")) {
+    if (FILE* pipe = LEMON_POPEN(cmd.c_str(), "r")) {
         std::string out;
         char buf[4096];
         size_t n = 0;
         while ((n = fread(buf, 1, sizeof(buf), pipe)) > 0) {
             if (out.size() < 64 * 1024) out.append(buf, n); // 上限保护（错误洪泛不进环）
         }
-        const int status = pclose(pipe);
+        const int status = LEMON_PCLOSE(pipe);
         rc = status >= 0 ? status : -1;
         if (outOutput) *outOutput = std::move(out);
     }
+#if defined(_MSC_VER)
+    #undef LEMON_POPEN
+    #undef LEMON_PCLOSE
+#endif
     if (outSeconds)
         *outSeconds = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
                                                                 t0)

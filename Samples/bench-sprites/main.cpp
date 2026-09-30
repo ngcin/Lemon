@@ -120,7 +120,8 @@ int main(int argc, char** argv) {
         // --- 渲染帧 ---
         AcquireResult acq = device->AcquireNextImage();
         if (acq.deviceLost || acq.needsRecreate) {
-            if (acq.deviceLost || !device->RecreateSwapchain()) continue;
+            if (!acq.deviceLost) device->RecreateSwapchain(); // 重建后跳过本帧（评审 D2）
+            continue;
         }
         CommandList& cl = device->BeginFrame();
 

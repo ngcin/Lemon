@@ -11,7 +11,12 @@ namespace lemon {
 
 enum class LogLevel : uint8_t { Info, Warn, Error };
 
+// MSVC 无 __attribute__((format))（Windows 阻断项②，07 §3.6）
+#if defined(_MSC_VER)
+void LogMsg(LogLevel level, const char* fmt, ...);
+#else
 void LogMsg(LogLevel level, const char* fmt, ...) __attribute__((format(printf, 2, 3)));
+#endif
 
 inline constexpr const char* ToString(LogLevel l) {
     switch (l) {

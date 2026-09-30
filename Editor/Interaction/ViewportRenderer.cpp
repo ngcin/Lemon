@@ -355,9 +355,9 @@ void ViewportRenderer::OnDeviceRecreated(rhi::Device& device) {
     assets_.Build(device); // 程序化页/字体页按原序重建 → spriteId 1..N 复原；
     // 导入页由 EditorApp 的 asset-gpu 回调按 DB 记账号升序重导入接续编号
     RebindProceduralIcons();
-    const rhi::Format rtFormat = rhi::Format::RGBA8Unorm;
-    sceneBatcher_.Init(device, 0, 1, rtFormat, /*ringSlot=*/0); // 管线经磁盘缓存重建；实例环形缓冲重建
-    gameBatcher_.Init(device, 0, 1, rtFormat, /*ringSlot=*/1);
+    // 合批器不在此重 Init（评审 D3，2026-09-30）：其自登记回调（注册序在本回调之前）
+    // 已在同一次设备丢失序列里完成几何/管线/实例环重建；此处再 Init 只会重复登记
+    // 回调 token 并覆盖刚重建的活资源（每次设备丢失净漏 2 buffer + 2 shader + 4 pipeline）
 }
 
 void ViewportRenderer::RebindProceduralIcons() {
@@ -475,7 +475,8 @@ void ViewportRenderer::RenderViewport(rhi::CommandList& cl, uint32_t idx, Sprite
     if (!rt.tex.IsValid()) return;
     const float aspect = (float)rt.w / (float)rt.h;
     const Rect view = cam.ViewRect(aspect);
-    rm_.SetViewport(cam.center, view.max.x - view.min.x, view.max.y - view.min.y, 200.0f);
+    rm_.SetViewport(cam.center, (view.max.x - view.min.x) * 0.5f,
+                    (view.max.y - view.min.y) * 0.5f, 200.0f); // SetViewport 取半宽/半高
     auto packets = rm_.Extract(assets_.Registry(), simAlpha);
     if (idx == 0) lastSceneVisible_ = rm_.LastStats().visible;
 

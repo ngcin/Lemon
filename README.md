@@ -31,7 +31,7 @@ cmake --build --preset mac    # 构建
 ./build/mac/spike/01-triangle/lemon-spike-triangle --immediate    # 极限帧率
 ```
 
-Windows：安装 LunarG Vulkan SDK + Visual Studio 2022，预设 `win` 待 M1 添加。
+Windows：安装 LunarG Vulkan SDK + Visual Studio 2022，然后 `cmake --preset win && cmake --build --preset win`（2026-09-30 添加 preset 并清零 07 §3.6 编译阻断项；**真机编译验证待首次**——首次在 Windows 上跑通前请按未验证对待）。
 
 ## 测试（方法与判读详见 `../docs/EngineDesign/09-Testing.md`）
 

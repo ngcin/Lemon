@@ -82,6 +82,7 @@ private:
     std::vector<uint8_t> slotOf_;       // 单遍生成时的槽索引缓存
     Stats stats_;
     bool warnedSanitize_ = false; // blend/filter 钳制告警只响一次
+    bool dropWarned_ = false;     // 键表满丢弃告警只响一次（评审 M1：计数只写不读）
 };
 
 } // namespace lemon::renderer

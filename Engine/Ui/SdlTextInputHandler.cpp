@@ -4,6 +4,8 @@
 // 三判据实证：中文提交零乱码/候选窗贴光标/事件不串）。
 #include "Ui/SdlTextInputHandler.h"
 
+#include "Core/Log.h"
+
 #include <RmlUi/Core.h>
 #include <RmlUi/Core/StringUtilities.h>
 #include <RmlUi/Core/TextInputHandler.h>
@@ -60,10 +62,16 @@ struct SdlTextInputHandler::Impl {
     SdlImeHandler handler;
 };
 
-SdlTextInputHandler::SdlTextInputHandler() = default;
+// impl_ 构造即分配（评审 D1，2026-09-30）：曾为 = default——HandlerPtr 取 &impl_->handler
+// 形式上解引用空指针（handler 恰在偏移 0 才"恰好"返回 nullptr 注册进 Rml），且
+// HandleTextEditing 的 if (impl_) 恒假 → IME 预编辑通道整体静默 no-op
+SdlTextInputHandler::SdlTextInputHandler() : impl_(std::make_unique<Impl>()) {}
 SdlTextInputHandler::~SdlTextInputHandler() = default;
 
-void* SdlTextInputHandler::HandlerPtr() { return &impl_->handler; }
+void* SdlTextInputHandler::HandlerPtr() {
+    LEMON_ASSERT(impl_, "impl_ must be allocated at construction (IME channel)");
+    return &impl_->handler;
+}
 
 void SdlTextInputHandler::HandleTextEditing(const char* utf8, int start, int length) {
     if (impl_) impl_->handler.HandleEdit(utf8, start, length);

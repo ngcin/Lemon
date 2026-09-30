@@ -261,6 +261,8 @@ void ImGuiBackend::Render(rhi::CommandList& cl) {
                                     (VkCommandBuffer)cl.NativeCommandBuffer());
 }
 
+void ImGuiBackend::SkipFrame() { ImGui::EndFrame(); }
+
 float ImGuiBackend::DisplayScale() const { return m->scale; }
 bool ImGuiBackend::CjkFontLoaded() const { return m->cjkLoaded; }
 

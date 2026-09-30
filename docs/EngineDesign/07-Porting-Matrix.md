@@ -127,7 +127,7 @@
 | **M3 脚本** | Luma CoreCLRHost 全量 + ScriptLoadContext（B）、yami 生命周期形状（C）、Prowl2D SceneDispatcher 调度 / 命名级 API 面 / MainThreadContext（C）、Prowl Roslyn（C，后期） |
 | **M4 编辑器** | Luma 面板框架与面板集（B）、MoteurJV Play 快照（C）、Prowl2D Undo 双轨 / PrefabLink + Inspector override（C）、Editor-RPG2D 模式栈/焦点仲裁/放行约定（A）、yami GUID+manifest（C）；新增第三方 Dear ImGui v1.92.9b-docking（MIT，编辑器 UI，THIRD_PARTY 已登记，M4.0）+ stb（公有领域，PNG 导入/截屏，M4.0） |
 | **M5 VS 模板** | duality SpriteAnimator 思想（C）、yami 存档接口（C）、yami 默认素材底包（MIT 直用）；新增第三方 **RmlUi 6.3**（MIT，v1.x 富 UI 首选，spike-04 三判据验收通过，ADR-008；CPM 锁 tag，THIRD_PARTY 已登记；**2026-09-28 批③a 转正式**——ADR-014，`Engine/Ui` + 自研 RenderInterface over RHI）+ **rbfx**（MIT fork，RmlUi↔引擎渲染层适配 D 级对照，ADR-008 接入形态依据）；FreeType 走系统 brew 2.14.3（RmlUi 字体引擎，暂不 vendored） |
-| **M6c TD 模板** | duality Tilemaps（B）、Editor-RPG2D 放置状态机/自动瓦片/chunk 烘焙（B） |
+| **M9 TD 模板**（编号沿革 M6c→M6d→M9，2026-09-30 定） | duality Tilemaps（B）、Editor-RPG2D 放置状态机/自动瓦片/chunk 烘焙（B） |
 | **M7 发布** | yami Deployment 清单（C）、Editor-RPG2D 序列化骨架（C） |
 | **M8 光照** | Luma 延迟光照裁剪版（B，含 WGSL→GLSL 直译） |
 
@@ -147,21 +147,26 @@ Windows 首次移植时需人工复验（M4.6 §7 登记；新 OS 级功能在�
 | 关闭按钮/退出确认 | `Window::PollEvents` 返回 false → 状态机 | ✅ M4.6（--smoke-close） | 无差异预期；跑同款冒烟即可 |
 | 文件选择器手输路径 | FilePicker（编辑器内实现，无 OS 对话框） | ✅ M4.6b | `C:\` 盘符路径回车直达 |
 
-## 3.6 Windows 编译阻断项（首次移植前清零；2026-09-24 全栈审查 F-11 登记）
+## 3.6 Windows 编译阻断项（首次移植前清零；2026-09-24 全栈审查 F-11 登记；**2026-09-30 第 0 批全数处置**）
 
 §3.5 行为验证表默认"能编译"——下列阻断项不清零则到不了行为层。**"补一个 win
 preset 就能编"不成立**；M7 开工前（Gate C 前置，08 §M7）逐项处置：
 
-| # | 阻断点 | 位置 | 处置方向 |
-|---|---|---|---|
-| 1 | `#include <unistd.h>`（getpid） | `Editor/App/EditorApp.cpp` | 平台抽象（`std::filesystem` 无此需求；SDL/条件宏） |
-| 2 | `__attribute__((format(printf,…)))` | `Engine/Core/Log.h` | `PRINTF_FORMAT` 宏按编译器分支（MSVC 用 `[[msvc::format]]`/SAL） |
-| 3 | `__builtin_strcmp`（5 处） | `Engine/ECS/ComponentRegistry.h`、`Engine/ECS/SystemPipeline.cpp` | 直接 `std::strcmp`（编译器自会内联，GCC 专有内建零收益） |
-| 4 | `popen/pclose` 拼 shell 编译命令 | `Editor/Assets/ProjectWizard.cpp` | 进程抽象层（`CreateProcessW`/`_popen` + 宽字符 argv，顺带消 shell 注入面） |
-| 5 | `std::filesystem::rename` 覆盖既有目标 | 存档/管线缓存写路径（原子写已收敛在 `WriteFileAtomic`——一处收口） | 语义层封装（Windows 走先删后改名或 `ReplaceFile`） |
+| # | 阻断点 | 位置 | 处置方向 | 处置状态（2026-09-30） |
+|---|---|---|---|---|
+| 1 | `#include <unistd.h>`（getpid） | `Editor/App/EditorAppSmoke.cpp`、`EditorAppSmokeTpl.cpp`、`Editor/Templates/VsTemplateGen.cpp`（EditorApp.cpp 已在减脂批消除） | 平台抽象（`std::filesystem` 无此需求；SDL/条件宏） | ✅ 新增 `Engine/Core/Process.h`（`lemon::CurrentProcessId()`：POSIX getpid / Win GetCurrentProcessId；SDL 3.2.14 无 SDL_GetPID 故未用 SDL） |
+| 2 | `__attribute__((format(printf,…)))` | `Engine/Core/Log.h` | `PRINTF_FORMAT` 宏按编译器分支（MSVC 用 `[[msvc::format]]`/SAL） | ✅ `#if defined(_MSC_VER)` 分支（MSVC 侧暂不加注解） |
+| 3 | `__builtin_strcmp` | `Engine/ECS/ComponentRegistry.h`（1 处）、`Engine/ECS/SystemPipeline.cpp`（3 处；合计 4 处非登记的 5 处） | 直接 `std::strcmp`（编译器自会内联，GCC 专有内建零收益） | ✅ 全换 `std::strcmp`（ComponentRegistry.h 补 `<cstring>`） |
+| 4 | `popen/pclose` 拼 shell 编译命令 | `Editor/Assets/ProjectWizard.cpp` | 进程抽象层（`CreateProcessW`/`_popen` + 宽字符 argv，顺带消 shell 注入面） | ✅ 编译面：MSVC `_popen/_pclose` 宏分支过渡。**行为面未清**：中文路径 codepage 归 Windows 真机首调（届时按原方向换 CreateProcessW 宽字符） |
+| 5 | `std::filesystem::rename` 覆盖既有目标 | 存档/管线缓存写路径（原子写已收敛在 `WriteFileAtomic`——一处收口） | 语义层封装（Windows 走先删后改名或 `ReplaceFile`） | ✅ 新增 `Engine/Core/FileOps.{h,cpp}` `RenameReplace()`：Win = `MoveFileExW(MOVEFILE_REPLACE_EXISTING)`（同卷原子、UTF-8→UTF-16），POSIX = `fs::rename`；`WriteFileAtomic`（AssetDatabase）与管线缓存写（RHI）已切换 |
 
 伴生项：宽字符路径（资产绝对路径 `std::string` 全链在 Windows 长路径/中文路径下的
-形态）与 `win` CMake preset——preset 是最后一件事，不是第一件。
+形态）——**未处置，归真机首调**；`win` CMake preset ✅ 已入 CMakePresets（VS2022 x64
+多配置生成器 + `condition` 限 Windows host）。
+
+> **验证口径**：以上处置均只在 macOS 侧验证"不回归"（构建 + 回归 full 16/16）；
+> **MSVC 实际编译仍待首次真机验证**——07 §3.5 行为验证表与 Gate C ② 的最终勾销
+> 以该次为准（[DevLog](../DevLog/2026-09-30-b0-gate-c-and-defect-batch1.md)）。
 
 ## 4. 登记模板（新增移植项用）
 

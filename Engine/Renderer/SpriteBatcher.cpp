@@ -11,6 +11,10 @@ namespace lemon::renderer {
 void SpriteBatcher::Init(rhi::Device& device, uint32_t samplerLinearSlot,
                          uint32_t samplerPointSlot, rhi::Format colorFormat,
                          uint32_t ringSlot) {
+    // 幂等（评审 D3，2026-09-30）：重复 Init 先摘旧 token 再登记——回调表是 vector
+    // push_back 不按名去重，不摘则条目随每次设备丢失线性累积，析构只摘最后一个，
+    // 残留回调持悬垂 this 于下次设备丢失 UAF
+    if (recreateCbId_ != 0) device.RemoveRecreateCallback(recreateCbId_);
     device_ = &device;
     colorFormat_ = colorFormat;
     samplerSlots_[0] = samplerLinearSlot;
