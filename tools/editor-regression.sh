@@ -8,6 +8,39 @@
 # 2026-09-24 用户反馈回归运行打断前台工作而加，机制见 Window.cpp LEMON_NO_ACTIVATE）
 export LEMON_NO_ACTIVATE=1
 
+# 残留实例前置守卫（2026-09-30 批③c-5 事故复盘：前夜泄漏的 headless 实例与
+# 回归链争 GPU/窗口资源，帧锚定注入链间歇失败、三轮排障才现形）。分类处置：
+# 带 smoke/bench/frames 等 CLI 旗标的 = headless 残留 → 清理后继续；无旗标的 =
+# 疑似交互会话 → 中止交人裁决（自动杀交互会话 = 丢用户未存状态）。
+stale_pids=""
+live_pids=""
+for pid in $(pgrep -f lemon-editor 2>/dev/null); do
+    cmd="$(ps -p "${pid}" -o command= 2>/dev/null)" || continue
+    [ -z "${cmd}" ] && continue
+    exe="${cmd%% *}"
+    [ "$(basename "${exe}")" = "lemon-editor" ] || continue
+    case "${cmd}" in
+        *--smoke*|*--bench*|*--frames*|*--final*|*--play*|*--scene*|*--save-scene*|*--screenshot*|*--gen-vs-template*)
+            stale_pids="${stale_pids} ${pid}" ;;
+        *) live_pids="${live_pids} ${pid}" ;;
+    esac
+done
+if [ -n "${live_pids}" ]; then
+    echo "== ABORT: lemon-editor 正在运行（疑似交互会话，不自动杀）：${live_pids}"
+    echo "       关闭它或手动 kill 后重跑；headless 残留会被本守卫自动清理"
+    exit 2
+fi
+if [ -n "${stale_pids}" ]; then
+    echo "-- 清理残留 headless 实例（前次回归泄漏，与本次争 GPU）：${stale_pids}"
+    kill ${stale_pids} 2>/dev/null
+    sleep 1
+    alive=""
+    for pid in ${stale_pids}; do
+        kill -0 "${pid}" 2>/dev/null && alive="${alive} ${pid}"
+    done
+    [ -n "${alive}" ] && kill -9 ${alive} 2>/dev/null && sleep 1
+fi
+
 # 注：macOS 自带 bash 3.2——所有展开一律 ${BRACED}（变量名后跟全角标点会把
 #     高位字节并进名字 → "unbound variable"）。
 set -u
