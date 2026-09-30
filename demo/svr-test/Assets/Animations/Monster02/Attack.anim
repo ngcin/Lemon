@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "name": "Monster02-Attack",
+  "fps": 14,
+  "loop": false,
+  "frames": [
+    {
+      "sheet": "ac8716372839ec6b",
+      "cell": 0
+    },
+    {
+      "sheet": "c651f26b867bc272",
+      "cell": 0
+    },
+    {
+      "sheet": "a2a0cb12e17139a0",
+      "cell": 0
+    },
+    {
+      "sheet": "a8ce959d959357ee",
+      "cell": 0
+    },
+    {
+      "sheet": "114233dde4272298",
+      "cell": 0
+    },
+    {
+      "sheet": "da7d86a4e5d11d29",
+      "cell": 0
+    },
+    {
+      "sheet": "d99811128b721d0d",
+      "cell": 0
+    },
+    {
+      "sheet": "0d3a729bf24d6625",
+      "cell": 0
+    },
+    {
+      "sheet": "9808ccc37d2ad5b8",
+      "cell": 0
+    },
+    {
+      "sheet": "247fd38d94b42ea1",
+      "cell": 0
+    },
+    {
+      "sheet": "074f4eea2581835d",
+      "cell": 0
+    },
+    {
+      "sheet": "647a08bd32465ae5",
+      "cell": 0
+    }
+  ],
+  "events": [
+    { "frame": 6, "id": 1 }
+  ]
+}

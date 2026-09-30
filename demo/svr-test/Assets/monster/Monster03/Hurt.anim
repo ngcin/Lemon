@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "name": "Hurt",
+  "fps": 12,
+  "loop": true,
+  "frames": [
+    {
+      "sheet": "efea30761378cccb",
+      "cell": 0
+    },
+    {
+      "sheet": "a6cceefaf028b61c",
+      "cell": 0
+    },
+    {
+      "sheet": "715435aa7e9d139a",
+      "cell": 0
+    },
+    {
+      "sheet": "3eea97e4d73d1477",
+      "cell": 0
+    },
+    {
+      "sheet": "ece381c238655d0f",
+      "cell": 0
+    },
+    {
+      "sheet": "178d39df457b8df5",
+      "cell": 0
+    },
+    {
+      "sheet": "447b60620cf9d8d0",
+      "cell": 0
+    },
+    {
+      "sheet": "8dfcea24dc589f2f",
+      "cell": 0
+    },
+    {
+      "sheet": "f838feadd2cc1d9d",
+      "cell": 0
+    },
+    {
+      "sheet": "f0065cf711add6dc",
+      "cell": 0
+    },
+    {
+      "sheet": "8f5e88903df56110",
+      "cell": 0
+    },
+    {
+      "sheet": "e9940ea42b43a56f",
+      "cell": 0
+    }
+  ]
+}

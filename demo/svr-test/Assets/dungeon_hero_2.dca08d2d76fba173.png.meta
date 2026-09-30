@@ -1,0 +1,17 @@
+{
+  "guid": "cf5164a2b1a84490",
+  "hash": 9472083598263962016,
+  "importedAt": 1790481037,
+  "importer": {
+    "cell": [
+      16,
+      32
+    ],
+    "frames": [
+      9,
+      1
+    ],
+    "slice": "grid"
+  },
+  "type": "sprite"
+}

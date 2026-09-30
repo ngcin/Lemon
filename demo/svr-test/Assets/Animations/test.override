@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "name": "test",
+  "segments": [
+    {
+      "name": "idle",
+      "clip": "0aae7a9071243a7b"
+    }
+  ]
+}

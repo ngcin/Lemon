@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "name": "Monster02-Death",
+  "fps": 10,
+  "loop": false,
+  "frames": [
+    {
+      "sheet": "4c52000907bf0cbe",
+      "cell": 0
+    },
+    {
+      "sheet": "48f3ebdf379feac3",
+      "cell": 0
+    },
+    {
+      "sheet": "67a9e0a3dfe10dfb",
+      "cell": 0
+    },
+    {
+      "sheet": "83351a71a0c9f351",
+      "cell": 0
+    },
+    {
+      "sheet": "54b2138aac82d4fa",
+      "cell": 0
+    },
+    {
+      "sheet": "423ec44121c777ca",
+      "cell": 0
+    },
+    {
+      "sheet": "5bcc9fcfce5a527c",
+      "cell": 0
+    },
+    {
+      "sheet": "22673b1c1fd92096",
+      "cell": 0
+    },
+    {
+      "sheet": "f8f3fbfa2531c686",
+      "cell": 0
+    },
+    {
+      "sheet": "985999eb25e5b845",
+      "cell": 0
+    },
+    {
+      "sheet": "052e818d014723b0",
+      "cell": 0
+    },
+    {
+      "sheet": "557d4f21b0a66248",
+      "cell": 0
+    },
+    {
+      "sheet": "d24c025f6e8c541e",
+      "cell": 0
+    },
+    {
+      "sheet": "cbf6c4382faabccb",
+      "cell": 0
+    },
+    {
+      "sheet": "984c6fa9b1de3810",
+      "cell": 0
+    }
+  ]
+}

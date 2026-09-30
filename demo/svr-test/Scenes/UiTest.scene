@@ -1,0 +1,1 @@
+{"entities":[{"components":{"Meta":{"guid":10195283870723807622,"layer":0,"prefabId":0,"tag":"UI_Main","team":0},"Transform2D":{"pos":[0.0,0.0],"rot":0.0,"scale":[1.0,1.0]},"UIDocument":{"modal":0,"reserved":0,"showOnStart":1,"sourceAssetGuid":16584239251967402134}},"scripts":[{"class":"UiEcho","guid":0}]}],"name":"UiTest","schemaVersion":2}

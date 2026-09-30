@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "name": "walk",
+  "fps": 18,
+  "loop": true,
+  "frames": [
+    {
+      "sheet": "5bc69a9abe4738fd",
+      "cell": 0
+    },
+    {
+      "sheet": "5ec8f2397c71cc70",
+      "cell": 0
+    },
+    {
+      "sheet": "1773a1b8696b846d",
+      "cell": 0
+    },
+    {
+      "sheet": "b9cc8fff04067330",
+      "cell": 0
+    },
+    {
+      "sheet": "1d880ae35e0f11af",
+      "cell": 0
+    },
+    {
+      "sheet": "1dbc640392fda0d3",
+      "cell": 0
+    },
+    {
+      "sheet": "67521add6b8346f0",
+      "cell": 0
+    },
+    {
+      "sheet": "87dc8d5e6ce9e474",
+      "cell": 0
+    },
+    {
+      "sheet": "18098039aabb0a61",
+      "cell": 0
+    },
+    {
+      "sheet": "ba13e5df8353bbf1",
+      "cell": 0
+    },
+    {
+      "sheet": "b31ab00ff947cea2",
+      "cell": 0
+    },
+    {
+      "sheet": "c924b75da711e2de",
+      "cell": 0
+    },
+    {
+      "sheet": "53b314de0709aa33",
+      "cell": 0
+    },
+    {
+      "sheet": "3c6a18b0759655c7",
+      "cell": 0
+    },
+    {
+      "sheet": "0fd925317cd5e4a6",
+      "cell": 0
+    },
+    {
+      "sheet": "6e980c953f3ccf81",
+      "cell": 0
+    },
+    {
+      "sheet": "9d12d730c867fa6d",
+      "cell": 0
+    },
+    {
+      "sheet": "51dc5ddb5fcc7d68",
+      "cell": 0
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+{"entities":[{"components":{"Hierarchy":{"firstChild":null,"next":null,"parent":null,"prev":null},"Meta":{"guid":1802025092500010001,"layer":0,"prefabId":0,"tag":"BattleDirector","team":0},"Transform2D":{"pos":[0.0,0.0],"rot":0.0,"scale":[1.0,1.0]}},"scripts":[{"class":"RedVsBlue","guid":0}]}],"name":"battle","schemaVersion":2}

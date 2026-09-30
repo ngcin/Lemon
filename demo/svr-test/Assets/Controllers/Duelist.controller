@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "name": "Duelist",
+  "params": [
+    { "name": "speed", "kind": "float" },
+    { "name": "attack", "kind": "trigger" },
+    { "name": "hit", "kind": "trigger" },
+    { "name": "death", "kind": "trigger" }
+  ],
+  "entry": "Idle",
+  "states": ["Idle", "Walk", "Attack", "Hit", "Death"],
+  "transitions": [
+    { "from": "Idle", "to": "Walk", "when": [{ "param": "speed", ">": 0.1 }] },
+    { "from": "Walk", "to": "Idle", "when": [{ "param": "speed", "<=": 0.1 }] },
+    { "from": "Idle", "to": "Attack", "when": [{ "trigger": "attack" }] },
+    { "from": "Walk", "to": "Attack", "when": [{ "trigger": "attack" }] },
+    { "from": "Attack", "to": "Idle", "on": "exitTime" },
+    { "from": "Idle", "to": "Hit", "when": [{ "trigger": "hit" }] },
+    { "from": "Walk", "to": "Hit", "when": [{ "trigger": "hit" }] },
+    { "from": "Attack", "to": "Hit", "when": [{ "trigger": "hit" }] },
+    { "from": "Hit", "to": "Idle", "on": "exitTime" },
+    { "from": "Idle", "to": "Death", "when": [{ "trigger": "death" }] },
+    { "from": "Walk", "to": "Death", "when": [{ "trigger": "death" }] },
+    { "from": "Attack", "to": "Death", "when": [{ "trigger": "death" }] },
+    { "from": "Hit", "to": "Death", "when": [{ "trigger": "death" }] }
+  ]
+}

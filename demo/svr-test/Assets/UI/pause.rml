@@ -1,0 +1,21 @@
+<rml>
+<head><title>pause</title>
+<link type="text/rcss" rel="stylesheet" href="theme.rcss"/>
+<style>
+/* 暂停 = 半透 scrim 叠加（HUD 在下保留 = 战况可视）。Esc 与「继续」同义 */
+#pause-panel { width: 300dp; }
+</style>
+</head>
+<body>
+<div id="pause-modal" class="scrim">
+  <div id="pause-panel" class="panel">
+    <div id="pause-title" class="title">暂停</div>
+    <div id="pause-list" class="menu-list">
+      <button id="btn-resume" class="btn-lg" data-event="resume">继续</button>
+      <button id="btn-psettings" class="btn-lg" data-event="settings">设置</button>
+      <button id="btn-tomenu" class="btn-lg" data-event="tomenu">回主菜单</button>
+    </div>
+  </div>
+</div>
+</body>
+</rml>

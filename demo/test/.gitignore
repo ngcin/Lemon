@@ -1,0 +1,5 @@
+bin/
+obj/
+.lemon/
+Builds/
+.DS_Store

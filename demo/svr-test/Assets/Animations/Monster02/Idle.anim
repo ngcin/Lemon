@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "name": "Monster02-Idle",
+  "fps": 8,
+  "loop": true,
+  "frames": [
+    {
+      "sheet": "ffe0579b2810fdd1",
+      "cell": 0
+    },
+    {
+      "sheet": "d3a1e648b87a3dee",
+      "cell": 0
+    },
+    {
+      "sheet": "d061940c0ca3411e",
+      "cell": 0
+    },
+    {
+      "sheet": "095a255f9de13554",
+      "cell": 0
+    },
+    {
+      "sheet": "f6eead5fb02a2f4e",
+      "cell": 0
+    },
+    {
+      "sheet": "d8df027299cf87a4",
+      "cell": 0
+    },
+    {
+      "sheet": "3c7f5e2c6b1dadf4",
+      "cell": 0
+    },
+    {
+      "sheet": "72e3d919686df4c7",
+      "cell": 0
+    },
+    {
+      "sheet": "de8b1ea376a59043",
+      "cell": 0
+    },
+    {
+      "sheet": "f998fca3b229495b",
+      "cell": 0
+    },
+    {
+      "sheet": "d00920fcac17de9c",
+      "cell": 0
+    },
+    {
+      "sheet": "6c0eebd15408deb6",
+      "cell": 0
+    }
+  ]
+}

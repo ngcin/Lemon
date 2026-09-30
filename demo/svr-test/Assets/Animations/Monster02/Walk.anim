@@ -1,0 +1,80 @@
+{
+  "schemaVersion": 1,
+  "name": "Monster02-Walk",
+  "fps": 12,
+  "loop": true,
+  "frames": [
+    {
+      "sheet": "0c478b26cc58a521",
+      "cell": 0
+    },
+    {
+      "sheet": "00ecbd2d77dfc939",
+      "cell": 0
+    },
+    {
+      "sheet": "0ce85d017bae3467",
+      "cell": 0
+    },
+    {
+      "sheet": "a5a9a54f179509ed",
+      "cell": 0
+    },
+    {
+      "sheet": "75ccfdd9dd31e0ea",
+      "cell": 0
+    },
+    {
+      "sheet": "76ccacd6e42e489e",
+      "cell": 0
+    },
+    {
+      "sheet": "0c4fc43f485b3a09",
+      "cell": 0
+    },
+    {
+      "sheet": "3fe56cf240193277",
+      "cell": 0
+    },
+    {
+      "sheet": "c62d693f80494e0d",
+      "cell": 0
+    },
+    {
+      "sheet": "f5554d08403cc48a",
+      "cell": 0
+    },
+    {
+      "sheet": "0fce0b0a8f2f8cf0",
+      "cell": 0
+    },
+    {
+      "sheet": "a6573595bd993d94",
+      "cell": 0
+    },
+    {
+      "sheet": "2287a4004b68a6eb",
+      "cell": 0
+    },
+    {
+      "sheet": "28325fbba9a6a24d",
+      "cell": 0
+    },
+    {
+      "sheet": "5284a39b64f7cf2f",
+      "cell": 0
+    },
+    {
+      "sheet": "7b1c473b2de5afcf",
+      "cell": 0
+    },
+    {
+      "sheet": "35d93aae58b9d6e2",
+      "cell": 0
+    },
+    {
+      "sheet": "d78dad774ddb6e53",
+      "cell": 0
+    }
+  ]
+}

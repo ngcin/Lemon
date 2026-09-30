@@ -1,0 +1,23 @@
+<rml>
+<head><title>settings</title>
+<link type="text/rcss" rel="stylesheet" href="theme.rcss"/>
+<style>
+/* 设置 = scrim 叠加，入口双源（主菜单/暂停）——返回目标由 GameFlow 记忆。
+     开关 = 按钮翻文案（Click 通道；Change/checkbox 不用——Click 已验证） */
+#settings-panel { width: 360dp; }
+#settings-more { margin-top: var(--sp-3); }
+#btn-back { margin-top: var(--sp-2); }
+</style>
+</head>
+<body>
+<div id="settings-modal" class="scrim">
+  <div id="settings-panel" class="panel">
+    <div id="settings-title" class="title">设置</div>
+    <div class="set-row"><span class="set-label">伤害飘字</span><button id="btn-fxtext" class="btn-set" data-event="toggle-fxtext">开</button></div>
+    <div class="set-row"><span class="set-label">世界血条</span><button id="btn-fxbar" class="btn-set" data-event="toggle-fxbar">开</button></div>
+    <div id="settings-more" class="hint">更多设置随音频（M6c）加入</div>
+    <button id="btn-back" class="btn-lg" data-event="back">返回</button>
+  </div>
+</div>
+</body>
+</rml>

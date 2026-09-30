@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Lemon vs-survivor 模板脚本工程（M5 批④） -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Nullable>enable</Nullable>
+    <AssemblyName>Game</AssemblyName>
+    <RootNamespace>Game</RootNamespace>
+    <GenerateRuntimeConfigurationFiles>false</GenerateRuntimeConfigurationFiles>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="Lemon.SDK">
+      <HintPath>/Users/ngcin/ZCodeProject/GameEngine/Lemon/build/mac/Scripting/dotnet/Lemon.SDK.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+</Project>

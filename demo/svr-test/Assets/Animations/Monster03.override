@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "name": "Monster03",
+  "segments": [
+    {
+      "name": "idle",
+      "clip": "fb326ad353efa906"
+    },
+    {
+      "name": "walk",
+      "clip": "be14eecd594ef45d"
+    },
+    {
+      "name": "attack",
+      "clip": "8f6545d9bbd81251"
+    },
+    {
+      "name": "dying",
+      "clip": "3e9637f245b6ff87"
+    },
+    {
+      "name": "hurt",
+      "clip": "7e19f25e80f79875"
+    }
+  ]
+}

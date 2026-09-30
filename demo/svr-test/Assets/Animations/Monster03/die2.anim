@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "name": "die2",
+  "fps": 8,
+  "loop": true,
+  "frames": [
+    {
+      "sheet": "aa112d400c9bbc1a",
+      "cell": 0
+    },
+    {
+      "sheet": "76583c95df285ef9",
+      "cell": 0
+    },
+    {
+      "sheet": "326b4e710707fb11",
+      "cell": 0
+    },
+    {
+      "sheet": "ca7f253e0bbc4ff8",
+      "cell": 0
+    },
+    {
+      "sheet": "733e6c275307a61d",
+      "cell": 0
+    },
+    {
+      "sheet": "54658f4e14eaa509",
+      "cell": 0
+    },
+    {
+      "sheet": "d5c5a310aa1fc148",
+      "cell": 0
+    },
+    {
+      "sheet": "239ac1ddb19a0b62",
+      "cell": 0
+    },
+    {
+      "sheet": "67b9d9a46c11e88d",
+      "cell": 0
+    },
+    {
+      "sheet": "c630fa55c3033a01",
+      "cell": 0
+    },
+    {
+      "sheet": "f261f3054cc86871",
+      "cell": 0
+    },
+    {
+      "sheet": "dc85fede43e5faec",
+      "cell": 0
+    },
+    {
+      "sheet": "f88930814bc97b97",
+      "cell": 0
+    },
+    {
+      "sheet": "2cf2c01657ced6ce",
+      "cell": 0
+    },
+    {
+      "sheet": "27e7bc46cd1ac719",
+      "cell": 0
+    }
+  ]
+}

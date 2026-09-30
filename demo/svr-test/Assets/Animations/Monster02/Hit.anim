@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "name": "Monster02-Hit",
+  "fps": 14,
+  "loop": false,
+  "frames": [
+    {
+      "sheet": "b2a5b01527dab93d",
+      "cell": 0
+    },
+    {
+      "sheet": "a1df1fa2c8852d01",
+      "cell": 0
+    },
+    {
+      "sheet": "183b28f3a99cf8ca",
+      "cell": 0
+    },
+    {
+      "sheet": "c54e719e825eb5d4",
+      "cell": 0
+    },
+    {
+      "sheet": "8c19baaf4d0d5c3e",
+      "cell": 0
+    },
+    {
+      "sheet": "e9a490a731e17aa6",
+      "cell": 0
+    },
+    {
+      "sheet": "3756098bbd3ec488",
+      "cell": 0
+    },
+    {
+      "sheet": "9335de5b1146e1cb",
+      "cell": 0
+    },
+    {
+      "sheet": "642de64aa90455b4",
+      "cell": 0
+    },
+    {
+      "sheet": "90964cdcdc5741c4",
+      "cell": 0
+    },
+    {
+      "sheet": "1c6748d1c665985e",
+      "cell": 0
+    },
+    {
+      "sheet": "a0f38a8ba8ea83aa",
+      "cell": 0
+    }
+  ]
+}

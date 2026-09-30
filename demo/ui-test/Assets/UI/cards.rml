@@ -1,0 +1,23 @@
+<rml>
+<head><title>cards</title>
+<link type="text/rcss" rel="stylesheet" href="theme.rcss"/>
+<style>
+/* 屏幕几何（L3 层）。scrim 全屏暗罩 = 模态标准形态（兼层序观察窗）；
+     死亡对话框 = 同文档 SetItems 单条（纸面验证 ⓪ 单条形态） */
+#cards { display: block; }
+</style>
+</head>
+<body>
+<div id="cards-modal" class="scrim">
+  <div id="cards-panel" class="panel">
+    <div id="cards-title" class="title"/>
+    <div id="cards" data-template="card">
+      <ui-template data-name="card">
+        <button class="card" data-event="pick"><span data-field="label"/></button>
+      </ui-template>
+    </div>
+    <div id="cards-hint" class="hint">点击卡片选择</div>
+  </div>
+</div>
+</body>
+</rml>

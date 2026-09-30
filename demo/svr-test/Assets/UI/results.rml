@@ -1,0 +1,25 @@
+<rml>
+<head><title>results</title>
+<link type="text/rcss" rel="stylesheet" href="theme.rcss"/>
+<style>
+/* 结算 = 半透 scrim（末帧 HUD 在下 = 战况定格可视）。统计行 SetText 四路 */
+#results-panel { width: 360dp; }
+#results-list { margin-top: var(--sp-3); }
+</style>
+</head>
+<body>
+<div id="results-modal" class="scrim">
+  <div id="results-panel" class="panel">
+    <div id="results-title" class="title"/>
+    <div class="stat-row"><span class="stat-label">得分</span><span id="res-score" class="stat-value"/></div>
+    <div class="stat-row"><span class="stat-label">存活</span><span id="res-time" class="stat-value"/></div>
+    <div class="stat-row"><span class="stat-label">击杀</span><span id="res-kills" class="stat-value"/></div>
+    <div class="stat-row"><span class="stat-label">最高</span><span id="res-best" class="stat-value"/></div>
+    <div id="results-list" class="menu-list">
+      <button id="btn-restart" class="btn-lg" data-event="restart">再战一局</button>
+      <button id="btn-rtomenu" class="btn-lg" data-event="tomenu">回主菜单</button>
+    </div>
+  </div>
+</div>
+</body>
+</rml>

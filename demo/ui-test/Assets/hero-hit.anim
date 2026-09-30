@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "name": "hero-hit",
+  "fps": 12,
+  "loop": false,
+  "frames": [
+    { "sheet": "5bd31a7c10000001", "cell": 8 },
+    { "sheet": "5bd31a7c10000001", "cell": 7 }
+  ]
+}

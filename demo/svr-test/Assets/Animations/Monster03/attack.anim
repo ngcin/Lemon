@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "name": "attack",
+  "fps": 12,
+  "loop": true,
+  "frames": [
+    {
+      "sheet": "bd4766627d881639",
+      "cell": 0
+    },
+    {
+      "sheet": "5edd0739ce456183",
+      "cell": 0
+    },
+    {
+      "sheet": "8dad7122edb3c853",
+      "cell": 0
+    },
+    {
+      "sheet": "18ad530c40fe39f1",
+      "cell": 0
+    },
+    {
+      "sheet": "7d4a1944233271f6",
+      "cell": 0
+    },
+    {
+      "sheet": "f725b8e8308d606a",
+      "cell": 0
+    },
+    {
+      "sheet": "0a71aa700b98f07d",
+      "cell": 0
+    },
+    {
+      "sheet": "78566fa58c8724b7",
+      "cell": 0
+    },
+    {
+      "sheet": "b6450ccac3ce091e",
+      "cell": 0
+    },
+    {
+      "sheet": "7cd248797ebef3ba",
+      "cell": 0
+    },
+    {
+      "sheet": "40290ada081d64d2",
+      "cell": 0
+    },
+    {
+      "sheet": "d44f432dc43e0f85",
+      "cell": 0
+    }
+  ]
+}

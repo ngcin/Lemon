@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "name": "idle",
+  "fps": 12,
+  "loop": true,
+  "frames": [
+    {
+      "sheet": "5e7c7a86b42bd4be",
+      "cell": 0
+    },
+    {
+      "sheet": "040d586bc121b2f6",
+      "cell": 0
+    },
+    {
+      "sheet": "c4e9f94d9fffdced",
+      "cell": 0
+    },
+    {
+      "sheet": "97b6a7651dbc97dd",
+      "cell": 0
+    },
+    {
+      "sheet": "a8c47cf65ab0975e",
+      "cell": 0
+    },
+    {
+      "sheet": "cace3c75143054f5",
+      "cell": 0
+    },
+    {
+      "sheet": "c4d95e497e50c9e7",
+      "cell": 0
+    },
+    {
+      "sheet": "ba01b7bc372045ff",
+      "cell": 0
+    },
+    {
+      "sheet": "c1e0468e0d476212",
+      "cell": 0
+    },
+    {
+      "sheet": "844365d476e1952a",
+      "cell": 0
+    },
+    {
+      "sheet": "1b941c43eeb8c15f",
+      "cell": 0
+    },
+    {
+      "sheet": "e451ba0dfb856777",
+      "cell": 0
+    }
+  ]
+}

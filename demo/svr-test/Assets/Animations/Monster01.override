@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "name": "Monster01",
+  "segments": [
+    {
+      "name": "Idle",
+      "clip": "aa01000000000101"
+    },
+    {
+      "name": "Walk",
+      "clip": "aa01000000000102"
+    },
+    {
+      "name": "Attack",
+      "clip": "aa01000000000103"
+    }
+  ]
+}

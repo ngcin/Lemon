@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "name": "idle",
+  "fps": 9,
+  "loop": true,
+  "frames": [
+    {
+      "sheet": "cf5164a2b1a84490",
+      "cell": 0
+    },
+    {
+      "sheet": "cf5164a2b1a84490",
+      "cell": 1
+    },
+    {
+      "sheet": "cf5164a2b1a84490",
+      "cell": 2
+    },
+    {
+      "sheet": "cf5164a2b1a84490",
+      "cell": 3
+    },
+    {
+      "sheet": "cf5164a2b1a84490",
+      "cell": 4
+    },
+    {
+      "sheet": "cf5164a2b1a84490",
+      "cell": 5
+    },
+    {
+      "sheet": "cf5164a2b1a84490",
+      "cell": 8
+    },
+    {
+      "sheet": "cf5164a2b1a84490",
+      "cell": 6
+    },
+    {
+      "sheet": "cf5164a2b1a84490",
+      "cell": 7
+    }
+  ]
+}
