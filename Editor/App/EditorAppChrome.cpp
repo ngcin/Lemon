@@ -238,11 +238,21 @@ void EditorApp::BuildToolbar() {
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", playing ? "Stop（恢复编辑场景）" : "Play（进入沙盒）");
     ImGui::SameLine();
     ImGui::BeginDisabled(!playing);
-    if (ui::IconButton(*this, IconKind::Pause, "##pause", paused_)) paused_ = !paused_;
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "暂停/继续（仅 Play 态）");
+    if (ui::IconButton(*this, IconKind::Pause, "##pause", paused_)) {
+        paused_ = !paused_;
+        // 2026-10-01 真人验收反馈：编辑器暂停此前只冻 sim、音频照响（"点暂停还有
+        // 声"）。现联动 ADR-015 M4 挂起语义（循环/BGM 挂起、Ui 组免疫）；恢复时按
+        // 游戏最后 staged 意图回设（游戏自身暂停屏在场则保持挂起，不越权解挂）。
+        if (paused_)
+            audio_.SetPaused(true);
+        else
+            audio_.SetPaused(ctx_.ActiveWorld().Audio().pausedStaged());
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("%s", "暂停/继续（仅 Play 态；音频同步挂起）");
     ImGui::SameLine();
     if (ui::IconButton(*this, IconKind::Step, "##step", false)) singleStep_ = true;
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "单步一帧（仅 Play 态）");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "单步一帧（仅 Play 态；音频保持挂起）");
     ImGui::EndDisabled();
 
     // ---- 右段：Layout 下拉（M4.7d；右对齐；窄工具栏时让位不与中段重叠）----

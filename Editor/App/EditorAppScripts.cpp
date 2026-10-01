@@ -232,6 +232,10 @@ uint32_t EditorApp::MountPlayAudio() {
         previewGuid_ = 0;
     }
     audio_.ResetClips();
+    // 会话起点归位（2026-10-01 真人验收发现）：引擎 pausedAll 跨会话残留——上局
+    // 游戏暂停中 StopPlay 再 Play，新 BGM 起播即挂起变哑。新 World 的 AudioChannel
+    // 意图恒 false（游戏要起始暂停会显式再 SetPaused），此处对齐引擎侧。
+    audio_.SetPaused(false);
     audioClips_.clear();
     const std::string root = ctx_.Assets().ProjectRoot();
     if (root.empty()) return 0; // 无项目 = 零资产零装载

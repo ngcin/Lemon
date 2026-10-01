@@ -436,7 +436,7 @@ body {
     <button id="btn-start" class="btn-lg" data-event="start">开始游戏</button>
     <button id="btn-msettings" class="btn-lg" data-event="settings">设置</button>
   </div>
-  <div id="main-hint" class="hint">移动 WASD · 攻击 自动 · 暂停 Esc</div>
+  <div id="main-hint" class="hint">移动 WASD · 攻击 自动 · 暂停 Esc/P</div>
 </div>
 </body>
 </rml>
@@ -1805,8 +1805,11 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
              "音效/界面，M6c 批④）持久化于 Settings 档。\n"
              "- 音频（M6c 批④）：BGM 开局起播（单槽 = 重开不叠曲）/ 命中·击杀·拾取·\n"
              "升级·波次事件音 + UI 组按钮音（暂停中可响）；Esc 暂停 = BGM 声部级\n"
-             "挂起续响（恢复不回跳）。音频资产在 `Assets/Audio/`，换音 = 换文件保\n"
-             "名（.meta guid 不动，脚本零改动）；音量即时生效 + Settings 档持久。\n";
+             "挂起续响（恢复不回跳）。**编辑器内注意**：Esc 是编辑器惯例 = 退出 Play，\n"
+             "游戏内暂停请按 **P**（bit6 同映射别名；独立运行时 Esc 生效）。音频资产\n"
+             "在 `Assets/Audio/`，换音 = 换文件保名（.meta guid 不动，脚本零改动）；\n"
+             "音量即时生效 + Settings 档持久。工具栏暂停钮 = 编辑器检视冻结（音频同步\n"
+             "挂起，M6c 批④ 起联动），与游戏内暂停是两回事。\n";
     }
 
     // 3) 打开项目（扫描记账）→ 播种场景 + 覆写 prefab 内容。
