@@ -203,6 +203,7 @@ bool ParseLbaHead(const uint8_t* head, const char* path, BakedClipInfo& outInfo)
     outInfo.channels = channels;
     outInfo.loopStart = GetLE32(head + 20);
     outInfo.loopEnd = GetLE32(head + 24) ? GetLE32(head + 24) : frameCount;
+    outInfo.payloadBytes = payloadBytes;
     return true;
 }
 } // namespace
@@ -239,6 +240,34 @@ bool PeekBakedClip(const char* path, BakedClipInfo& outInfo) {
                     ParseLbaHead(head, path, outInfo);
     std::fclose(f);
     return ok;
+}
+
+bool OpenBakedStream(const char* path, BakedClipInfo& outInfo, std::FILE*& outFile) {
+    outFile = nullptr;
+    outInfo = {};
+    FILE* f = std::fopen(path, "rb");
+    if (!f)
+        return false;
+    uint8_t head[sizeof(LbaHeader)];
+    if (std::fread(head, 1, sizeof(head), f) != sizeof(head) ||
+        !ParseLbaHead(head, path, outInfo)) {
+        std::fclose(f);
+        return false;
+    }
+    outFile = f; // 头 32B 已读——句柄停在载荷首字节
+    return true;
+}
+
+bool SeekBakedFrame(std::FILE* f, uint32_t frame, uint16_t channels) {
+    if (!f || (channels != 1 && channels != 2))
+        return false;
+    const long long off = 32 + static_cast<long long>(frame) * channels * 2;
+#if defined(_WIN32)
+    return _fseeki64(f, off, SEEK_SET) == 0;
+#else
+    // 目标平台（macOS/Linux x64）long = 64 位；Windows 走 _fseeki64
+    return std::fseek(f, static_cast<long>(off), SEEK_SET) == 0;
+#endif
 }
 
 } // namespace lemon::audio

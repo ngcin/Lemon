@@ -102,8 +102,9 @@ public:
                              int32_t loop);
     /// M6c 批①：Edit 态试听切换（同 guid 再点 = 停；换 guid 顶停旧曲）
     void TogglePreviewAudio(uint64_t guid);
-    /// M6c 批①：按需装载单 clip（试听/兜底用；缺烤/陈旧现烤——同步路径）
-    bool EnsureClipLoaded(const AssetEntry& e);
+    /// M6c 批①：按需装载单 clip（试听/兜底用；缺烤/陈旧现烤——同步路径）。
+    /// 批①b：outStreamed 出参 = 本次是否走流式（装载日志/验收证据）。
+    bool EnsureClipLoaded(const AssetEntry& e, bool* outStreamed = nullptr);
     /// M6c 批①：后台烤制入队（Rescan 增量 / 开项目预热；线程惰性起）
     void EnqueueAudioBake(const AssetEntry& e);
     /// 开项目一次性预热全部音频（批①：导入期烤制——EnterPlay 命中缓存）

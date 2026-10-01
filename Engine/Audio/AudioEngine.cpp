@@ -5,6 +5,8 @@
 // 与有声模式一致（冒烟断言可用）。
 #include "Audio/AudioEngine.h"
 
+#include "Audio/BakedClip.h"
+#include "Audio/SpscRing.h"
 #include "Core/Log.h"
 
 // 宏视角统一（review 2026-09-30）：本 TU 虽只碰 ma_context/ma_device（布局不依赖
@@ -15,10 +17,16 @@
 #include "thirdparty/miniaudio.h"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <mutex>
+#include <string>
+#include <thread>
 #include <vector>
 
 namespace lemon::audio {
@@ -39,12 +47,36 @@ void PanGains(float pan, float& outL, float& outR) {
 
 struct AudioEngine::Impl {
     struct Clip {
-        std::vector<int16_t> pcm; // 交错 PCM16（48k 契约）
+        std::vector<int16_t> pcm; // 交错 PCM16（48k 契约）；流式 clip 为空
+        std::string streamPath;   // 非空 = 流式（批①b：.baked 句柄随声部开闭）
         uint32_t frameCount = 0;
         uint16_t channels = 1;
         uint32_t loopStart = 0;
         uint32_t loopEnd = 0; // 0 = 尾
     };
+
+    // 流式声部喂送状态（批①b，ADR-015 M2）：每声部一份——同 clip 多声部（BGM 交叉
+    // 淡出）各自持句柄与游标。环 = 生产者(填充线程/离线泵)×消费者(设备回调/
+    // MixOffline)SPSC；回卷换位在生产者侧（环内是线性化帧流，消费者无回卷逻辑）。
+    struct StreamFeed {
+        static constexpr size_t kRingBytes = 256 * 1024; // ADR-015 M2
+
+        SpscRing ring{kRingBytes};
+        std::FILE* file = nullptr;
+        uint16_t channels = 2;
+        uint32_t frameCount = 0;
+        uint32_t loopStart = 0, loopEnd = 0; // 已归一（loopEnd = 尾帧数）
+        bool loop = false;                   // 生效语义（退化区间已视同不循环）
+        std::atomic<bool> dead{false};   // 声部弃养（回收/复用/停）→ 生产者撤 job
+        std::atomic<bool> failed{false}; // 载荷 IO 错 → 消费者环空即终结
+        std::atomic<uint64_t> consumed{0}; // 消费帧累计（观测；一次性曲终判据走 cursor）
+        std::atomic<uint32_t> underruns{0};
+        uint64_t nextFrame = 0; // 生产者私有（回卷换位后的文件帧位）
+        ~StreamFeed() {
+            if (file) std::fclose(file);
+        }
+    };
+    using FeedRef = std::shared_ptr<StreamFeed>;
 
     struct Voice {
         uint32_t id = 0;       // 0 = 空槽；单调发号不复用（Stop(id) 后 id 永久退役）
@@ -57,6 +89,7 @@ struct AudioEngine::Impl {
         bool loop = false;
         bool done = false;     // 一次性播完 / 被停 / clip 注销，待 Tick 回收
         bool paused = false;
+        FeedRef stream;        // 非 null = 流式声部（批①b；环/句柄随声部生命周期）
         // M6c 批②（D4）：音量包络——fadeDur 内 fadeFrom 线性到 fadeTo（绝对音量域，
         // 逐样本推进）；到点后 volume=fadeTo、包络退役；stopAtFadeEnd 且到 0 = 终结
         float fadeFrom = 1.0f, fadeTo = 1.0f;
@@ -87,10 +120,89 @@ struct AudioEngine::Impl {
     ma_device device{};
     bool ctxOk = false, deviceOk = false;
 
+    // 流式填充线程（批①b：设备模式唯一生产者；静音/离线 = PumpStreams 手动驱动）
+    std::thread fillThread_;
+    std::mutex fillMtx_;                       // 只护 fillJobs_/fillStop_（不与 mtx 嵌套反向）
+    std::condition_variable fillCv_;
+    std::vector<FeedRef> fillJobs_;            // 活跃流（dead/failed/曲终即撤）
+    bool fillStop_ = false;
+    std::atomic<uint64_t> streamUnderruns_{0}; // 累计欠载帧（观测/验收）
+    bool underrunWarned_ = false;
+
+    // 生产者步进（填充线程 / 起播预填 / 离线泵共用）：喂到环满/曲终/死亡/IO 错。
+    // staging 由调用方持有复用（填充线程循环免反复分配）。
+    static void PumpFeed(StreamFeed& fd, std::vector<uint8_t>& staging) {
+        if (fd.dead.load(std::memory_order_relaxed) ||
+            fd.failed.load(std::memory_order_relaxed))
+            return;
+        for (;;) {
+            const size_t frameBytes = size_t(fd.channels) * 2;
+            const size_t freeBytes = fd.ring.Free();
+            if (freeBytes < frameBytes)
+                return; // 环满（或剩余不足一帧）
+            if (fd.loop) {
+                if (fd.nextFrame >= fd.loopEnd) { // 回卷换位（producer 私有）
+                    if (!SeekBakedFrame(fd.file, fd.loopStart, fd.channels)) {
+                        fd.failed.store(true, std::memory_order_relaxed);
+                        return;
+                    }
+                    fd.nextFrame = fd.loopStart;
+                }
+            } else if (fd.nextFrame >= fd.frameCount) {
+                return; // 一次性曲终（job 由填充线程撤；环内余量够消费者放完）
+            }
+            const uint64_t end = fd.loop ? fd.loopEnd : fd.frameCount;
+            const uint64_t frames = std::min<uint64_t>(
+                {4096ull, end - fd.nextFrame, freeBytes / frameBytes});
+            if (frames == 0)
+                return;
+            staging.resize(size_t(frames) * frameBytes);
+            const size_t got = std::fread(staging.data(), frameBytes, size_t(frames), fd.file);
+            if (got == 0) { // EOF 早到/IO 错（头校验过载荷长度——正常路径不可达）
+                fd.failed.store(true, std::memory_order_relaxed);
+                return;
+            }
+            fd.ring.Write(staging.data(), got * frameBytes);
+            fd.nextFrame += got;
+            if (got < frames) { // 半读 = 载荷被外部截断
+                fd.failed.store(true, std::memory_order_relaxed);
+                return;
+            }
+        }
+    }
+
+    void FillThreadLoop() {
+        std::vector<uint8_t> staging;
+        for (;;) {
+            std::unique_lock<std::mutex> lk(fillMtx_);
+            if (fillJobs_.empty())
+                fillCv_.wait(lk, [this] { return fillStop_ || !fillJobs_.empty(); });
+            else // 有活跃流：短周期轮询补环（256KiB ≈ 1.4s 立体声余量，4ms 绰绰有余）
+                fillCv_.wait_for(lk, std::chrono::milliseconds(4),
+                                 [this] { return fillStop_; });
+            if (fillStop_)
+                return;
+            for (size_t i = 0; i < fillJobs_.size();) {
+                StreamFeed& fd = *fillJobs_[i];
+                PumpFeed(fd, staging);
+                const bool gone = fd.dead.load(std::memory_order_relaxed) ||
+                                  fd.failed.load(std::memory_order_relaxed) ||
+                                  (!fd.loop && fd.nextFrame >= fd.frameCount);
+                if (gone)
+                    fillJobs_.erase(fillJobs_.begin() + i);
+                else
+                    ++i;
+            }
+        }
+    }
+
     // ---- 主线程：声部/音量变更（锁内）----
-    uint32_t PlayLocked(uint32_t clipId, const PlayParams& p) {
+    uint32_t PlayLocked(uint32_t clipId, const PlayParams& p, FeedRef feed) {
         if (clipId == 0 || clipId > clips.size() || clips[clipId - 1].frameCount == 0)
             return 0;
+        const Clip& c = clips[clipId - 1];
+        if (!c.streamPath.empty() != (feed != nullptr))
+            return 0; // 流式/整载类型失配（feed 由 Play 按 clip 类型开好）
         // review 2026-09-30：group 防御钳（越界 = groupVol[] 越界读；C# 路径上层已
         // 钳，此处兜直接 C++ 调用——测试/未来消费者）
         int gi = static_cast<int>(p.group);
@@ -118,6 +230,8 @@ struct AudioEngine::Impl {
             slot = stealSlot;
         }
         Voice& v = voices[slot];
+        if (v.stream) // 复用槽弃养旧流（偷声部/done 未回收同理——生产者撤 job）
+            v.stream->dead.store(true, std::memory_order_relaxed);
         v.id = nextVoiceId++;
         v.clipRef = clipId;
         v.cursor = 0;
@@ -125,9 +239,20 @@ struct AudioEngine::Impl {
         v.volume = std::clamp(p.volume, 0.0f, 4.0f);
         PanGains(p.pan, v.panL, v.panR);
         v.group = group;
-        v.loop = p.loop;
+        // 循环语义归一（批①b）：退化区间（loopEnd<=loopStart）视同不循环——与
+        // MixVoices 回卷守卫口径一致（整载路径原先播到 loopEnd 截断，现对齐全曲）
+        v.loop = p.loop && c.loopEnd > c.loopStart;
         v.done = false;
-        v.paused = pausedAll && group != Group::Ui && (p.loop || group == Group::Bgm);
+        v.paused = pausedAll && group != Group::Ui && (v.loop || group == Group::Bgm);
+        v.stream = std::move(feed);
+        if (v.stream) { // 设备模式挂填充队列（静音/离线无线程——PumpStreams 手动驱动）
+            v.stream->loop = v.loop;
+            if (fillThread_.joinable()) {
+                std::lock_guard<std::mutex> flk(fillMtx_);
+                fillJobs_.push_back(v.stream);
+                fillCv_.notify_one();
+            }
+        }
         // D4 起播淡入：包络从 0 爬到 volume（fadeDur<=0 = 直起，包络退役态）
         v.fadeFrom = 0.0f;
         v.fadeTo = v.volume;
@@ -146,7 +271,10 @@ struct AudioEngine::Impl {
                 continue;
             const Clip& c = clips[v.clipRef - 1];
             const uint32_t loopEnd = c.loopEnd ? std::min(c.loopEnd, c.frameCount) : c.frameCount;
-            const uint32_t end = v.loop ? loopEnd : c.frameCount;
+            // 终点语义：整载循环 = 回卷点（消费者侧回卷）；流式循环 = 无穷（回卷在
+            // 生产者侧，环内是线性化帧流）；一次性（两路）= 全曲帧数
+            const uint32_t end = v.stream ? (v.loop ? UINT32_MAX : c.frameCount)
+                                          : (v.loop ? loopEnd : c.frameCount);
             const float gv = groupVol[static_cast<int>(v.group)] * masterVol;
             const bool fading = v.fadeDur > 0.0f;
             float gL0 = v.volume * gv * v.panL, gR0 = v.volume * gv * v.panR;
@@ -156,9 +284,13 @@ struct AudioEngine::Impl {
                 gR0 = ve * gv * v.panR;
             }
             float gL = gL0, gR = gR0;
+            uint32_t streamUnderrun = 0; // 批①b：块末一次发布（实时路径免逐帧 RMW）
             for (uint32_t f = 0; f < frames;) {
-                if (v.cursor >= end) {
-                    if (v.loop && loopEnd > c.loopStart) {
+                // review 2026-10-01：流式循环声部游标 u32 会在 2^32 帧（≈24.8h 连续
+                // 循环）抵达 UINT32_MAX——守卫跳过终点检查让其回卷续播（RAM 路径回卷
+                // 模运算无此边界）
+                if (v.cursor >= end && !(v.stream && v.loop)) {
+                    if (v.loop && !v.stream && loopEnd > c.loopStart) {
                         v.cursor = c.loopStart;
                         continue;
                     }
@@ -179,20 +311,42 @@ struct AudioEngine::Impl {
                     gL = ve * gv * v.panL;
                     gR = ve * gv * v.panR;
                 }
-                const int16_t* frm = c.pcm.data() + static_cast<size_t>(v.cursor) * c.channels;
-                if (c.channels == 1) {
-                    const float s = frm[0] * kInv32768;
-                    out[f * 2 + 0] += s * gL;
-                    out[f * 2 + 1] += s * gR;
+                float sL, sR;
+                if (v.stream) { // 批①b：流式取帧——环空 = 欠载静音（failed 且枯竭 = 终结）
+                    uint8_t fb[4] = {};
+                    const size_t fbBytes = size_t(c.channels) * 2;
+                    if (v.stream->ring.Read(fb, fbBytes) != fbBytes) {
+                        if (v.stream->failed.load(std::memory_order_acquire)) {
+                            v.done = true;
+                            break;
+                        }
+                        ++streamUnderrun;
+                    }
+                    const auto le16 = [](const uint8_t* p) {
+                        return int16_t(uint16_t(p[0]) | (uint16_t(p[1]) << 8)) * kInv32768;
+                    };
+                    sL = le16(fb);
+                    sR = c.channels == 2 ? le16(fb + 2) : sL;
                 } else {
-                    out[f * 2 + 0] += frm[0] * kInv32768 * gL;
-                    out[f * 2 + 1] += frm[1] * kInv32768 * gR;
+                    const int16_t* frm = c.pcm.data() + static_cast<size_t>(v.cursor) * c.channels;
+                    if (c.channels == 1) {
+                        sL = sR = frm[0] * kInv32768;
+                    } else {
+                        sL = frm[0] * kInv32768;
+                        sR = frm[1] * kInv32768;
+                    }
                 }
+                out[f * 2 + 0] += sL * gL;
+                out[f * 2 + 1] += sR * gR;
                 ++v.cursor;
                 ++f;
             }
             if (!v.loop && v.cursor >= end)
                 v.done = true; // 恰好混到末帧的一次性声部当场终止（不待下一块）
+            if (v.stream && streamUnderrun > 0) { // 块末发布（观测/验收"欠载静音 ≤ 单次"）
+                v.stream->underruns.fetch_add(streamUnderrun, std::memory_order_relaxed);
+                streamUnderruns_.fetch_add(streamUnderrun, std::memory_order_relaxed);
+            }
         }
         for (uint32_t i = 0; i < frames * kMixChannels; ++i)
             out[i] = std::clamp(out[i], -1.0f, 1.0f);
@@ -274,6 +428,9 @@ bool AudioEngine::Init(const InitOptions& opts) {
                 impl_->silent_ = true;
             } else {
                 impl_->deviceOk = true;
+                // 批①b：流式填充线程（设备模式唯一生产者；音频回调消费 SPSC 环）
+                impl_->fillStop_ = false;
+                impl_->fillThread_ = std::thread([this] { impl_->FillThreadLoop(); });
             }
         }
     }
@@ -285,17 +442,32 @@ void AudioEngine::Shutdown() {
     if (!impl_->inited_)
         return;
     if (impl_->deviceOk) {
-        ma_device_stop(&impl_->device);
+        ma_device_stop(&impl_->device);   // 同步等回调退出（不再碰环消费侧）
         ma_device_uninit(&impl_->device);
-        impl_->deviceOk = false;
     }
+    if (impl_->fillThread_.joinable()) {  // 批①b：先收填充线程再弃养 feed
+        {
+            std::lock_guard<std::mutex> lk(impl_->fillMtx_);
+            impl_->fillStop_ = true;
+        }
+        impl_->fillCv_.notify_all();
+        impl_->fillThread_.join();
+        std::lock_guard<std::mutex> lk(impl_->fillMtx_);
+        impl_->fillJobs_.clear();
+    }
+    // review 2026-10-01：deviceOk 与填充线程共存亡（join 后才落 false）——否则窗口期
+    // PumpStreams 见 false 放行手动泵 = 与填充线程同环双生产者
+    impl_->deviceOk = false;
     if (impl_->ctxOk) {
         ma_context_uninit(&impl_->ctx);
         impl_->ctxOk = false;
     }
     std::lock_guard<std::mutex> lk(impl_->mtx);
-    for (auto& v : impl_->voices)
+    for (auto& v : impl_->voices) {
+        if (v.stream)
+            v.stream->dead.store(true, std::memory_order_relaxed);
         v = {}; // 原生数组不能整体赋值；号不复用（nextVoiceId 只增）
+    }
     impl_->silent_ = false;
     impl_->inited_ = false;
 }
@@ -330,8 +502,24 @@ uint32_t AudioEngine::RegisterClip(std::vector<int16_t>&& pcm, uint16_t channels
     return static_cast<uint32_t>(impl_->clips.size());
 }
 
-void AudioEngine::UnregisterClip(uint32_t clipId) {
+uint32_t AudioEngine::RegisterStreamClip(const char* path) {
+    if (!path || !path[0])
+        return 0;
+    BakedClipInfo info;
+    if (!PeekBakedClip(path, info)) // 头校验单源（拒坏文件，与整载同口径）
+        return 0;
     std::lock_guard<std::mutex> lk(impl_->mtx);
+    Impl::Clip c;
+    c.streamPath = path;
+    c.frameCount = info.frameCount;
+    c.channels = info.channels;
+    c.loopStart = std::min(info.loopStart, info.frameCount);
+    c.loopEnd = info.loopEnd ? std::min(info.loopEnd, info.frameCount) : info.frameCount;
+    impl_->clips.push_back(std::move(c));
+    return static_cast<uint32_t>(impl_->clips.size());
+}
+
+void AudioEngine::UnregisterClip(uint32_t clipId) {    std::lock_guard<std::mutex> lk(impl_->mtx);
     if (clipId == 0 || clipId > impl_->clips.size())
         return;
     impl_->clips[clipId - 1].frameCount = 0; // 保留槽位（id 不复用），Play 拒绝
@@ -348,8 +536,42 @@ void AudioEngine::ResetClips() {
 }
 
 uint32_t AudioEngine::Play(uint32_t clipId, const PlayParams& p) {
+    // 流式 clip 两阶段（批①b）：锁内取路径 → 锁外 open+头解析+预填（ADR-015 M2
+    // "主线程只做 open + 头解析"；预填整环保首回调零欠载——256KiB 顺序读 ≈ 亚毫秒）
+    std::string streamPath;
+    {
+        std::lock_guard<std::mutex> lk(impl_->mtx);
+        if (clipId == 0 || clipId > impl_->clips.size())
+            return 0;
+        streamPath = impl_->clips[clipId - 1].streamPath;
+    }
+    Impl::FeedRef feed;
+    if (!streamPath.empty()) {
+        BakedClipInfo info;
+        std::FILE* f = nullptr;
+        if (!OpenBakedStream(streamPath.c_str(), info, f)) {
+            LogMsg(LogLevel::Warn, "audio: 流式声部打开失败（.baked 缺失/头坏）：%s",
+                   streamPath.c_str());
+            return 0;
+        }
+        feed = std::make_shared<Impl::StreamFeed>();
+        feed->file = f;
+        feed->channels = info.channels;
+        feed->frameCount = info.frameCount;
+        feed->loopStart = std::min(info.loopStart, info.frameCount);
+        feed->loopEnd = info.loopEnd ? std::min(info.loopEnd, info.frameCount) : info.frameCount;
+        std::vector<uint8_t> staging;
+        Impl::PumpFeed(*feed, staging); // 预填（loop 语义在 PlayLocked 落位后由 job 线程
+                                        // 按 v.loop 续喂——预填期 loop 未定，按一次性喂
+                                        // 首环；循环声部起播即 v.loop 路径只多喂环尾）
+        if (feed->failed.load(std::memory_order_relaxed)) {
+            LogMsg(LogLevel::Warn, "audio: 流式声部预填失败（载荷 IO 错）：%s",
+                   streamPath.c_str());
+            return 0;
+        }
+    }
     std::lock_guard<std::mutex> lk(impl_->mtx);
-    return impl_->PlayLocked(clipId, p);
+    return impl_->PlayLocked(clipId, p, std::move(feed));
 }
 
 bool AudioEngine::Stop(uint32_t voiceId) {
@@ -450,9 +672,18 @@ void AudioEngine::SetPaused(bool paused) {
 
 void AudioEngine::Tick(float dtSeconds) {
     std::lock_guard<std::mutex> lk(impl_->mtx);
-    for (auto& v : impl_->voices)
-        if (v.done)
-            v = {}; // 回收：id 归零（号不复用——nextVoiceId 只增）
+    for (auto& v : impl_->voices) {
+        if (!v.done)
+            continue;
+        if (v.stream) // 批①b：回收即弃养（填充线程撤 job；环/句柄随末引用释放）
+            v.stream->dead.store(true, std::memory_order_relaxed);
+        v = {}; // 回收：id 归零（号不复用——nextVoiceId 只增）
+    }
+    if (!impl_->underrunWarned_ && impl_->streamUnderruns_.load(std::memory_order_relaxed) > 0) {
+        impl_->underrunWarned_ = true; // 验收证据面："欠载静音 ≤ 单次"判据的观测钩
+        LogMsg(LogLevel::Warn, "audio: 流式声部出现欠载（累计 %llu 帧——环 256KiB/填充 4ms 周期下不应发生）",
+               static_cast<unsigned long long>(impl_->streamUnderruns_.load()));
+    }
     if (impl_->silent_ && dtSeconds > 0.0f) {
         const auto frames = static_cast<uint32_t>(dtSeconds * kMixSampleRate);
         if (frames > 0)
@@ -495,6 +726,23 @@ void AudioEngine::AdvanceSilentFrames(uint32_t frames) {
         return;
     std::lock_guard<std::mutex> lk(impl_->mtx);
     impl_->AdvanceLocked(frames);
+}
+
+void AudioEngine::PumpStreams() {
+    if (impl_->deviceOk) {
+        LogMsg(LogLevel::Error,
+               "audio: PumpStreams 仅静音/离线模式（设备模式由专用线程喂数——双生产者违规）");
+        return;
+    }
+    std::lock_guard<std::mutex> lk(impl_->mtx);
+    std::vector<uint8_t> staging;
+    for (auto& v : impl_->voices)
+        if (v.id != 0 && !v.done && v.stream)
+            Impl::PumpFeed(*v.stream, staging);
+}
+
+uint64_t AudioEngine::StreamUnderrunFrames() const {
+    return impl_->streamUnderruns_.load(std::memory_order_relaxed);
 }
 
 bool AudioEngine::silent() const {

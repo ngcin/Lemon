@@ -11,6 +11,7 @@
 #include "Audio/AudioChannel.h" // M6c 批②：命令通道（World.h 链亦达，显式声明测试意图）
 #include "Audio/AudioEngine.h"
 #include "Audio/BakedClip.h"
+#include "Audio/SpscRing.h" // M6c 批①b：SPSC 环序锁
 #include "Core/Guid.h"
 #include "Core/Math.h"
 #include "Components/AudioComponents.h" // M6c 批②：AudioSource
@@ -5675,6 +5676,252 @@ void TestAudioBakedHardening() {
     fs::remove_all(dir, ec);
 }
 
+// ------------------------------------------------ M6c 批①b：SPSC 环 + 流式声部 ----
+void TestAudioSpscRing() {
+    // 批①b：环序/边界——容量取 2^n、单调索引免 ABA、全满/全空、跨回卷 FIFO
+    audio::SpscRing ring(1000);
+    Expect(ring.Capacity() == 1024, "capacity rounds up to pow2");
+    Expect(ring.Size() == 0 && ring.Free() == 1024, "empty state");
+
+    uint8_t wbuf[512], rbuf[512];
+    uint64_t wpos = 0, rpos = 0; // 全局字节位（内容 = 位置哈希，序错即暴露）
+    uint32_t seed = 12345;
+    const auto rnd = [&seed] {
+        seed = seed * 1664525u + 1013904223u;
+        return seed >> 8;
+    };
+    for (int step = 0; step < 300; ++step) {
+        const size_t wn = 1 + rnd() % (sizeof wbuf) + 0;
+        for (size_t i = 0; i < wn; ++i)
+            wbuf[i] = uint8_t(((wpos + i) * 31u + 7u) >> 3);
+        wpos += ring.Write(wbuf, wn); // 可能部分写（环满）——前缀一致即序一致
+        const size_t rn = 1 + rnd() % (sizeof rbuf) + 0;
+        const size_t got = ring.Read(rbuf, rn);
+        bool ok = got > 0;
+        for (size_t i = 0; i < got; ++i)
+            ok = ok && rbuf[i] == uint8_t(((rpos + i) * 31u + 7u) >> 3);
+        Expect(ok, "interleaved chunk FIFO holds across wrap");
+        rpos += got;
+    }
+    // 排空到恰好读完 + 全满写 0
+    while (ring.Size() > 0) {
+        const size_t got = ring.Read(rbuf, sizeof rbuf);
+        bool ok = got > 0;
+        for (size_t i = 0; i < got; ++i)
+            ok = ok && rbuf[i] == uint8_t(((rpos + i) * 31u + 7u) >> 3);
+        Expect(ok, "drain keeps order");
+        rpos += got;
+    }
+    Expect(rpos == wpos, "all written bytes read in order");
+    for (int i = 0; i < 4; ++i) wpos += ring.Write(wbuf, 256);
+    Expect(ring.Free() == 0 && ring.Write(wbuf, 1) == 0, "full ring rejects writes");
+
+    // 双线程锤（4MiB，随机块）：单生产者×单消费者字节序精确
+    audio::SpscRing big(64 * 1024);
+    constexpr uint64_t kTotal = 4ull << 20;
+    std::atomic<bool> orderOk{true};
+    std::thread prod([&] {
+        uint8_t buf[1024];
+        uint32_t s = 999;
+        const auto r = [&s] {
+            s = s * 1664525u + 1013904223u;
+            return s >> 8;
+        };
+        uint64_t p = 0;
+        while (p < kTotal) {
+            const size_t n = 1 + r() % (sizeof buf) + 0;
+            for (size_t i = 0; i < n; ++i)
+                buf[i] = uint8_t(((p + i) * 2654435761ull) >> 24);
+            p += big.Write(buf, n);
+        }
+    });
+    std::thread cons([&] {
+        uint8_t buf[1024];
+        uint32_t s = 777;
+        const auto r = [&s] {
+            s = s * 1664525u + 1013904223u;
+            return s >> 8;
+        };
+        uint64_t p = 0;
+        while (p < kTotal) {
+            const size_t got = big.Read(buf, 1 + r() % (sizeof buf) + 0);
+            for (size_t i = 0; i < got; ++i)
+                if (buf[i] != uint8_t(((p + i) * 2654435761ull) >> 24)) {
+                    orderOk.store(false);
+                    return;
+                }
+            p += got;
+        }
+    });
+    prod.join();
+    cons.join();
+    Expect(orderOk.load(), "threaded SPSC 4MiB byte-exact order");
+}
+
+void TestAudioStreamVoice() {
+    // 批①b：流式声部——预填即鸣（首回调零欠载）、一次性曲终、循环回卷换位（环内
+    // 线性化帧流）、欠载静音计数、同 clip 双声部（BGM 交叉淡出形态）。静音模式
+    // 手动泵（PumpStreams）= 离线确定性生产者。
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "lemon-audio-stream-test";
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+
+    // 48k 立体声正弦 wav（烤制 passthrough——内容可精确对照）
+    constexpr uint32_t kFrames = 14400, kRate = 48000; // 0.3s
+    std::vector<int16_t> pcm(kFrames * 2);
+    for (uint32_t i = 0; i < kFrames; ++i) {
+        pcm[i * 2] = int16_t(10000.0f * std::sin(i * 0.05f));
+        pcm[i * 2 + 1] = int16_t(-10000.0f * std::sin(i * 0.05f));
+    }
+    const std::string wav = (dir / "in.wav").string();
+    {
+        FILE* f = std::fopen(wav.c_str(), "wb");
+        Expect(f != nullptr, "stream wav fixture open");
+        const uint32_t dataBytes = kFrames * 2 * 2, riffSize = 36 + dataBytes;
+        std::fwrite("RIFF", 1, 4, f);
+        std::fwrite(&riffSize, 4, 1, f);
+        std::fwrite("WAVEfmt ", 1, 8, f);
+        const uint32_t fmtSize = 16, byteRate = kRate * 2 * 2;
+        const uint16_t fmt = 1, ch = 2, bits = 16, blockAlign = 4;
+        std::fwrite(&fmtSize, 4, 1, f);
+        std::fwrite(&fmt, 2, 1, f);
+        std::fwrite(&ch, 2, 1, f);
+        std::fwrite(&kRate, 4, 1, f);
+        std::fwrite(&byteRate, 4, 1, f);
+        std::fwrite(&blockAlign, 2, 1, f);
+        std::fwrite(&bits, 2, 1, f);
+        std::fwrite("data", 1, 4, f);
+        std::fwrite(&dataBytes, 4, 1, f);
+        std::fwrite(pcm.data(), 2, pcm.size(), f);
+        std::fclose(f);
+    }
+    const std::string baked = (dir / "s.baked").string();
+    const std::string looped = (dir / "loop.baked").string();
+    const std::string bigBaked = (dir / "big.baked").string();
+    Expect(audio::BakeAudioFile(wav.c_str(), baked.c_str()), "bake stream fixture");
+    // 循环点 [0.05s, 0.2s) = [2400, 9600) 帧
+    Expect(audio::BakeAudioFile(wav.c_str(), looped.c_str(), 0.05f, 0.2f),
+           "bake loop fixture");
+    {
+        // 大 clip（80000 帧 = 320KB > 256KiB 环）：欠载路径专用
+        std::vector<int16_t> big(80000 * 2, 6000);
+        const uint32_t dataBytes = 80000u * 2 * 2, riffSize = 36 + dataBytes;
+        FILE* f = std::fopen(wav.c_str(), "wb"); // 复用 wav 名重写为大内容
+        Expect(f != nullptr, "big wav rewrite open");
+        std::fwrite("RIFF", 1, 4, f);
+        std::fwrite(&riffSize, 4, 1, f);
+        std::fwrite("WAVEfmt ", 1, 8, f);
+        const uint32_t fmtSize = 16, byteRate = 48000 * 2 * 2;
+        const uint16_t fmt = 1, ch = 2, bits = 16, blockAlign = 4;
+        std::fwrite(&fmtSize, 4, 1, f);
+        std::fwrite(&fmt, 2, 1, f);
+        std::fwrite(&ch, 2, 1, f);
+        const uint32_t rate = 48000;
+        std::fwrite(&rate, 4, 1, f);
+        std::fwrite(&byteRate, 4, 1, f);
+        std::fwrite(&blockAlign, 2, 1, f);
+        std::fwrite(&bits, 2, 1, f);
+        std::fwrite("data", 1, 4, f);
+        std::fwrite(&dataBytes, 4, 1, f);
+        std::fwrite(big.data(), 2, big.size(), f);
+        std::fclose(f);
+        Expect(audio::BakeAudioFile(wav.c_str(), bigBaked.c_str()), "bake big fixture");
+    }
+
+    audio::AudioEngine eng;
+    Expect(eng.Init({.forceSilent = true}), "silent init (manual pump)");
+    Expect(eng.RegisterStreamClip((dir / "none.baked").string().c_str()) == 0,
+           "missing stream file rejected");
+    const uint32_t clip = eng.RegisterStreamClip(baked.c_str());
+    Expect(clip != 0, "stream clip registered");
+
+    // 一次性：Play 预填整环（clip 57.6KB < 256KiB）→ 零欠载、样本精确、曲终即亡
+    const uint32_t v1 = eng.Play(clip, {});
+    Expect(v1 != 0, "stream voice plays");
+    {
+        std::vector<float> out(kFrames * 2);
+        uint32_t doneFrames = 0;
+        while (doneFrames < kFrames) {
+            const uint32_t chunk = std::min<uint32_t>(2048, kFrames - doneFrames);
+            eng.MixOffline(out.data() + doneFrames * 2, chunk);
+            doneFrames += chunk;
+        }
+        Expect(eng.StreamUnderrunFrames() == 0, "prefilled stream never underruns");
+        bool ok = true;
+        for (uint32_t i = 0; i < 16; ++i) { // 抽 16 帧对照（pan 中心等功率）
+            const float exL = pcm[i * 900 * 2] / 32768.0f * 0.70710678f;
+            const float exR = pcm[i * 900 * 2 + 1] / 32768.0f * 0.70710678f;
+            ok = ok && std::fabs(out[i * 900 * 2] - exL) < 1e-4f &&
+                 std::fabs(out[i * 900 * 2 + 1] - exR) < 1e-4f;
+        }
+        Expect(ok, "stream samples byte-exact via ring");
+        Expect(!eng.VoiceAlive(v1), "one-shot stream done at frameCount");
+    }
+    eng.Tick();
+    Expect(eng.ActiveVoiceCount() == 0, "stream voice reaped");
+
+    // 循环回卷：环内线性化 = [0..14400) + [2400..9600) 反复——消费无回卷逻辑
+    const uint32_t loopClip = eng.RegisterStreamClip(looped.c_str());
+    Expect(loopClip != 0, "loop stream clip registered");
+    const uint32_t v2 = eng.Play(loopClip, {.loop = true});
+    Expect(v2 != 0 && eng.VoiceAlive(v2), "loop stream voice plays");
+    eng.PumpStreams(); // 起播按一次性预填首环；Pump 后按 loop 语义续喂回卷段
+    {
+        const uint32_t span = 9600 - 2400;
+        const uint32_t total = kFrames + span * 2 + 100; // 首遍 + 两圈 + 余量
+        std::vector<float> out(total * 2);
+        uint32_t doneFrames = 0;
+        while (doneFrames < total) {
+            const uint32_t chunk = std::min<uint32_t>(3000, total - doneFrames);
+            eng.PumpStreams(); // 模拟填充线程（离线确定性）
+            eng.MixOffline(out.data() + doneFrames * 2, chunk);
+            doneFrames += chunk;
+        }
+        bool ok = true;
+        for (uint32_t k = 0; k < total; k += 997) {
+            const uint32_t idx = k < kFrames ? k : 2400 + (k - kFrames) % span;
+            const float exL = pcm[idx * 2] / 32768.0f * 0.70710678f;
+            ok = ok && std::fabs(out[k * 2] - exL) < 1e-4f;
+        }
+        Expect(ok, "loop wrap linearized in ring (producer-side seek)");
+        Expect(eng.VoiceAlive(v2), "loop stream voice stays alive");
+        Expect(eng.StreamUnderrunFrames() == 0, "pumped loop never underruns");
+        eng.Stop(v2);
+    }
+
+    // 欠载：大 clip（预填 65536 帧 = 256KiB/4B）不泵直混 → 80000-65536 = 14464 静音帧
+    const uint32_t bigClip = eng.RegisterStreamClip(bigBaked.c_str());
+    Expect(bigClip != 0, "big stream clip registered");
+    const uint32_t v3 = eng.Play(bigClip, {});
+    Expect(v3 != 0, "big stream voice plays");
+    {
+        std::vector<float> out(80000 * 2);
+        eng.MixOffline(out.data(), 80000);
+        Expect(eng.StreamUnderrunFrames() == 80000 - 65536,
+               "unpumped tail counts as underrun silence exactly");
+        bool ok = true;
+        for (uint32_t i = 0; i < 8; ++i) // 已预填段样本正确
+            ok = ok && std::fabs(out[i * 8000 * 2] - 6000 / 32768.0f * 0.70710678f) < 1e-4f;
+        Expect(ok, "prefilled span samples correct");
+        Expect(!eng.VoiceAlive(v3), "one-shot big stream done despite underrun");
+    }
+
+    // 同 clip 双声部（BGM 交叉淡出形态）：两句柄两环两游标，叠加 = 2×
+    const uint32_t va = eng.Play(clip, {});
+    const uint32_t vb = eng.Play(clip, {});
+    Expect(va != 0 && vb != 0 && va != vb, "dual stream voices on same clip");
+    {
+        float out[8];
+        eng.MixOffline(out, 4);
+        const float ex = pcm[0] / 32768.0f * 0.70710678f;
+        ExpectNear(out[0], 2 * ex, 1e-4f, "dual stream voices sum");
+    }
+    eng.StopAll();
+    fs::remove_all(dir, ec);
+}
+
 // ------------------------------------------------ M6c 批②：命令通道/包络/空间化/组件声源 ----
 void TestAudioFadeEnvelope() {
     // D4 包络：fadeIn 逐样本爬升；FadeVoice→0 + stopWhenDone 到点终结；
@@ -5996,6 +6243,8 @@ int main() {
     TestAudioBench100Sfx();   // M6c 批⓪：100 并发 SFX 模拟侧 ≤0.5ms
     TestAudioBakedRoundtrip(); // M6c 竖切批：LBA1 烤制/装载（44.1k→48k 重采样）
     TestAudioBakedHardening(); // review 2026-10-01：坏头（回绕/超限载荷）拒绝 + 并发烤制不交错
+    TestAudioSpscRing();      // M6c 批①b：SPSC 环序（交错/回卷/双线程 4MiB 字节精确）
+    TestAudioStreamVoice();   // M6c 批①b：流式声部（预填即鸣/曲终/回卷线性化/欠载计数/双声部）
     TestAudioFadeEnvelope();   // M6c 批② D4：起播淡入/FadeVoice 到零即停/静音记账同径
     TestAudioSpatialMath();    // M6c 批② M5：线性衰减钳界 + 声像半宽归一
     TestAudioChannelCommands();// M6c 批②：staging/保序 Stop/BGM 单槽换曲/StopAll/null 引擎记账

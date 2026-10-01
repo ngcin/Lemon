@@ -237,31 +237,54 @@ uint32_t EditorApp::MountPlayAudio() {
     if (root.empty()) return 0; // 无项目 = 零资产零装载
     std::error_code ec;
     fs::create_directories(fs::path(root) / ".lemon" / "baked" / "audio", ec);
-    uint32_t ok = 0, failed = 0;
+    uint32_t ok = 0, failed = 0, streamed = 0;
     for (const AssetEntry& e : ctx_.Assets().Entries()) {
         if (e.type != AssetType::Audio || e.missing) continue;
-        if (EnsureClipLoaded(e)) ++ok;
-        else ++failed;
+        bool isStream = false;
+        if (EnsureClipLoaded(e, &isStream)) {
+            ++ok;
+            if (isStream) ++streamed; // 批①b：>1MiB 未 preload = 流式（RAM 常驻证据）
+        } else {
+            ++failed;
+        }
     }
     if (ok)
-        LEMON_LOG("进 Play 音频装载：%u 成功%s", ok, failed ? "" : "，全部就绪");
+        LEMON_LOG("进 Play 音频装载：%u 成功（流式 %u）%s", ok, streamed,
+                  failed ? "" : "，全部就绪");
     else if (failed)
         LEMON_WARN("进 Play 音频装载：0 成功 / %u 失败（详见上方红字）", failed);
     return ok;
 }
 
 // 按需装载单 clip：缺烤/陈旧现烤（同步；通常已被后台烤制预热）→ 装载注册 →
-// guid→clipId。Edit 态试听与 EnterPlay 兜底共用此口。
-bool EditorApp::EnsureClipLoaded(const AssetEntry& e) {
+// guid→clipId。Edit 态试听与 EnterPlay 兜底共用此口。批①b：payload > 1MiB 且
+// 未显式 preload → 流式注册（RAM 常驻 < 阈值；句柄/环随声部开闭）。
+bool EditorApp::EnsureClipLoaded(const AssetEntry& e, bool* outStreamed) {
+    if (outStreamed) *outStreamed = false;
     if (const auto it = audioClips_.find(e.guid); it != audioClips_.end()) return true;
     const std::string root = ctx_.Assets().ProjectRoot();
     const std::string src = ctx_.Assets().AbsolutePath(e);
     const std::string dst = BakedPathFor(root, e.guid);
-    if (BakeStale(src, dst) &&
-        !audio::BakeAudioFile(src.c_str(), dst.c_str(), e.audioLoopStart, e.audioLoopEnd))
-        return false;
-    std::vector<int16_t> pcm;
+    if (BakeStale(src, dst)) {
+        const auto t0 = std::chrono::steady_clock::now();
+        if (!audio::BakeAudioFile(src.c_str(), dst.c_str(), e.audioLoopStart, e.audioLoopEnd))
+            return false;
+        // 批①b：同步烤超 100ms 红字（后台预热未命中——首播顿挫面，量级证据）
+        const double ms = std::chrono::duration<double, std::milli>(
+                              std::chrono::steady_clock::now() - t0).count();
+        if (ms > 100.0)
+            LEMON_WARN("audio: 同步烤制耗时 %.0fms（后台预热未命中）：%s", ms, src.c_str());
+    }
     audio::BakedClipInfo info;
+    if (!audio::PeekBakedClip(dst.c_str(), info)) return false;
+    if (info.payloadBytes > audio::kStreamThresholdBytes && !e.audioPreload) {
+        const uint32_t streamId = audio_.RegisterStreamClip(dst.c_str());
+        if (streamId == 0) return false;
+        audioClips_[e.guid] = streamId;
+        if (outStreamed) *outStreamed = true;
+        return true;
+    }
+    std::vector<int16_t> pcm;
     if (!audio::LoadBakedClip(dst.c_str(), pcm, info)) return false;
     const uint32_t clipId = audio_.RegisterClip(std::move(pcm), info.channels,
                                                 info.frameCount, info.loopStart, info.loopEnd);

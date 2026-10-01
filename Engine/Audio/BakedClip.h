@@ -5,6 +5,7 @@
 #pragma once
 
 #include <cstdint>
+#include <cstdio>
 #include <vector>
 
 namespace lemon::audio {
@@ -14,6 +15,7 @@ struct BakedClipInfo {
     uint16_t channels = 0;   // 1|2
     uint32_t loopStart = 0;  // 帧（竖切批恒 0/0 = 全曲循环；批① 起 .meta importer 声明）
     uint32_t loopEnd = 0;    // 0 = 尾（== frameCount）
+    uint32_t payloadBytes = 0; // = frameCount × channels × 2（批①b：流式/整载分流判据）
 };
 
 /// 解码 srcPath（miniaudio 内建 wav/mp3/flac/vorbis 四解码器）→ 归一 48k PCM16 →
@@ -28,5 +30,12 @@ bool LoadBakedClip(const char* path, std::vector<int16_t>& outPcm, BakedClipInfo
 
 /// 只读头（浏览器 tooltip / smoke 探针用）：不碰载荷。失败 false。
 bool PeekBakedClip(const char* path, BakedClipInfo& outInfo);
+
+/// 打开 .baked 载荷句柄供流式读取（批①b，ADR-015 M2）：头校验 + 停在载荷首
+/// 字节。失败 false（outFile 保证关闭、outInfo 为空）。
+bool OpenBakedStream(const char* path, BakedClipInfo& outInfo, std::FILE*& outFile);
+
+/// 载荷按帧定位（流式循环回卷换位用）。失败 false。
+bool SeekBakedFrame(std::FILE* f, uint32_t frame, uint16_t channels);
 
 } // namespace lemon::audio

@@ -46,7 +46,7 @@
 
 - **落位 `.lemon/baked/audio/`**（项目状态目录，随 gitignore，manifest 同侧先例）：生成物、可随时重烤（源 hash 变更自动重烤）、`git clean -xfd` 后编辑器按需补烤——与 M7a "无需 `.lemon/` 缓存" 判据相容；M7 packager 出包时从源资产现烤入包。
 - 源侧 `.meta` importer 段（`SyncMeta` 既有 schema，网格切片同款先例）：`{"importer":{"loop":[起,止(秒)],"preload":bool}}`；`preload` 缺省 = payloadBytes > 1 MiB 走流式。
-- 加载策略：SFX 整载入 RAM；长 BGM 流式（ring buffer 256 KiB，专用加载线程填充，主线程只做文件 open + 头解析——**"解码不占主线程"由架构保证**，验收的 0.5ms 预算只剩命令 staging + 空间化数学）。
+- 加载策略：SFX 整载入 RAM；长 BGM 流式（ring buffer 256 KiB，专用加载线程填充，主线程只做文件 open + 头解析——**"解码不占主线程"由架构保证**，验收的 0.5ms 预算只剩命令 staging + 空间化数学）。**实现注记（2026-10-01 批①b）**：环为声部级（同 clip 多声部各持环/句柄，BGM 交叉淡出即此形态）；**回卷换位在生产者侧**——环内是线性化帧流，消费者（设备回调）零回卷逻辑；起播主线程另做**预填整环**（≤256KiB 顺序读 ≈ 亚毫秒，"只做 open+头解析"的窄偏差，保首回调零欠载）；欠载帧静音混出并计数（`StreamUnderrunFrames` 观测 + Tick Warn）。
 - `.baked` 容器家族口径：本 ADR 只定音频容器；`LBA1` 魔数属音频类型，图集/场景等后续 `.baked` 各自定头（06 §4 双格式策略不变），共同点 = version 字段 + M7 packager 单点消费。
 
 ### M3 播放面双轨：AudioChannel（零重录）+ AudioSource 组件 id 31（一次性重录）

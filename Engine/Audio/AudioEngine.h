@@ -13,7 +13,8 @@ namespace lemon::audio {
 inline constexpr int kMixSampleRate = 48000; // ADR-015 M2：全引擎音频域恒定
 inline constexpr int kMixChannels = 2;
 inline constexpr int kMaxVoices = 64;        // 声部池上限；满时偷最旧一次性声部
-inline constexpr uint32_t kStreamThresholdBytes = 1u << 20; // >1MiB 流式（批① 消费）
+inline constexpr uint32_t kStreamThresholdBytes = 1u << 20; // >1MiB 走流式（批①b 消费：
+                                                            // 装载侧分流判据，audioPreload 覆盖）
 
 enum class Group : uint8_t { Bgm = 0, Sfx, Ui, Count };
 inline constexpr int kGroupCount = static_cast<int>(Group::Count);
@@ -56,6 +57,10 @@ public:
     /// 移动重载（批①：装载 vector 直迁——21MB BGM 免双拷贝瞬时翻峰）
     uint32_t RegisterClip(std::vector<int16_t>&& pcm, uint16_t channels, uint32_t frameCount,
                           uint32_t loopStart, uint32_t loopEnd);
+    /// 流式注册（批①b，ADR-015 M2）：长 clip 免整载——文件保持 .baked 原样，
+    /// 声部起播时开载荷句柄 + 256KiB SPSC 环（设备模式专用线程填充；起播主线程
+    /// open + 头解析 + 预填环，保首回调零欠载）。返回 clipId，0 = 头校验失败。
+    uint32_t RegisterStreamClip(const char* path);
     void UnregisterClip(uint32_t clipId); // 引用中的声部当场终止
     void ResetClips();                    // 全清 + 停声（EnterPlay 重装前调——注册表只增不减，防跨局累积）
 
@@ -94,6 +99,13 @@ public:
 
     // 静音模式推进逻辑游标（单测确定性驱动；设备模式 no-op）
     void AdvanceSilentFrames(uint32_t frames);
+
+    /// 单测/离线专用：同步喂满全部活跃流式声部的环（设备模式由专用线程承担，
+    /// 调用即红字拒绝——双生产者违规）。静音/离线测试手动驱动生产者侧。
+    void PumpStreams();
+
+    /// 流式声部累计欠载帧数（观测/验收"欠载静音 ≤ 单次"判据；批①b）
+    uint64_t StreamUnderrunFrames() const;
 
     bool silent() const;  // 静音模式（降级或强制）——逻辑声部仍记账
     bool inited() const;
