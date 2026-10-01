@@ -58,6 +58,7 @@ enum class FieldHint : uint32_t {
     AnimSetRef    = 1u << 9,  // 动画集槽（uint64 = .override/.override 资产 GUID；T3d 批①）
     ControllerRef = 1u << 10, // 状态机槽（uint64 = .controller 资产 GUID；T3d 批①）
     RmlRef        = 1u << 11, // .rml 文档槽（uint64 = 资产 GUID 全量；M6b 批③d 前置）
+    AudioRef      = 1u << 12, // 音频资产槽（uint64 = 资产 GUID 全量；M6c 批③）
 };
 inline constexpr FieldHint operator|(FieldHint a, FieldHint b) {
     return (FieldHint)((uint32_t)a | (uint32_t)b);

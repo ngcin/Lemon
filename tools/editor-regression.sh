@@ -108,6 +108,12 @@ if [ "${MODE}" = "full" ]; then
     grep_step "guid-chain smoke (insert+rename+manifest-wipe -> reopen per-entity resolve; M6a-b0)" \
         "smoke-guid: .* => OK" \
         "${EDITOR}" --smoke-guid --no-reopen
+    # M6c 批③：音频全链（夹具自播种 wav → 导入/meta/后台烤/Peek/试听 +
+    # AudioSource playOnStart 逻辑声部断言）。LEMON_AUDIO=off 强制静音 = 无头
+    # 确定性口径（"off 无头环境同绿"判据的机器面；设备路径 = 真人/svr-test 验）
+    grep_step "audio-chain smoke (seeded wav import/bake/preview + playOnStart voices; LEMON_AUDIO=off; M6c-b3)" \
+        "smoke-audio.*OK" \
+        env LEMON_AUDIO=off "${EDITOR}" --project "${TMP}/audio" --smoke-audio --no-reopen
     if [ -f "${SDK}" ]; then
         grep_step "uirml-chain smoke (RmlUi C# API: ops/clone/click-events/contract + font/asset/hot-reload + uidoc dual-channel/stale/layer/watcher-evict + zombie-render triple-form + reconcile + entity-delete evict3; M6b-b3d)" \
             "smoke-uirml: .* => OK" \

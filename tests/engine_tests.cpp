@@ -3794,6 +3794,14 @@ void TestEditorMetaSanity() {
     const ComponentMeta& tf = *reg.Find("Transform2D");
     Expect(tf.editorMeta && HasHint(tf.editorMeta[1].hints, FieldHint::Degree),
            "Transform2D.rot degree meta");
+    // M6c 批③：AudioSource 抽查——clipGuid AudioRef 槽 + group 三名枚举
+    //（Inspector 槽控件的前提；hint 位回归锁）
+    const ComponentMeta& aus = *reg.Find("AudioSource");
+    Expect(aus.editorMeta && HasHint(aus.editorMeta[0].hints, FieldHint::AudioRef) &&
+               aus.fields[0].type == FieldType::UInt64 &&
+               HasHint(aus.editorMeta[5].hints, FieldHint::Enum) &&
+               aus.editorMeta[5].enumCount == 3,
+           "AudioSource clipGuid/group meta");
     // M4.8 字段级重置：Reset 提示的字段必须 constructFn 可用且组件可入 Inspector 栈缓冲（128B）
     for (uint16_t id2 = 0; id2 < reg.Count(); ++id2) {
         const ComponentMeta& m = reg.At(id2);

@@ -75,8 +75,10 @@ struct EditorLaunch {
     bool smokeTemplate = false; // --smoke-template：M5 批④ 模板链冒烟（向导复制 →
                                 // build → Play → HUD/波次/击杀/升级/卡片断言）
     bool smokeGuid = false;     // --smoke-guid：M6a 批⓪ T5 sprite 引用稳定性链冒烟
-    bool smokeAudio = false;    // --smoke-audio：M6c 批① 音频资产链冒烟（须配 --project）
-                                //（导入插队 + 资产改名 + 删 manifest → 重开逐实体归一断言）
+    bool smokeAudio = false;    // --smoke-audio：M6c 音频全链冒烟（批① 资产链 +
+                                // 批③ playOnStart 逻辑声部断言；须配 --project——
+                                // 空目录夹具自播种；真项目 Game/ 会装配运行脚本，
+                                // ExitPlay 兜底回写 .lemon/saves/ 三档）
     bool smokeUirml = false;    // --smoke-uirml：M6b 批③a RmlUi 呈现地基冒烟（隐含
                                 // --play；gameRT 像素断言 + 独立裁决链，不并 editor-smoke 门）
 };
@@ -212,6 +214,10 @@ private:
     /// 统一走此口——ExitPlay 本体在 EditorContext（无 gameUi_ 依赖，分层不动）。
     bool StopPlay();
     void BuildPickersAndModals();
+    /// Audio Mixer 按需工具窗（M6c 批③；05 §3 冻结旁路形态——不进面板注册表，
+    /// Window 菜单进入）。Master/三组音量 + voice 计数 + 节流/微扰全局调参面；
+    /// 无持久化（设置屏音量档 = 批④）。
+    void DrawAudioMixerWindow();
     /// 场景选择器起始目录：当前场景父目录 → 项目 Scenes/ → 项目根 → CWD（无项目）
     std::string PickerStartDir();
     void BuildNoProjectCard(); // 无项目引导（M4.6 §4-1：中央卡 + 两按钮直达）
@@ -219,6 +225,8 @@ private:
     void SeedSmokeScene();   // 冒烟播种：父子链 + 常用组件（面板验收有内容）
     void SeedSmokeProject(); // 冒烟播种：临时项目 + 预置 PNG（固定 guid，M4.4 资产链验收）
     void SeedSmokeUiRmlProject(); // 批③b：--smoke-uirml 资产夹具（temp 项目 + .rml/.rcss/贴图）
+    void SeedSmokeAudioProject(); // 批③：--smoke-audio 资产夹具（temp 项目 + WAV；
+                                  // 目标已是真项目则零播种——夹具纪律，smoke-anim 同款）
     void SeedSmokeUiDocument(); // 批③b：--smoke-uirml 文档装载（从夹具资产走 LoadDocumentFromFile）
     /// 批③b 贴图桥解析器（安装给 gameUi_）：RmlUi JoinPath 后的路径 → 项目精灵
     /// 资产 → 图集页纹理 + 尺寸（未命中 = false → ③a 告警语义）
@@ -445,6 +453,7 @@ private:
     std::string pendingScenePath_; // RecentScene 的目标路径（确认模态期间持有）
     int8_t tabFocusPending_ = 0; // Play 进出自动切 Game/Scene 标签页（+1/-1；BuildUI 内消费）
     bool aboutOpen_ = false;
+    bool audioMixerOpen_ = false; // Audio Mixer 工具窗开态（M6c 批③；Window 菜单）
     uint32_t smokeSeeded_ = 0;     // 冒烟播种实体数（退出时守恒断言）
     SceneViewPanel* scenePanel_ = nullptr; // --smoke-drag 注入定位（按名取，非所有权）
     AssetBrowserPanel* assetPanel_ = nullptr; // --smoke-ui 注入定位（按名取，非所有权）

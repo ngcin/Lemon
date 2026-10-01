@@ -430,6 +430,7 @@ FieldResult DrawField(EditorApp& app, const ecs::ComponentMeta& meta, ecs::Entit
         !ecs::HasHint(ed.hints, FieldHint::AnimSetRef) &&
         !ecs::HasHint(ed.hints, FieldHint::ControllerRef) &&
         !ecs::HasHint(ed.hints, FieldHint::RmlRef) &&
+        !ecs::HasHint(ed.hints, FieldHint::AudioRef) &&
         !ecs::HasHint(ed.hints, FieldHint::Enum) &&
         !ecs::HasHint(ed.hints, FieldHint::ColorHex) &&
         (f.type == FieldType::Float || f.type == FieldType::Double ||
@@ -465,7 +466,8 @@ FieldResult DrawField(EditorApp& app, const ecs::ComponentMeta& meta, ecs::Entit
         !ecs::HasHint(ed.hints, ecs::FieldHint::ClipRef) &&
         !ecs::HasHint(ed.hints, ecs::FieldHint::AnimSetRef) &&
         !ecs::HasHint(ed.hints, ecs::FieldHint::ControllerRef) &&
-        !ecs::HasHint(ed.hints, ecs::FieldHint::RmlRef)) {
+        !ecs::HasHint(ed.hints, ecs::FieldHint::RmlRef) &&
+        !ecs::HasHint(ed.hints, ecs::FieldHint::AudioRef)) {
         const float iconSz = ImGui::GetFrameHeight() - 4.0f;
         ImGui::SameLine();
         // slack 必须在 SameLine 之后取：文本绘制后光标已换行到列首，之前取到的
@@ -509,6 +511,10 @@ FieldResult DrawField(EditorApp& app, const ecs::ComponentMeta& meta, ecs::Entit
     } else if (ecs::HasHint(ed.hints, FieldHint::RmlRef) && f.type == FieldType::UInt64) {
         // 批③d 前置：UIDocument.sourceAssetGuid（0 = 未挂，进 Play 不装载该屏）
         DrawGuidSlot(app, p, AssetType::Rml, 8, "(未挂 .rml · 进 Play 不装载)");
+    } else if (ecs::HasHint(ed.hints, FieldHint::AudioRef) && f.type == FieldType::UInt64) {
+        // M6c 批③：AudioSource.clipGuid（0 = 无片静默；AudioSystem 红字告警面在
+        // 悬空 guid ≠ 0 时——无片是有意的合法态）
+        DrawGuidSlot(app, p, AssetType::Audio, 10, "(无片 · 静默)");
     } else if (ecs::HasHint(ed.hints, FieldHint::Enum)) {
         changed = DrawEnumControl(f, ed, p);
     } else if (ecs::HasHint(ed.hints, FieldHint::ColorHex) && f.type == FieldType::UInt32) {

@@ -317,6 +317,12 @@ void EditorApp::EnqueueAudioBake(const AssetEntry& e) {
     if (e.type != AssetType::Audio || e.missing) return;
     const std::string root = ctx_.Assets().ProjectRoot();
     if (root.empty()) return;
+    // 批③修：新项目首次导入即后台烤（早于任何 EnterPlay）——烤制目录的建目录
+    // 时序原归 MountPlayAudio（首进 Play）所有，worker 落盘前无目录 = "产物
+    // 不可写"红字。入队侧幂等补建（主线程，无 worker fs 竞争）。
+    std::error_code ec;
+    std::filesystem::create_directories(
+        std::filesystem::path(root) / ".lemon" / "baked" / "audio", ec);
     {
         std::lock_guard<std::mutex> lk(audioBakeMtx_);
         audioBakeQueue_.emplace_back(e.guid, ctx_.Assets().AbsolutePath(e),

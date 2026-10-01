@@ -1,12 +1,17 @@
-// Lemon 编辑器 — M6c 批① --smoke-audio 资产链冒烟（第一段）
-// 链路：真项目（--project 传入，须含 Audio 资产）导入识别 → meta importer 段 →
-// 后台烤制（WarmAudioBakes 已入队；本链等待收敛）→ .baked Peek 头校验 → Edit 态
-// 试听（EnsureClipLoaded + TogglePreviewAudio：声部存活 → 再点停止）。
-// 真人验收面（音量/听感）不在此链——Edit 态逻辑通道的机器证明。
+// Lemon 编辑器 — M6c --smoke-audio 全链冒烟（批① 第一段 + 批③ 第二段）
+// 第一段（资产链，批①）：真项目（--project 传入，须含 Audio 资产）导入识别 →
+// meta importer 段 → 后台烤制（WarmAudioBakes 已入队；本链等待收敛）→ .baked
+// Peek 头校验 → Edit 态试听（EnsureClipLoaded + TogglePreviewAudio：声部存活 →
+// 再点停止）。
+// 第二段（playOnStart，批③）：编辑场景播种 AudioSource 双实体（循环声源 bit1
+// 置位 + 对照 bit1 清零）→ EnterPlay → 逻辑声部计数断言 ==1 → Stop → ==0。
+// 真人验收面（音量/听感）不在此链——Edit/Play 逻辑通道的机器证明；静音模式
+//（LEMON_AUDIO=off/无设备）同径断言（批⓪ 口径：逻辑记账是降级路径的一部分）。
 #include "App/EditorApp.h"
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <fstream>
 #include <iterator>
 #include <thread>
@@ -16,9 +21,57 @@
 
 #include "Audio/BakedClip.h"
 #include "Assets/AssetDatabase.h"
+#include "Components/AudioComponents.h"
 #include "Core/Log.h"
 
 namespace lemon::editor {
+
+// 批③夹具：目标目录不是项目（无 project.lemon）才播种——回归临时目录自足、
+// 真项目（svr-test 等）零污染（smoke-anim 空目录自播种同纪律）。产物 =
+// project.lemon + Assets/smoke-tone.wav（48k mono PCM16 正弦 0.25s；24KB <
+// 1MiB 整载路径——流式分支归批①b 单测，此处不占）。
+void EditorApp::SeedSmokeAudioProject() {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path root(launchCopy_.projectDir);
+    if (root.empty() || fs::exists(root / "project.lemon", ec)) return;
+    fs::create_directories(root / "Assets", ec);
+    {
+        std::ofstream f(root / "project.lemon", std::ios::trunc);
+        f << "{\n  \"schemaVersion\": 1,\n  \"name\": \"smoke-audio\",\n"
+             "  \"engineVersion\": \"0.6.0-m6c\"\n}\n";
+    }
+    const fs::path wav = root / "Assets" / "smoke-tone.wav";
+    if (fs::exists(wav, ec)) return;
+    constexpr uint32_t kFrames = 12000, kRate = 48000; // 0.25s
+    constexpr uint32_t kDataBytes = kFrames * 2;        // mono PCM16
+    std::ofstream f(wav, std::ios::binary | std::ios::trunc);
+    auto le32 = [&f](uint32_t x) {
+        for (int i = 0; i < 4; ++i) f.put(char((x >> (8 * i)) & 0xFF));
+    };
+    auto le16 = [&f](uint16_t x) {
+        f.put(char(x & 0xFF));
+        f.put(char((x >> 8) & 0xFF));
+    };
+    f.write("RIFF", 4);
+    le32(36 + kDataBytes);
+    f.write("WAVE", 4);
+    f.write("fmt ", 4);
+    le32(16);
+    le16(1); // PCM
+    le16(1); // mono
+    le32(kRate);
+    le32(kRate * 2); // byteRate = rate × ch × 2
+    le16(2);         // blockAlign
+    le16(16);        // bits
+    f.write("data", 4);
+    le32(kDataBytes);
+    for (uint32_t i = 0; i < kFrames; ++i) {
+        const double t = (double)i / kRate;
+        const int16_t s = (int16_t)(12000.0 * std::sin(6.283185307179586 * 440.0 * t));
+        le16((uint16_t)s);
+    }
+}
 
 bool EditorApp::RunSmokeAudioChain() {
     namespace fs = std::filesystem;
@@ -38,7 +91,8 @@ bool EditorApp::RunSmokeAudioChain() {
         }
     }
     if (entries == 0) {
-        LEMON_ERROR("smoke-audio：项目无音频资产（--project 须指向含 Assets/Audio 的工程）");
+        LEMON_ERROR("smoke-audio：项目无音频资产（--project 须指向含 Assets/Audio 的工程，"
+                    "或空目录由夹具自播种——目标已是项目时不播种）");
         return false;
     }
     // 后台烤制收敛（WarmAudioBakes 已在分发点入队；上限 60s 防挂死）
@@ -73,10 +127,62 @@ bool EditorApp::RunSmokeAudioChain() {
     TogglePreviewAudio(first);
     const bool voiceDown = previewVoice_ == 0;
     const bool previewOk = voiceUp && voiceDown;
-    std::printf("[lemon] editor-smoke audio: entries=%d baked=%d meta=%d preview=%d/%d => %s\n",
-                entries, baked, metaOk, (int)voiceUp, (int)voiceDown,
-                (entries == baked && previewOk) ? "OK" : "FAIL");
-    return entries == baked && previewOk;
+
+    // ---- 第二段（批③）：AudioSource playOnStart / EnterPlay 逻辑声部断言 ----
+    // P1 交底（review 修 2026-10-01）：真项目带 Game/ 时本段副作用面——用户脚本
+    // 装配运行 + EnterPlay 载入/ExitPlay 兜底回写 .lemon/saves/ 三档（svr-test
+    // 验机实证：装载值恒等回写 + .bak 轮换；恒等不具一般性）。验机建议跑副本。
+    {
+        std::string csproj, dll;
+        if (FindGameProject(csproj, dll))
+            LEMON_WARN("smoke-audio：项目含 Game/（%s）——第二段将装配运行用户脚本，"
+                       "ExitPlay 回写 .lemon/saves/ 三档；验机建议跑项目副本",
+                       csproj.c_str());
+    }
+    // 播种双实体（编辑场景）：循环声源（bit1 置位，Sfx 组）+ 对照（bit1 清零——
+    // 只循环不起播）。计数断言用 ==1 而非 >=1：恰一起播 = playOnStart 生效 +
+    // 对照不起播 + preview 已停（ActiveVoiceCount 只计 !done，Stop 当帧跌零）
+    // 三事实合一。系统侧实现 = 批② AudioSystem::Tick ② 段扫描；本段是 Edit→Play
+    // 全链（装载/后端注入/系统扫描）的机器验收。
+    bool playOk = false;
+    int liveAfterEnter = -1, liveAfterStop = -1;
+    bool entered = false;
+    {
+        ecs::Scene& s = ctx_.ActiveScene();
+        const ecs::Entity src = ctx_.CreateEntity("AudioSmokeLoop");
+        const ecs::Entity quiet = ctx_.CreateEntity("AudioSmokeQuiet");
+        if (!src.IsNull() && !quiet.IsNull()) {
+            ecs::AudioSource& a = s.Emplace<ecs::AudioSource>(src);
+            a.clipGuid = first;
+            a.flags = ecs::kAudioLoop | ecs::kAudioPlayOnStart;
+            a.group = (uint8_t)audio::Group::Sfx;
+            ecs::AudioSource& q = s.Emplace<ecs::AudioSource>(quiet);
+            q.clipGuid = first;
+            q.flags = ecs::kAudioLoop; // bit1 清零 = 不起播对照
+            q.group = (uint8_t)audio::Group::Sfx;
+
+            entered = TryEnterPlay(); // 装载（MountPlayAudio）+ 后端注入 + UI 归位全链
+            if (entered) {
+                for (int i = 0; i < 8; ++i) { // 首步 AudioSystem 建绑定起播；余步验稳
+                    ctx_.TickPlay(1.0f / 60.0f);
+                    audio_.Tick(1.0f / 60.0f);
+                }
+                liveAfterEnter = audio_.ActiveVoiceCount();
+            }
+            const bool stopped = entered ? StopPlay() : false;
+            liveAfterStop = audio_.ActiveVoiceCount();
+            playOk = entered && liveAfterEnter == 1 && stopped && liveAfterStop == 0;
+            if (!playOk)
+                LEMON_ERROR("smoke-audio playOnStart 断言失败：enter=%d voices=%d stop 后=%d",
+                            (int)entered, liveAfterEnter, liveAfterStop);
+        }
+    }
+    std::printf("[lemon] editor-smoke audio: entries=%d baked=%d meta=%d preview=%d/%d "
+                "voices=%d/%d => %s\n",
+                entries, baked, metaOk, (int)voiceUp, (int)voiceDown, liveAfterEnter,
+                liveAfterStop,
+                (entries == baked && previewOk && playOk) ? "OK" : "FAIL");
+    return entries == baked && previewOk && playOk;
 }
 
 } // namespace lemon::editor

@@ -33,6 +33,7 @@ namespace {
 #define ED_ASSET(tip) { FieldHint::AssetRef, 0, 0, nullptr, 0, tip }
 #define ED_CLIPREF(tip) { FieldHint::ClipRef, 0, 0, nullptr, 0, tip } // M5 批③
 #define ED_RMLREF(tip) { FieldHint::RmlRef, 0, 0, nullptr, 0, tip } // M6b 批③d 前置
+#define ED_AUDIOREF(tip) { FieldHint::AudioRef, 0, 0, nullptr, 0, tip } // M6c 批③
 
 // ---- Core（id 0..4）----
 constexpr FieldMeta kTransform2D[] = {
@@ -133,7 +134,8 @@ constexpr FieldEditorMeta kEdUIDocument[] = {
 // ---- M6c 批②（id 31；表尾追加，只增不改序）----
 // Unity AudioSource 同构：挂实体的循环/环境声，AudioSystem #20 监听器空间化。
 // 24B 冻结（AudioComponents.h 布局注记——ADR-015 M3 字段序勘误后口径）。
-// Inspector：AudioRef 专用槽归批③（hint 1<<12），本批 clipGuid 走通用 u64 行。
+// 批③：clipGuid 接 AudioRef 选择器（DrawGuidSlot）；group 走 Enum 下拉。
+static constexpr const char* kAudioGroupNames[] = {"Bgm", "Sfx", "Ui"};
 constexpr FieldMeta kAudioSource[] = {
     FIELD(AudioSource, clipGuid, UInt64),
     FIELD(AudioSource, volume, Float),
@@ -142,12 +144,12 @@ constexpr FieldMeta kAudioSource[] = {
     FIELD(AudioSource, flags, UInt16),
     FIELD(AudioSource, group, UInt8)};
 constexpr FieldEditorMeta kEdAudioSource[] = {
-    ED_TIP("音频资产槽（.wav/.ogg/.mp3/.flac GUID；0 = 无片静默。批③ 接 AudioRef 选择器）"),
+    ED_AUDIOREF("音频资产槽（.wav/.ogg/.mp3/.flac GUID；0 = 无片静默）"),
     ED_RANGE(0.0f, 4.0f),
-    ED_TIP("全增益半径（≤此距离不衰减）"),
-    ED_TIP("衰减到 0 半径（线性）"),
+    {FieldHint::Range, 0.0f, 8192.0f, nullptr, 0, "全增益半径（≤此距离不衰减）"},
+    {FieldHint::Range, 0.0f, 8192.0f, nullptr, 0, "衰减到 0 半径（线性）"},
     ED_TIP("bit0 循环 · bit1 进 Play 自动起播（默认开）"),
-    ED_TIP("混音组：0 BGM / 1 SFX / 2 UI")};
+    {FieldHint::Enum, 0, 0, kAudioGroupNames, 3, "混音组（批② 起组音量引擎侧生效）"}};
 
 // ---- Behavior（id 9..20）----
 constexpr FieldMeta kHealth[] = {FIELD(Health, max, Float), FIELD(Health, cur, Float),

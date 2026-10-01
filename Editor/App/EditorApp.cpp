@@ -259,6 +259,17 @@ int EditorApp::Run(const EditorLaunch& launch) {
     // 批③b：--smoke-uirml 资产夹具（temp 项目：.rml + .rcss + 贴图，标准管线打开）
     // ——文档/样式/贴图/热重载四通道全走真实资产路径（③a 的内存文档退役）
     if (launch.smokeUirml) SeedSmokeUiRmlProject();
+    // M6c 批③ review 修：--smoke-audio 须显式 --project，裸跑 fail-fast。两个
+    // hazard：①自动重开上次项目并在其上跑链（真项目副作用面——Game/ 脚本装配
+    // 运行 + EnterPlay 载入/ExitPlay 兜底回写 .lemon/saves/ 三档）；②无最近项目
+    // 则链路不执行、无提示开窗常驻。守卫在自动重开块之前（原义 projectDir）。
+    if (launch.smokeAudio && launch.projectDir.empty()) {
+        LEMON_ERROR("--smoke-audio 须配 --project（空目录 = 夹具自播种；真项目注意："
+                    "Game/ 脚本会装配运行，ExitPlay 兜底回写 .lemon/saves/ 三档）");
+        return 1;
+    }
+    // M6c 批③：--smoke-audio 夹具（temp 项目 + smoke-tone.wav；真项目零播种）
+    if (launch.smokeAudio) SeedSmokeAudioProject();
     // 最近项目（M4.6 §4-4）：--project 缺省时自动重开上次（--no-reopen 跳过；
     // 冒烟/终验不适用——确定性优先）。菜单最近列表同源本 vector。
     recentProjects_ = LoadRecentProjects();

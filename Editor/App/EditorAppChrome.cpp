@@ -169,6 +169,8 @@ void EditorApp::BuildMenuBar() {
     if (ImGui::BeginMenu("Window")) {
         for (auto& e : panels_.Entries()) ImGui::MenuItem(e.panel->Name(), nullptr, &e.open);
         ImGui::Separator();
+        // M6c 批③：Audio Mixer 按需工具窗（不进面板注册表——05 §3 冻结旁路形态）
+        ImGui::MenuItem("Audio Mixer", nullptr, &audioMixerOpen_);
         ImGui::MenuItem("Dear ImGui Demo", nullptr, &launchCopy_.demoWindow);
         ImGui::EndMenu();
     }
@@ -612,6 +614,7 @@ void EditorApp::BuildUI() {
 
     BuildNoProjectCard();
     BuildPickersAndModals();
+    DrawAudioMixerWindow(); // M6c 批③：按需工具窗（默认关——零默认布局影响）
 
     if (launchCopy_.demoWindow) ImGui::ShowDemoWindow(&launchCopy_.demoWindow);
     if (aboutOpen_) {
@@ -622,6 +625,52 @@ void EditorApp::BuildUI() {
         }
         ImGui::End();
     }
+}
+
+// Audio Mixer 按需工具窗（M6c 批③）：Master/三组音量直写引擎（钳界引擎侧已有），
+// voice 计数与静音降级态是观测面（静音模式逻辑记账同有效，批⓪ 口径）。节流/微扰
+// = 两轮听感热修（2026-10-01）参数的全局调参台——per-资产覆写缓议（批文件裁定），
+// 真实调参需求出现时以微批启。无持久化：设置屏音量档归批④（Settings 档）。
+void EditorApp::DrawAudioMixerWindow() {
+    if (!audioMixerOpen_) return;
+    if (!ImGui::Begin("Audio Mixer", &audioMixerOpen_, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::End();
+        return;
+    }
+    namespace ag = lemon::audio;
+    static constexpr const char* kGroupNames[ag::kGroupCount] = {"Bgm", "Sfx", "Ui"};
+
+    // 状态行：设备/降级 + 声部占用（试听与 Play 世界同引擎——单实例单真相）
+    if (audio_.silent()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, theme::kTextWarn);
+        ImGui::TextUnformatted("静音模式（无设备/LEMON_AUDIO=off 降级，逻辑声部照常记账）");
+        ImGui::PopStyleColor();
+    } else {
+        ImGui::TextUnformatted("设备输出正常");
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("声部 %d/%d", audio_.ActiveVoiceCount(), ag::kMaxVoices);
+
+    float v = audio_.MasterVolume();
+    if (ImGui::SliderFloat("Master", &v, 0.0f, 1.0f, "%.2f")) audio_.SetMasterVolume(v);
+    for (int i = 0; i < ag::kGroupCount; ++i) {
+        const ag::Group g = static_cast<ag::Group>(i);
+        float gv = audio_.GroupVolume(g);
+        if (ImGui::SliderFloat(kGroupNames[i], &gv, 0.0f, 1.0f, "%.2f"))
+            audio_.SetGroupVolume(g, gv);
+    }
+    if (ImGui::Button("全部停止")) audio_.StopAll(); // 试听/残留声部急停（Play 世界同引擎）
+    ImGui::SameLine();
+    ImGui::TextDisabled("Edit 试听与 Play 共用本引擎");
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("重触发治理（全局默认；per-资产缓议）");
+    float cd = audio_.RetriggerCooldown();
+    if (ImGui::SliderFloat("同 clip 节流", &cd, 0.0f, 0.2f, "%.3fs"))
+        audio_.SetRetriggerCooldown(cd);
+    float pj = audio_.PitchJitter();
+    if (ImGui::SliderFloat("音高微扰", &pj, 0.0f, 0.1f, "%.3f")) audio_.SetPitchJitter(pj);
+    ImGui::End();
 }
 
 void EditorApp::BuildPickersAndModals() {
