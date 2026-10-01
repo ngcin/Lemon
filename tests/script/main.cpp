@@ -539,6 +539,7 @@ void TestAudioSdk() {
 
     lemon::audio::AudioEngine eng;
     Expect(eng.Init({.forceSilent = true}), "silent engine for audio sdk test");
+    eng.SetRetriggerCooldown(0); // 探针同帧同 clip 连发 Play+PlayAt（API 语义断言）——节流让路
     std::vector<int16_t> pcm(4800 * 2, 4000); // 0.1s 恒幅
     const uint32_t clip = eng.RegisterClip(std::move(pcm), 2, 4800, 0, 0);
     struct AudCtx {

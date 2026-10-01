@@ -5259,6 +5259,7 @@ void TestAudioMixerMath() {
     audio::AudioEngine eng;
     Expect(eng.Init({.forceSilent = true}), "audio init (forced silent)");
     Expect(eng.silent(), "forced silent engaged");
+    eng.SetRetriggerCooldown(0); // 本测断言叠加数学——同 clip 连播不吃节流窗（常数 PCM 对微扰免疫）
 
     // 单声道 0.5 满幅常数 clip：pan 中心 = 等功率 -3dB（L=R=0.7071）
     std::vector<int16_t> mono(4800, 16384);
@@ -5331,6 +5332,7 @@ void TestAudioMixerMath() {
 void TestAudioLifecycle() {
     audio::AudioEngine eng;
     eng.Init({.forceSilent = true});
+    eng.SetRetriggerCooldown(0); // 发号单调/池满偷取断言需同 clip 连播——节流让路
 
     // 一次性声部恰好在末帧混完 → 当场终止，Tick 回收
     std::vector<int16_t> pcm100(100, 16384);
@@ -5375,6 +5377,7 @@ void TestAudioLifecycle() {
     // （clip 注册表每实例私有——eng2/eng3 须各自注册，跨实例 clipId 查无）
     audio::AudioEngine eng2;
     eng2.Init({.forceSilent = true});
+    eng2.SetRetriggerCooldown(0); // 池满 64 连播语义不受节流影响
     const uint32_t d1 = eng2.RegisterClip({pcm100.data(), 100, 1, 0, 0});
     const uint32_t d2 = eng2.RegisterClip({ramp.data(), 4800, 1, 0, 2400});
     uint32_t firstId = 0;
@@ -5433,6 +5436,7 @@ void TestAudioBench100Sfx() {
     // 08 §2 M6c 判据：100 并发 SFX 模拟侧（staging + Tick 应用）≤ 0.5ms
     audio::AudioEngine eng;
     eng.Init({.forceSilent = true});
+    eng.SetRetriggerCooldown(0); // 保留池满/并发上限两级偷取覆盖（默认节流下 100 连发仅 1 次过窗）
     std::vector<int16_t> pcm(2400, 16384);
     const uint32_t c = eng.RegisterClip({pcm.data(), 2400, 1, 0, 0});
     using clock = std::chrono::steady_clock;
@@ -5444,7 +5448,10 @@ void TestAudioBench100Sfx() {
     const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
     LEMON_LOG("audio: 100 并发 SFX 模拟侧（staging+Tick）= %.4f ms", ms);
     Expect(ms < 0.5, "100 SFX sim-side <= 0.5ms (08 M6c)");
-    Expect(eng.ActiveVoiceCount() == audio::kMaxVoices, "capped at pool size after steal");
+    // 听感验收 2026-10-01 起语义：同 clip 并发上限接管（活 = kMaxVoicesPerClip）；
+    // 释放中的声部占槽 → 65+ 发仍穿过池满偷取路径（两级偷取都被本测走过）
+    Expect(eng.ActiveVoiceCount() == audio::kMaxVoicesPerClip,
+           "same-clip burst lands at per-clip cap");
 }
 
 void TestAudioBakedRoundtrip() {
@@ -5832,6 +5839,7 @@ void TestAudioStreamVoice() {
 
     audio::AudioEngine eng;
     Expect(eng.Init({.forceSilent = true}), "silent init (manual pump)");
+    eng.SetRetriggerCooldown(0); // 末段同 clip 双声部（BGM 交叉淡出形态）需同帧连播
     Expect(eng.RegisterStreamClip((dir / "none.baked").string().c_str()) == 0,
            "missing stream file rejected");
     const uint32_t clip = eng.RegisterStreamClip(baked.c_str());
@@ -5922,12 +5930,168 @@ void TestAudioStreamVoice() {
     fs::remove_all(dir, ec);
 }
 
+// ------------------------------------------------ M6c 听感验收驱动：母带限幅/同 clip 并发 ----
+void TestAudioMasterLimiter() {
+    // 听感验收 2026-10-01：多 kill.wav 同帧叠加 → 硬钳斩波破音。膝下位零增益透传；
+    // 过载段 tanh 渐近压回（值严格 < 1.0——硬钳会是恰好 ±1.0 平顶）；单调不过压
+    audio::AudioEngine eng;
+    Expect(eng.Init({.forceSilent = true}), "silent init");
+    eng.SetRetriggerCooldown(0); // 相干叠加断言：同 clip 同帧 N 份连播且音高全同
+    eng.SetPitchJitter(0);
+    constexpr uint32_t kFrames = 4800;
+    std::vector<int16_t> pcm(kFrames); // 单声道正弦，幅值近满格
+    for (uint32_t i = 0; i < kFrames; ++i)
+        pcm[i] = int16_t(32000.0f * std::sin(i * 0.05f));
+    int maxS = 0;
+    for (int16_t s : pcm) maxS = std::max(maxS, std::abs(int(s)));
+    const uint32_t clip = eng.RegisterClip(std::move(pcm), 1, kFrames, 0, 0);
+    Expect(clip != 0, "limiter clip registered");
+    const float unit = maxS / 32768.0f;                  // 单声部满音量中心声像前
+    const float center = 0.70710678f;                    // 等功率中心每声道
+    const auto mixPeak = [&](int voices, float vol) {    // 同帧起播 N 份 → 混完取峰
+        for (int k = 0; k < voices; ++k)
+            eng.Play(clip, {.volume = vol});
+        std::vector<float> out(kFrames * 2);
+        eng.MixOffline(out.data(), kFrames);             // 一次性 clip 混完即亡
+        eng.Tick();                                      // 回收，案例间状态干净
+        float peak = 0;
+        for (float s : out) peak = std::max(peak, std::fabs(s));
+        return peak;
+    };
+    const auto softLimit = [](float x) {                 // 与引擎同式（膝点 0.8）
+        constexpr float k = 0.8f;
+        return x <= k ? x : k + (1.0f - k) * std::tanh((x - k) / (1.0f - k));
+    };
+
+    // 膝下位（0.3 vol 峰 ≈ 0.21）：零增益透传（限幅分支未触及）
+    const float low = mixPeak(1, 0.3f);
+    Expect(std::fabs(low - 0.3f * unit * center) < 1e-6f, "below-knee passes unity");
+
+    // 中度过载（2×0.75 峰 ≈ 1.04）：压回膝上软段——锁曲线本体（硬钳会给恰好 1.0）
+    const float mid = mixPeak(2, 0.75f);
+    Expect(std::fabs(mid - softLimit(2.0f * 0.75f * unit * center)) < 1e-4f,
+           "moderate overload lands on soft knee");
+
+    // 深过载（3×1.0 峰 ≈ 2.07）：渐近顶但严格 < 1.0；且不过压（深 > 中）
+    const float hot = mixPeak(3, 1.0f);
+    Expect(hot < 1.0f && hot > 0.999f, "deep overload asymptotic under 1.0");
+    Expect(hot > mid, "limiter monotonic (louder in = louder out)");
+}
+
+void TestAudioVoiceCapSteal() {
+    // 听感验收 2026-10-01：同 clip 重触发无限叠（相干求和最坏 +6dB/份）→ 并发上限
+    // kMaxVoicesPerClip + 偷最老。释放复用 D4 包络 5ms（硬停切波前有咔哒）；释放中
+    // （stopAtFadeEnd）不计活跃——连发脉冲下"活"声部恒 ≤ 上限
+    audio::AudioEngine eng;
+    Expect(eng.Init({.forceSilent = true}), "silent init");
+    const uint32_t clip = eng.RegisterClip(std::vector<int16_t>(48000, 12000), 1,
+                                           48000, 0, 0);
+    const uint32_t clip2 = eng.RegisterClip(std::vector<int16_t>(48000, 12000), 1,
+                                            48000, 0, 0);
+    Expect(clip != 0 && clip2 != 0, "cap clips registered");
+
+    // 上限内共存：kMaxVoicesPerClip 个同 clip 循环声部全活
+    uint32_t ids[8] = {};
+    for (int k = 0; k < audio::kMaxVoicesPerClip; ++k)
+        ids[k] = eng.Play(clip, {.loop = true});
+    bool ok = true;
+    for (int k = 0; k < audio::kMaxVoicesPerClip; ++k)
+        ok = ok && ids[k] != 0 && eng.VoiceAlive(ids[k]);
+    Expect(ok, "within-cap same-clip voices coexist");
+
+    // 第 5 个：最老被偷——先占槽释放（仍计活跃），5ms 后亡，新声部与其余活
+    const uint32_t fifth = eng.Play(clip, {.loop = true});
+    Expect(fifth != 0, "over-cap play accepted via steal");
+    Expect(eng.ActiveVoiceCount() == audio::kMaxVoicesPerClip + 1,
+           "stolen voice occupies slot during its release");
+    eng.AdvanceSilentFrames(480); // 10ms > 5ms 释放
+    Expect(!eng.VoiceAlive(ids[0]), "oldest dies after release window");
+    ok = eng.VoiceAlive(ids[1]) && eng.VoiceAlive(ids[2]) && eng.VoiceAlive(ids[3]) &&
+         eng.VoiceAlive(fifth);
+    Expect(ok, "younger voices and newcomer survive");
+    eng.Tick();
+
+    // 连发脉冲（同 tick 20 发）：活声部恒 ≤ 上限（其余在各自 5ms 释放中）
+    for (int k = 0; k < 20; ++k)
+        eng.Play(clip, {.loop = true});
+    eng.AdvanceSilentFrames(480);
+    eng.Tick();
+    Expect(eng.ActiveVoiceCount() == audio::kMaxVoicesPerClip,
+           "burst retrigger keeps live voices at cap");
+
+    // 跨 clip 独立：另一 clip 满编不连坐
+    eng.StopAll();
+    eng.Tick();
+    for (int k = 0; k < audio::kMaxVoicesPerClip; ++k)
+        ids[k] = eng.Play(clip2, {.loop = true});
+    const uint32_t otherClip = eng.Play(clip, {.loop = true});
+    ok = otherClip != 0 && eng.VoiceAlive(otherClip);
+    for (int k = 0; k < audio::kMaxVoicesPerClip; ++k)
+        ok = ok && eng.VoiceAlive(ids[k]);
+    Expect(ok, "per-clip cap does not spill across clips");
+}
+
+void TestAudioRetriggerThrottlePitchJitter() {
+    // 听感验收 2026-10-01"放鞭炮"（同素材高频连发 = 机枪效应）→ 重触发节流 + 音高
+    // 微扰。节流时钟 = 混音帧域（设备/静音同径）：窗内新请求丢（返 0 不占槽不偷不
+    // 更锚）；窗过即收；异 clip/循环声部豁免。微扰：两连播输出相异（去相干），可
+    // 关回整数位精确路径。
+    audio::AudioEngine eng;
+    Expect(eng.Init({.forceSilent = true}), "silent init");
+    eng.SetRetriggerCooldown(0.05f); // 显式 50ms = 2400 帧（不依赖默认值漂移）
+    std::vector<int16_t> ramp(48000);
+    for (uint32_t i = 0; i < 48000; ++i) ramp[i] = int16_t(i % 32768); // 非常数 PCM：微扰可观测
+    const uint32_t a = eng.RegisterClip(std::move(ramp), 1, 48000, 0, 0);
+    const uint32_t b = eng.RegisterClip(std::vector<int16_t>(48000, 8000), 1, 48000, 0, 0);
+    Expect(a != 0 && b != 0, "throttle clips registered");
+
+    // 窗内丢：第二次同 clip 播放返 0、不占槽
+    const uint32_t v1 = eng.Play(a, {});
+    Expect(v1 != 0, "first play accepted");
+    Expect(eng.Play(a, {}) == 0, "within-window retrigger dropped");
+    Expect(eng.ActiveVoiceCount() == 1, "dropped play takes no slot");
+    Expect(eng.Play(b, {}) != 0, "other clip unaffected by window");
+    Expect(eng.Play(a, {.loop = true}) != 0, "loop exempt from throttle");
+    eng.StopAll();
+    eng.Tick();
+
+    // 窗过即收：恰 2400 帧（50ms）后新请求过窗（锚 = 上次被接受的起播）
+    eng.AdvanceSilentFrames(2400);
+    Expect(eng.Play(a, {}) != 0, "past-window retrigger accepted");
+    eng.StopAll();
+    eng.Tick();
+
+    // 音高微扰（±5% 放大观测）：两连播同 clip 输出相异——同帧对拍即去相干证据
+    eng.SetRetriggerCooldown(0);
+    eng.SetPitchJitter(0.05f);
+    std::vector<float> cap1(480 * 2), cap2(480 * 2);
+    Expect(eng.Play(a, {}) != 0, "jitter play 1");
+    eng.MixOffline(cap1.data(), 480);
+    eng.AdvanceSilentFrames(48000); // 放完首播（cooldown 已关，推进只为状态干净）
+    eng.Tick();
+    Expect(eng.Play(a, {}) != 0, "jitter play 2");
+    eng.MixOffline(cap2.data(), 480);
+    bool differ = false;
+    for (int i = 0; i < 480 * 2; ++i)
+        differ = differ || std::fabs(cap1[i] - cap2[i]) > 1e-6f;
+    Expect(differ, "pitch jitter decorrelates identical clips");
+
+    // 微扰关闭 = 整数游标位精确路径（帧 1 = ramp[1]，中心声像 0.707）
+    eng.StopAll();
+    eng.Tick();
+    eng.SetPitchJitter(0);
+    Expect(eng.Play(a, {}) != 0, "exact play");
+    eng.MixOffline(cap1.data(), 480);
+    ExpectNear(cap1[2], 1 / 32768.0f * 0.70710678f, 1e-6f, "jitter off = integer path exact");
+}
+
 // ------------------------------------------------ M6c 批②：命令通道/包络/空间化/组件声源 ----
 void TestAudioFadeEnvelope() {
     // D4 包络：fadeIn 逐样本爬升；FadeVoice→0 + stopWhenDone 到点终结；
     // 静音模式 AdvanceSilentFrames 同径推进（逻辑记账 = 有声模式）
     audio::AudioEngine eng;
     Expect(eng.Init({.forceSilent = true}), "silent init");
+    eng.SetRetriggerCooldown(0); // v2/v3 同 clip 快速重播断言包络语义（常数 PCM 对微扰免疫）
     std::vector<int16_t> pcm(4800 * 2, 8000); // 0.1s 恒幅 stereo
     const uint32_t clip = eng.RegisterClip(std::move(pcm), 2, 4800, 0, 0);
     Expect(clip != 0, "clip registered");
@@ -6245,6 +6409,9 @@ int main() {
     TestAudioBakedHardening(); // review 2026-10-01：坏头（回绕/超限载荷）拒绝 + 并发烤制不交错
     TestAudioSpscRing();      // M6c 批①b：SPSC 环序（交错/回卷/双线程 4MiB 字节精确）
     TestAudioStreamVoice();   // M6c 批①b：流式声部（预填即鸣/曲终/回卷线性化/欠载计数/双声部）
+    TestAudioMasterLimiter(); // 听感验收 2026-10-01：母带软限幅（膝下透传/软膝锁值/渐近不过压）
+    TestAudioVoiceCapSteal(); // 听感验收 2026-10-01：同 clip 并发上限 + 偷最老（释放窗口/连发脉冲/跨 clip）
+    TestAudioRetriggerThrottlePitchJitter(); // 听感验收 2026-10-01：重触发节流（帧时钟窗）+ 音高微扰（可关可异）
     TestAudioFadeEnvelope();   // M6c 批② D4：起播淡入/FadeVoice 到零即停/静音记账同径
     TestAudioSpatialMath();    // M6c 批② M5：线性衰减钳界 + 声像半宽归一
     TestAudioChannelCommands();// M6c 批②：staging/保序 Stop/BGM 单槽换曲/StopAll/null 引擎记账

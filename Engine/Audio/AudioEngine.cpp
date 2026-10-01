@@ -34,6 +34,7 @@ namespace lemon::audio {
 namespace {
 
 constexpr float kInv32768 = 1.0f / 32768.0f;
+constexpr float kStealReleaseSec = 0.005f; // 同 clip 偷声部释放：短到听不出迟滞，长到不咔哒
 
 // 等功率声像：pan ∈ [-1,1] → θ ∈ [0,π/2]；中心 -3dB（常数功率，扫像无爆点）
 void PanGains(float pan, float& outL, float& outR) {
@@ -53,6 +54,7 @@ struct AudioEngine::Impl {
         uint16_t channels = 1;
         uint32_t loopStart = 0;
         uint32_t loopEnd = 0; // 0 = 尾
+        uint64_t lastStartFrame = UINT64_MAX; // 重触发节流锚（混音帧域；MAX=从未播）
     };
 
     // 流式声部喂送状态（批①b，ADR-015 M2）：每声部一份——同 clip 多声部（BGM 交叉
@@ -95,6 +97,10 @@ struct AudioEngine::Impl {
         float fadeFrom = 1.0f, fadeTo = 1.0f;
         float fadeElapsed = 0.0f, fadeDur = 0.0f; // fadeDur<=0 = 无在途包络
         bool stopAtFadeEnd = false;
+        // 音高微扰（听感验收 2026-10-01）：rate==1 = 整数游标位精确路径（既有契约）；
+        // rate≠1 = 分数游标 1-tap lerp（仅非循环整载声部——循环/流式恒 1）
+        float rate = 1.0f;
+        float frac = 0.0f;
 
         /// 当前有效音量（在途包络取插值；终态化由推进侧调用 FinalizeFadeLocked）
         float EffectiveVolume() const {
@@ -114,6 +120,17 @@ struct AudioEngine::Impl {
     bool pausedAll = false;
     bool silent_ = false;
     bool inited_ = false;
+
+    // 同 clip 重触发治理（听感验收 2026-10-01）：节流窗（混音帧域时钟）+ 音高微扰
+    uint64_t mixFrames_ = 0;      // 混音帧时钟（MixVoices/AdvanceLocked 累加；锁内）
+    uint32_t retriggerCdFrames_ = uint32_t(0.045f * kMixSampleRate); // 默认 45ms ≈22Hz
+    float pitchJitter_ = 0.02f;   // ±2%（Sfx/Ui 非循环整载；0 = 关）
+    uint32_t rngState_ = 0x2545F491u; // 固定种子：微扰序列可复现（表现层装饰，不入哈希）
+    uint32_t Xorshift() {
+        uint32_t x = rngState_;
+        x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+        return rngState_ = x;
+    }
 
     // 设备面（仅设备模式存在）
     ma_context ctx{};
@@ -208,6 +225,14 @@ struct AudioEngine::Impl {
         int gi = static_cast<int>(p.group);
         if (gi < 0 || gi >= kGroupCount) gi = 1; // 越界落 Sfx
         const Group group = static_cast<Group>(gi);
+        // 重触发节流（听感验收 2026-10-01"放鞭炮"）：同 clip 一次性播放距上次起播
+        // 节流窗内的新请求丢弃（返回 0——机枪效应治密度；循环声部豁免：BGM/环境
+        // 声的重触发语义是"重启"非"叠发"）。窗锚 = 上次**被接受**的起播。
+        const bool oneshot = !(p.loop && c.loopEnd > c.loopStart);
+        if (oneshot && retriggerCdFrames_ > 0 &&
+            c.lastStartFrame != UINT64_MAX &&
+            mixFrames_ - c.lastStartFrame < retriggerCdFrames_)
+            return 0;
         int slot = -1;
         for (int i = 0; i < kMaxVoices; ++i) {
             if (voices[i].id == 0 || voices[i].done) { // 空槽或完成未回收的槽直接复用
@@ -229,6 +254,31 @@ struct AudioEngine::Impl {
                 return 0;
             slot = stealSlot;
         }
+        // 同 clip 并发上限（听感验收 2026-10-01：叠音第二源头——同 clip 重触发无限
+        // 叠，相干求和最坏 +6dB/份）：业界 per-sound voice limit 同构，超限偷最老；
+        // 释放复用 D4 包络（硬停切波前有咔哒）。释放中（stopAtFadeEnd）不计活跃
+        // ——突发连发下"活"声部恒 ≤ 上限
+        {
+            int live = 0;
+            uint64_t oldest = UINT64_MAX;
+            Voice* victim = nullptr;
+            for (Voice& o : voices) {
+                if (o.id == 0 || o.done || o.clipRef != clipId || o.stopAtFadeEnd)
+                    continue;
+                ++live;
+                if (o.startSeq < oldest) {
+                    oldest = o.startSeq;
+                    victim = &o;
+                }
+            }
+            if (live >= kMaxVoicesPerClip && victim) {
+                victim->fadeFrom = victim->EffectiveVolume(); // 从当前可闻音量起释放
+                victim->fadeTo = 0.0f;
+                victim->fadeElapsed = 0.0f;
+                victim->fadeDur = kStealReleaseSec;
+                victim->stopAtFadeEnd = true;
+            }
+        }
         Voice& v = voices[slot];
         if (v.stream) // 复用槽弃养旧流（偷声部/done 未回收同理——生产者撤 job）
             v.stream->dead.store(true, std::memory_order_relaxed);
@@ -245,6 +295,14 @@ struct AudioEngine::Impl {
         v.done = false;
         v.paused = pausedAll && group != Group::Ui && (v.loop || group == Group::Bgm);
         v.stream = std::move(feed);
+        v.rate = 1.0f;
+        v.frac = 0.0f;
+        if (pitchJitter_ > 0.0f && !v.loop && !v.stream && group != Group::Bgm) {
+            // 音高微扰：同素材连发去相干（拍频/梳状叠加的根治项）。±range 均匀；
+            // 序列固定种子可复现。BGM 组不扰（乐律精确的音乐性一次性素材）
+            const float u = float(Xorshift() >> 8) / 8388607.0f; // [0,1]
+            v.rate = 1.0f + (u * 2.0f - 1.0f) * pitchJitter_;
+        }
         if (v.stream) { // 设备模式挂填充队列（静音/离线无线程——PumpStreams 手动驱动）
             v.stream->loop = v.loop;
             if (fillThread_.joinable()) {
@@ -259,12 +317,14 @@ struct AudioEngine::Impl {
         v.fadeDur = std::max(p.fadeInSec, 0.0f);
         v.fadeElapsed = 0.0f;
         v.stopAtFadeEnd = false;
+        clips[clipId - 1].lastStartFrame = mixFrames_; // 节流窗锚（仅被接受的起播）
         return v.id;
     }
 
     // ---- 混音核心（调用方持锁；设备回调与 MixOffline 共用）----
     void MixVoices(float* out, uint32_t frames) {
         std::memset(out, 0, sizeof(float) * frames * kMixChannels);
+        mixFrames_ += frames; // 混音帧时钟（节流窗锚域；设备回调与离线同径）
         constexpr float kInvRate = 1.0f / static_cast<float>(kMixSampleRate);
         for (Voice& v : voices) {
             if (v.id == 0 || v.done || v.paused)
@@ -329,16 +389,38 @@ struct AudioEngine::Impl {
                     sR = c.channels == 2 ? le16(fb + 2) : sL;
                 } else {
                     const int16_t* frm = c.pcm.data() + static_cast<size_t>(v.cursor) * c.channels;
-                    if (c.channels == 1) {
-                        sL = sR = frm[0] * kInv32768;
-                    } else {
-                        sL = frm[0] * kInv32768;
-                        sR = frm[1] * kInv32768;
+                    if (v.rate == 1.0f) { // 整数游标：位精确既有路径（jitter 关闭/循环/流式）
+                        if (c.channels == 1) {
+                            sL = sR = frm[0] * kInv32768;
+                        } else {
+                            sL = frm[0] * kInv32768;
+                            sR = frm[1] * kInv32768;
+                        }
+                    } else { // 音高微扰：分数游标 1-tap lerp（尾帧持住防越界）
+                        const int16_t* nxt = v.cursor + 1 < c.frameCount
+                                                 ? frm + c.channels : frm;
+                        const auto lerped = [&](int i) {
+                            return (frm[i] + float(nxt[i] - frm[i]) * v.frac) * kInv32768;
+                        };
+                        if (c.channels == 1) {
+                            sL = sR = lerped(0);
+                        } else {
+                            sL = lerped(0);
+                            sR = lerped(1);
+                        }
                     }
                 }
                 out[f * 2 + 0] += sL * gL;
                 out[f * 2 + 1] += sR * gR;
-                ++v.cursor;
+                if (v.rate == 1.0f) {
+                    ++v.cursor;
+                } else {
+                    v.frac += v.rate;
+                    while (v.frac >= 1.0f) { // rate∈[0.75,1.25] 至多一步，while 兜底
+                        v.frac -= 1.0f;
+                        ++v.cursor;
+                    }
+                }
                 ++f;
             }
             if (!v.loop && v.cursor >= end)
@@ -348,11 +430,26 @@ struct AudioEngine::Impl {
                 streamUnderruns_.fetch_add(streamUnderrun, std::memory_order_relaxed);
             }
         }
-        for (uint32_t i = 0; i < frames * kMixChannels; ++i)
-            out[i] = std::clamp(out[i], -1.0f, 1.0f);
+        // 母带软限幅（听感验收 2026-10-01：多 kill.wav 同帧叠加 → 求和顶满被硬钳
+        // 斩成方波 = 破音）：膝下位零增益位精确透传（常态路径无超越函数）；过载段
+        // tanh 渐近压回（膝点 C1 连续，无斜率跳变）；L/R 共用同帧峰值增益（联动
+        // 限幅——独立限幅过载时会拉偏声像）。膝点 0.8：常规混音位不变，只驯顶。
+        constexpr float kKnee = 0.8f;
+        for (uint32_t i = 0; i < frames; ++i) {
+            float* fr = out + i * kMixChannels;
+            const float peak = std::max(std::fabs(fr[0]), std::fabs(fr[1]));
+            if (peak <= kKnee)
+                continue;
+            const float limited =
+                kKnee + (1.0f - kKnee) * std::tanh((peak - kKnee) / (1.0f - kKnee));
+            const float gain = limited / peak;
+            fr[0] *= gain;
+            fr[1] *= gain;
+        }
     }
 
     void AdvanceLocked(uint32_t frames) {
+        mixFrames_ += frames; // 静音/离线同径走帧时钟（节流窗锚域一致）
         const float dt = static_cast<float>(frames) / static_cast<float>(kMixSampleRate);
         for (Voice& v : voices) {
             if (v.id == 0 || v.done || v.paused)
@@ -657,6 +754,28 @@ float AudioEngine::GroupVolume(Group g) const {
 float AudioEngine::MasterVolume() const {
     std::lock_guard<std::mutex> lk(impl_->mtx);
     return impl_->masterVol;
+}
+
+void AudioEngine::SetRetriggerCooldown(float cooldownSec) {
+    std::lock_guard<std::mutex> lk(impl_->mtx);
+    constexpr float kMaxCd = 2.0f; // 上限仅防误用（秒级静默 = 配置错误信号）
+    const float s = std::clamp(cooldownSec, 0.0f, kMaxCd);
+    impl_->retriggerCdFrames_ = uint32_t(s * kMixSampleRate);
+}
+
+float AudioEngine::RetriggerCooldown() const {
+    std::lock_guard<std::mutex> lk(impl_->mtx);
+    return float(impl_->retriggerCdFrames_) / kMixSampleRate;
+}
+
+void AudioEngine::SetPitchJitter(float range) {
+    std::lock_guard<std::mutex> lk(impl_->mtx);
+    impl_->pitchJitter_ = std::clamp(range, 0.0f, 0.25f); // ±25% 封顶（半音外即走调）
+}
+
+float AudioEngine::PitchJitter() const {
+    std::lock_guard<std::mutex> lk(impl_->mtx);
+    return impl_->pitchJitter_;
 }
 
 void AudioEngine::SetPaused(bool paused) {

@@ -13,6 +13,7 @@ namespace lemon::audio {
 inline constexpr int kMixSampleRate = 48000; // ADR-015 M2：全引擎音频域恒定
 inline constexpr int kMixChannels = 2;
 inline constexpr int kMaxVoices = 64;        // 声部池上限；满时偷最旧一次性声部
+inline constexpr int kMaxVoicesPerClip = 4;  // 同 clip 并发上限；重触发超限偷最老（5ms 释放）
 inline constexpr uint32_t kStreamThresholdBytes = 1u << 20; // >1MiB 走流式（批①b 消费：
                                                             // 装载侧分流判据，audioPreload 覆盖）
 
@@ -81,6 +82,19 @@ public:
     void SetMasterVolume(float v);
     float GroupVolume(Group g) const;
     float MasterVolume() const;
+
+    // ---- 同 clip 重触发治理（听感验收 2026-10-01：pickup 密集"放鞭炮"——机枪效应）----
+    /// 重触发节流：同 clip 非循环播放在距上次起播 cooldownSec 内的新请求被丢弃
+    /// （返回 0）。时钟 = 混音帧域（设备/静音同径）。默认 0.045s（≈22Hz 上限）；
+    /// 0 = 关闭。业界 throttle 同构；per-资产覆写归 meta（批③）。
+    void SetRetriggerCooldown(float cooldownSec);
+    float RetriggerCooldown() const;
+    /// 音高微扰：Sfx/Ui 组非循环整载声部起播时随机 ±range（1-tap 线性插值，非
+    /// 采样率转换重采样器——ADR-015 M2"零重采样"按性能口径不变；BGM 组/循环/
+    /// 流式不扰保乐律精确）。去同素材连发的相干叠加/拍频。默认 0.02；0 = 关闭。
+    /// 微扰序列固定种子（表现层装饰，不入状态哈希/金回放）。
+    void SetPitchJitter(float range);
+    float PitchJitter() const;
 
     // 暂停语义（ADR-015 M4）：循环声部与 BGM 组声部级挂起；一次性 SFX 自然放完；
     // UI 组永不挂起（暂停菜单按钮音仍可响）。设备级 pause 不用（会连 UI 音一起哑）。
