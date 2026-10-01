@@ -93,6 +93,13 @@ MyGame/                                   # 用户项目（升级永不触碰）
 > GPU 纹理保留到重启：登记号仍在 AtlasRegistry，销毁纹理会使引用中的 spriteId 采样
 > 悬空描述符）；体检红字覆盖孤儿 meta / GUID 冲突 / 缺失引用。
 > manifest 记账 spriteId 只增不减 → 已存场景引用不因增删资产漂移。
+> **2026-10-01 修订（墓碑退役 + 孤儿清扫，用户拍板）**：删除文件 = **条目同轮出表**
+>（墓碑机制退役——实现本就会话级、注释"重启不回收"言过其实；误删恢复由 .meta
+> 随文件走 + 版本管理承担，Unity/Cocos/Godot 三家均无持久墓碑、市场收敛于清扫）。
+> 孤儿 .meta：**零引用自动清扫**（扫描期 + Assets 菜单手动入口同判定）；**仍被引用
+> 保留 + 红字**（"只恢复源文件"场景的复链钩子——引用面判据 = 项目数据文本中 guid
+> 的 hex/十进制形态，引擎本体可保守，Godot 社区插件只能盲清）；源+meta 双删仍被引用
+> = 红字一次。详见 [DevLog](../DevLog/2026-10-01-orphan-meta-sweep-and-tombstone-retirement.md)。
 > **M5 批④后修②（2026-09-23，demo/svr-test 实测）**：**换项目 = 图集注册表复位到
 > 内置页**（`OpenProjectPipeline`：`Registry().Reset()` + `ProceduralAtlas::Build`
 > + `AssetGpuCache::ClearPages` + ImGui 纹理重绑，设备重建回调同配方）——此前基号
@@ -163,6 +170,7 @@ MyGame/                                   # 用户项目（升级永不触碰）
 ```
 
 - 平台矩阵 v1：`windows-x64`；`macos-universal`（MoltenVK 路径，开发可用级）为第二批。
+  > **2026-10-01 注记（用户拍板）**：目标平台集合不变（windows-x64 仍为发布 v1）；**M7a 内实现顺序 mac 先行**——运行时资产层/GameEntry/packager 判据先在开发机闭环，Windows 真机收口为 M7a 末批。拆解见 [Plans/M7a/M7a.md](../Plans/M7a/M7a.md) §0。
 - **Steam**：steamworks 动态加载薄封装（成就/云档/富存在），构建产物对齐 depot 上传布局（steamcmd）；成就/云档配置在 `project.lemon` 声明。
 - 产物清单对标 yami `Deployment`（三平台产物 + 加密资源 + 外壳），但外壳是我们自己的原生 runtime，非 Electron。
 
