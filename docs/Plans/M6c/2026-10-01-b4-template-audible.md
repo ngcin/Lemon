@@ -7,7 +7,7 @@ Chiptunes" Level 1（Juhani Junkala，CC0——zip 断点续传 48MB 到手，WA
 uirml 双步由本批附带修"watcher 竞速"转绿，见附带修段）+ ctest 3/3 + smoke-template
 `aud(mount=7 pause=5 resume=6=OK)`（standalone + 回归双绿）+ bench-survivor
 **fps=82 ≥ M6b 基线 78**（alive=10436/fx 饱和同前）+ svr-test 无头 `9 成功
-（流式 2）`同断言过。**真人验收清单待用户**（见文末，批② 两项同场）。
+（流式 2）`同断言过。**真人验收已过 2026-10-01**（初步走查 + 暂停热修复测两轮——验收期反馈驱动编辑器暂停联动/Esc-P 交底/pausedAll 残留三修，见热修 DevLog；[验收记录](../../DevLog/2026-10-01-acceptance-m6c-b4.md)）。
 [DevLog](../../DevLog/2026-10-01-m6c-b4-template-audible.md)）
 
 ## 范围（M6c.md 批④ 行）
@@ -149,7 +149,7 @@ MountPlayAudio 会话起点归位 + 暂停钮联动挂起（恢复按游戏 stag
 提示/README 键位交底。修后回归 full **17/17 首跑全绿**。
 [DevLog](../../DevLog/2026-10-01-m6c-b4-editor-pause-audio-hotfix.md)
 
-## 真人验收清单（待用户；批② 两项同场补验）
+## 真人验收清单（**已过 2026-10-01**：初步走查 + 暂停项热修复测两轮；[验收记录](../../DevLog/2026-10-01-acceptance-m6c-b4.md)）
 
 1. **一局全程有声**（模板或 svr-test）：BGM 开局起播 / 命中·击杀·拾取·升级·
    波次横幅事件音 / UI 按钮（含升级卡）音——密度与音量平衡观感。
