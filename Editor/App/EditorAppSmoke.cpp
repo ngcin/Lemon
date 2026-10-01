@@ -404,8 +404,14 @@ void EditorApp::SeedSmokeScene() {
             }
         }
     }
-    // M4.4 装配通路：--script 时挂 SpawnerBehaviour（Play 中刷怪断言用）
-    if (ctx_.Scripts()) ctx_.AttachScript(root, 0, "SpawnerBehaviour");
+    // M4.4 装配通路：--script 时挂 SpawnerBehaviour（Play 中刷怪断言用）。
+    // 挂前先解析：该类是 --script 测试装置（TestScript）注册的——真项目 Game 程序集
+    // 无此类（svr-test 2026-10-01 实证：旧门控 ctx_.Scripts() 使 --smoke --play 恒
+    // FAIL），不挂不断言（EditorApp 侧 smokeSpawnScript_ 同步）。
+    if (ctx_.Scripts() && ctx_.ResolveScriptTypeId("SpawnerBehaviour") >= 0) {
+        ctx_.AttachScript(root, 0, "SpawnerBehaviour");
+        smokeSpawnScript_ = true;
+    }
     smokeSeeded_ = (uint32_t)s.AliveCount();
     ctx_.Select(root, false); // Inspector 有主选中
 }

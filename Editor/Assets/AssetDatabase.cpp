@@ -267,6 +267,37 @@ static void ParseGridImporter(const Json& doc, AssetEntry& e) {
     }
 }
 
+// 运行时按"资产 GUID 低 32 位"索引的类型域（03 §69 组件 schema 恒 uint32：
+// prefabId/clipId/controllerId/表 id；EditorContext BuildPlay*Cache 映射约定）。
+// 域内两资产低 32 位同值 = 后登记者静默丢映射（2026-10-01 svr-test Player/Mob
+// 手工"前缀+小序号"guid 家族实证，DevLog 同日条目）。
+static bool IsLow32Keyed(AssetType t) {
+    switch (t) {
+    case AssetType::Prefab:
+    case AssetType::Clip:
+    case AssetType::AnimSet:
+    case AssetType::Controller:
+    case AssetType::Table: return true;
+    default: return false;
+    }
+}
+
+uint64_t AssetDatabase::GenerateUniqueGuid(AssetType type) const {
+    for (;;) {
+        const uint64_t g = GenerateGuid();
+        if (g == 0) continue; // 0 = "无 guid"哨兵，不发
+        const uint32_t low = (uint32_t)g;
+        bool clash = false;
+        for (const AssetEntry& e : entries_) {
+            if (e.guid == g || (e.type == type && (uint32_t)e.guid == low)) {
+                clash = true;
+                break;
+            }
+        }
+        if (!clash) return g;
+    }
+}
+
 void AssetDatabase::SyncMeta(AssetEntry& e) const {
     const std::string abs = AbsolutePath(e);
     const std::string metaPath = abs + ".meta";
@@ -289,7 +320,7 @@ void AssetDatabase::SyncMeta(AssetEntry& e) const {
             if (e.type == AssetType::Audio) ParseAudioImporter(doc, e);
         }
     }
-    if (e.guid == 0) e.guid = GenerateGuid();
+    if (e.guid == 0) e.guid = GenerateUniqueGuid(e.type);
     if (metaExists) return; // 已在档：不重写（500ms 轮询重扫不做写放大）
 
     Json doc;
@@ -328,6 +359,8 @@ bool AssetDatabase::OpenProject(const std::string& projectRoot, uint32_t spriteI
     spriteIdBase_ = spriteIdBase;
     nextSpriteId_ = spriteIdBase;
     entries_.clear();
+    refCorpusTried_ = false;
+    refCorpus_.clear();
     opened_ = true;
 
     std::error_code ec;
@@ -412,10 +445,118 @@ bool AssetDatabase::OpenProject(const std::string& projectRoot, uint32_t spriteI
     return true;
 }
 
+// ------------------------------------------------------------ 孤儿清扫 ----
+AssetDatabase::OrphanSweepResult AssetDatabase::SweepOrphanMetas() {
+    OrphanSweepResult r = SweepOrphanMetasInternal();
+    for (const std::string& p : r.cleaned)
+        LEMON_LOG("清理孤儿 .meta（源已删且零引用）：%s", p.c_str());
+    for (const std::string& p : r.keptReferenced)
+        LEMON_ERROR("孤儿 .meta 保留（guid 仍被引用——恢复源文件即可复链，"
+                    "确弃请先清引用）：%s", p.c_str());
+    return r;
+}
+
+AssetDatabase::OrphanSweepResult AssetDatabase::SweepOrphanMetasInternal() {
+    if (!opened_) return {}; // 无项目态（菜单恒可用——空报告，与 Rescan/SaveManifest 守卫同款）
+    OrphanSweepResult r;
+    std::error_code ec;
+    for (auto it = fs::recursive_directory_iterator(
+             root_, fs::directory_options::skip_permission_denied, ec);
+         it != fs::recursive_directory_iterator(); it.increment(ec)) {
+        if (ec) break;
+        const fs::directory_entry& de = *it;
+        if (de.is_directory(ec)) {
+            const std::string name = de.path().filename().string();
+            std::string relDir = fs::relative(de.path(), root_, ec).generic_string();
+            const bool top = !ec && relDir.find('/') == std::string::npos;
+            const bool skip = ec || (top ? SkipDirTop(name) : SkipDirAny(name));
+            if (skip) it.disable_recursion_pending();
+            continue;
+        }
+        const std::string name = de.path().filename().string();
+        if (name.size() <= 5 || name.compare(name.size() - 5, 5, ".meta") != 0) continue;
+        const fs::path base = de.path().parent_path() / name.substr(0, name.size() - 5);
+        std::error_code ec2;
+        if (fs::exists(base, ec2)) continue; // 正常伴生
+        // 源缺失 → 孤儿。guid 解不出（坏档/无 guid）= 无从被引用，判垃圾一并清
+        uint64_t guid = 0;
+        if (std::ifstream mf(de.path(), std::ios::binary); mf) {
+            std::string text((std::istreambuf_iterator<char>(mf)),
+                             std::istreambuf_iterator<char>());
+            const Json doc = Json::parse(text, nullptr, false);
+            if (!doc.is_discarded() && doc.contains("guid")) {
+                const Json& g = doc.at("guid");
+                if (g.is_string()) guid = HexToGuid(g.get<std::string>().c_str());
+                else if (g.is_number_unsigned()) guid = g.get<uint64_t>();
+            }
+        }
+        const std::string rel = fs::relative(de.path(), root_, ec2).generic_string();
+        if (guid != 0 && GuidReferenced(guid)) {
+            r.keptReferenced.push_back(rel);
+        } else if (fs::remove(de.path(), ec2)) {
+            r.cleaned.push_back(rel);
+        } else {
+            LEMON_WARN("孤儿 .meta 清理失败（权限/IO？）：%s", rel.c_str());
+        }
+    }
+    return r;
+}
+
+bool AssetDatabase::GuidReferenced(uint64_t guid) {
+    if (!opened_ || guid == 0) return false;
+    if (!refCorpusTried_) {
+        refCorpusTried_ = true;
+        refCorpus_.clear();
+        // 引用面 = 项目数据文本（含资产扫描排除的 Game/Scenes/Data——引用常驻处）。
+        // 不含 .meta（自引用假阳性）；单文件 16 MiB 上限防怪物档撑爆语料。
+        static const char* kRefExt[] = {".scene", ".prefab", ".anim",   ".override",
+                                        ".controller", ".tab", ".rml",  ".rcss",
+                                        ".cs",     ".asset"};
+        std::error_code ec;
+        for (auto it = fs::recursive_directory_iterator(
+                 root_, fs::directory_options::skip_permission_denied, ec);
+             it != fs::recursive_directory_iterator(); it.increment(ec)) {
+            if (ec) break;
+            const fs::directory_entry& de = *it;
+            if (de.is_directory(ec)) {
+                const std::string name = de.path().filename().string();
+                const bool skip = name.empty() || name[0] == '.' || name == "obj" ||
+                                  name == "bin" || name == "Builds";
+                if (skip) it.disable_recursion_pending();
+                continue;
+            }
+            std::string ext = de.path().extension().string();
+            for (char& c : ext) c = (char)std::tolower((unsigned char)c);
+            bool isRef = false;
+            for (const char* re : kRefExt)
+                if (ext == re) { isRef = true; break; }
+            std::error_code ec2;
+            if (!isRef || !fs::is_regular_file(de.path(), ec2)) continue;
+            if (fs::file_size(de.path(), ec2) > (uintmax_t)16 << 20) continue;
+            std::ifstream f(de.path(), std::ios::binary);
+            if (!f) continue;
+            refCorpus_.append((std::istreambuf_iterator<char>(f)),
+                              std::istreambuf_iterator<char>());
+            refCorpus_.push_back('\n');
+        }
+    }
+    if (refCorpus_.empty()) return false;
+    // guid 在数据文本的三种形态：引擎写出的 hex 小写串 / 十进制数（.scene 组件字段）、
+    // 用户代码常量可能的大小写 hex。十进制全串（19-20 位）子串命中 ≠ 巧合数字。
+    const std::string hex = GuidToHex(guid);
+    if (refCorpus_.find(hex) != std::string::npos) return true;
+    std::string hexUp = hex;
+    for (char& c : hexUp) c = (char)std::toupper((unsigned char)c);
+    if (refCorpus_.find(hexUp) != std::string::npos) return true;
+    return refCorpus_.find(std::to_string(guid)) != std::string::npos;
+}
+
 void AssetDatabase::Rescan() {
     if (!opened_) return;
     lastChange_ = {};
     healthIssues_ = 0;
+    refCorpusTried_ = false; // 引用语料随磁盘态失效（SweepOrphanMetas/删除引用检查共用）
+    refCorpus_.clear();
 
     // 旧表按路径索引（保 guid/spriteId）
     std::unordered_map<std::string, AssetEntry> old;
@@ -527,16 +668,19 @@ void AssetDatabase::Rescan() {
         entries_.push_back(std::move(e));
     }
 
-    // 消失文件 → 墓碑（号/引用保留；重启不回收）
+    // 消失文件 → 条目出表（墓碑 2026-10-01 退役，06 §2.2 修订：误删恢复由 .meta
+    // 随文件走 + 版本管理承担）。源+meta 双亡但仍被引用 → 红字一次（悬空可见性；
+    // meta 独存的情形归下方孤儿清扫 pass 报，不双报）。
     for (auto& [path, prev] : old) {
         if (std::find(seenPaths.begin(), seenPaths.end(), path) != seenPaths.end()) continue;
-        if (!prev.missing) {
-            lastChange_.removed.push_back(prev.guid);
-            LEMON_WARN("资产缺失（引用悬空）：%s", path.c_str());
+        if (!prev.missing) lastChange_.removed.push_back(prev.guid);
+        std::error_code ec2;
+        if (prev.guid != 0 && !fs::exists(AbsolutePath(prev) + ".meta", ec2) &&
+            GuidReferenced(prev.guid)) {
+            LEMON_ERROR("资产已删除但仍被引用（guid %016llx）：%s——恢复源文件或清理引用",
+                        (unsigned long long)prev.guid, path.c_str());
             ++healthIssues_;
         }
-        prev.missing = true;
-        entries_.push_back(prev);
     }
 
     std::sort(entries_.begin(), entries_.end(),
@@ -549,29 +693,42 @@ void AssetDatabase::Rescan() {
             LEMON_ERROR("GUID 冲突：%s 与 %s 同为 %016llx（后者重发号）",
                         entries_[i].relPath.c_str(), entries_[j].relPath.c_str(),
                         (unsigned long long)entries_[i].guid);
-            entries_[j].guid = GenerateGuid();
+            entries_[j].guid = GenerateUniqueGuid(entries_[j].type);
             ++healthIssues_;
         }
     }
 
-    // 孤儿 meta（文件没了 meta 还在）体检（同排除规则）
-    for (auto it = fs::recursive_directory_iterator(root_, ec);
-         it != fs::recursive_directory_iterator(); it.increment(ec)) {
-        if (ec) break;
-        const fs::directory_entry& de = *it;
-        const std::string name = de.path().filename().string();
-        if (de.is_directory(ec)) {
-            std::string relDir = fs::relative(de.path(), root_, ec).generic_string();
-            const bool top = !ec && relDir.find('/') == std::string::npos;
-            const bool skip = ec || (top ? SkipDirTop(name) : SkipDirAny(name));
-            if (skip) it.disable_recursion_pending();
-            continue;
+    // 低 32 位碰撞体检（运行时映射域，见 IsLow32Keyed）。只红字不重发：碰撞对两
+    // guid 全宽互异、全宽引用（场景/脚本）完好，重发反而断引用——修复动作 = 对其中
+    // 之一重新生成 GUID（分配期防线见 GenerateUniqueGuid；本体检兜手工改 .meta 与
+    // 模板拼装两条不经发号函数的路径）。
+    {
+        std::unordered_map<uint64_t, size_t> seen; // key = type<<32 | 低 32 位
+        for (size_t i = 0; i < entries_.size(); ++i) {
+            const AssetEntry& e = entries_[i];
+            if (e.missing || !IsLow32Keyed(e.type)) continue;
+            const uint64_t key = ((uint64_t)e.type << 32) | (uint32_t)e.guid;
+            const auto [it, first] = seen.emplace(key, i);
+            if (!first) {
+                LEMON_ERROR("GUID 低 32 位碰撞（%s）：%s 与 %s 同为 %08x"
+                            "——运行时按低 32 位索引将取先登记者，请重新生成其一 GUID",
+                            AssetTypeName(e.type), entries_[it->second].relPath.c_str(),
+                            e.relPath.c_str(), (uint32_t)e.guid);
+                ++healthIssues_;
+            }
         }
-        if (name.size() <= 5 || name.compare(name.size() - 5, 5, ".meta") != 0) continue;
-        std::string base = de.path().parent_path() / fs::path(name.substr(0, name.size() - 5));
-        std::error_code ec2;
-        if (!fs::exists(base, ec2)) {
-            LEMON_ERROR("孤儿 .meta（源文件已删）：%s", de.path().string().c_str());
+    }
+
+    // 孤儿 .meta 清扫（源缺失）：零引用 = 垃圾自动清（Unity/Cocos 同款，2026-10-01
+    // 拍板）；仍被引用 = 保留 + 红字（"只恢复源文件"场景的复链钩子，盲删永久断引用
+    // ——Godot 社区插件只能盲清，引擎本体有引用视图可保守）。手动入口同判定出报告。
+    {
+        const OrphanSweepResult sweep = SweepOrphanMetasInternal();
+        for (const std::string& p : sweep.cleaned)
+            LEMON_LOG("清理孤儿 .meta（源已删且零引用）：%s", p.c_str());
+        for (const std::string& p : sweep.keptReferenced) {
+            LEMON_ERROR("孤儿 .meta 保留（guid 仍被引用——恢复源文件即可复链，"
+                        "确弃请先清引用）：%s", p.c_str());
             ++healthIssues_;
         }
     }
@@ -660,9 +817,15 @@ bool AssetDatabase::Remove(AssetEntry& e) {
     std::error_code ec;
     fs::remove(AbsolutePath(e), ec);
     fs::remove(AbsolutePath(e) + ".meta", ec);
-    e.missing = true; // 墓碑：spriteId/引用保留（体检红字提示悬空）
+    // 条目本轮隐藏（missing 位立即失效化浏览器/查询），下轮 Rescan 出表——不就地
+    // erase：调用方（浏览器瓦片循环）持有 entries_ 引用，就地删除 = 迭代器失效。
+    // removed 变更在此推送（Rescan 的出表路径对 missing 态不再重复推）→ GPU 幽灵页
+    // 回收（RescanAssets Evict）即时触达。
+    e.missing = true;
+    lastChange_.removed.push_back(e.guid);
     SaveManifest();
-    LEMON_WARN("资产已删除（转墓碑，场景引用悬空将红字提示）：%s", e.relPath.c_str());
+    LEMON_WARN("资产已删除：%s（guid %016llx；条目下轮扫描出表，引用悬空装载期告警）",
+               e.relPath.c_str(), (unsigned long long)e.guid);
     return true;
 }
 

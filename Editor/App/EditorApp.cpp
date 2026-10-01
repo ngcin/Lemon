@@ -952,7 +952,8 @@ int EditorApp::Run(const EditorLaunch& launch) {
         // 批③d-2：模板模式豁免——菜单先行使 Stop 时点（回菜单态）无 run 实体，
         // spawn 证明由 smoke-template 流程链（重开重挂/mobs/gems 峰值）承接
         bool scriptOk = true;
-        if (host_ && launch.playTest && !launch.finalTest && !launch.smokeTemplate) {
+        if (host_ && launch.playTest && !launch.finalTest && !launch.smokeTemplate &&
+            smokeSpawnScript_) {
             scriptOk = playAliveAtStop > smokeSeeded_ + 10;
             std::printf("[lemon] editor-smoke script-spawn: playAlive=%u seeded=%u => %s\n",
                         playAliveAtStop, smokeSeeded_, scriptOk ? "OK" : "FAIL");

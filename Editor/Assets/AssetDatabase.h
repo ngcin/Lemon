@@ -2,9 +2,10 @@
 // 纯文件系统 + JSON 逻辑，零 GPU/ImGui 依赖（可单测；GPU 侧见 AssetGpuCache）。
 //   * GUID 稳定键：.meta 随文件走（重命名/移动引用不断）；.scene 只存 GUID/spriteId。
 //   * spriteId 持久分配（manifest 记账，只增不减）：已存场景引用不因增删资产漂移。
-//   * 删除文件 = 墓碑（missing；号保留），重启不回收——编号连续性是
-//     "AtlasRegistry 追加式 id ↔ DB 分配号"对齐的前提。
-//   * 启动/重扫体检（孤儿 meta / GUID 冲突 / 墓碑引用）红字进 Console。
+//   * 删除文件 = 条目出表（墓碑机制 2026-10-01 退役，06 §2.2 修订——误删恢复由
+//     .meta 随文件走 + 版本管理承担；编号只增不减继续成立）。孤儿 .meta：零引用
+//     自动清扫、仍被引用保留 + 红字（SweepOrphanMetas 判据，Unity/Cocos 同款收口）。
+//   * 启动/重扫体检（GUID 冲突 / 低 32 位碰撞 / 已删仍被引用）红字进 Console。
 #pragma once
 
 #include <cstdint>
@@ -44,7 +45,9 @@ struct AssetEntry {
     AssetType type = AssetType::Generic;
     uint32_t spriteId = 0; // Sprite：AtlasRegistry 稳定 id（0 = 非 sprite）
     uint64_t hash = 0;     // 内容 FNV-1a 64（重导入判定）
-    bool missing = false;  // 墓碑（文件已删；号保留，浏览器隐藏）
+    bool missing = false;  // 墓碑 2026-10-01 退役：仅剩编辑器内 Remove() 的同帧隐藏位
+                           //（下轮 Rescan 出表；不就地 erase = 调用方持有 entries_ 引用）。
+                           // 恒 false 的消费方守卫清除随 M7a 批② AssetIndex 搬运批。
 
     // ---- 网格切片（M5 批③；.meta importer 段声明，DB 纯文件系统零解码记账）----
     // cellW/H=0 = 全幅（M4 最小集语义）；gridCols/Rows 来自 meta frames 声明
@@ -76,6 +79,14 @@ public:
         bool Empty() const { return added.empty() && modified.empty() && removed.empty(); }
     };
 
+    /// 孤儿 .meta 清扫报告（2026-10-01 拍板：Unity/Cocos 式自动清 + 引用判据保守保留）
+    struct OrphanSweepResult {
+        std::vector<std::string> cleaned;        // 已清（源缺失且 guid 零引用）
+        std::vector<std::string> keptReferenced; // 保留（guid 仍被引用 = 复链钩子）
+    };
+    /// 手动清扫入口（Assets 菜单）：与 Rescan 自动路径同判定，立即执行并返回报告。
+    OrphanSweepResult SweepOrphanMetas();
+
     /// 打开项目（root 含 Assets/；缺则建空目录）。spriteIdBase = 程序化图集之后
     /// 首个可用 id（调用方 = ViewportRenderer 装配后 SpriteCount()+1）。
     /// 扫描 + meta 补齐 + manifest 载入/落盘 + 体检。返回 false = root 不可写。
@@ -86,7 +97,7 @@ public:
 
     const ChangeSet& LastChange() const { return lastChange_; }
 
-    // ---- 查询（含墓碑；调用方按需过滤 missing）----
+    // ---- 查询（外部删除 = 条目同轮出表；missing 仅编辑器内 Remove 的同帧过渡位）----
     const AssetEntry* FindByGuid(uint64_t guid) const;
     const AssetEntry* FindByPath(const std::string& relPath) const;
     const AssetEntry* FindBySpriteId(uint32_t spriteId) const;
@@ -139,6 +150,17 @@ private:
     static uint64_t HashFile(const std::string& absPath);
     /// 读 sidecar .meta（无/坏 → 0）；wantWrite = 缺失时按 e 现值写一份
     void SyncMeta(AssetEntry& e) const;
+    /// 新发号：全宽全库唯一 + 同类型域内低 32 位唯一（运行时映射约定的安全前提，
+    /// 2026-10-01 svr-test Player/Mob 低 32 位碰撞实证后立；Rescan 体检兜手工 .meta）
+    uint64_t GenerateUniqueGuid(AssetType type) const;
+    /// 引用面检索：项目数据文本（scene/prefab/anim/override/controller/tab/rml/rcss/
+    /// cs/asset，不含 .meta——自引用假阳性）中 guid 的任一形态（hex 小写/大写/十进制）
+    /// 命中即真。语料惰性装配，Rescan/OpenProject 起点失效。
+    bool GuidReferenced(uint64_t guid);
+    /// 清扫本体（自动/手动共用）：遍历源缺失的 .meta，零引用删之、被引用留之。
+    OrphanSweepResult SweepOrphanMetasInternal();
+    std::string refCorpus_;      // 引用面语料（惰性）
+    bool refCorpusTried_ = false;
 
     std::string root_;
     std::vector<AssetEntry> entries_; // relPath 升序（含墓碑）

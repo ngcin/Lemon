@@ -130,6 +130,7 @@ void EditorApp::BuildMenuBar() {
     if (ImGui::BeginMenu("Assets")) {
         if (ImGui::MenuItem("导入文件...", nullptr, false, true)) MenuImportAsset();
         if (ImGui::MenuItem("重扫资产库", nullptr, false, true)) RescanAssets();
+        if (ImGui::MenuItem("清理孤儿 .meta…", nullptr, false, true)) MenuSweepOrphanMetas();
         ImGui::Separator();
         { // 新建脚本（M4.6 §5-4）：模板 .cs → Game/ + 注册行 → 热重载排队
             std::string csproj, dll;
@@ -625,6 +626,7 @@ void EditorApp::BuildUI() {
     BuildNoProjectCard();
     BuildPickersAndModals();
     DrawAudioMixerWindow(); // M6c 批③：按需工具窗（默认关——零默认布局影响）
+    DrawOrphanSweepReportWindow(); // 孤儿 .meta 清扫报告（默认关，随菜单动作开）
 
     if (launchCopy_.demoWindow) ImGui::ShowDemoWindow(&launchCopy_.demoWindow);
     if (aboutOpen_) {
@@ -680,6 +682,35 @@ void EditorApp::DrawAudioMixerWindow() {
         audio_.SetRetriggerCooldown(cd);
     float pj = audio_.PitchJitter();
     if (ImGui::SliderFloat("音高微扰", &pj, 0.0f, 0.1f, "%.3f")) audio_.SetPitchJitter(pj);
+    ImGui::End();
+}
+
+// 孤儿 .meta 清扫报告（2026-10-01 拍板，Assets 菜单动作的结果面）：清了什么 /
+// 留了什么为什么留。不盲清被引用项——那是"只恢复源文件"场景的复链钩子，
+// 引用面判据见 AssetDatabase::SweepOrphanMetas。
+void EditorApp::DrawOrphanSweepReportWindow() {
+    if (!orphanSweepReportOpen_) return;
+    if (!ImGui::Begin("孤儿 .meta 清理报告", &orphanSweepReportOpen_,
+                      ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::End();
+        return;
+    }
+    ImGui::Text("已清理（源已删且零引用）：%u",
+                (uint32_t)orphanSweepResult_.cleaned.size());
+    for (const std::string& p : orphanSweepResult_.cleaned) ImGui::BulletText("%s", p.c_str());
+    ImGui::Separator();
+    if (orphanSweepResult_.keptReferenced.empty()) {
+        ImGui::TextDisabled("无被引用残留");
+    } else {
+        ImGui::PushStyleColor(ImGuiCol_Text, theme::kTextWarn);
+        ImGui::Text("保留（guid 仍被引用——恢复源文件即可复链，确弃请先清引用）：%u",
+                    (uint32_t)orphanSweepResult_.keptReferenced.size());
+        ImGui::PopStyleColor();
+        for (const std::string& p : orphanSweepResult_.keptReferenced)
+            ImGui::BulletText("%s", p.c_str());
+    }
+    ImGui::Separator();
+    if (ImGui::Button("关闭")) orphanSweepReportOpen_ = false;
     ImGui::End();
 }
 

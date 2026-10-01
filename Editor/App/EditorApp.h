@@ -153,6 +153,7 @@ public:
     // ---- 资产动作（M4.4）----
     void MenuImportAsset();  // 文件选择器（复制进 Assets/ + 导入）
     void RescanAssets();     // FileWatcher/手动重扫 → DB + GPU 增量导入
+    void MenuSweepOrphanMetas(); // Assets 菜单：手动清扫孤儿 .meta（同 Rescan 自动判定）
     /// 双击 .anim/.override 资产 → 打开 Animation 面板（M6a 批② T3——首个"资产 →
     /// 专用编辑面板"通道）。T3c 集归并：.anim 若已属某 .override 集 → 开集工作台并
     /// 选中该段；否则裸 clip 传统模式；.override 直接开集。
@@ -218,6 +219,7 @@ private:
     /// Window 菜单进入）。Master/三组音量 + voice 计数 + 节流/微扰全局调参面；
     /// 无持久化（设置屏音量档 = 批④）。
     void DrawAudioMixerWindow();
+    void DrawOrphanSweepReportWindow(); // 孤儿 .meta 清扫报告（随菜单动作开）
     /// 场景选择器起始目录：当前场景父目录 → 项目 Scenes/ → 项目根 → CWD（无项目）
     std::string PickerStartDir();
     void BuildNoProjectCard(); // 无项目引导（M4.6 §4-1：中央卡 + 两按钮直达）
@@ -454,7 +456,12 @@ private:
     int8_t tabFocusPending_ = 0; // Play 进出自动切 Game/Scene 标签页（+1/-1；BuildUI 内消费）
     bool aboutOpen_ = false;
     bool audioMixerOpen_ = false; // Audio Mixer 工具窗开态（M6c 批③；Window 菜单）
+    bool orphanSweepReportOpen_ = false;          // 清扫报告窗开态（Assets 菜单动作）
+    AssetDatabase::OrphanSweepResult orphanSweepResult_; // 最近一次清扫报告
     uint32_t smokeSeeded_ = 0;     // 冒烟播种实体数（退出时守恒断言）
+    bool smokeSpawnScript_ = false; // 播种挂上了 SpawnerBehaviour（--script 测试装置）——
+                                    // script-spawn 断言随此成立；真项目 Game 程序集无此类
+                                    // 不挂不断言（svr-test 实证 2026-10-01 前恒 FAIL）
     SceneViewPanel* scenePanel_ = nullptr; // --smoke-drag 注入定位（按名取，非所有权）
     AssetBrowserPanel* assetPanel_ = nullptr; // --smoke-ui 注入定位（按名取，非所有权）
     bool noProjectCardDismissed_ = false;  // 无项目中央卡已关（会话内；卡会截走视口点击）

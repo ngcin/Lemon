@@ -126,6 +126,13 @@ bool EditorApp::OpenProjectInSession(const std::string& root) {
     return true;
 }
 
+void EditorApp::MenuSweepOrphanMetas() {
+    // 手动清扫入口（2026-10-01 拍板）：与 Rescan 自动路径同判定（零引用删 / 被引用
+    // 留），立即执行并弹报告——给"全部清除"一个人工决断口，但报告面不盲清被引用项。
+    orphanSweepResult_ = ctx_.Assets().SweepOrphanMetas();
+    orphanSweepReportOpen_ = true;
+}
+
 void EditorApp::RescanAssets() {
     AssetDatabase& db = ctx_.Assets();
     db.Rescan();

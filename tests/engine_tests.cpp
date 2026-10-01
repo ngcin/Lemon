@@ -3862,7 +3862,109 @@ void TestAtlasPageHotUpdate() {
     Expect(s1.atlasIndex == 2, "atlas slot preserved");
 }
 
-// ---- M4.4-a：AssetDatabase 生命周期（GUID 稳定/manifest 记账/墓碑/体检）----
+// ---- M7a 前置：低 32 位碰撞体检 + 发号唯一性（2026-10-01，svr-test Player/Mob 实证）----
+// prefabId/clipId/controllerId/表 id 均取资产 GUID 低 32 位（03 §69 恒 uint32），
+// 同类型两资产低 32 位同值 = 运行时静默丢映射。锁两件事：①体检按【同类型域】红字
+//（跨类型同低 32 位合法——不同键空间，HealthIssues==1 钉死域语义）；②新发号避开
+// 域内已占低 32 位。
+void TestAssetDatabaseLow32Collision() {
+    namespace fs = std::filesystem;
+    using lemon::editor::AssetDatabase;
+    using lemon::editor::AssetEntry;
+
+    const fs::path root = fs::temp_directory_path() /
+                          ("lemon-test-low32-" + std::to_string(::getpid()));
+    std::error_code ec;
+    fs::remove_all(root, ec);
+
+    AssetDatabase db;
+    Expect(db.OpenProject(root.string(), /*spriteIdBase=*/100), "open project");
+
+    auto put = [&](const std::string& rel, const char* guidHex) {
+        const fs::path p = root / rel;
+        fs::create_directories(p.parent_path(), ec);
+        { std::ofstream f(p, std::ios::binary); f << "x"; }
+        std::ofstream f(p.string() + ".meta", std::ios::trunc);
+        f << "{\"guid\":\"" << guidHex << "\"}";
+    };
+    put("Assets/a.anim", "111100000000000a");
+    put("Assets/b.anim", "222200000000000a"); // 与 a 同低 32 位（…0000000a）→ 红字
+    put("Prefabs/p.prefab", "333300000000000a"); // 同低 32 位但异域（prefab≠clip）→ 不报
+    { std::ofstream f(root / "Assets" / "c.anim", std::ios::binary); f << "y"; } // 无 meta → 新发号
+
+    db.Rescan();
+    Expect(db.HealthIssues() == 1, "same-type low32 collision flagged exactly once");
+    const AssetEntry* c = db.FindByPath("Assets/c.anim");
+    Expect(c && c->guid != 0 && (uint32_t)c->guid != 0x0000000aull,
+           "allocated guid avoids taken low32 in domain");
+    fs::remove_all(root, ec);
+}
+
+// ---- 孤儿 .meta 清扫（2026-10-01 拍板：Unity/Cocos 式自动清 + 引用判据保守保留）----
+// 三态：源缺失 + guid 零引用 = 扫描期自动删；源缺失 + 仍被引用 = meta 保留 + 红字
+//（"只恢复源文件"场景的复链钩子，盲删永久断引用）；源+meta 双删但仍被引用 = 红字。
+// 引用面 = 项目数据文本（hex 小写/大写 + 十进制三针）；手动 SweepOrphanMetas() 同判定。
+void TestOrphanMetaSweep() {
+    namespace fs = std::filesystem;
+    using lemon::editor::AssetDatabase;
+
+    const fs::path root = fs::temp_directory_path() /
+                          ("lemon-test-sweep-" + std::to_string(::getpid()));
+    std::error_code ec;
+    fs::remove_all(root, ec);
+
+    AssetDatabase db;
+    Expect(db.OpenProject(root.string(), /*spriteIdBase=*/100), "open project for sweep");
+
+    auto put = [&](const std::string& rel, const char* guidHex) {
+        const fs::path p = root / rel;
+        fs::create_directories(p.parent_path(), ec);
+        { std::ofstream f(p, std::ios::binary); f << "x"; }
+        std::ofstream f(p.string() + ".meta", std::ios::trunc);
+        f << "{\"guid\":\"" << guidHex << "\"}";
+    };
+    put("Assets/hero.png", "aaaa000000000001"); // 将被引用
+    put("Assets/mob.png", "aaaa000000000002");  // 零引用
+    put("Assets/gem.png", "aaaa000000000003");  // 将被引用（十进制形态）
+    fs::create_directories(root / "Scenes", ec);
+    {
+        std::ofstream f(root / "Scenes" / "ref.scene", std::ios::trunc);
+        f << "{\"heroRef\": \"aaaa000000000001\", \"gemRef\": "
+          << 0xaaaa000000000003ull << "}"; // hex 串 + 十进制双形态
+    }
+    db.Rescan();
+    Expect(db.FindByPath("Assets/hero.png") && db.FindByPath("Assets/mob.png") &&
+               db.FindByPath("Assets/gem.png"),
+           "three assets alive");
+
+    // ① 外部删源（meta 残留）：hero 被引用 → 条目出表 + meta 保留 + 红字恰一次；
+    // mob 零引用 → meta 自动清扫、零红字
+    fs::remove(root / "Assets" / "hero.png", ec);
+    fs::remove(root / "Assets" / "mob.png", ec);
+    db.Rescan();
+    Expect(db.FindByPath("Assets/hero.png") == nullptr, "referenced deleted entry dropped");
+    Expect(fs::exists(root / "Assets" / "hero.png.meta", ec), "referenced orphan meta kept");
+    Expect(!fs::exists(root / "Assets" / "mob.png.meta", ec), "unreferenced orphan meta swept");
+    Expect(db.HealthIssues() == 1, "kept referenced orphan flagged exactly once");
+
+    // ② 双删（源+meta 同时）但仍被引用 → 出表 + 红字（悬空可见性；与 ① 的保留红共存）
+    fs::remove(root / "Assets" / "gem.png", ec);
+    fs::remove(root / "Assets" / "gem.png.meta", ec);
+    db.Rescan();
+    Expect(db.FindByPath("Assets/gem.png") == nullptr, "double-deleted entry dropped");
+    Expect(db.HealthIssues() == 2, "double-deleted-but-referenced flagged (plus kept meta)");
+
+    // ③ 手动清扫入口（菜单）：同判定立即执行并出报告；复用 ① 的 hero.meta（引用态）
+    { std::ofstream f(root / "Assets" / "stray.png.meta", std::ios::trunc);
+      f << "{\"guid\":\"aaaa000000000004\"}"; }
+    AssetDatabase::OrphanSweepResult r = db.SweepOrphanMetas();
+    Expect(r.cleaned.size() == 1 && r.keptReferenced.size() == 1, "manual sweep report");
+    Expect(!fs::exists(root / "Assets" / "stray.png.meta", ec), "stray swept by manual call");
+    Expect(fs::exists(root / "Assets" / "hero.png.meta", ec), "referenced meta still kept");
+    fs::remove_all(root, ec);
+}
+
+// ---- M4.4-a：AssetDatabase 生命周期（GUID 稳定/manifest 记账/体检）----
 void TestAssetDatabaseLifecycle() {
     namespace fs = std::filesystem;
     using lemon::editor::AssetDatabase;
@@ -3947,24 +4049,24 @@ void TestAssetDatabaseLifecycle() {
                "renamed asset rescans alive (guid intact)");
     }
 
-    // 删除文件 → 墓碑（号不回收；体检红字）；新文件不重用旧号
+    // 删除文件 → 条目出表（墓碑 2026-10-01 退役，06 §2.2 修订）；号不回收
     fs::remove(root / "Assets" / "icons" / "coin.png", ec);
     fs::remove(root / "Assets" / "icons" / "coin.png.meta", ec);
     db.Rescan();
-    {
-        const AssetEntry* c3 = db.FindByGuid(0x1122334455667788ull);
-        Expect(c3 && c3->missing, "deleted asset is a tombstone (guid kept)");
-        Expect(db.LastChange().removed.size() == 1, "removal reported");
-    }
+    Expect(db.FindByGuid(0x1122334455667788ull) == nullptr,
+           "deleted asset entry dropped (no tombstone)");
+    Expect(db.LastChange().removed.size() == 1, "removal reported");
     { std::ofstream f(root / "Assets" / "new.png", std::ios::binary); f << "n"; }
     db.Rescan();
     const AssetEntry* np = db.FindByPath("Assets/new.png");
-    Expect(np && np->spriteId == 102, "new sprite id never reuses tombstoned id");
+    Expect(np && np->spriteId == 102, "new sprite id never reuses freed id");
 
-    // 孤儿 meta 体检红字
+    // 孤儿 meta：零引用 = 扫描期自动清扫（不再红字永续）
     { std::ofstream f(root / "Assets" / "orphan.png.meta", std::ios::trunc); f << "{}"; }
     db.Rescan();
-    Expect(db.HealthIssues() >= 1, "orphan meta reported as health issue");
+    Expect(!fs::exists(root / "Assets" / "orphan.png.meta", ec),
+           "unreferenced orphan meta swept");
+    Expect(db.HealthIssues() == 0, "sweep leaves no health issue");
 
     fs::remove_all(root, ec);
 }
@@ -6391,6 +6493,8 @@ int main() {
 #ifdef LEMON_EDITOR_CORE
     TestAtlasPageHotUpdate();
     TestAssetDatabaseLifecycle();
+    TestAssetDatabaseLow32Collision();
+    TestOrphanMetaSweep();
     TestAssetPathContainment();
     TestCsvTable();       // M6a 批② T1：CSV/表格序列化（ADR-012）
     TestGridSliceConfig(); // M6a 批② T3b-3：SetGridSlice 连号块

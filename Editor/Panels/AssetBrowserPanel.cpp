@@ -374,7 +374,7 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
         if (ImGui::MenuItem("复制 GUID"))
             ImGui::SetClipboardText(AssetDatabase::GuidToHex(e.guid).c_str());
         ImGui::Separator();
-        if (ImGui::MenuItem("删除（转墓碑）")) {
+        if (ImGui::MenuItem("删除")) {
             if (AssetEntry* target = ctx.Assets().FindByGuid(e.guid))
                 ctx.Assets().Remove(*target);
         }
