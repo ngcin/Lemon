@@ -262,11 +262,16 @@ bool AudioEngine::Init(const InitOptions& opts) {
             cfg.dataCallback = &Impl::DataCallback;
             cfg.pUserData = impl_.get();
             if (ma_device_init(&impl_->ctx, &cfg, &impl_->device) != MA_SUCCESS) {
+                // review 2026-10-01：2026-09-30 热修③ 自称"silent_ 置位"但从未落地——
+                // silent_ 恒假 = Tick 不推逻辑游标 → 声部永 done=false → AudioChannel
+                // 死条目回收（VoiceAlive 判据）失效 = 每次播放泄漏一条记账
                 LogMsg(LogLevel::Warn, "audio: ma_device_init 失败 → 静音模式（降级不阻断）");
+                impl_->silent_ = true;
             } else if (ma_device_start(&impl_->device) != MA_SUCCESS) {
                 // review 2026-09-30：start 失败（设备被独占等）此前无红字且不落降级
                 ma_device_uninit(&impl_->device);
                 LogMsg(LogLevel::Warn, "audio: ma_device_start 失败 → 静音模式（降级不阻断）");
+                impl_->silent_ = true;
             } else {
                 impl_->deviceOk = true;
             }

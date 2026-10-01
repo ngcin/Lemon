@@ -14,9 +14,16 @@
 #include "thirdparty/miniaudio.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <vector>
+
+#if defined(_WIN32)
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace lemon::audio {
 
@@ -37,6 +44,12 @@ struct LbaHeader {
 };
 static_assert(sizeof(LbaHeader) == 32, "LBA1 header must be 32 bytes (ADR-015 M2)");
 
+// review 2026-10-01：载荷 sane 上限（手改/恶意 .baked 防线）——此前一致性校验在
+// uint32 域做乘法可回绕（构造 frameCount=0x60000000/双声道 → 回绕值恰好等于声称
+// payloadBytes → resize ~2GB 直接 bad_alloc 崩装载路径）。1GiB ≈ 48k 立体声 89
+// 分钟，2D 引擎音频资产域足够宽裕；配合下方 64 位域校验，回绕头整体拒绝。
+constexpr uint64_t kMaxBakedPayloadBytes = 1ull << 30;
+
 void PutLE16(uint8_t* p, uint16_t v) {
     p[0] = uint8_t(v);
     p[1] = uint8_t(v >> 8);
@@ -51,6 +64,23 @@ uint16_t GetLE16(const uint8_t* p) { return uint16_t(p[0] | (p[1] << 8)); }
 uint32_t GetLE32(const uint8_t* p) {
     return uint32_t(p[0]) | (uint32_t(p[1]) << 8) | (uint32_t(p[2]) << 16) |
            (uint32_t(p[3]) << 24);
+}
+
+// review 2026-10-01：tmp 唯一化——后台烤制线程（WarmAudioBakes/Rescan）与主线程
+// EnsureClipLoaded 兜底可并发烤同一资产（BakeStale 判定到 dst rename 之间存在
+// TOCTOU 窗口），确定性 tmp 名 = 两把 FILE* 以 "wb" 开同一文件交错写 → 坏产物/
+// 假"换名失败"/一侧失败清理误删对端在写文件。pid+单调序后缀让两侧各写各的
+// tmp，RenameReplace 原子换名后写者胜（同参产物字节一致，异参整体自洽不交错）。
+uint32_t BakeTmpSeq() {
+    static std::atomic<uint32_t> seq{1};
+    return seq.fetch_add(1, std::memory_order_relaxed);
+}
+int BakePid() {
+#if defined(_WIN32)
+    return _getpid();
+#else
+    return static_cast<int>(::getpid());
+#endif
 }
 
 } // namespace
@@ -70,7 +100,8 @@ bool BakeAudioFile(const char* srcPath, const char* dstPath, float loopStartSec,
         return false;
     }
     std::vector<int16_t> pcm;
-    const ma_uint64 kChunk = 8192; // 帧分块读（decoder 可能少给，循环到 0）
+    const ma_uint64 kChunk = 8192; // 帧分块读（短读即 EOF——miniaudio 自家
+                                   // ma_decoder_read_pcm_frames_data 同款判据）
     size_t gotTotal = 0;
     bool decodeOk = true;
     for (;;) {
@@ -118,8 +149,11 @@ bool BakeAudioFile(const char* srcPath, const char* dstPath, float loopStartSec,
     PutLE32(head + 28, uint32_t(gotTotal * channels * 2));
 
     // review 2026-09-30：原子写（tmp + RenameReplace）——半截产物 mtime 比源新会被
-    // 缓存判定永不重烤；先写 .tmp 全量成功再换名（WriteFileAtomic 同款纪律）
-    const std::string tmpPath = std::string(dstPath) + ".tmp";
+    // 缓存判定永不重烤；先写 .tmp 全量成功再换名（WriteFileAtomic 同款纪律）。
+    // review 2026-10-01：tmp 名带 pid+序号唯一后缀（上方 BakeTmpSeq 处注释）。
+    char tmpSuffix[48];
+    std::snprintf(tmpSuffix, sizeof(tmpSuffix), ".%d.%u.tmp", BakePid(), BakeTmpSeq());
+    const std::string tmpPath = std::string(dstPath) + tmpSuffix;
     FILE* f = std::fopen(tmpPath.c_str(), "wb");
     if (!f) {
         LogMsg(LogLevel::Error, "audio: 烤制产物不可写（目录缺失/权限）：%s", tmpPath.c_str());
@@ -157,8 +191,11 @@ bool ParseLbaHead(const uint8_t* head, const char* path, BakedClipInfo& outInfo)
     const uint32_t sampleRate = GetLE32(head + 12);
     const uint32_t frameCount = GetLE32(head + 16);
     const uint32_t payloadBytes = GetLE32(head + 28);
+    // 期望载荷在 64 位域计算（uint32 乘法回绕 = 构造头通过校验，见 kMaxBakedPayloadBytes 注释）
+    const uint64_t payloadExpect = uint64_t(frameCount) * channels * 2;
     if ((channels != 1 && channels != 2) || sampleRate != uint32_t(kMixSampleRate) ||
-        frameCount == 0 || payloadBytes != frameCount * channels * 2) {
+        frameCount == 0 || payloadBytes != payloadExpect ||
+        payloadExpect > kMaxBakedPayloadBytes) {
         LogMsg(LogLevel::Error, "audio: .baked 字段不一致（声道/采样率/载荷）：%s", path);
         return false;
     }

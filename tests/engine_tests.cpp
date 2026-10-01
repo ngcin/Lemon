@@ -5561,6 +5561,120 @@ void TestAudioBakedRoundtrip() {
     fs::remove_all(dir, ec);
 }
 
+// review 2026-10-01 二轮热修回归锁：①回绕/超限载荷头拒绝（头校验的 uint32 乘法
+// 可回绕——构造 frameCount 使截断值恰好等于声称 payloadBytes，旧校验放行 →
+// resize ~2GiB 直接 bad_alloc 崩装载路径）；②并发烤制同一 dst 不交错（后台烤制
+// 线程与 EnterPlay/试听兜底的 TOCTOU 窗口——tmp 唯一化前两把 FILE* 写同一 inode）。
+void TestAudioBakedHardening() {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "lemon-audio-baked-hardening";
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+
+    // ① 手写两种坏头：回绕（0x60000000 帧×2ch×2B=0x180000000 → 截断 0x80000000）
+    // 与无回绕但超限（0x20000000 帧 → 恰 2GiB，uint32 域自洽）
+    const auto put16 = [](uint8_t* p, uint16_t v) {
+        p[0] = uint8_t(v);
+        p[1] = uint8_t(v >> 8);
+    };
+    const auto put32 = [](uint8_t* p, uint32_t v) {
+        p[0] = uint8_t(v);
+        p[1] = uint8_t(v >> 8);
+        p[2] = uint8_t(v >> 16);
+        p[3] = uint8_t(v >> 24);
+    };
+    const char* names[] = {"wrapped.baked", "huge.baked"};
+    const uint32_t frameCounts[] = {0x60000000u, 0x20000000u};
+    for (int i = 0; i < 2; ++i) {
+        uint8_t head[32] = {};
+        std::memcpy(head, "LBA1", 4);
+        put16(head + 4, 1);
+        put16(head + 6, 32);
+        put16(head + 8, 1);
+        put16(head + 10, 2);
+        put32(head + 12, 48000);
+        put32(head + 16, frameCounts[i]);
+        put32(head + 28, uint32_t(uint64_t(frameCounts[i]) * 2 * 2));
+        const std::string path = (dir / names[i]).string();
+        FILE* f = std::fopen(path.c_str(), "wb");
+        Expect(f != nullptr, "hardening fixture open");
+        std::fwrite(head, 1, 32, f);
+        std::fclose(f);
+        std::vector<int16_t> pcm;
+        audio::BakedClipInfo info;
+        Expect(!audio::LoadBakedClip(path.c_str(), pcm, info),
+               "wrapped/over-cap payload head rejected");
+        Expect(pcm.empty(), "rejected load leaves pcm empty");
+        audio::BakedClipInfo pi;
+        Expect(!audio::PeekBakedClip(path.c_str(), pi), "peek rejects same head");
+    }
+
+    // ② 并发烤制同一 dst：tmp 唯一化后各写各的、原子换名后写者胜 → 两侧成功、
+    // 产物完整可装载（唯一化前 = 交错写/假换名失败/remove 误删对端）
+    const std::string wav = (dir / "in.wav").string();
+    {
+        constexpr uint32_t kFrames = 4800, kRate = 48000; // 0.1s 单声道
+        const uint32_t dataBytes = kFrames * 2, riffSize = 36 + dataBytes;
+        FILE* f = std::fopen(wav.c_str(), "wb");
+        Expect(f != nullptr, "hardening wav fixture open");
+        std::fwrite("RIFF", 1, 4, f);
+        std::fwrite(&riffSize, 4, 1, f);
+        std::fwrite("WAVEfmt ", 1, 8, f);
+        const uint32_t fmtSize = 16;
+        const uint16_t fmt = 1, ch = 1, bits = 16;
+        const uint32_t byteRate = kRate * ch * bits / 8;
+        const uint16_t blockAlign = uint16_t(ch * bits / 8);
+        std::fwrite(&fmtSize, 4, 1, f);
+        std::fwrite(&fmt, 2, 1, f);
+        std::fwrite(&ch, 2, 1, f);
+        std::fwrite(&kRate, 4, 1, f);
+        std::fwrite(&byteRate, 4, 1, f);
+        std::fwrite(&blockAlign, 2, 1, f);
+        std::fwrite(&bits, 2, 1, f);
+        std::fwrite("data", 1, 4, f);
+        std::fwrite(&dataBytes, 4, 1, f);
+        for (uint32_t i = 0; i < kFrames; ++i) {
+            const int16_t s = int16_t(8000.0f * std::sin(i * 0.1f));
+            std::fwrite(&s, 2, 1, f);
+        }
+        std::fclose(f);
+    }
+    const std::string dst = (dir / "race.baked").string();
+    std::atomic<int> okCount{0};
+    const auto bakeJob = [&] {
+        if (audio::BakeAudioFile(wav.c_str(), dst.c_str()))
+            ++okCount;
+    };
+    std::thread t1(bakeJob), t2(bakeJob);
+    t1.join();
+    t2.join();
+    Expect(okCount.load() == 2, "concurrent bakes both succeed");
+    {
+        std::vector<int16_t> loaded;
+        audio::BakedClipInfo info;
+        Expect(audio::LoadBakedClip(dst.c_str(), loaded, info), "raced dst loads clean");
+        Expect(info.frameCount == 4800 && info.channels == 1, "raced dst fields intact");
+        Expect(loaded.size() == info.frameCount, "raced dst payload complete");
+    }
+    // 失败烤制不留任何 tmp（唯一后缀名同受失败清理覆盖——不留猜测文件名缺口）
+    {
+        const std::string garbage = (dir / "garbage.wav").string();
+        FILE* f = std::fopen(garbage.c_str(), "wb");
+        std::fwrite("NOTAWAVJUSTGARBAGEBYTES", 1, 24, f);
+        std::fclose(f);
+        const std::string outG = (dir / "garbage.baked").string();
+        Expect(!audio::BakeAudioFile(garbage.c_str(), outG.c_str()),
+               "garbage source fails bake");
+        int tmpCount = 0;
+        for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec))
+            if (it->path().string().find(".tmp") != std::string::npos)
+                ++tmpCount;
+        Expect(tmpCount == 0, "no tmp leftovers (unique suffixes cleaned too)");
+    }
+    fs::remove_all(dir, ec);
+}
+
 // ------------------------------------------------ M6c 批②：命令通道/包络/空间化/组件声源 ----
 void TestAudioFadeEnvelope() {
     // D4 包络：fadeIn 逐样本爬升；FadeVoice→0 + stopWhenDone 到点终结；
@@ -5881,6 +5995,7 @@ int main() {
     TestAudioDeviceInitNoCrash(); // M6c 批⓪：真初始化三路径不崩（设备/null/降级）
     TestAudioBench100Sfx();   // M6c 批⓪：100 并发 SFX 模拟侧 ≤0.5ms
     TestAudioBakedRoundtrip(); // M6c 竖切批：LBA1 烤制/装载（44.1k→48k 重采样）
+    TestAudioBakedHardening(); // review 2026-10-01：坏头（回绕/超限载荷）拒绝 + 并发烤制不交错
     TestAudioFadeEnvelope();   // M6c 批② D4：起播淡入/FadeVoice 到零即停/静音记账同径
     TestAudioSpatialMath();    // M6c 批② M5：线性衰减钳界 + 声像半宽归一
     TestAudioChannelCommands();// M6c 批②：staging/保序 Stop/BGM 单槽换曲/StopAll/null 引擎记账
