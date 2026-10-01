@@ -55,6 +55,10 @@ struct UirmlSmokeState {
     bool smokeUiResetSeedOk = false, smokeUiResetOnlyOk = false;
     int smokeUiNegP2 = -1; // 251 帧负面行容器快照（终帧在三局——通道 A 重装已清）
     bool smokeUiEvictEditOk = false; // 三局入 Play 后 editprev 已不在 docs
+    // 竞速修（2026-10-01，M6c 批④ 回归期发现）：复种复活靠 500ms watcher 轮询，
+    // 帧锚定单发装载（302/394）在快机上竞速落空 → 405 清场断言连锁红。两装载
+    // 改重试窗（成功即停；FindByPath 须过 !missing——墓碑命中会假成功静默跳载）
+    bool smokeUiFormBSeeded = false, smokeUiFinalSeeded = false;
 };
 UirmlSmokeState g_uirmlSmoke;
 
@@ -262,11 +266,15 @@ void EditorApp::SmokeUirmlFrame(uint64_t frame) {
             }
             LEMON_LOG("uirml-smoke: dyn/editprev 复种（等 watcher 复活墓碑）");
         }
-        if (frame == 302 && gameUi_) {
-            if (const AssetEntry* e =
-                    ctx_.Assets().FindByPath("Assets/UI/editprev.rml"))
+        // 形态 B 种子（竞速修：原 302 单发帧。254 起重试——253 僵尸像素断言前
+        // 不得装载（editprev 画面须保持清零），窗口 254..303 ≈ 50 帧 ≥ 500ms
+        // watcher 轮询周期；窗尽仍是墓碑 = 原红字语义保留）
+        if (frame >= 254 && frame < 304 && gameUi_ && !g_uirmlSmoke.smokeUiFormBSeeded) {
+            const AssetEntry* e = ctx_.Assets().FindByPath("Assets/UI/editprev.rml");
+            if (e && !e->missing) {
                 LoadUiDocument(e->guid); // 双击通道重装载 + Show（形态 B 种子）
-            else
+                g_uirmlSmoke.smokeUiFormBSeeded = true;
+            } else if (frame == 303)
                 LEMON_ERROR("uirml-smoke: 形态 B 种子失败（复种未被 watcher 处理）");
         }
         if (frame == 304) {
@@ -304,11 +312,14 @@ void EditorApp::SmokeUirmlFrame(uint64_t frame) {
                  "</body>\n</rml>\n";
             LEMON_LOG("uirml-smoke: editprev 终局复种（终帧断言复位）");
         }
-        if (frame == 394 && gameUi_) {
-            if (const AssetEntry* e =
-                    ctx_.Assets().FindByPath("Assets/UI/editprev.rml"))
+        // 终局复位装载（竞速修同上：353..404 重试窗 ≈ 50 帧 ≥ 轮询周期；
+        // 405 Stop 清场断言前须已装载——cPrevN/hasDocC 终帧口径）
+        if (frame >= 353 && frame < 405 && gameUi_ && !g_uirmlSmoke.smokeUiFinalSeeded) {
+            const AssetEntry* e = ctx_.Assets().FindByPath("Assets/UI/editprev.rml");
+            if (e && !e->missing) {
                 LoadUiDocument(e->guid); // 终帧 hasDocC/cPrevN 复位（Play 中装载）
-            else
+                g_uirmlSmoke.smokeUiFinalSeeded = true;
+            } else if (frame == 404)
                 LEMON_ERROR("uirml-smoke: 终局复种未被 watcher 处理");
         }
         // 形态 D（2026-09-29 用户实报：删场景 UIDocument 实体 → 重进 Play 仍

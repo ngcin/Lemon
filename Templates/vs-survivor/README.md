@@ -13,6 +13,9 @@
   Yami & Xuran & Contributors）——随模板再分发需在发布物保留版权声明
   （仓库根 THIRD_PARTY.md 已登记）。
 - `gem/bullet/pierce/blade.png`：程序化生成（无版权负担）。
+- `Assets/Audio/*.ogg`：Kenney 各 CC0 包 + OpenGameArt CC0（M6c 批④；
+  逐件来源表见 `Samples/Assets/cc0-audio/README.md`，THIRD_PARTY.md
+  已登记——CC0 无署名义务，登记仅为溯源）。
 
 ## 玩法锚点
 
@@ -39,4 +42,9 @@ PlayerCombat.cs 头注释；表 GUID 生成期固定（改玩法勿动 .meta）�
 单源；场景 UI_* 实体挂 UIDocument 声明装载）。**换肤 = 改 theme.rcss 的
 token 区**（色板/字号/间距，全 dp——画布缩放时 UI 物理比例恒定，720dp
 设计基准）；改布局/文案 = 改 .rml/.rcss 资产，引擎零改动。数字键选择
-已退役（点击选择）；设置两开关（飘字/血条）持久化于 Settings 档。
+已退役（点击选择）；设置两开关（飘字/血条）+ 音量四滑条（主/音乐/
+音效/界面，M6c 批④）持久化于 Settings 档。
+- 音频（M6c 批④）：BGM 开局起播（单槽 = 重开不叠曲）/ 命中·击杀·拾取·
+升级·波次事件音 + UI 组按钮音（暂停中可响）；Esc 暂停 = BGM 声部级
+挂起续响（恢复不回跳）。音频资产在 `Assets/Audio/`，换音 = 换文件保
+名（.meta guid 不动，脚本零改动）；音量即时生效 + Settings 档持久。

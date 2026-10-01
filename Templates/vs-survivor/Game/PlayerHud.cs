@@ -11,11 +11,14 @@ using Lemon.Interop;
 public sealed class PlayerHud : LemonBehaviour
 {
     private const string kDoc = "Assets/UI/hud.rml";
+    // M6c 批④：波次横幅音（Assets/Audio/wave.ogg）
+    private const string kSfxWave = "7e57400000000006";
 
     public PlayerHud()
     {
         Subscribe(GameEvent.WaveStart, m => {
             UI.SetText(kDoc, "wave", $"—— 第 {(int)m.P0 + 1} 波 ——");
+            Audio.PlayOneShot(kSfxWave, 0.6f); // M6c 批④：波次横幅音
             UI.Apply();
         });
     }

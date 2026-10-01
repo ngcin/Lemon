@@ -1,0 +1,13 @@
+{
+  "guid": "7e57400000000001",
+  "type": "audio",
+  "hash": 0,
+  "importedAt": 0,
+  "importer": {
+    "loop": [
+      0.0,
+      0.0
+    ],
+    "preload": false
+  }
+}

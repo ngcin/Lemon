@@ -63,6 +63,31 @@ void WriteHitClips(const std::filesystem::path& assetsDir) {
     }
 }
 
+/// M6c 批④：模板音频七件（Samples/Assets/cc0-audio CC0 包 → Assets/Audio/；
+/// .meta 随行 = 固定 guid 7e574 段。BGM >1MiB 流式（meta preload:false）、全曲
+/// 循环 loop:[0,0]；六件 SFX 整载。来源登记见包内 README + THIRD_PARTY.md）。
+bool WriteAudioAssets(const std::filesystem::path& assets) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::create_directories(assets / "Audio", ec);
+    const fs::path src = fs::path(LEMON_TEMPLATE_DIR).parent_path() /
+                         "Samples/Assets/cc0-audio";
+    for (const char* f : {"bgm.ogg",     "bgm.ogg.meta",     "hit.ogg",
+                          "hit.ogg.meta", "kill.ogg",        "kill.ogg.meta",
+                          "pickup.ogg",  "pickup.ogg.meta", "levelup.ogg",
+                          "levelup.ogg.meta", "wave.ogg",    "wave.ogg.meta",
+                          "ui-click.ogg", "ui-click.ogg.meta"}) {
+        if (!fs::is_regular_file(src / f, ec)) {
+            LEMON_ERROR("gen-vs-template：cc0-audio 素材包缺失 %s/%s",
+                        src.string().c_str(), f);
+            return false; // 缺件即断——"全程有声"判据依赖七件全
+        }
+        fs::copy(src / f, assets / "Audio" / f, fs::copy_options::overwrite_existing,
+                 ec);
+    }
+    return true;
+}
+
 /// M6a 批② T4：数值配置表三件（Assets/tables/；ADR-012 D1 全字符串格）。
 /// 列契约（首行 = 列头；PlayerCombat 读——语义详见其头注释）：
 ///   weapons：id label prefabGuid interval speed pierce count radius angle
@@ -146,6 +171,7 @@ body {
     --c-wave:   #60e0a0;    /* 波次绿 */
     --c-bar-bg: #000000aa;  /* 进度条底 */
     --c-scrim:  #000000a0;  /* 模态暗罩 */
+    --c-slider: #ffcc44;    /* 滑条拖点（= 强调色系；hover 亮阶见组件区） */
 
     /* 品级色（.card.rare/.epic 等 class 消费；③e 图鉴规模化用） */
     --rarity-common: #9aa3ad;
@@ -303,6 +329,35 @@ body {
 }
 .btn-set:hover  { border-color: var(--c-accent); }
 .btn-set:active { border-color: var(--c-accent); background: #35507add; }
+
+/* ---- M6c 批④：音量滑条（设置屏四行；<input type="range">）----
+ * 伪元素子结构由 RmlUi WidgetSlider 实例化（slidertrack/sliderbar 非 DOM 子，
+ * 几何 = RCSS 定尺寸 + widget 算偏移——bar 纵向 = margin-top，轨道横向吃满本体）。 */
+.vol-slider {                   /* 本体：可点行程区（20dp 高 = 20dp 触达带） */
+    display: block;
+    width: 160dp;
+    height: 20dp;
+}
+.vol-slider slidertrack {       /* 轨道 */
+    height: 6dp;
+    width: auto;
+    background: var(--c-bar-bg);
+    border: 1dp var(--c-border);
+}
+.vol-slider sliderbar {         /* 拖点（14dp 方块，margin-top 居中于本体） */
+    width: 14dp;
+    height: 14dp;
+    margin-top: 3dp;
+    background: var(--c-slider);
+    border: 2dp var(--c-border);
+}
+.vol-slider sliderbar:hover { background: #ffe27a; }
+.vol-value {                    /* 滑条右侧百分数（SetText 回显） */
+    display: block;
+    width: 44dp;
+    color: var(--c-dim);
+    text-align: right;
+}
 .stat-row {                     /* 结算统计行：label 左值右 */
     display: flex;
     justify-content: space-between;
@@ -413,9 +468,10 @@ body {
 <link type="text/rcss" rel="stylesheet" href="theme.rcss"/>
 <style>
 /* 设置 = scrim 叠加，入口双源（主菜单/暂停）——返回目标由 GameFlow 记忆。
-     开关 = 按钮翻文案（Click 通道；Change/checkbox 不用——Click 已验证） */
+     开关 = 按钮翻文案（Click 通道）；音量 = 滑条（M6c 批④：input range 的
+     Change 通道——payload = 值；SetAttr 回显同值不回发 Change，免抑制位） */
 #settings-panel { width: 360dp; }
-#settings-more { margin-top: var(--sp-3); }
+#settings-vol { margin-top: var(--sp-3); }
 #btn-back { margin-top: var(--sp-2); }
 </style>
 </head>
@@ -425,7 +481,12 @@ body {
     <div id="settings-title" class="title">设置</div>
     <div class="set-row"><span class="set-label">伤害飘字</span><button id="btn-fxtext" class="btn-set" data-event="toggle-fxtext">开</button></div>
     <div class="set-row"><span class="set-label">世界血条</span><button id="btn-fxbar" class="btn-set" data-event="toggle-fxbar">开</button></div>
-    <div id="settings-more" class="hint">更多设置随音频（M6c）加入</div>
+    <div id="settings-vol">
+      <div class="set-row"><span class="set-label">主音量</span><input id="vol-master" class="vol-slider" type="range" min="0" max="100" step="5" value="80"/><span id="vol-master-val" class="vol-value">80</span></div>
+      <div class="set-row"><span class="set-label">音乐</span><input id="vol-bgm" class="vol-slider" type="range" min="0" max="100" step="5" value="80"/><span id="vol-bgm-val" class="vol-value">80</span></div>
+      <div class="set-row"><span class="set-label">音效</span><input id="vol-sfx" class="vol-slider" type="range" min="0" max="100" step="5" value="80"/><span id="vol-sfx-val" class="vol-value">80</span></div>
+      <div class="set-row"><span class="set-label">界面</span><input id="vol-ui" class="vol-slider" type="range" min="0" max="100" step="5" value="80"/><span id="vol-ui-val" class="vol-value">80</span></div>
+    </div>
     <button id="btn-back" class="btn-lg" data-event="back">返回</button>
   </div>
 </div>
@@ -553,12 +614,18 @@ public static class GameMain
     }
 
     /// <summary>设置态（批③d-2 D3：Settings 档持久化 version=1 + fx.text/fx.bar；
-    /// GameFlow 载入/写回，PlayerCombat.OnHit 消费门控）。静态随域重建——
-    /// GameFlow 热重载代收代还。</summary>
+    /// 批④ 音量四路 vol.*。GameFlow 载入/写回，PlayerCombat.OnHit 消费门控）。
+    /// 静态随域重建——GameFlow 热重载代收代还。</summary>
     public static class Settings
     {
         public static bool FxText = true; // 伤害飘字
         public static bool FxBar = true;  // 世界血条
+        // M6c 批④：音量四路（0..1；默认 0.8 = 滑条 value 80。引擎应用 =
+        // Audio.MasterVolume/SetGroupVolume，进 Play 装载后 + 滑条 Change 即时）
+        public static float MasterVol = 0.8f;
+        public static float BgmVol = 0.8f;
+        public static float SfxVol = 0.8f;
+        public static float UiVol = 0.8f;
     }
 
     /// <summary>UI 文档名（批③d-1 cards + 批③d-2 流程四屏）。UI 资产建后
@@ -568,6 +635,10 @@ public static class GameMain
     internal const string PauseDoc = "Assets/UI/pause.rml";
     internal const string SettingsDoc = "Assets/UI/settings.rml";
     internal const string ResultsDoc = "Assets/UI/results.rml";
+
+    // M6c 批④：UI 组按钮音（Assets/Audio/ui-click.ogg——全体 Click 统一打点，
+    // 暂停中仍可响 = Ui 组不挂起语义的消费实证）
+    private const string kSfxUi = "7e57400000000007";
 
     // ---- 卡片屏文档态（静态：Configure 订阅不持实例；PlayerCombat 写/消费）----
     internal static string? CardPickPending; // 待选条目 key（"cards/<id>"；读后即清 = 消费式）
@@ -599,7 +670,13 @@ public static class GameMain
             else GameFlow.OnDocReloaded(e.DocStr); // 流程屏 shown 态重放 + 设置标签重灌
             return;
         }
+        // M6c 批④：滑条值落定（payload = "%f" 值串；key = 滑条 id）→ 音量应用
+        if (e.Kind == (byte)Lemon.UiEventKind.Change) {
+            GameFlow.OnVolumeChange(e.KeyStr, e.PayloadStr);
+            return;
+        }
         if (e.Kind != (byte)Lemon.UiEventKind.Click) return;
+        Audio.PlayOneShot(kSfxUi, 0.5f, AudioGroup.Ui); // 批④：UI 组按钮音全体打点
         if (e.DocStr == CardsDoc) {
             if (e.EvStr == "pick") CardPickPending = e.KeyStr;
         } else {
@@ -654,6 +731,8 @@ public sealed class GameFlow : LemonBehaviour
     // 模板资产 GUID（生成期固定——引用锚点，勿改）
     private const string kPlayerPrefab = "7e57100000000007";
     private const string kDirectorPrefab = "7e57100000000008";
+    // M6c 批④：BGM（Assets/Audio/bgm.ogg——开局起播，单槽交叉淡出 = 重开不叠曲）
+    private const string kBgm = "7e57400000000001";
 
     internal enum State { Menu, Spawning, Run, Paused, Results, Settings }
 
@@ -699,6 +778,7 @@ public sealed class GameFlow : LemonBehaviour
             GameMain.Run.Dead = false;
             GameMain.Run.ReviveUsed = false;
             Time.Scale = 1f;
+            Audio.PlayBgm(kBgm, 0.55f); // M6c 批④：开战 BGM（再战重入同曲 = 单槽顶停旧曲）
             St = State.Run;                            // 入口屏已在 EnterRun 即隐
             break;
         case State.Run:
@@ -747,6 +827,7 @@ public sealed class GameFlow : LemonBehaviour
     /// <summary>回主菜单：清场（在途动态屏一并收）+ 实底菜单。</summary>
     internal static void ReturnToMenu()
     {
+        Audio.StopBgm(0.5f); // M6c 批④：回菜单静场（0.5s 淡出）
         SweepArmed = true;
         SweepObserved = false;
         Time.Scale = 0f;
@@ -759,9 +840,12 @@ public sealed class GameFlow : LemonBehaviour
         St = State.Menu;
     }
 
-    /// <summary>暂停对（Run↔Paused；卡片冻结期 Input 已被模态让出，天然不响应）。</summary>
+    /// <summary>暂停对（Run↔Paused；卡片冻结期 Input 已被模态让出，天然不响应）。
+    /// 批④：Audio.Paused 先挂起再冻结（恢复反向）——D5 显式语义，Ui 组免疫
+    ///（暂停屏按钮音仍可响）。</summary>
     internal static void SetPaused(bool on)
     {
+        Audio.Paused = on;
         if (on) {
             Time.Scale = 0f;
             UI.Show(GameMain.PauseDoc);
@@ -835,17 +919,72 @@ public sealed class GameFlow : LemonBehaviour
     {
         GameMain.Settings.FxText = Save.GetString("fx.text", Save.Chan.Settings) != "0";
         GameMain.Settings.FxBar = Save.GetString("fx.bar", Save.Chan.Settings) != "0";
-        SaveSettings(); // 首开建档（version=1）+ 标签刷新
+        // M6c 批④：音量四路（vol.* int 0..100 字串，缺省 80）→ 引擎应用 + 回显
+        GameMain.Settings.MasterVol = VolOf("vol.master");
+        GameMain.Settings.BgmVol = VolOf("vol.bgm");
+        GameMain.Settings.SfxVol = VolOf("vol.sfx");
+        GameMain.Settings.UiVol = VolOf("vol.ui");
+        ApplyVolumes();
+        SaveSettings(); // 首开建档（version=1）+ 标签/滑条刷新
     }
+
+    // ---- M6c 批④：音量四路（设置屏滑条；Settings 档 vol.* 持久化）----
+
+    private static float VolOf(string key)
+        => int.TryParse(Save.GetString(key, Save.Chan.Settings), out int v)
+               && v >= 0 && v <= 100 ? v / 100f : 0.8f;
+
+    /// 引擎应用（Master + 三组；staging 写当帧提交，装载前后重复调 = 幂等终态）。
+    /// （Settings 为静态类——成员全限定访问，无实例别名。）
+    private static void ApplyVolumes()
+    {
+        Audio.MasterVolume = GameMain.Settings.MasterVol;
+        Audio.SetGroupVolume(AudioGroup.Bgm, GameMain.Settings.BgmVol);
+        Audio.SetGroupVolume(AudioGroup.Sfx, GameMain.Settings.SfxVol);
+        Audio.SetGroupVolume(AudioGroup.Ui, GameMain.Settings.UiVol);
+    }
+
+    /// 滑条值落定（key = 滑条 id；payload = "%f" 值串 0..100）。同值早退——
+    /// SetAttr 回显自回环防线（RmlUi 值未变不派发，回显等值也免二次落盘）。
+    internal static void OnVolumeChange(string key, string payload)
+    {
+        if (!float.TryParse(payload, System.Globalization.NumberStyles.Float, IC,
+                            out float v)) return;
+        v = Math.Clamp(v / 100f, 0f, 1f);
+        if (key == "vol-master") { if (Math.Abs(v - GameMain.Settings.MasterVol) < 0.001f) return; GameMain.Settings.MasterVol = v; }
+        else if (key == "vol-bgm") { if (Math.Abs(v - GameMain.Settings.BgmVol) < 0.001f) return; GameMain.Settings.BgmVol = v; }
+        else if (key == "vol-sfx") { if (Math.Abs(v - GameMain.Settings.SfxVol) < 0.001f) return; GameMain.Settings.SfxVol = v; }
+        else if (key == "vol-ui") { if (Math.Abs(v - GameMain.Settings.UiVol) < 0.001f) return; GameMain.Settings.UiVol = v; }
+        else return;
+        ApplyVolumes();
+        SaveSettings(); // 落盘 + 滑条/百分数回显
+    }
+
+    private static string Pct(float v) => ((int)Math.Round(v * 100f)).ToString(IC);
+    private static readonly System.Globalization.CultureInfo IC =
+        System.Globalization.CultureInfo.InvariantCulture;
 
     private static void SaveSettings()
     {
         Save.SetString("version", "1", Save.Chan.Settings);
         Save.SetString("fx.text", GameMain.Settings.FxText ? "1" : "0", Save.Chan.Settings);
         Save.SetString("fx.bar", GameMain.Settings.FxBar ? "1" : "0", Save.Chan.Settings);
+        Save.SetString("vol.master", Pct(GameMain.Settings.MasterVol), Save.Chan.Settings);
+        Save.SetString("vol.bgm", Pct(GameMain.Settings.BgmVol), Save.Chan.Settings);
+        Save.SetString("vol.sfx", Pct(GameMain.Settings.SfxVol), Save.Chan.Settings);
+        Save.SetString("vol.ui", Pct(GameMain.Settings.UiVol), Save.Chan.Settings);
         Save.Flush();
         UI.SetText(GameMain.SettingsDoc, "btn-fxtext", GameMain.Settings.FxText ? "开" : "关");
         UI.SetText(GameMain.SettingsDoc, "btn-fxbar", GameMain.Settings.FxBar ? "开" : "关");
+        // 滑条 value 属性 + 右侧百分数（隐藏态可写——装载文档 DOM 常在，③d-2 先例）
+        UI.SetAttr(GameMain.SettingsDoc, "vol-master", "value", Pct(GameMain.Settings.MasterVol));
+        UI.SetAttr(GameMain.SettingsDoc, "vol-bgm", "value", Pct(GameMain.Settings.BgmVol));
+        UI.SetAttr(GameMain.SettingsDoc, "vol-sfx", "value", Pct(GameMain.Settings.SfxVol));
+        UI.SetAttr(GameMain.SettingsDoc, "vol-ui", "value", Pct(GameMain.Settings.UiVol));
+        UI.SetText(GameMain.SettingsDoc, "vol-master-val", Pct(GameMain.Settings.MasterVol));
+        UI.SetText(GameMain.SettingsDoc, "vol-bgm-val", Pct(GameMain.Settings.BgmVol));
+        UI.SetText(GameMain.SettingsDoc, "vol-sfx-val", Pct(GameMain.Settings.SfxVol));
+        UI.SetText(GameMain.SettingsDoc, "vol-ui-val", Pct(GameMain.Settings.UiVol));
         UI.Apply();
     }
 
@@ -856,6 +995,10 @@ public sealed class GameFlow : LemonBehaviour
         bag.Set("from", (int)settingsFrom);
         bag.Set("fxtext", GameMain.Settings.FxText);
         bag.Set("fxbar", GameMain.Settings.FxBar);
+        bag.Set("vmaster", GameMain.Settings.MasterVol); // 批④：音量四路随包
+        bag.Set("vbgm", GameMain.Settings.BgmVol);
+        bag.Set("vsfx", GameMain.Settings.SfxVol);
+        bag.Set("vui", GameMain.Settings.UiVol);
     }
 
     protected override void OnHotReloadIn(Lemon.StateBag bag)
@@ -864,6 +1007,11 @@ public sealed class GameFlow : LemonBehaviour
         if (bag.TryGet("from", out int from)) settingsFrom = (State)from;
         if (bag.TryGet("fxtext", out bool ft)) GameMain.Settings.FxText = ft;
         if (bag.TryGet("fxbar", out bool fb)) GameMain.Settings.FxBar = fb;
+        if (bag.TryGet("vmaster", out float vm)) GameMain.Settings.MasterVol = vm;
+        if (bag.TryGet("vbgm", out float vb)) GameMain.Settings.BgmVol = vb;
+        if (bag.TryGet("vsfx", out float vs)) GameMain.Settings.SfxVol = vs;
+        if (bag.TryGet("vui", out float vu)) GameMain.Settings.UiVol = vu;
+        ApplyVolumes(); // 引擎侧随域重建归默认——热进即回设
     }
 }
 
@@ -953,6 +1101,11 @@ public sealed class PlayerCombat : LemonBehaviour
 {
     // 模板资产 GUID（Templates/vs-survivor 生成期固定——引用锚点，勿改）
     private const string kGemPrefab = "7e57100000000005";
+    // M6c 批④：事件音四件（Assets/Audio/；命中高频小音量——引擎重触发节流兜底）
+    private const string kSfxHit = "7e57400000000002";     // 怪受击
+    private const string kSfxKill = "7e57400000000003";    // 击杀
+    private const string kSfxPickup = "7e57400000000004";  // 宝石拾取
+    private const string kSfxLevelUp = "7e57400000000005"; // 升级
     // 数值表 GUID（Assets/tables/；生成期固定，PlayerCombat 读）
     private const string kWeaponsTable = "7e57200000100001";
     private const string kUpgradesTable = "7e57200000100002";
@@ -991,9 +1144,13 @@ public sealed class PlayerCombat : LemonBehaviour
         // Subscribe 助手（M15）：实例销毁自动退订（裸 Events.Subscribe 只增不删，
         // 死亡→复活重挂会逐局累积订阅）
         Subscribe(GameEvent.LevelUp, m => {
-            if (m.Src.Id == gameObject.Entity.Id) ++_pendingLevels;
+            if (m.Src.Id == gameObject.Entity.Id) {
+                ++_pendingLevels;
+                Audio.PlayOneShot(kSfxLevelUp, 0.7f); // M6c 批④：升级音
+            }
         });
         Subscribe(GameEvent.Death, OnDeath);
+        Subscribe(GameEvent.Pickup, _ => Audio.PlayOneShot(kSfxPickup, 0.5f)); // 批④：宝石拾取音
         // 批①受击表现：怪受击 = 受击段（Play+Queue 播完回行走）+ 伤害飘字 + 世界
         // 血条；玩家受击 = 世界血条刷新（常显——每击续命，HUD 文字条仍是权威）
         Subscribe(GameEvent.Hit, OnHit);
@@ -1004,6 +1161,7 @@ public sealed class PlayerCombat : LemonBehaviour
         var victim = GameObject.From(m.Dst);
         if (!victim.Alive || !victim.TryGetComponent<Meta>(out var meta)) return;
         if (meta.Team == 1) { // 怪受击
+            Audio.PlayOneShot(kSfxHit, 0.45f); // M6c 批④：受击音（高命中率小音量）
             Anim.Play(victim, kMobHit, false); // 受击段立即打断
             Anim.Queue(victim, kMobWalk);      // 播完（0.1667s）自动回行走
             // 批③d-2 D3：飘字/血条 = 设置开关门控（Settings 档持久化，即时生效）
@@ -1026,6 +1184,7 @@ public sealed class PlayerCombat : LemonBehaviour
         if (!src.Alive || !src.TryGetComponent<Meta>(out var meta)) return;
         if (meta.Team == 1) {
             ++GameMain.Run.Kills;
+            Audio.PlayOneShot(kSfxKill, 0.6f); // M6c 批④：击杀音
             if (src.TryGetComponent<Transform2D>(out var tf)) // 两阶段销毁：当帧可读
                 Instantiate.Prefab(kGemPrefab, new Vec2(tf.Pos.X, tf.Pos.Y));
         } else if (m.Src.Id == gameObject.Entity.Id) {
@@ -1345,11 +1504,14 @@ using Lemon.Interop;
 public sealed class PlayerHud : LemonBehaviour
 {
     private const string kDoc = "Assets/UI/hud.rml";
+    // M6c 批④：波次横幅音（Assets/Audio/wave.ogg）
+    private const string kSfxWave = "7e57400000000006";
 
     public PlayerHud()
     {
         Subscribe(GameEvent.WaveStart, m => {
             UI.SetText(kDoc, "wave", $"—— 第 {(int)m.P0 + 1} 波 ——");
+            Audio.PlayOneShot(kSfxWave, 0.6f); // M6c 批④：波次横幅音
             UI.Apply();
         });
     }
@@ -1550,8 +1712,8 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
         }
         fs::remove_all(root, ec);
     }
-    for (const char* dir : {"Assets", "Assets/tables", "Prefabs", "Scenes", "Game",
-                            "Data", ".lemon/editor"})
+    for (const char* dir : {"Assets", "Assets/tables", "Assets/Audio", "Prefabs",
+                            "Scenes", "Game", "Data", ".lemon/editor"})
         fs::create_directories(root / dir, ec);
 
     // 1) yami 素材拷贝（批③入库包 → 模板自带；.meta 随行 = guid/切片稳定）
@@ -1570,6 +1732,8 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
     WriteHitClips(root / "Assets"); // 批①受击段（模板自带，PlayerCombat 受击切段用）
     WriteTableAssets(root / "Assets"); // 批② T4 数值三表（weapons/upgrades/balance）
     WriteUiAssets(root / "Assets"); // 批③d-1：UI 三资产（theme/hud/cards——样板双屏）
+    if (!WriteAudioAssets(root / "Assets")) // M6c 批④：CC0 音频七件（缺件红字断生成）
+        return false;
 
     // 2) 程序化小图 + Game/ 脚本工程 + prefab 占位（固定 guid meta 先行——
     //    OpenProject 扫描按 meta 记账，之后覆写 .prefab 内容 guid 不动）
@@ -1609,7 +1773,10 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
              "- `dungeon_*` 精灵表与 `*.anim`：yami-rpg-editor（MIT，Copyright (c) 2025\n"
              "  Yami & Xuran & Contributors）——随模板再分发需在发布物保留版权声明\n"
              "  （仓库根 THIRD_PARTY.md 已登记）。\n"
-             "- `gem/bullet/pierce/blade.png`：程序化生成（无版权负担）。\n\n"
+             "- `gem/bullet/pierce/blade.png`：程序化生成（无版权负担）。\n"
+             "- `Assets/Audio/*.ogg`：Kenney 各 CC0 包 + OpenGameArt CC0（M6c 批④；\n"
+             "  逐件来源表见 `Samples/Assets/cc0-audio/README.md`，THIRD_PARTY.md\n"
+             "  已登记——CC0 无署名义务，登记仅为溯源）。\n\n"
              "## 玩法锚点\n\n"
              "- 流程（M6b 批③d-2 档1）：**单场景** `Main.scene` 只放常驻件（UI 六文档\n"
              "+ Flow 实体）；玩家/导演在 `Prefabs/Player.prefab`/`Director.prefab`，\n"
@@ -1634,7 +1801,12 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
              "单源；场景 UI_* 实体挂 UIDocument 声明装载）。**换肤 = 改 theme.rcss 的\n"
              "token 区**（色板/字号/间距，全 dp——画布缩放时 UI 物理比例恒定，720dp\n"
              "设计基准）；改布局/文案 = 改 .rml/.rcss 资产，引擎零改动。数字键选择\n"
-             "已退役（点击选择）；设置两开关（飘字/血条）持久化于 Settings 档。\n";
+             "已退役（点击选择）；设置两开关（飘字/血条）+ 音量四滑条（主/音乐/\n"
+             "音效/界面，M6c 批④）持久化于 Settings 档。\n"
+             "- 音频（M6c 批④）：BGM 开局起播（单槽 = 重开不叠曲）/ 命中·击杀·拾取·\n"
+             "升级·波次事件音 + UI 组按钮音（暂停中可响）；Esc 暂停 = BGM 声部级\n"
+             "挂起续响（恢复不回跳）。音频资产在 `Assets/Audio/`，换音 = 换文件保\n"
+             "名（.meta guid 不动，脚本零改动）；音量即时生效 + Settings 档持久。\n";
     }
 
     // 3) 打开项目（扫描记账）→ 播种场景 + 覆写 prefab 内容。

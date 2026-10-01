@@ -50,6 +50,15 @@ constexpr uint64_t kMainRml = 0x7e57300000100004ull;      // main.rml（主菜�
 constexpr uint64_t kPauseRml = 0x7e57300000100005ull;     // pause.rml（暂停）
 constexpr uint64_t kSettingsRml = 0x7e57300000100006ull;  // settings.rml（设置）
 constexpr uint64_t kResultsRml = 0x7e57300000100007ull;   // results.rml（结算）
+// M6c 批④：模板音频七件（Samples/Assets/cc0-audio 拷入 Assets/Audio/；7e574 段
+// = 音频族——0 程序图/1 prefab/2 表/3 UI rml 之后。CC0 来源登记见包内 README）
+constexpr uint64_t kBgmOgg = 0x7e57400000000001ull;       // bgm.ogg（BGM 循环，流式）
+constexpr uint64_t kHitOgg = 0x7e57400000000002ull;       // hit.ogg（怪受击）
+constexpr uint64_t kKillOgg = 0x7e57400000000003ull;      // kill.ogg（击杀）
+constexpr uint64_t kPickupOgg = 0x7e57400000000004ull;    // pickup.ogg（宝石拾取）
+constexpr uint64_t kLevelUpOgg = 0x7e57400000000005ull;   // levelup.ogg（升级）
+constexpr uint64_t kWaveOgg = 0x7e57400000000006ull;      // wave.ogg（波次横幅）
+constexpr uint64_t kUiClickOgg = 0x7e57400000000007ull;   // ui-click.ogg（UI 组按钮音）
 
 /// --smoke-guid（M6a 批⓪ T5）：sprite 引用 GUID 稳定性链——插队导入/资产
 /// 改名/删 manifest 三难并发 → 重开逐实体断言（详注见 VsTemplateGen.cpp）

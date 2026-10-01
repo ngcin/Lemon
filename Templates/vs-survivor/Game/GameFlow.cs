@@ -14,6 +14,8 @@ public sealed class GameFlow : LemonBehaviour
     // 模板资产 GUID（生成期固定——引用锚点，勿改）
     private const string kPlayerPrefab = "7e57100000000007";
     private const string kDirectorPrefab = "7e57100000000008";
+    // M6c 批④：BGM（Assets/Audio/bgm.ogg——开局起播，单槽交叉淡出 = 重开不叠曲）
+    private const string kBgm = "7e57400000000001";
 
     internal enum State { Menu, Spawning, Run, Paused, Results, Settings }
 
@@ -59,6 +61,7 @@ public sealed class GameFlow : LemonBehaviour
             GameMain.Run.Dead = false;
             GameMain.Run.ReviveUsed = false;
             Time.Scale = 1f;
+            Audio.PlayBgm(kBgm, 0.55f); // M6c 批④：开战 BGM（再战重入同曲 = 单槽顶停旧曲）
             St = State.Run;                            // 入口屏已在 EnterRun 即隐
             break;
         case State.Run:
@@ -107,6 +110,7 @@ public sealed class GameFlow : LemonBehaviour
     /// <summary>回主菜单：清场（在途动态屏一并收）+ 实底菜单。</summary>
     internal static void ReturnToMenu()
     {
+        Audio.StopBgm(0.5f); // M6c 批④：回菜单静场（0.5s 淡出）
         SweepArmed = true;
         SweepObserved = false;
         Time.Scale = 0f;
@@ -119,9 +123,12 @@ public sealed class GameFlow : LemonBehaviour
         St = State.Menu;
     }
 
-    /// <summary>暂停对（Run↔Paused；卡片冻结期 Input 已被模态让出，天然不响应）。</summary>
+    /// <summary>暂停对（Run↔Paused；卡片冻结期 Input 已被模态让出，天然不响应）。
+    /// 批④：Audio.Paused 先挂起再冻结（恢复反向）——D5 显式语义，Ui 组免疫
+    ///（暂停屏按钮音仍可响）。</summary>
     internal static void SetPaused(bool on)
     {
+        Audio.Paused = on;
         if (on) {
             Time.Scale = 0f;
             UI.Show(GameMain.PauseDoc);
@@ -195,17 +202,72 @@ public sealed class GameFlow : LemonBehaviour
     {
         GameMain.Settings.FxText = Save.GetString("fx.text", Save.Chan.Settings) != "0";
         GameMain.Settings.FxBar = Save.GetString("fx.bar", Save.Chan.Settings) != "0";
-        SaveSettings(); // 首开建档（version=1）+ 标签刷新
+        // M6c 批④：音量四路（vol.* int 0..100 字串，缺省 80）→ 引擎应用 + 回显
+        GameMain.Settings.MasterVol = VolOf("vol.master");
+        GameMain.Settings.BgmVol = VolOf("vol.bgm");
+        GameMain.Settings.SfxVol = VolOf("vol.sfx");
+        GameMain.Settings.UiVol = VolOf("vol.ui");
+        ApplyVolumes();
+        SaveSettings(); // 首开建档（version=1）+ 标签/滑条刷新
     }
+
+    // ---- M6c 批④：音量四路（设置屏滑条；Settings 档 vol.* 持久化）----
+
+    private static float VolOf(string key)
+        => int.TryParse(Save.GetString(key, Save.Chan.Settings), out int v)
+               && v >= 0 && v <= 100 ? v / 100f : 0.8f;
+
+    /// 引擎应用（Master + 三组；staging 写当帧提交，装载前后重复调 = 幂等终态）。
+    /// （Settings 为静态类——成员全限定访问，无实例别名。）
+    private static void ApplyVolumes()
+    {
+        Audio.MasterVolume = GameMain.Settings.MasterVol;
+        Audio.SetGroupVolume(AudioGroup.Bgm, GameMain.Settings.BgmVol);
+        Audio.SetGroupVolume(AudioGroup.Sfx, GameMain.Settings.SfxVol);
+        Audio.SetGroupVolume(AudioGroup.Ui, GameMain.Settings.UiVol);
+    }
+
+    /// 滑条值落定（key = 滑条 id；payload = "%f" 值串 0..100）。同值早退——
+    /// SetAttr 回显自回环防线（RmlUi 值未变不派发，回显等值也免二次落盘）。
+    internal static void OnVolumeChange(string key, string payload)
+    {
+        if (!float.TryParse(payload, System.Globalization.NumberStyles.Float, IC,
+                            out float v)) return;
+        v = Math.Clamp(v / 100f, 0f, 1f);
+        if (key == "vol-master") { if (Math.Abs(v - GameMain.Settings.MasterVol) < 0.001f) return; GameMain.Settings.MasterVol = v; }
+        else if (key == "vol-bgm") { if (Math.Abs(v - GameMain.Settings.BgmVol) < 0.001f) return; GameMain.Settings.BgmVol = v; }
+        else if (key == "vol-sfx") { if (Math.Abs(v - GameMain.Settings.SfxVol) < 0.001f) return; GameMain.Settings.SfxVol = v; }
+        else if (key == "vol-ui") { if (Math.Abs(v - GameMain.Settings.UiVol) < 0.001f) return; GameMain.Settings.UiVol = v; }
+        else return;
+        ApplyVolumes();
+        SaveSettings(); // 落盘 + 滑条/百分数回显
+    }
+
+    private static string Pct(float v) => ((int)Math.Round(v * 100f)).ToString(IC);
+    private static readonly System.Globalization.CultureInfo IC =
+        System.Globalization.CultureInfo.InvariantCulture;
 
     private static void SaveSettings()
     {
         Save.SetString("version", "1", Save.Chan.Settings);
         Save.SetString("fx.text", GameMain.Settings.FxText ? "1" : "0", Save.Chan.Settings);
         Save.SetString("fx.bar", GameMain.Settings.FxBar ? "1" : "0", Save.Chan.Settings);
+        Save.SetString("vol.master", Pct(GameMain.Settings.MasterVol), Save.Chan.Settings);
+        Save.SetString("vol.bgm", Pct(GameMain.Settings.BgmVol), Save.Chan.Settings);
+        Save.SetString("vol.sfx", Pct(GameMain.Settings.SfxVol), Save.Chan.Settings);
+        Save.SetString("vol.ui", Pct(GameMain.Settings.UiVol), Save.Chan.Settings);
         Save.Flush();
         UI.SetText(GameMain.SettingsDoc, "btn-fxtext", GameMain.Settings.FxText ? "开" : "关");
         UI.SetText(GameMain.SettingsDoc, "btn-fxbar", GameMain.Settings.FxBar ? "开" : "关");
+        // 滑条 value 属性 + 右侧百分数（隐藏态可写——装载文档 DOM 常在，③d-2 先例）
+        UI.SetAttr(GameMain.SettingsDoc, "vol-master", "value", Pct(GameMain.Settings.MasterVol));
+        UI.SetAttr(GameMain.SettingsDoc, "vol-bgm", "value", Pct(GameMain.Settings.BgmVol));
+        UI.SetAttr(GameMain.SettingsDoc, "vol-sfx", "value", Pct(GameMain.Settings.SfxVol));
+        UI.SetAttr(GameMain.SettingsDoc, "vol-ui", "value", Pct(GameMain.Settings.UiVol));
+        UI.SetText(GameMain.SettingsDoc, "vol-master-val", Pct(GameMain.Settings.MasterVol));
+        UI.SetText(GameMain.SettingsDoc, "vol-bgm-val", Pct(GameMain.Settings.BgmVol));
+        UI.SetText(GameMain.SettingsDoc, "vol-sfx-val", Pct(GameMain.Settings.SfxVol));
+        UI.SetText(GameMain.SettingsDoc, "vol-ui-val", Pct(GameMain.Settings.UiVol));
         UI.Apply();
     }
 
@@ -216,6 +278,10 @@ public sealed class GameFlow : LemonBehaviour
         bag.Set("from", (int)settingsFrom);
         bag.Set("fxtext", GameMain.Settings.FxText);
         bag.Set("fxbar", GameMain.Settings.FxBar);
+        bag.Set("vmaster", GameMain.Settings.MasterVol); // 批④：音量四路随包
+        bag.Set("vbgm", GameMain.Settings.BgmVol);
+        bag.Set("vsfx", GameMain.Settings.SfxVol);
+        bag.Set("vui", GameMain.Settings.UiVol);
     }
 
     protected override void OnHotReloadIn(Lemon.StateBag bag)
@@ -224,6 +290,11 @@ public sealed class GameFlow : LemonBehaviour
         if (bag.TryGet("from", out int from)) settingsFrom = (State)from;
         if (bag.TryGet("fxtext", out bool ft)) GameMain.Settings.FxText = ft;
         if (bag.TryGet("fxbar", out bool fb)) GameMain.Settings.FxBar = fb;
+        if (bag.TryGet("vmaster", out float vm)) GameMain.Settings.MasterVol = vm;
+        if (bag.TryGet("vbgm", out float vb)) GameMain.Settings.BgmVol = vb;
+        if (bag.TryGet("vsfx", out float vs)) GameMain.Settings.SfxVol = vs;
+        if (bag.TryGet("vui", out float vu)) GameMain.Settings.UiVol = vu;
+        ApplyVolumes(); // 引擎侧随域重建归默认——热进即回设
     }
 }
 

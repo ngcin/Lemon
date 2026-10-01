@@ -16,12 +16,18 @@ public static class GameMain
     }
 
     /// <summary>设置态（批③d-2 D3：Settings 档持久化 version=1 + fx.text/fx.bar；
-    /// GameFlow 载入/写回，PlayerCombat.OnHit 消费门控）。静态随域重建——
-    /// GameFlow 热重载代收代还。</summary>
+    /// 批④ 音量四路 vol.*。GameFlow 载入/写回，PlayerCombat.OnHit 消费门控）。
+    /// 静态随域重建——GameFlow 热重载代收代还。</summary>
     public static class Settings
     {
         public static bool FxText = true; // 伤害飘字
         public static bool FxBar = true;  // 世界血条
+        // M6c 批④：音量四路（0..1；默认 0.8 = 滑条 value 80。引擎应用 =
+        // Audio.MasterVolume/SetGroupVolume，进 Play 装载后 + 滑条 Change 即时）
+        public static float MasterVol = 0.8f;
+        public static float BgmVol = 0.8f;
+        public static float SfxVol = 0.8f;
+        public static float UiVol = 0.8f;
     }
 
     /// <summary>UI 文档名（批③d-1 cards + 批③d-2 流程四屏）。UI 资产建后
@@ -31,6 +37,10 @@ public static class GameMain
     internal const string PauseDoc = "Assets/UI/pause.rml";
     internal const string SettingsDoc = "Assets/UI/settings.rml";
     internal const string ResultsDoc = "Assets/UI/results.rml";
+
+    // M6c 批④：UI 组按钮音（Assets/Audio/ui-click.ogg——全体 Click 统一打点，
+    // 暂停中仍可响 = Ui 组不挂起语义的消费实证）
+    private const string kSfxUi = "7e57400000000007";
 
     // ---- 卡片屏文档态（静态：Configure 订阅不持实例；PlayerCombat 写/消费）----
     internal static string? CardPickPending; // 待选条目 key（"cards/<id>"；读后即清 = 消费式）
@@ -62,7 +72,13 @@ public static class GameMain
             else GameFlow.OnDocReloaded(e.DocStr); // 流程屏 shown 态重放 + 设置标签重灌
             return;
         }
+        // M6c 批④：滑条值落定（payload = "%f" 值串；key = 滑条 id）→ 音量应用
+        if (e.Kind == (byte)Lemon.UiEventKind.Change) {
+            GameFlow.OnVolumeChange(e.KeyStr, e.PayloadStr);
+            return;
+        }
         if (e.Kind != (byte)Lemon.UiEventKind.Click) return;
+        Audio.PlayOneShot(kSfxUi, 0.5f, AudioGroup.Ui); // 批④：UI 组按钮音全体打点
         if (e.DocStr == CardsDoc) {
             if (e.EvStr == "pick") CardPickPending = e.KeyStr;
         } else {

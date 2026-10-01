@@ -19,6 +19,8 @@
 | yami-rpg-editor 音频素材（第二批） | 同上（`Assets/音频/正在使用的音频` + `Assets/UI/标题画面`；文件名去 yami 哈希缀） | MIT（同上） | `demo/svr-test/Assets/Audio/` 8 件（bgm.mp3=watery_cave + 6 wav SE + 1 ogg SE） | M6c 竖切批实测素材（注意：同仓 `音乐/Royalty Free Music Loops OGG` 为 **CC BY 4.0** 不在 MIT 面内，未取用） | M6c 批⓪.5 |
 | Noto Sans SC（Regular，SubsetOTF 8.3MB） | notofonts/noto-cjk main（2026-09-28 取） | SIL OFL 1.1 | `Engine/Ui/Fonts/NotoSansSC-Regular.otf` + 同目录 `OFL.txt`（随仓库版本管理） | 引擎 UI 正字（M6a 批③b，ADR-014：RmlUi 主/fallback 字体，系统字体链降级兜底） | M6a③b |
 | miniaudio（含 stb_vorbis v1.22） | 0.11.25 | 公有领域（Unlicense）或 MIT-0 双许可择一（全文 `Engine/Audio/thirdparty/LICENSE`；stb_vorbis 亦公有领域） | vendored 四件（`Engine/Audio/thirdparty/`：miniaudio.h 4.1MB + miniaudio.c + stb_vorbis.c（Vorbis 外供件，同包 extras）+ LICENSE；源自 GitHub mackron/miniaudio tag 0.11.25 zip——网络持续阻断 CPM 不可行，用户手备包，ADR-015 M1） | 音频后端：设备/混音/解码（WAV/MP3/FLAC 内建 + Vorbis 经外供 stb_vorbis；烤制期消费，运行时零解码） | M6c 批⓪ |
+| Kenney 音频包（impact-sounds / rpg-audio / digital-audio / music-jingles / ui-audio 各取一件） | 2026-10-01 直链下载 | **CC0**（无署名义务） | `Samples/Assets/cc0-audio/` 6 件 + `demo/svr-test/Assets/Audio/ui-click.ogg`（同源 click3）；逐件来源表见包内 README | vs-survivor 模板"全程有声"事件音/UI 音（M6c 批④；模板随引擎再分发走 CC0 零负担面） | M6c 批④ |
+| 5 Action Chiptunes（Juhani Junkala） | 2018（OGA 发布） | **CC0** | `Samples/Assets/cc0-audio/bgm.ogg`（取单曲 ogg 循环段；opengameart.org/content/5-chiptunes-action） | 模板 BGM 循环（M6c 批④） | M6c 批④ |
 
 ## 保留的第三方版权声明
 

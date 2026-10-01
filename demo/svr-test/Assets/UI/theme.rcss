@@ -174,6 +174,35 @@ body {
 }
 .btn-set:hover  { border-color: var(--c-accent); }
 .btn-set:active { border-color: var(--c-accent); background: #35507add; }
+
+/* ---- M6c 批④：音量滑条（设置屏四行；<input type="range">）----
+ * 伪元素子结构由 RmlUi WidgetSlider 实例化（slidertrack/sliderbar 非 DOM 子，
+ * 几何 = RCSS 定尺寸 + widget 算偏移——bar 纵向 = margin-top，轨道横向吃满本体）。 */
+.vol-slider {                   /* 本体：可点行程区（20dp 高 = 20dp 触达带） */
+    display: block;
+    width: 160dp;
+    height: 20dp;
+}
+.vol-slider slidertrack {       /* 轨道 */
+    height: 6dp;
+    width: auto;
+    background: var(--c-bar-bg);
+    border: 1dp var(--c-border);
+}
+.vol-slider sliderbar {         /* 拖点（14dp 方块，margin-top 居中于本体） */
+    width: 14dp;
+    height: 14dp;
+    margin-top: 3dp;
+    background: var(--c-accent);
+    border: 2dp var(--c-border);
+}
+.vol-slider sliderbar:hover { background: #ffe27a; }
+.vol-value {                    /* 滑条右侧百分数（SetText 回显） */
+    display: block;
+    width: 44dp;
+    color: var(--c-dim);
+    text-align: right;
+}
 .stat-row {                     /* 结算统计行：label 左值右 */
     display: flex;
     justify-content: space-between;

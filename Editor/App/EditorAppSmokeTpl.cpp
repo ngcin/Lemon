@@ -69,6 +69,9 @@ struct TplSmokeState {
     // M6a 批② T4：数值表载入断言（weapons 4 行 × upgrades 7 行 × balance 2 行——
     // 含列头行；PlayerCombat.Start 读、EnterPlay 快照建 TableStore）
     bool tablesOk = false;
+    // M6c 批④：音频链机器断言——装载恰 7（CC0 七件）+ BGM 声部暂停期挂起非
+    // 终止（>=1）+ 恢复后仍活（挂起续响；一次性 SFX 不在断言面——自然放完）
+    int audMount = -1, audPauseVoices = -1, audResumeVoices = -1;
     // 批③d-2：流程链（菜单→开局→常规链→二死→结算→重开清场→暂停/设置→回菜单）。
     // 元素点击 = 引擎直灌三帧同卡片条目路径（clickElDoc/Id 非空 = 下一发目标）
     bool menuOk = false, runStarted = false;
@@ -193,6 +196,16 @@ void EditorApp::SmokeTplSteer(uint64_t frame, ecs::InputState& in) {
 // 低频诊断快照；批③c-4 自 Run 外迁，挂点原位）----
 void EditorApp::SmokeTplSample(uint64_t frame) {
     if (Launch().smokeTemplate && ctx_.Playing() && frame > 5) {
+        // M6c 批④：音频链采样——装载恰 7（一次）+ 暂停屏在场期声部数（逐帧
+        // 覆写 = 恢复前末值）+ 暂停解除后首帧声部数（挂起续响：BGM 不死）
+        if (g_tplSmoke.audMount < 0)
+            g_tplSmoke.audMount = (int)audioClips_.size();
+        static const char* const kPauseDocTpl = "Assets/UI/pause.rml";
+        if (gameUi_ && gameUi_->IsDocumentShown(kPauseDocTpl)) {
+            g_tplSmoke.audPauseVoices = audio_.ActiveVoiceCount();
+        } else if (g_tplSmoke.audPauseVoices >= 0 && g_tplSmoke.audResumeVoices < 0) {
+            g_tplSmoke.audResumeVoices = audio_.ActiveVoiceCount();
+        }
         // M6a 批② T4：三表快照断言（EnterPlay 建、Start 消费——行数 = 列头+数据行）
         if (!g_tplSmoke.tablesOk) {
             auto rowsOf = [&](uint64_t guid) {
@@ -636,12 +649,15 @@ bool EditorApp::SmokeTplVerdict() {
                            g_tplSmoke.revived && g_tplSmoke.scriptOk &&
                            g_tplSmoke.mobHitClip && g_tplSmoke.fxText && g_tplSmoke.fxBar && // 批①
                            g_tplSmoke.tablesOk && // 批② T4：数值表载入
-                           g_tplSmoke.uiLoads == 6 && layerOk && flowOk; // 批③d-1/③d-2：装载恰 6 + 层序三拍 + 流程链
+                           g_tplSmoke.uiLoads == 6 && layerOk && flowOk && // 批③d-1/③d-2：装载恰 6 + 层序三拍 + 流程链
+                           g_tplSmoke.audMount == 7 && g_tplSmoke.audPauseVoices >= 1 &&
+                           g_tplSmoke.audResumeVoices >= 1; // 批④：七件装载 + 暂停挂起续响
         std::printf("[lemon] smoke-template: hud(doc=%s bar=%s) saveLoad=%s wave(row=%s n=%d) "
                     "kills=%d levelUps=%d cards(doc seen=%s pick=%s hidden=%s) "
                     "layer(%d/%d/%d=%s) "
                     "death(seen=%s revive=%s scriptOk=%s) "
                     "hitClip=%s fx(text=%s bar=%s) tables=%s uidoc=%d "
+                    "aud(mount=%d pause=%d resume=%d=%s) "
                     "flow(menu=%s start=%s results=%s restart=%s pause=%s "
                     "set=%s/%s resume=%s tomenu=%s) => %s\n",
                     g_tplSmoke.hudDocOk ? "YES" : "NO",
@@ -655,6 +671,9 @@ bool EditorApp::SmokeTplVerdict() {
                     g_tplSmoke.scriptOk ? "YES" : "NO", g_tplSmoke.mobHitClip ? "YES" : "NO",
                     g_tplSmoke.fxText ? "YES" : "NO", g_tplSmoke.fxBar ? "YES" : "NO",
                     g_tplSmoke.tablesOk ? "YES" : "NO", g_tplSmoke.uiLoads,
+                    g_tplSmoke.audMount, g_tplSmoke.audPauseVoices, g_tplSmoke.audResumeVoices,
+                    (g_tplSmoke.audMount == 7 && g_tplSmoke.audPauseVoices >= 1 &&
+                     g_tplSmoke.audResumeVoices >= 1) ? "OK" : "FAIL",
                     g_tplSmoke.menuOk ? "YES" : "NO", g_tplSmoke.runStarted ? "YES" : "NO",
                     g_tplSmoke.resultsOk ? "YES" : "NO", g_tplSmoke.restartOk ? "YES" : "NO",
                     g_tplSmoke.pauseOk ? "YES" : "NO", g_tplSmoke.settingsOk ? "YES" : "NO",

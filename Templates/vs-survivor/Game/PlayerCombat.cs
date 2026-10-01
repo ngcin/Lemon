@@ -17,6 +17,11 @@ public sealed class PlayerCombat : LemonBehaviour
 {
     // 模板资产 GUID（Templates/vs-survivor 生成期固定——引用锚点，勿改）
     private const string kGemPrefab = "7e57100000000005";
+    // M6c 批④：事件音四件（Assets/Audio/；命中高频小音量——引擎重触发节流兜底）
+    private const string kSfxHit = "7e57400000000002";     // 怪受击
+    private const string kSfxKill = "7e57400000000003";    // 击杀
+    private const string kSfxPickup = "7e57400000000004";  // 宝石拾取
+    private const string kSfxLevelUp = "7e57400000000005"; // 升级
     // 数值表 GUID（Assets/tables/；生成期固定，PlayerCombat 读）
     private const string kWeaponsTable = "7e57200000100001";
     private const string kUpgradesTable = "7e57200000100002";
@@ -55,9 +60,13 @@ public sealed class PlayerCombat : LemonBehaviour
         // Subscribe 助手（M15）：实例销毁自动退订（裸 Events.Subscribe 只增不删，
         // 死亡→复活重挂会逐局累积订阅）
         Subscribe(GameEvent.LevelUp, m => {
-            if (m.Src.Id == gameObject.Entity.Id) ++_pendingLevels;
+            if (m.Src.Id == gameObject.Entity.Id) {
+                ++_pendingLevels;
+                Audio.PlayOneShot(kSfxLevelUp, 0.7f); // M6c 批④：升级音
+            }
         });
         Subscribe(GameEvent.Death, OnDeath);
+        Subscribe(GameEvent.Pickup, _ => Audio.PlayOneShot(kSfxPickup, 0.5f)); // 批④：宝石拾取音
         // 批①受击表现：怪受击 = 受击段（Play+Queue 播完回行走）+ 伤害飘字 + 世界
         // 血条；玩家受击 = 世界血条刷新（常显——每击续命，HUD 文字条仍是权威）
         Subscribe(GameEvent.Hit, OnHit);
@@ -68,6 +77,7 @@ public sealed class PlayerCombat : LemonBehaviour
         var victim = GameObject.From(m.Dst);
         if (!victim.Alive || !victim.TryGetComponent<Meta>(out var meta)) return;
         if (meta.Team == 1) { // 怪受击
+            Audio.PlayOneShot(kSfxHit, 0.45f); // M6c 批④：受击音（高命中率小音量）
             Anim.Play(victim, kMobHit, false); // 受击段立即打断
             Anim.Queue(victim, kMobWalk);      // 播完（0.1667s）自动回行走
             // 批③d-2 D3：飘字/血条 = 设置开关门控（Settings 档持久化，即时生效）
@@ -90,6 +100,7 @@ public sealed class PlayerCombat : LemonBehaviour
         if (!src.Alive || !src.TryGetComponent<Meta>(out var meta)) return;
         if (meta.Team == 1) {
             ++GameMain.Run.Kills;
+            Audio.PlayOneShot(kSfxKill, 0.6f); // M6c 批④：击杀音
             if (src.TryGetComponent<Transform2D>(out var tf)) // 两阶段销毁：当帧可读
                 Instantiate.Prefab(kGemPrefab, new Vec2(tf.Pos.X, tf.Pos.Y));
         } else if (m.Src.Id == gameObject.Entity.Id) {

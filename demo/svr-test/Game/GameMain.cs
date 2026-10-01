@@ -3,12 +3,21 @@ using Lemon;
 public static class GameMain
 {
     /// <summary>设置态（批③d-2 D3：Settings 档持久化 version=1 + fx.text/fx.bar；
-    /// GameFlow 载入/写回，PlayerBehaviour.OnHit 消费门控）。</summary>
+    /// M6c 批④ 音量四路 vol.*。GameFlow 载入/写回，PlayerBehaviour.OnHit 消费门控）。</summary>
     public static class Settings
     {
         public static bool FxText = true; // 伤害飘字
         public static bool FxBar = true;  // 世界血条
+        // M6c 批④：音量四路（0..1；默认 0.8 = 滑条 value 80）
+        public static float MasterVol = 0.8f;
+        public static float BgmVol = 0.8f;
+        public static float SfxVol = 0.8f;
+        public static float UiVol = 0.8f;
     }
+
+    // M6c 批④：UI 组按钮音（Assets/Audio/ui-click.ogg = Kenney CC0 click3；
+    // 全体 Click 统一打点，暂停中仍可响 = Ui 组不挂起语义的消费实证）
+    private const string kSfxUi = "6a6d100000000009";
 
     /// <summary>流程屏文档名（批③d-2；Assets/UI/ 下四屏 + theme，与用户既有
     /// main.rml（UiTest 观测面）不冲突）。UI 资产建后不挪不改名。</summary>
@@ -39,7 +48,15 @@ public static class GameMain
             GameFlow.OnDocReloaded(e.DocStr);
             return;
         }
-        if (e.Kind == (byte)Lemon.UiEventKind.Click) GameFlow.HandleUiEvent(e);
-        // 其余事件（UiEcho 的 Change/Submit 等）由 UiEcho 自身订阅面消费
+        // M6c 批④：音量滑条值落定（key = 滑条 id；非 vol-* 键忽略，不吞 UiEcho 面）
+        if (e.Kind == (byte)Lemon.UiEventKind.Change) {
+            GameFlow.OnVolumeChange(e.KeyStr, e.PayloadStr);
+            return;
+        }
+        if (e.Kind == (byte)Lemon.UiEventKind.Click) {
+            Audio.PlayOneShot(kSfxUi, 0.5f, AudioGroup.Ui); // 批④：UI 组按钮音
+            GameFlow.HandleUiEvent(e);
+        }
+        // 其余事件（UiEcho 的 Submit 等）由 UiEcho 自身订阅面消费
     }
 }
