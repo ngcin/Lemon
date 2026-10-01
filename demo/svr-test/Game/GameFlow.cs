@@ -12,8 +12,8 @@ using Lemon.Interop;
 public sealed class GameFlow : LemonBehaviour
 {
     // svr-test 资产 GUID（批③d-2 新落；引用锚点，勿改）
-    private const string kPlayerPrefab = "7e57410000000001";
-    private const string kDirectorPrefab = "7e57410000000002";
+    private const string kPlayerPrefab = "ee516071c5ca3e29";
+    private const string kDirectorPrefab = "b2d7cc08d3ada0cd";
 
     internal enum State { Menu, Spawning, Run, Paused, Results, Settings }
 
