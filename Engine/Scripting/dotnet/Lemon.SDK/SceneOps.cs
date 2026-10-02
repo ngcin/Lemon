@@ -66,18 +66,27 @@ public static unsafe class SceneOps
                                         CompId = ComponentTable.Id<T>(), Entity = e });
     }
 
-    /// <summary>挂脚本组件（档①）；typeId = Behaviours 注册序。</summary>
+    /// <summary>挂脚本组件（档①）；typeId = Behaviours 注册序。
+    /// typeId 超 255 = 响亮丢弃（SceneOp.CompId 是 byte，静默截断会挂错类型——#51）。</summary>
     public static void AttachScript(EntityHandle e, int typeId)
     {
+        if ((uint)typeId > 255u) {
+            Console.Error.WriteLine($"[lemon][error] AttachScript typeId={typeId} 超 255（CompId=byte）→ 丢弃");
+            return;
+        }
         lock (s_lock)
             s_pending.Add(new SceneOp { Type = SceneOpType.AttachScript,
                                         CompId = (byte)typeId, Entity = e });
     }
 
     /// <summary>卸单槽脚本（M6a 批⓪ T3：GameObject.RemoveComponent 脚本分路）；
-    /// typeId = Behaviours 注册序。未挂 = 引擎侧幂等 no-op。</summary>
+    /// typeId = Behaviours 注册序。未挂 = 引擎侧幂等 no-op。typeId 超 255 同 #51 口径。</summary>
     public static void DetachScript(EntityHandle e, int typeId)
     {
+        if ((uint)typeId > 255u) {
+            Console.Error.WriteLine($"[lemon][error] DetachScript typeId={typeId} 超 255（CompId=byte）→ 丢弃");
+            return;
+        }
         lock (s_lock)
             s_pending.Add(new SceneOp { Type = SceneOpType.DetachScript,
                                         CompId = (byte)typeId, Entity = e });

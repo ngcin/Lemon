@@ -505,10 +505,10 @@ void AssetBrowserPanel::RenderTableGrid(EditorApp& app, const AssetEntry& e) {
                         e.FileName().c_str(), rows, cols);
     if (app.Ctx().Playing())
         ImGui::TextDisabled("Play 进行中：当前局的表快照不变，改动下一局生效");
-    if (!tableError_.empty()) {
+    if (!tableError_.empty())
         ImGui::TextColored(theme::kTextError, "%s", tableError_.c_str());
-        tableError_.clear();
-    }
+    // #38：红字持久到下次提交成功（tryCommit 成功分支才 clear）——原渲染后当帧
+    // clear，16ms 后消失，用户无从得知失败原因（错误路径等于不可见）
 
     // ScrollX + SizingFixedFit：列宽 = 内容宽，超窗横向滚动（T1 反馈批——19 列
     // 表在内嵌区/窄窗横向不可达）；行号列 + ScrollFreeze(1,1) 双向钉住（宽表

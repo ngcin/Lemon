@@ -176,6 +176,17 @@ private:
     std::unordered_map<std::string, RefFile> refFiles_;
     bool refCorpusTried_ = false; // true = refFiles_ 为本 Rescan 周期语料
 
+    // 内容哈希增量缓存（review 2026-10-02 #31，refFiles_ 同款）：路径 →
+    // {mtime,size,hash}。原 Rescan 对全项目资产无条件全文件重读算哈希——watcher
+    // 500ms 轮询下任一文件改动即全量同步 IO 卡 UI 线程；mtime+size 未变 = 字节
+    // 未变（编辑器/保存器都更新 mtime），直接复用上轮哈希值。
+    struct HashStat {
+        uint64_t mtime = 0;
+        uintmax_t size = 0;
+        uint64_t hash = 0;
+    };
+    std::unordered_map<std::string, HashStat> hashCache_;
+
     std::string root_;
     std::vector<AssetEntry> entries_; // relPath 升序（含墓碑）
     // 启动期 manifest 携带（path → guid/spriteId/切片块；首轮 Rescan 后清空）

@@ -1073,7 +1073,12 @@ void AnimatorSystem::Tick(World& world, Scene& scene, float dt) {
             an.time += an.speed * dt;
             if (an.loop) {
                 float period = 1.0f; // 占位周期；无 clip 路径恒此值（勿动——金档锚）
-                while (an.time >= period) an.time -= period;
+                // fmod 一次到位 + 有限性护栏（#65）：档面/脚本可写 speed，JSON 大数
+                // 经 float 即 inf——原 while 逐帧减对 inf 整帧死循环；正常值下 fmod
+                // 与逐减位级同值（回放零漂移）
+                an.time = std::isfinite(an.time) && period > 0.0f
+                              ? std::fmod(an.time, period)
+                              : 0.0f;
             }
             continue;
         }
@@ -1088,17 +1093,19 @@ void AnimatorSystem::Tick(World& world, Scene& scene, float dt) {
         bool wrapped = false; // 本 tick 发生回绕减法（Queue 的 loop 段切点）
         if (an.loop == 2) {
             if (totalPP > 0.0f) {
-                while (an.time >= totalPP) {
-                    an.time -= totalPP;
+                // fmod 一次到位 + 有限性护栏（#65，与 M2 分支同款）：inf time 原逐减
+                // while 整帧挂起；正常值一次回绕 Sterbenz 精确 = 与逐减位级同值
+                if (an.time >= totalPP) {
                     wrapped = true;
+                    an.time = std::isfinite(an.time) ? std::fmod(an.time, totalPP) : 0.0f;
                 }
             } else if (an.time > 0.0f)
                 an.time = 0.0f;
             if (an.time < 0.0f) an.time = 0.0f; // 负 speed 防御
         } else if (an.loop) {
-            while (an.time >= total) {
-                an.time -= total;
+            if (total > 0.0f && an.time >= total) { // total==0（空帧表）同护栏，防恒真循环
                 wrapped = true;
+                an.time = std::isfinite(an.time) ? std::fmod(an.time, total) : 0.0f;
             }
             if (an.time < 0.0f) an.time = 0.0f; // 负 speed 防御（回绕后仍负）
         } else {

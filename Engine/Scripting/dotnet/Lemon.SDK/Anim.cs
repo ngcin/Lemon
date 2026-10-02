@@ -28,9 +28,20 @@ public static class Anim
         PingPong = 2,
     }
 
-    /// <summary>clip 资产 GUID（16 位 hex）→ clipId（GUID 低 32 位直取，零跨界）。</summary>
+    /// <summary>clip 资产 GUID（16 位 hex）→ clipId（GUID 低 32 位直取，零跨界）。
+    /// 非法 hex = 0 + 红字一次（TryParse 口径，与 GuidOf/ResolveClip/Audio 一致——
+    /// 原 ulong.Parse 裸抛，#59）。</summary>
     public static uint ClipId(string clipGuidHex)
-        => (uint)ulong.Parse(clipGuidHex, System.Globalization.NumberStyles.HexNumber);
+    {
+        if (clipGuidHex != null &&
+            ulong.TryParse(clipGuidHex, System.Globalization.NumberStyles.HexNumber,
+                           null, out var v))
+            return (uint)v;
+        if (s_missed.Add("clipid:" + (clipGuidHex ?? "(null)")))
+            Console.Error.WriteLine(
+                $"[lemon][warn] Anim.ClipId: '{clipGuidHex ?? "(null)"}' 非 GUID hex → 0");
+        return 0;
+    }
 
     /// <summary>立即播放段（time 归零、打断在途队列）。loop=false 播完钳末帧——
     /// 配 Queue 做受击→回行走；同段重复调用 = 重播。</summary>

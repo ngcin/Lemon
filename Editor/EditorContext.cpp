@@ -229,6 +229,8 @@ bool EditorContext::OpenSceneRecovery(const std::string& autosavePath) {
     if (!SceneArchive::Load(*scene_, text)) return false;
     // scenePath_ 保持指向原 .scene（untitled 则保持空）——落盘与否由用户决定
     selection_.clear();
+    undo_.Clear(); // #77：整体替换场景 = 与 OpenScene/NewScene 同款清栈（旧栈指向
+                   // 已被替换掉的实体集，Ctrl+Z 会把恢复前场景"复活"成残影混合态）
     BackfillGuids();
     ResolveSpriteRefs(); // M6a 批⓪ T2：autosave 可能来自旧进程（id 口径漂移）
     dirty = true;
@@ -495,6 +497,7 @@ ecs::Entity EditorContext::InstantiatePrefabAsset(uint64_t prefabGuid, Vec2 pos)
     if (!f) return ecs::Entity::Null();
     std::string json((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     ecs::Scene& s = ActiveScene(); // Play 中脚本 Instantiate.Prefab 落 Play World
+    const uint32_t aliveBefore = s.AliveCount(); // #79：日志记本次 spawn 数（非全场景）
     ecs::Entity root = InstantiatePrefabJson(s, json, prefabGuid, pos);
     if (root.IsNull()) return root;
     // 批③d-2：Play 态 spawn 的 prefab 若带 scripts[]，槽实例在此挂载——与
@@ -529,7 +532,8 @@ ecs::Entity EditorContext::InstantiatePrefabAsset(uint64_t prefabGuid, Vec2 pos)
     // Play 态 = 同进程 spawn，id 即真值，热路径零扫表）
     if (!Playing()) ResolveSpriteRefs();
     dirty = !Playing(); // Play 中 = 落 Play World，不动编辑侧脏标记（决议 #5）
-    LEMON_LOG("Prefab 实例化：%s（%u 实体）", entry->relPath.c_str(), s.AliveCount());
+    LEMON_LOG("Prefab 实例化：%s（%u 实体）", entry->relPath.c_str(),
+              s.AliveCount() - aliveBefore);
     return root;
 }
 

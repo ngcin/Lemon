@@ -29,8 +29,9 @@ public static class Behaviours
     {
         public required string Name;
         public required Func<LemonBehaviour> Factory;
+        public required System.Type Type; // 同名冲突判据（#58：t.Name 身份 + FullName 分辨）
         public LifecycleBits Mask;
-        public int Order; // [ExecutionOrder]（M3：桶间排序标签，同 Order 按注册序）
+        public int Order; // [ExecutionOrder]（数值排序键，同 Order 按注册序）
         public readonly List<LemonBehaviour> Instances = new();
         public readonly List<bool> StartPending = new();
         public readonly List<int> BadStreak = new();
@@ -71,10 +72,15 @@ public static class Behaviours
 
     private static void RebuildOrder()
     {
+        // (Order, 注册序) 数值全序（Prowl2D/Unity 同名特性语义；#17——原两桶
+        // 分法把 Order 当 0/非0 标签，负 Order 不会早于默认桶、非零 Order 之间
+        // 不比较，与注释承诺不符）。索引排序保证确定性且比较器无 O(n) 查找。
         s_ordered.Clear();
-        for (int pass = 0; pass < 2; pass++) // pass0: Order==0（默认），pass1: 显式 Order
-            for (int i = 0; i < Slots.Count; i++)
-                if ((Slots[i].Order == 0) == (pass == 0)) s_ordered.Add(Slots[i]);
+        var idx = new List<int>(Slots.Count);
+        for (int i = 0; i < Slots.Count; i++) idx.Add(i);
+        idx.Sort((a, b) => Slots[a].Order != Slots[b].Order
+            ? Slots[a].Order.CompareTo(Slots[b].Order) : a.CompareTo(b));
+        foreach (var i in idx) s_ordered.Add(Slots[i]);
     }
 
     /// <summary>注册脚本类型（GameMain.Configure 内调用；typeId = 注册序，跨帧稳定）。</summary>
@@ -96,9 +102,21 @@ public static class Behaviours
         if (OverrideOf("LateUpdate") != null) mask |= LifecycleBits.LateUpdate;
         if (OverrideOf("OnDestroy") != null) mask |= LifecycleBits.OnDestroy;
 
+        // 类型身份 = 裸类名 t.Name（.scene className 持久键，04 M4.4）。跨命名空间
+        // 同名类并存会让 TypeIdOf 静默路由到先注册者（#58）——当场响亮拒绝第二个。
+        for (int i = 0; i < Slots.Count; i++) {
+            if (Slots[i].Name != t.Name) continue;
+            if (Slots[i].Type == t) return; // 同类型重复注册 = 幂等 no-op
+            Console.Error.WriteLine(
+                $"[lemon][error] Behaviours.Register: 类名 '{t.Name}' 冲突" +
+                $"（{Slots[i].Type.FullName} 已注册；{t.FullName} 未注册）——类型标识按裸类名，同名不同命名空间不可并存");
+            return;
+        }
+
         Slots.Add(new TypeSlot {
             Name = t.Name,
             Factory = () => new T(),
+            Type = t,
             Mask = mask,
             Order = t.GetCustomAttribute<ExecutionOrderAttribute>()?.Order ?? 0,
         });
@@ -143,7 +161,13 @@ public static class Behaviours
                     $"{e.Id} — duplicate attach skipped (lifecycle leak?)");
                 return;
             }
-        var b = slot.Factory();
+        LemonBehaviour b;
+        try { b = slot.Factory(); } // 用户构造器（#15）：唯一无护栏生命周期——红字跳过，
+        catch (Exception ex) {      // C++ 侧槽已写、实例未挂 = 脚本哑火，必须可见
+            Console.Error.WriteLine(
+                $"[lemon][error] behaviour '{slot.Name}' 构造器异常（实例未挂载）: {ex.Message}");
+            return;
+        }
         b.gameObject = new GameObject(e);
         int idx = slot.Instances.Count;
         slot.Instances.Add(b);

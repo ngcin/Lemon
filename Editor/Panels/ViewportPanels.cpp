@@ -325,7 +325,13 @@ void SceneViewPanel::OnGui(EditorApp& app) {
         if (const ImGuiPayload* pay = ImGui::AcceptDragDropPayload("LemonEntity")) {
             Entity dropped{};
             std::memcpy(&dropped, pay->Data, sizeof(dropped));
-            if (SceneSetParent(ctx.ActiveScene(), dropped, Entity::Null())) ctx.dirty = true;
+            // #93：与 Hierarchy 空白拖放同操作同轨——原仅 SetParent+dirty，同一
+            // 摘根两个入口 Ctrl+Z 行为不一致
+            const std::string before = ctx.SnapshotSceneJson();
+            if (SceneSetParent(ctx.ActiveScene(), dropped, Entity::Null())) {
+                ctx.dirty = true;
+                if (!ctx.Playing()) ctx.PushStructuralUndo("摘根（视口拖放）", before);
+            }
         }
         // 资产拖入（M4.4）：sprite = 光标处建实体；prefab = 光标处实例化
         if (const ImGuiPayload* pay = ImGui::AcceptDragDropPayload("LemonAsset")) {
@@ -833,7 +839,11 @@ void GameViewPanel::OnGui(EditorApp& app) {
             lemon::ecs::RtUiCards& cards = app.Ctx().ActiveWorld().Cards();
             if (cards.active) {
                 const bool gvFocus = ImGui::IsWindowFocused() && ImGui::IsWindowHovered();
-                const ImVec2 center(off.x + imgW * 0.5f, off.y + imgH * 0.42f);
+                // #34：SetNextWindowPos 要屏幕坐标——原传 gv 子窗口局部坐标且
+                // ImGuiCond_Always 每帧钉死，面板恒落编辑器窗口左上方向偏移处；
+                // 画布左上屏幕位 gvMin + 局部偏移即屏幕中心
+                const ImVec2 center(gvMin.x + off.x + imgW * 0.5f,
+                                    gvMin.y + off.y + imgH * 0.42f);
                 ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
                 ImGui::SetNextWindowBgAlpha(0.88f);
                 ImGui::Begin("##rtui-cards", nullptr,

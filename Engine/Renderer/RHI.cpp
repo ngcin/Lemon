@@ -160,6 +160,19 @@ struct Device::Impl {
     // M4.7-P0 教训：单槽 + UPDATE_AFTER_BIND"执行期取最新值"语义下，同帧第二个
     // 合批器改写会让首个合批器的绘制读到错误的环（overlay 通道整体消失的根因）
     uint32_t boundStorageBufferIds[kRingSsboSlots] = {};
+    // #7：bindless 纹理槽记账（与 boundStorageBufferIds 对称）——DestroyTexture 时
+    // 仍指向被销毁纹理的槽改写为 dummy 黑 1x1，防陈旧渲染采样已销毁 view。
+    uint32_t boundTextureIds[kMaxTextureSlots] = {};
+    Texture dummyTex{}; // 惰性建（走 CreateTexture/UploadTexture 全管线 = 清黑确定值）
+
+    VkImageView DummyView() {
+        if (dummyTex.IsValid()) return textures[dummyTex.id - 1].view;
+        dummyTex = ownerDevice->CreateTexture({.width = 1, .height = 1,
+                                               .debugName = "dummy (destroyed-slot fallback)"});
+        static const uint8_t kBlack[4] = {0, 0, 0, 255};
+        ownerDevice->UploadTexture(dummyTex, kBlack, sizeof kBlack);
+        return textures[dummyTex.id - 1].view;
+    }
 
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE; // 全 M1 管线共享
     VkPipelineCache pipelineCache = VK_NULL_HANDLE;
@@ -502,6 +515,7 @@ struct Device::Impl {
         ai.pSetLayouts = &bindlessLayout;
         VK_CHECK(vkAllocateDescriptorSets(device, &ai, &bindlessSet));
         for (auto& id : boundStorageBufferIds) id = 0;
+        for (auto& id : boundTextureIds) id = 0;
 
         // 管线布局：set0 bindless + 128B push constant（vert|frag）
         VkPushConstantRange pc{VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
@@ -726,6 +740,7 @@ struct Device::Impl {
             if (r.image) vmaDestroyImage(allocator, r.image, r.alloc);
         }
         textures.clear(); textureFree.clear();
+        dummyTex = {}; // 含 dummy（随上面循环销毁；重建后惰性重造）
         for (auto& r : samplers)
             if (r.sampler) vkDestroySampler(device, r.sampler, nullptr);
         samplers.clear(); samplerFree.clear();
@@ -744,6 +759,7 @@ struct Device::Impl {
         pipelineLayout = VK_NULL_HANDLE;
         bindlessSet = VK_NULL_HANDLE; // UPDATE_AFTER_BIND 池不支持 free 单 set，随池销毁
         for (auto& id : boundStorageBufferIds) id = 0;
+        for (auto& id : boundTextureIds) id = 0;
         if (bindlessPool) vkDestroyDescriptorPool(device, bindlessPool, nullptr);
         bindlessPool = VK_NULL_HANDLE;
         if (bindlessLayout) vkDestroyDescriptorSetLayout(device, bindlessLayout, nullptr);
@@ -1056,6 +1072,32 @@ void Device::UploadTexture(Texture t, const void* rgba8Pixels, uint64_t byteSize
 
 void Device::DestroyTexture(Texture t) {
     if (!t.IsValid()) return;
+    // #7：先做 bindless 槽兜底——仍在指向本纹理的槽（调用方未重绑的窗口期）改写
+    // 为 dummy 黑 view，防后续帧采样已销毁 view。注意先于 `auto& r` 取引用：
+    // DummyView() 走 CreateTexture 可能扩容 textures 向量使旧引用失效。设备丢失
+    // 撤卸期跳过（整个集随池销毁，重建后由持有者重绑）。
+    if (!m->deviceLost) {
+        for (uint32_t slot = 0; slot < kMaxTextureSlots; ++slot) {
+            if (m->boundTextureIds[slot] != t.id) continue;
+            m->boundTextureIds[slot] = 0;
+            if (VkImageView v = m->DummyView()) {
+                VkDescriptorImageInfo info{};
+                info.imageView = v;
+                info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                VkWriteDescriptorSet write{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+                write.dstSet = m->bindlessSet;
+                write.dstBinding = 0;
+                write.dstArrayElement = slot;
+                write.descriptorCount = 1;
+                write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+                write.pImageInfo = &info;
+                vkUpdateDescriptorSets(m->device, 1, &write, 0, nullptr);
+            }
+            LEMON_LOG("DestroyTexture: slot %u 曾指向被销毁纹理 id=%u — 已改写 dummy"
+                      "（合法重建流：热重导入/换项目即期重绑同场景）",
+                      slot, t.id);
+        }
+    }
     auto& r = m->textures[t.id - 1];
     LEMON_ASSERT(r.image, "double destroy");
     vkDestroyImageView(m->device, r.view, nullptr);
@@ -1194,6 +1236,7 @@ void Device::BindTextureToSlot(Texture t, uint32_t slot) {
     write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
     write.pImageInfo = &info;
     vkUpdateDescriptorSets(m->device, 1, &write, 0, nullptr);
+    m->boundTextureIds[slot] = t.id; // #7 槽位记账（DestroyTexture 兜底用）
 }
 
 void Device::BindSamplerToSlot(Sampler s, uint32_t slot) {

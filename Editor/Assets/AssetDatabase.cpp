@@ -84,14 +84,18 @@ const AssetEntry* AssetDatabase::FindByPath(const std::string& relPath) const {
 
 const AssetEntry* AssetDatabase::FindBySpriteId(uint32_t spriteId) const {
     if (spriteId == 0) return nullptr;
-    for (const auto& e : entries_)
+    for (const auto& e : entries_) {
+        if (e.missing) continue; // #89：与 FindClipByLowId/EntriesInDir 同口径——Remove()
+                                 // 后到下轮 Rescan 前的同帧窗口不再报"已登记"
         if (e.spriteId == spriteId) return &e;
+    }
     return nullptr;
 }
 
 bool AssetDatabase::SpriteIdRegistered(uint32_t spriteId) const {
     if (spriteId == 0) return false;
     for (const auto& e : entries_) {
+        if (e.missing) continue; // #89：同上
         if (e.spriteId == spriteId) return true;
         if (e.sliceCount > 0 && spriteId >= e.sliceBase &&
             spriteId < e.sliceBase + e.sliceCount) // 切片连号区间（模板场景引 cell 号）
@@ -155,14 +159,17 @@ std::string AssetDatabase::GuidToHex(uint64_t guid) {
 uint64_t AssetDatabase::HexToGuid(const char* hex) {
     if (!hex) return 0;
     uint64_t v = 0;
+    int n = 0;
     for (const char* p = hex; *p && p - hex < 16; ++p) {
         v <<= 4;
+        ++n;
         char c = *p;
         if (c >= '0' && c <= '9') v |= (uint64_t)(c - '0');
         else if (c >= 'a' && c <= 'f') v |= (uint64_t)(c - 'a' + 10);
         else if (c >= 'A' && c <= 'F') v |= (uint64_t)(c - 'A' + 10);
         else return 0; // 非 hex 字符
     }
+    if (n != 16) return 0; // #88：短 hex 串按截断值放行会静默错绑资产——恰 16 位才合法
     return v;
 }
 
@@ -334,8 +341,13 @@ void AssetDatabase::SyncMeta(AssetEntry& e) const {
         imp["preload"] = false;
         doc["importer"] = imp;
     }
-    std::ofstream of(metaPath, std::ios::binary | std::ios::trunc);
-    of << doc.dump(2);
+    // #33：新建 .meta 走原子替换（同文件 SetGridSlice 的既定纪律）——裸 ofstream
+    // trunc 直写在崩溃时留半截 JSON → 解析 discarded → 下一轮重发 guid → 场景
+    // spriteGuid/clip 引用静默断链且永不自愈；写失败（磁盘满/权限）红字可见
+    const std::string text = doc.dump(2) + "\n";
+    if (!WriteFileAtomic(metaPath, text.data(), text.size()))
+        LEMON_ERROR("新建 .meta 写入失败（guid %016llx 将于下轮重扫重发）：%s",
+                    (unsigned long long)e.guid, metaPath.c_str());
 }
 
 // ------------------------------------------------------------ Open/Scan ----
@@ -361,6 +373,7 @@ bool AssetDatabase::OpenProject(const std::string& projectRoot, uint32_t spriteI
     entries_.clear();
     refCorpusTried_ = false;
     refFiles_.clear(); // 切项目 = 语料全失效（旧项目文件不得复用，#24 缓存随项目走）
+    hashCache_.clear(); // #31：哈希缓存同随项目走（防跨项目同路径误命中）
     opened_ = true;
 
     std::error_code ec;
@@ -638,7 +651,23 @@ void AssetDatabase::Rescan() {
         auto oldIt = old.find(rel);
         if (oldIt != old.end()) e.guid = oldIt->second.guid; // 路径命中：guid 先继承
 
-        e.hash = HashFile(AbsolutePath(e));
+        // #31：mtime+size 未变 → 复用上轮内容哈希（refFiles_ 同款增量门控；原每轮
+        // 全项目全文件重读，watcher 500ms 轮询任一改动 = 全量同步 IO 卡 UI 线程）
+        {
+            std::error_code ec2;
+            const auto mt = fs::last_write_time(file, ec2);
+            const uintmax_t fsize = ec2 ? 0 : fs::file_size(file, ec2);
+            const uint64_t fmtime =
+                ec2 ? 0 : uint64_t(mt.time_since_epoch().count());
+            const auto hc = hashCache_.find(rel);
+            if (!ec2 && hc != hashCache_.end() && hc->second.mtime == fmtime &&
+                hc->second.size == fsize) {
+                e.hash = hc->second.hash;
+            } else {
+                e.hash = HashFile(AbsolutePath(e));
+                if (e.hash != 0) hashCache_[rel] = {fmtime, fsize, e.hash};
+            }
+        }
         // .meta（可能带外部迁入的 guid；新建时 hash 已算好）
         SyncMeta(e);
         if (oldIt != old.end()) {
@@ -710,6 +739,7 @@ void AssetDatabase::Rescan() {
     // meta 独存的情形归下方孤儿清扫 pass 报，不双报）。
     for (auto& [path, prev] : old) {
         if (std::find(seenPaths.begin(), seenPaths.end(), path) != seenPaths.end()) continue;
+        hashCache_.erase(path); // #31：缓存随文件消失出表（防换项目前残值误命中）
         if (!prev.missing) lastChange_.removed.push_back(prev.guid);
         std::error_code ec2;
         if (prev.guid != 0 && !fs::exists(AbsolutePath(prev) + ".meta", ec2) &&
@@ -803,6 +833,14 @@ bool AssetDatabase::Rename(AssetEntry& e, const std::string& newRelPath) {
         LEMON_WARN("重命名失败（IO）：%s → %s", e.relPath.c_str(), newRelPath.c_str());
         return false;
     }
+    if (ec2) {
+        // #86：.meta 随行改名失败此前被静默忽略——meta 留旧路径时下轮 SyncMeta 视
+        // 新路径为无档 → guid 重发 → 场景引用全部断链且零红字；响亮报错让用户
+        // 知道要手动搬 .meta（源文件已改成功，不回滚）
+        LEMON_ERROR("重命名：源文件已改但 .meta 随行失败（请手动搬移）：%s.meta → %s.meta",
+                    oldAbs.c_str(), newAbs.c_str());
+    }
+    hashCache_.erase(e.relPath); // #31：旧路径缓存键作废（改名后按新路径重记）
     e.relPath = newRelPath;
     e.type = TypeOf(newRelPath);
     e.hash = HashFile(AbsolutePath(e));

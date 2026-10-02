@@ -61,19 +61,27 @@ void ReanchorSdkHintPath(const fs::path& gameDir, const std::string& sdkDir) {
 
 /// 项目名 = 单段目录名（2026-09-24 审查 F-02）：拒绝绝对路径、路径分隔符与
 /// "."/".." 逃逸段——名字直接拼进父目录，"../x" 会使创建根越出父目录。
-/// 其余字符（含中文/空格）交给文件系统，保持向导可用性。
+/// review 2026-10-02 #32：名字还拼进 popen 双引号命令串（POSIX sh 在 "..."
+/// 内仍展开 $(...) 与反引号 = 命令注入）与手写 project.lemon JSON——改白名单：
+/// 放行 ASCII 字母数字/-/_/./空格 + 全部 ≥0x80 字节（中文项目名不受限），
+/// 其余 ASCII 一律拒（shell/JSON 元字符恰好全在 ASCII）。
 bool IsValidProjectName(const std::string& n) {
     if (n.empty() || n.size() > 63) return false;
     if (n == "." || n == "..") return false;
-    for (char c : n)
-        if (c == '/' || c == '\\' || c == ':' || (unsigned char)c < 0x20) return false;
+    for (char c : n) {
+        const unsigned char u = (unsigned char)c;
+        if (u >= 0x80) continue; // UTF-8 多字节（中文等项目名）
+        if (std::isalnum(u) || c == '-' || c == '_' || c == '.' || c == ' ') continue;
+        return false;
+    }
     return fs::path(n).parent_path().empty();
 }
 
 std::string ProjectWizard::Create(const ProjectDesc& d, uint64_t* outSpawnGuid) {
     if (d.name.empty() || d.parentDir.empty()) return {};
     if (!IsValidProjectName(d.name)) {
-        LEMON_WARN("新建项目失败：项目名不是合法目录名（禁止路径分隔符/: 与 ..）：%s",
+        LEMON_WARN("新建项目失败：项目名只允许字母数字/中文/-/_/./空格（名字会拼进"
+                   "编译命令与 project.lemon，shell/JSON 元字符一律拒绝）：%s",
                    d.name.c_str());
         return {};
     }

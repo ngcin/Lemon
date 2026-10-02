@@ -105,9 +105,18 @@ internal static unsafe class Exports
     [UnmanagedCallersOnly]
     public static int lemon_hr_leaks() => DomainManager.LeakCount;
 
-    /// <summary>帧执行（域线程）；未加载返回 NaN 哨兵。</summary>
+    /// <summary>帧执行（域线程）；未加载返回 NaN 哨兵。
+    /// 唯一执行用户代码却无护栏的 UCO 导出（M4.6 纪律漏网——Post 会把域线程
+    /// 异常重抛到本导出，TestScript.Tick 抛 = coreclr abort）——补 try/catch。</summary>
     [UnmanagedCallersOnly]
-    public static double lemon_dm_tick(float dt) => DomainManager.Tick(dt);
+    public static double lemon_dm_tick(float dt)
+    {
+        try { return DomainManager.Tick(dt); }
+        catch (Exception e) {
+            Console.Error.WriteLine("[lemon] dm_tick 异常（已拦，保进程）：" + e.Message);
+            return double.NaN;
+        }
+    }
 
     /// <summary>Time 归零（编辑器进 Play = 新的一局；M5 清障①）。</summary>
     [UnmanagedCallersOnly]
@@ -200,17 +209,19 @@ internal static unsafe class Exports
     public static int lemon_behaviours_types() => Lemon.Behaviours.TypeCount;
 
     /// <summary>注册脚本类型名表（M4.4 编辑器装配通路）：'\n' 分隔写入 dst，'\0' 结尾。
-    /// 返回类型数；cap 不足返回 -1（调用方换大缓冲重试）。</summary>
+    /// 返回类型数；cap 不足返回 -1（调用方换大缓冲重试）。UTF-8 编码——类型名经
+    /// 编辑器进 .scene className 持久键，Latin-1 直出会产出非法 UTF-8（#16）。</summary>
     [UnmanagedCallersOnly]
     public static unsafe int lemon_behaviours_list(byte* dst, int cap)
     {
         var names = Lemon.Behaviours.RegisteredNames;
+        var enc = System.Text.Encoding.UTF8; // NativeApi.CopyUtf8 同口径；ASCII 逐字节不变
         int total = 0;
-        foreach (var n in names) total += n.Length + 1; // 名 + '\n'
+        foreach (var n in names) total += enc.GetByteCount(n) + 1; // 名 + '\n'
         if (total >= cap) return -1;
         int p = 0;
         foreach (var n in names) {
-            for (int i = 0; i < n.Length; i++) dst[p++] = (byte)n[i];
+            p += enc.GetBytes(n, new Span<byte>(dst + p, total - p));
             dst[p++] = (byte)'\n';
         }
         dst[total > 0 ? total - 1 : 0] = 0; // 末 '\n' 换成 '\0'（空表 = 首字节 \0）
@@ -253,11 +264,14 @@ internal static unsafe class Exports
     }
 
     /// <summary>UI 事件批量派发（#16 头部：引擎文档监听器 → 订阅者）。
-    /// 订阅者异常由 UI.DispatchEvents 逐个隔离；此处兜底编码/框架层异常。</summary>
+    /// 域线程池化投递（ADR-010 D1：订阅 handler 是用户 ALC 代码，与游戏事件
+    /// PostBatchEvents 同口径——原在引擎管线线程内联执行，击穿"卸载线程从未
+    /// 触碰 ALC"的换装前提）。订阅者异常由 UI.DispatchEvents 逐个隔离；
+    /// 此处兜底编码/框架层异常。</summary>
     [UnmanagedCallersOnly]
     public static unsafe void lemon_ui_events_dispatch(Lemon.UiEvent* src, int n)
     {
-        try { Lemon.UI.DispatchEvents(src, n); }
+        try { DomainManager.PostUiEvents(src, n); }
         catch (Exception e) {
             Console.Error.WriteLine("[lemon] ui_events_dispatch 异常（已拦，保进程）：" + e.Message);
         }

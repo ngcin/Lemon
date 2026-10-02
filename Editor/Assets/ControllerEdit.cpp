@@ -43,11 +43,13 @@ const char* OpName(int o) {
 }
 
 void AppendFloat(std::string& out, float v) {
-    char buf[24];
+    // #90：%g 最短有效表示（6 位）——原非整值恒 %.1f，过渡阈值 0.15 保存后变
+    // 0.1/0.2（游戏逻辑值经保存-重载静默漂移）；整值路径不变（1 不写成 1.0）
+    char buf[32];
     if (v == (float)(long long)v)
         std::snprintf(buf, sizeof(buf), "%lld", (long long)v);
     else
-        std::snprintf(buf, sizeof(buf), "%.1f", v);
+        std::snprintf(buf, sizeof(buf), "%g", (double)v);
     out += buf;
 }
 

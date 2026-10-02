@@ -667,6 +667,8 @@ int EditorApp::Run(const EditorLaunch& launch) {
         } else {
             playAcc_ = 0.0f;   // 出 Play 清账（复审 2a）
             playAlpha_ = 1.0f; // 编辑态渲染恒取 cur（无插值）
+            audio_.Tick(ImGui::GetIO().DeltaTime); // #76：Edit 态试听的生命周期——
+            // done 声部回收 + 静音降级模式游标推进（同 clip 重触发节流窗的过期也靠它）
             ctx_.TickEditor(1.0f / 60.0f); // Essential（销毁提交）+ 空 FixedTick
             UpdateGameCameraFollow();  // 非 Play：退出跟随时回默认位
         }
@@ -1024,6 +1026,13 @@ int EditorApp::Run(const EditorLaunch& launch) {
     // --smoke-uirml 裁决——外迁 EditorAppSmokeUirml.cpp（批③c-5）
     if (launchCopy_.smokeUirml && !SmokeUirmlVerdict()) exitCode = 1;
 
+    // #28：重副作用裁决压轴——第二项目检查（ProjectWizard::Create + OpenProjectPipeline
+    // 会换走整个会话：停双 watcher/复位图集注册表/UnloadAllDocuments/重编译 dotnet）。
+    // 原内联在 SmokeTplVerdict，其后的 FinalVerdict/overlay/SmokeUirmlVerdict 全在
+    // "项目已换走"的会话上执行（手动组合 --smoke-template --smoke-uirml 时后者必
+    // FAIL）；裁决函数应只读聚合，切项目的验收移到全部只读裁决之后。
+    if (launchCopy_.smokeTemplate && !SmokeTplSecondProjectCheck()) exitCode = 1;
+
     watcher_.Stop();          // 先停 watcher 线程（此后无资产重扫）
     scriptWatcher_.Stop();    // 与 Game/ 源监视同批收尾
     host_.reset();            // C# 宿主卸载（无脚本时为空操作）
@@ -1075,17 +1084,45 @@ void EditorApp::UpdateGameCameraFollow() {
         return;
     }
     ecs::Scene& s = ctx_.ActiveScene();
-    ecs::Entity camEnt = ecs::Entity::Null(), playerEnt = ecs::Entity::Null(),
-                scriptedEnt = ecs::Entity::Null();
-    s.Each([&](ecs::Entity e) {
-        const bool hasTf = s.Has<ecs::Transform2D>(e);
-        if (!hasTf) return;
-        const ecs::Meta* m = s.TryGet<ecs::Meta>(e);
-        const char* tag = m ? m->tag : nullptr;
-        if (camEnt.IsNull() && TagEquals(tag, "Camera")) camEnt = e;
-        if (playerEnt.IsNull() && TagEquals(tag, "Player")) playerEnt = e;
-        if (scriptedEnt.IsNull() && s.Has<scripting::ScriptBox>(e)) scriptedEnt = e;
-    });
+    // #27：目标缓存 + 逐帧轻校验——原每帧全池线性扫（Scene::Each 无早退机制），
+    // bench-survivor 万实体场景 = 每帧上万迭代；校验（活着 + 有 Transform + 判据
+    // 仍成立）失败才重扫。校验语义与每帧重扫一致：换 Play 世界/目标死亡/换 tag
+    // 即失校验；同 id 重生同 tag（director 重挂 prefab）= 同一逻辑目标，继续跟。
+    auto stillValid = [&](ecs::Entity& cached, bool wantScriptBox, const char* tag) {
+        if (cached.IsNull() || !s.Alive(cached) || !s.Has<ecs::Transform2D>(cached)) {
+            cached = ecs::Entity::Null();
+            return false;
+        }
+        if (wantScriptBox && !s.Has<scripting::ScriptBox>(cached)) {
+            cached = ecs::Entity::Null();
+            return false;
+        }
+        if (!wantScriptBox &&
+            !TagEquals(s.TryGet<ecs::Meta>(cached) ? s.TryGet<ecs::Meta>(cached)->tag
+                                                   : nullptr, tag)) {
+            cached = ecs::Entity::Null();
+            return false;
+        }
+        return true;
+    };
+    const bool allValid = stillValid(camFollowEnt_, false, "Camera") &&
+                          stillValid(playerFollowEnt_, false, "Player") &&
+                          stillValid(scriptedFollowEnt_, true, nullptr);
+    if (!allValid) {
+        camFollowEnt_ = playerFollowEnt_ = scriptedFollowEnt_ = ecs::Entity::Null();
+        s.Each([&](ecs::Entity e) {
+            const bool hasTf = s.Has<ecs::Transform2D>(e);
+            if (!hasTf) return;
+            const ecs::Meta* m = s.TryGet<ecs::Meta>(e);
+            const char* tag = m ? m->tag : nullptr;
+            if (camFollowEnt_.IsNull() && TagEquals(tag, "Camera")) camFollowEnt_ = e;
+            if (playerFollowEnt_.IsNull() && TagEquals(tag, "Player")) playerFollowEnt_ = e;
+            if (scriptedFollowEnt_.IsNull() && s.Has<scripting::ScriptBox>(e))
+                scriptedFollowEnt_ = e;
+        });
+    }
+    const ecs::Entity camEnt = camFollowEnt_, playerEnt = playerFollowEnt_,
+                      scriptedEnt = scriptedFollowEnt_;
     const ecs::Entity target = !camEnt.IsNull()     ? camEnt
                                : !playerEnt.IsNull() ? playerEnt
                                                      : scriptedEnt;

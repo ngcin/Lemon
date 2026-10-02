@@ -269,6 +269,14 @@ void EditorApp::BuildToolbar() {
 // ---- Layout 下拉（M4.7d）：命名布局 = imgui.ini 全量快照另存，一键切换 ----
 // 切换延迟一帧到 BuildUI 的布局安全点应用（与 forceDefaultLayout_ 同点，
 // DockBuilder/LoadIniSettingsFromMemory 均在帧内 dockspace 构建前调用）。
+// #78：布局名是自由文本但只准做文件名主干——含路径分隔符/ ".." 即可越出布局
+// 目录写/删任意 .ini（与 DiscardAutosave「外部输入不得成为删除原语」同款防线；
+// CJK 等其余字符放行）
+static bool ValidLayoutName(const std::string& name) {
+    if (name.empty() || name == "." || name == "..") return false;
+    return name.find('/') == std::string::npos && name.find('\\') == std::string::npos;
+}
+
 void EditorApp::BuildLayoutDropdown() {
     const std::vector<std::string> names = ListSavedLayouts();
     const char* preview = activeLayout_.empty() ? "布局：默认" : activeLayout_.c_str();
@@ -300,9 +308,13 @@ void EditorApp::BuildLayoutDropdown() {
             std::snprintf(buf, sizeof(buf), "删除 \xe2\x80\x9c%s\xe2\x80\x9d",
                           activeLayout_.c_str());
             if (ImGui::Selectable(buf)) {
-                std::error_code ec;
-                std::filesystem::remove(".lemon/editor/layouts/" + activeLayout_ + ".ini", ec);
-                activeLayout_.clear();
+                if (ValidLayoutName(activeLayout_)) { // #78：删除原语同款防线
+                    std::error_code ec;
+                    std::filesystem::remove(".lemon/editor/layouts/" + activeLayout_ + ".ini", ec);
+                    activeLayout_.clear();
+                } else {
+                    LEMON_WARN("布局名含路径字符，删除被拒：%s", activeLayout_.c_str());
+                }
             }
         }
         ImGui::EndCombo();
@@ -342,6 +354,10 @@ void EditorApp::BuildLayoutDropdown() {
 }
 
 bool EditorApp::SaveLayoutIni(const std::string& name) {
+    if (!ValidLayoutName(name)) {
+        LEMON_WARN("布局名含路径字符被拒：%s", name.c_str());
+        return false;
+    }
     std::error_code ec;
     std::filesystem::create_directories(".lemon/editor/layouts", ec);
     size_t sz = 0;

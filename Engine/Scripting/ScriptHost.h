@@ -138,8 +138,8 @@ struct EditorAssetHooks {
 /// 进程级单份（宿主装配期一次；thread-safe 之前 = 引导期约定）
 void SetEditorAssetHooks(const EditorAssetHooks& hooks);
 
-/// 存档 IO 钩子（M5 批④ D1：编辑器注入项目路径实现；纯运行时 M8 自带
-/// %APPDATA% 版）。未注入 = C# Save.Flush 红字一次后 no-op（内存态照常）。
+/// 存档 IO 钩子（M5 批④ D1：编辑器注入项目路径实现；独立运行时自带版归
+/// M7a（D5 便携位）；OS 用户目录（%APPDATA%）归 M8）。未注入 = C# Save.Flush 红字一次后 no-op（内存态照常）。
 struct ScriptIoHooks {
     void (*saveFlush)(ecs::World& world); // 全量落盘（幂等）
 };
@@ -254,13 +254,13 @@ private:
     std::vector<BatchSys> batch_;
 
     int (*dmLoad_)(const char*) = nullptr;
-    int (*dmUnload_)() = nullptr;
+    // lemon_dm_unload / lemon_batch_tick 两导出无任何调用点（卸载走 dmReload_ 整域
+    // 重建、帧执行走 scriptsTickFn_ 档①+档②合一）——不再解析也不再作必需闸（#54）
     int (*dmReload_)(const char*, int*, int*) = nullptr; // M4.5（路径, *泄漏数, *本次回收）
     int (*hrReloadsFn_)() = nullptr;
     int (*hrLeaksFn_)() = nullptr;
     int (*batchCountFn_)() = nullptr;
     int (*batchQueryFn_)(int, uint8_t*, int) = nullptr;
-    void (*batchTickFn_)(BatchSystemFrame*, int) = nullptr;
     void (*eventsDispatchFn_)(const ecs::EventPacket*, int) = nullptr;
     int (*eventsPullFn_)(ecs::EventPacket*, int) = nullptr;
     void (*scriptsTickFn_)(BatchSystemFrame*, int, float) = nullptr;
@@ -287,7 +287,9 @@ private:
     std::vector<std::string> behaviourNames_; // 惰性缓存（BehaviourTypeNames）
     int hrCount_ = 0;                       // 换装计数（镜像托管侧；Profiler 显示）
     int hrLeaks_ = 0;                       // 泄漏计数（红字告警口径，ADR-010 A 线）
-    bool scriptsNeedTick_ = true;           // 档① 实例存在时即使无批量帧也要跑 tick
+    // 恒跑 tick 说明：档① behaviours 可能存在而批量帧为空——C++ 观测不到托管实例数，
+    // 跳过空帧的优化（原 scriptsNeedTick_ 设想的"无实例早退"）从未接线，删死标志
+    // 保诚实（#55）；空场景每帧 ~66µs 托管往返登记 M7a 宿主抽象再收。
     bool batchPulled_ = false;              // 注册表惰性拉取标记（M3-7：装配可早于 World）
     bool warnedNoCountFn_ = false;          // 批量系统缺 countFn 告警只响一次（M13）
 

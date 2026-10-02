@@ -1735,8 +1735,16 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
                           "dungeon_monster_2.png", "dungeon_monster_2.png.meta",
                           "dungeon_boss_1.png", "dungeon_boss_1.png.meta",
                           "hero-walk.anim", "hero-walk.anim.meta",
-                          "monster-walk.anim", "monster-walk.anim.meta"})
+                          "monster-walk.anim", "monster-walk.anim.meta"}) {
         fs::copy(yamiSrc / f, root / "Assets" / f, fs::copy_options::overwrite_existing, ec);
+        // #96：与音频拷贝（review #26 修）同款——失败即断，不产出缺素材的"成功"模板
+        if (ec) {
+            LEMON_ERROR("gen-vs-template：yami 素材拷贝失败 %s → %s（%s）",
+                        (yamiSrc / f).string().c_str(),
+                        (root / "Assets" / f).string().c_str(), ec.message().c_str());
+            return false;
+        }
+    }
     WriteHitClips(root / "Assets"); // 批①受击段（模板自带，PlayerCombat 受击切段用）
     WriteTableAssets(root / "Assets"); // 批② T4 数值三表（weapons/upgrades/balance）
     WriteUiAssets(root / "Assets"); // 批③d-1：UI 三资产（theme/hud/cards——样板双屏）

@@ -5,6 +5,7 @@
 #include <cstring>
 
 #include "Components/CoreComponents.h"
+#include "ECS/Scene.h"
 
 namespace lemon::physics2d {
 

@@ -58,12 +58,11 @@ bool HasImageExt(const std::string& p) {
 }
 
 void Destroy(Item& it) {
+    // 调用方负责先 WaitIdle（Destroy 自身不逐项停等——Clear/批量逐出各一次即可，
+    // #99：原逐项 WaitIdle = Clear() 最多连续 128 次全队列停等）
     if (!it.borrowed) {
         if (it.tex && S().ui) S().ui->UnregisterViewportTexture(it.tex);
-        if (it.rhi && S().device) {
-            S().device->WaitIdle(); // 在途帧可能采样（热重导同口径；逐出低频）
-            S().device->DestroyTexture(rhi::Texture{it.rhi});
-        }
+        if (it.rhi && S().device) S().device->DestroyTexture(rhi::Texture{it.rhi});
     }
     it = Item{};
 }
@@ -111,6 +110,7 @@ void Init(rhi::Device* device, ImGuiBackend* ui, const AssetDatabase* db,
 
 void Clear() {
     State& s = S();
+    if (s.device) s.device->WaitIdle(); // #99：清场一次停等（在途帧可能采样）
     for (auto& [k, it] : s.map) Destroy(it);
     s.map.clear();
     s.lru.clear();
@@ -128,6 +128,7 @@ void Tick() {
         s.pendingSeen.erase(s.pendingSeen.begin());
         auto it = s.map.find(abs);
         if (it == s.map.end()) continue; // 已被 LRU 逐出 = 不再可见，跳过
+        if (it->second.borrowed) continue; // #39：借用项不走解码（页纹理即成品）
         if (!Load(abs, it->second)) it->second.failed = true;
         ++n;
     }
@@ -146,15 +147,10 @@ void* Get(const std::string& absPath, int* w, int* h) {
         if (h) *h = it->second.h;
         return it->second.failed ? nullptr : it->second.tex;
     }
-    // 新请求：先入表占位（去重）+ 排队，本帧返回 nullptr（占位框）
+    // 新请求：先试借用（#39——原先入 pending 再借用提前 return，条目滞留待解码
+    // 队列：Tick 对同一张图重复解码+上传覆盖借用纹理，且 borrowed 标记使逐出/清场
+    // 跳过销毁 = 新建的 VkImage 与描述符集随目录浏览无上界泄漏；借用成立不入队）
     Item& item = s.map.emplace(absPath, Item{}).first->second;
-    s.lru.push_back(absPath);
-    if (std::find(s.pendingSeen.begin(), s.pendingSeen.end(), absPath) ==
-        s.pendingSeen.end()) {
-        s.pendingSeen.push_back(absPath);
-        s.pending.push_back(absPath);
-    }
-    // 项目内已导入精灵：直接复用 AssetGpuCache 的 thumb（零解码零上传）
     const std::string& root = s.db->ProjectRoot();
     if (!root.empty() && absPath.rfind(root + "/", 0) == 0 && s.gpu) {
         const std::string rel = absPath.substr(root.size() + 1);
@@ -168,18 +164,28 @@ void* Get(const std::string& absPath, int* w, int* h) {
                     item.w = (int)pw;
                     item.h = (int)ph;
                 }
+                s.lru.push_back(absPath);
                 if (w) *w = item.w;
                 if (h) *h = item.h;
                 return item.tex;
             }
         }
     }
-    while (s.lru.size() > kCap) { // LRU 逐出（队首 = 最旧）
-        const std::string old = s.lru.front();
-        s.lru.pop_front();
-        if (auto oit = s.map.find(old); oit != s.map.end()) {
-            Destroy(oit->second); // 借用项 rhi=0：只删表项不碰页内纹理
-            s.map.erase(oit);
+    s.lru.push_back(absPath);
+    if (std::find(s.pendingSeen.begin(), s.pendingSeen.end(), absPath) ==
+        s.pendingSeen.end()) { // 逐出后立刻再请求等边缘：防 pending 双份（双 Load 覆盖 = 泄漏）
+        s.pendingSeen.push_back(absPath);
+        s.pending.push_back(absPath);
+    }
+    if (s.lru.size() > kCap) { // LRU 逐出（队首 = 最旧）
+        if (s.device) s.device->WaitIdle(); // #99：在途帧可能采样——批量逐出共一次停等
+        while (s.lru.size() > kCap) {
+            const std::string old = s.lru.front();
+            s.lru.pop_front();
+            if (auto oit = s.map.find(old); oit != s.map.end()) {
+                Destroy(oit->second); // 借用项 rhi=0：只删表项不碰页内纹理
+                s.map.erase(oit);
+            }
         }
     }
     return nullptr;

@@ -284,6 +284,9 @@ private:
     void SmokeTplSteer(uint64_t frame, ecs::InputState& in);
     void SmokeTplSample(uint64_t frame);
     bool SmokeTplVerdict();
+    /// #28：第二项目检查（重副作用——OpenProjectPipeline 切走会话），压轴在
+    /// 全部只读裁决（FinalVerdict/overlay/SmokeUirmlVerdict）之后调
+    bool SmokeTplSecondProjectCheck();
     /// 批④ 收口（g_tplSmoke 单 TU 化——结构体退回 EditorAppSmokeTpl.cpp）：Run
     /// 渲染段层序捕获块挂点化（挂点原位、时序逐位不变）+ FeedGameUiInput 的
     /// 指针保持窗读点（随 UI 桥外迁后经此访问器读）
@@ -430,6 +433,10 @@ private:
     char smokeUiEvText_[48] = {}; // 批③c：uiev 回读快照（Play 中的 RtUi 槽——退 Play
                                   // 后 play world 即毁，终帧前捕获）
     bool gameFollowActive_ = false; // 游戏相机跟随已吸附（UpdateGameCameraFollow）
+    // #27：跟随目标缓存（逐帧轻校验，失效才全池重扫——原每帧线性全扫）
+    ecs::Entity camFollowEnt_ = ecs::Entity::Null();
+    ecs::Entity playerFollowEnt_ = ecs::Entity::Null();
+    ecs::Entity scriptedFollowEnt_ = ecs::Entity::Null();
     EditTool tool_ = EditTool::Move;
     // 网格显示与吸附解耦（手测第五轮）：旧 gridSnap_ 一flag两用——想看网格就被迫
     // 吃 8px/15°/0.25 全套吸附台阶（= "8 向拖动不丝滑"主因）。Godot/Unity 语义：

@@ -41,7 +41,8 @@ namespace {
 // 存储刚需不变）----
 struct TplSmokeState {
     int waveStarts = 0, levelUps = 0, deaths = 0;
-    int gems = 0, mobs = 0; // 峰值快照（帧内采样）
+    int gems = 0, mobs = 0;      // 当前采样窗计数（60 帧重置；#83）
+    int gemsPeak = 0, mobsPeak = 0; // 历史峰值（窗口计数取 max——原只加不清冒充峰值）
     // 批③d 前置 T5 → 批③d-1/③d-2 随迁：模板场景现挂 6 UIDocument（HUD/cards/
     // main/pause/settings/results）——零装载护栏升级为"通道 A 装载恰 6"（装载点
     // 单一性防线的同型收紧；bench 场景仍零装载）
@@ -624,6 +625,11 @@ void EditorApp::SmokeTplSample(uint64_t frame) {
                 [](auto, ecs::Collectible&) { ++g_tplSmoke.gems; });
             ctx_.ActiveScene().View<ecs::Chase>().each(
                 [](auto, ecs::Chase&) { ++g_tplSmoke.mobs; });
+            // #83：peak 取窗口计数 max 后清窗——原只加不清（60 帧累加和随局时长
+            // 线性增长），diag 行标"peak"语义失真
+            g_tplSmoke.gemsPeak = std::max(g_tplSmoke.gemsPeak, g_tplSmoke.gems);
+            g_tplSmoke.mobsPeak = std::max(g_tplSmoke.mobsPeak, g_tplSmoke.mobs);
+            g_tplSmoke.gems = g_tplSmoke.mobs = 0;
         }
     }
 }
@@ -681,7 +687,7 @@ bool EditorApp::SmokeTplVerdict() {
                     g_tplSmoke.resumedOk ? "YES" : "NO", g_tplSmoke.tomenuOk ? "YES" : "NO",
                     tplOk ? "OK" : "FAIL");
         std::printf("[lemon] smoke-template: diag %s gems(peak)=%d mobs(peak)=%d\n",
-                    g_tplSmoke.hudRows, g_tplSmoke.gems, g_tplSmoke.mobs);
+                    g_tplSmoke.hudRows, g_tplSmoke.gemsPeak, g_tplSmoke.mobsPeak);
         bool verdictOk = tplOk;
         // ExitPlay 兜底落盘（写路径）：Stop 后 .lemon/saves/ 三档——slot_0 =
         // 旧 game.sav 惰性迁移后落新名（迁移链闭环：内容含种子键）；meta =
@@ -732,6 +738,13 @@ bool EditorApp::SmokeTplVerdict() {
         // 第一个逐项一致（换项目注册表复位）。修复前第二个项目整体后移上个
         // 项目的精灵数 → 场景烘焙引用悬空、玩家/怪物全不渲染（demo/svr-test
         // 实测 +31；自动重开上次项目后走新建向导 = 稳定触发路径）。
+        // #28：本块是重副作用（OpenProjectPipeline 切走整个会话），已拆为独立
+        // 压轴函数 SmokeTplSecondProjectCheck（在全部只读裁决之后调）。
+    return verdictOk;
+}
+
+// ---- 批④后修②第二项目检查（#28 拆出；调用点 = 全部只读裁决之后）----
+bool EditorApp::SmokeTplSecondProjectCheck() {
 #ifdef LEMON_SCRIPT_DIR
         {
             auto SnapshotIds = [](const AssetDatabase& db) {
@@ -766,10 +779,11 @@ bool EditorApp::SmokeTplVerdict() {
             }
             std::printf("[lemon] smoke-template: second-project ids %s => %s\n",
                         idOk ? "identical" : "DRIFTED", idOk ? "OK" : "FAIL");
-            verdictOk = verdictOk && idOk;
+            return idOk;
         }
+#else
+        return true;
 #endif
-    return verdictOk;
 }
 
 // ---- --smoke-template 层序三拍捕获（批③d-1：动态时点——SmokeTplSample 证据

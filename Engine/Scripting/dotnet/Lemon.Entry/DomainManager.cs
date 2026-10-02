@@ -46,6 +46,7 @@ internal static unsafe class DomainManager
     private static ScriptAlc? s_alc;
     private static WeakReference? s_alcWeak;
     private static Assembly? s_asm;
+    private static string? s_loadedPath; // 幂等分支核对用（#57：不同路径的重复 load 拒绝）
     private static volatile TickFn? s_tickFn;
     private static double s_tickResult = double.NaN;
 
@@ -93,7 +94,13 @@ internal static unsafe class DomainManager
         string err = null;
         Post(() => {
             try {
-                if (s_alc != null) { ok = true; return; } // 已加载（幂等）
+                if (s_alc != null) { // 已加载（幂等）——但不同路径不是幂等是请求错装（#57）
+                    if (!string.Equals(s_loadedPath, assemblyPath, StringComparison.OrdinalIgnoreCase)) {
+                        err = "已装载 " + s_loadedPath + "，重复 load 不同路径被拒（先 unload/reload）";
+                        return;
+                    }
+                    ok = true; return;
+                }
                 var alc = new ScriptAlc();
                 var asm = alc.LoadFromAssemblyPath(assemblyPath);
                 // 换域清注册表/事件订阅 + 装配入口约定：GameMain.Configure()（无则无脚本系统）
@@ -105,12 +112,16 @@ internal static unsafe class DomainManager
                 Lemon.Time.Reset(); // M5 清障①：新局归零（编辑器重进 Play 走 lemon_time_reset 同语义）
                 asm.GetType("GameMain")?.GetMethod("Configure", BindingFlags.Public | BindingFlags.Static)
                    ?.Invoke(null, null);
+                // "TestScript.Tick" = 测试台架入口（tests/script 消费；用户游戏走
+                // 批量系统通道）——通用宿主对测试类的耦合是登记债（#18 半边：
+                // 解耦需 load 命令带类型名参数，动 C++/C# 协议，随 M7a 宿主抽象）
                 var tick = asm.GetType("TestScript")?.GetMethod("Tick", BindingFlags.Public | BindingFlags.Static);
                 if (tick != null)
                     s_tickFn = tick.CreateDelegate<TickFn>(); // 教训 7：托管委托缓存，禁 GetFunctionPointer
                 s_asm = asm;
                 s_alcWeak = new WeakReference(alc);
                 s_alc = alc;
+                s_loadedPath = assemblyPath;
                 ok = true;
             } catch (Exception e) {
                 // 域线程异常就地捕获（Post 会把 cmd.Error 原样重抛到 UCO 线程——
@@ -134,7 +145,7 @@ internal static unsafe class DomainManager
             // Scripting/Events/SceneOps 静态表仍根住旧 ALC 类型 → Unload 后 GC
             // 永远收不净、weak.IsAlive 恒真。与 LoadScript 的清理口径对称）
             Post(() => {
-                s_tickFn = null; s_asm = null; s_alc = null;
+                s_tickFn = null; s_asm = null; s_alc = null; s_loadedPath = null;
                 Lemon.Scripting.Reset();
                 Lemon.Events.Reset();
                 Lemon.UI.Reset();
@@ -192,7 +203,7 @@ internal static unsafe class DomainManager
                 Lemon.UI.Reset();
                 Lemon.SceneOps.Reset();
                 Lemon.Time.Reset();
-                s_tickFn = null; s_asm = null; s_alc = null;
+                s_tickFn = null; s_asm = null; s_alc = null; s_loadedPath = null;
             });
             var weak = s_alcWeak;
             s_alcWeak = null;
@@ -230,14 +241,17 @@ internal static unsafe class DomainManager
         return s_tickResult;
     }
 
-    /// <summary>批量帧执行（域线程；M3-3 档②）。异常吞掉并红字——批量 tick 不因脚本异常失败。</summary>
+    /// <summary>批量帧执行（域线程；M3-3 档②）。异常红字不重抛——批量 tick 不因
+    /// 脚本异常失败。原注释宣称"Batch 内部已做异常隔离"对 attach 路径不成立
+    /// （构造器裸奔）且错误被静默丢弃 = 脚本哑火零诊断——改红字（#15）。</summary>
     internal static void PostBatch(Action run)
     {
         if (s_onDomainThread.Value) { run(); return; }
         var cmd = new Command { Run = run };
         s_queue.Add(cmd);
         cmd.Done.Wait();
-        // cmd.Error 不上抛：Batch 内部已做异常隔离与禁用记账
+        if (cmd.Error != null)
+            Console.Error.WriteLine("[lemon] 域命令异常（已拦，保进程）：" + cmd.Error.Message);
     }
 
     // ---- 热路径命令池（GC 纪律 04 §5：每帧命令对象/闭包/事件句柄 = ~200B/帧分配，
@@ -264,6 +278,24 @@ internal static unsafe class DomainManager
     }
 
     private static void EvtBody() => Lemon.Events.DispatchPackets(s_ePkts, s_eCount);
+
+    private static unsafe Lemon.UiEvent* s_uiPkts;
+    private static int s_uiCount;
+    private static readonly Action s_uiEvtBody = UiEvtBody;
+    private static readonly Command s_uiEvtCmd = new() { Run = s_uiEvtBody };
+
+    private static void UiEvtBody() => Lemon.UI.DispatchEvents(s_uiPkts, s_uiCount);
+
+    /// <summary>UI 事件段派发（池化，零分配；域线程）。UI.Events 订阅 handler 是
+    /// 用户 ALC 代码——与 PostBatchEvents 同线程契约（ADR-010 D1；原导出内联
+    /// 执行击穿"卸载线程从未触碰 ALC"前提，#14）。</summary>
+    internal static unsafe void PostUiEvents(Lemon.UiEvent* pkts, int count)
+    {
+        s_uiPkts = pkts; s_uiCount = count;
+        RunPooled(s_uiEvtCmd);
+        if (s_uiEvtCmd.Error != null)
+            Console.Error.WriteLine("[lemon] UI 事件派发异常（已拦，保进程）：" + s_uiEvtCmd.Error.Message);
+    }
 
     private static void RunPooled(Command cmd)
     {

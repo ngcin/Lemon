@@ -217,6 +217,7 @@ struct UiSubsystem::Impl {
         Rml::Element* container = nullptr;
         Rml::Element* tpl = nullptr;  // <template> 元素（display:none 持续压制）
         Rml::Element* proto = nullptr;// 行根原型（template 首个元素子）
+        std::string templateName;     // 定型模板名（#72：复用携带不同名 = 契约错）
         std::set<std::string> fields; // 模板字段集（data-field + class {{}} 占位）
         std::unordered_map<std::string, Rml::Element*> itemRoots; // 稳定 key → 克隆根
     };
@@ -228,9 +229,8 @@ struct UiSubsystem::Impl {
         Rml::ElementDocument* doc = nullptr;
         bool shown = false;
         bool modal = false;             // M1 模态标记（事件携带 + 让出面）
-        bool shownDuringPlay = false;   // 批③d 前置 stale 位：只在 ApplyOps 的 Show
-                                        // op 置位（C# 动态 Show 来源）——EnterPlay 归位
-                                        // 观测位；清场判据 2026-09-29 升级为 origin
+        // （原 stale 位 shownDuringPlay 已删——清场判据 2026-09-29 升级为 origin，
+        // 该位遗留后只写不读，#74）
         uint8_t origin = (uint8_t)UiDocOrigin::Scene; // 装载来源（R10 启用——
                                         // ResetDynamicDocuments/HideNonEditDocuments
                                         // 判据；装载时定，重载不变）
@@ -399,8 +399,18 @@ struct UiSubsystem::Impl {
         const std::string ck = docName + "/" + containerId;
         auto it = containers.find(ck);
         if (it != containers.end()) {
-            if (it->second.container && it->second.container->GetOwnerDocument() == d.doc)
+            if (it->second.container && it->second.container->GetOwnerDocument() == d.doc) {
+                // #72：容器态首条 SetItems 定型——后续携带不同 templateName 被静默
+                // 忽略、沿用首模板克隆，违背响亮失败纪律 → 记契约错
+                if (it->second.templateName != templateName) {
+                    ContractFail("container '%s' 已定型模板 '%s'，SetItems 携带 '%s' 被拒"
+                                 "（容器模板不可换；需换 = 文档侧重命名容器）",
+                                 ck.c_str(), it->second.templateName.c_str(),
+                                 templateName.c_str());
+                    return nullptr;
+                }
                 return &it->second;
+            }
             containers.erase(it); // 文档已换实例（重载）——旧元素句柄全死，重建
         }
         Rml::Element* container = d.doc->GetElementById(Rml::String(containerId));
@@ -439,6 +449,7 @@ struct UiSubsystem::Impl {
         cs.container = container;
         cs.tpl = tpl;
         cs.proto = proto;
+        cs.templateName = templateName;
         // 字段集：data-field 名 + 全子树 class {{}} 占位（响亮失败的 "has:" 集合）
         std::vector<Rml::Element*> stack{proto};
         while (!stack.empty()) {
@@ -623,9 +634,11 @@ bool UiSubsystem::Init(rhi::Device& device, rhi::Format rtFormat, void* sdlWindo
         }
     }
     if (i.fontFamily.empty()) {
-        LEMON_ERROR("ui-subsystem: 系统字体链全败（Hiragino/STHeiti/Songti）——"
-                    "③b 将随引擎带 Noto Sans CJK；本会话 UI 层不可用");
-        return false;
+        // #23：系统字体链（macOS 路径）只是兜底——THIRD_PARTY/③b 登记意图 = 引擎
+        // Noto 主字、系统链降级。非 macOS 全链缺席时禁用整个 UI 层 = 主/兜底倒置：
+        // 宿主（编辑器/独立运行时）Init 成功后即注册自带正字，此处只红字降级不失败。
+        LEMON_WARN("ui-subsystem: 系统字体链缺席——UI 层照常初始化；宿主须在装载文档前"
+                   " LoadFontFace 注册自带字体（编辑器 = 引擎 Noto Sans SC）");
     }
     // 设备丢失：后端先重建（注册序在前），本层随后重生字体图集 + 按底稿重载文档
     // （文档重载 → RmlUi 重编译几何——池是新的，旧几何句柄已随设备死）。
@@ -689,7 +702,6 @@ bool UiSubsystem::LoadDocumentFromMemory(const char* name, const char* rmlText,
     entry.doc = doc;
     entry.shown = false;
     entry.modal = false;
-    entry.shownDuringPlay = false; // 新装载 = 新鲜态（stale 归零）
     entry.origin = (uint8_t)origin;
     entry.showSeq = 0;             // D1：层序从装载序起步
     i.AttachListener(entry);
@@ -717,7 +729,6 @@ bool UiSubsystem::LoadDocumentFromFile(const char* name, const char* absPath,
     entry.doc = doc;
     entry.shown = false;
     entry.modal = false;
-    entry.shownDuringPlay = false; // 新装载 = 新鲜态（stale 归零）
     entry.origin = (uint8_t)origin;
     entry.showSeq = 0;             // D1：层序从装载序起步
     i.AttachListener(entry);
@@ -837,7 +848,6 @@ void UiSubsystem::ResetDynamicDocuments(const std::vector<std::string>& declared
         }
         d.shown = false;
         d.showSeq = 0;
-        d.shownDuringPlay = false; // stale 清
     }
 }
 
@@ -852,7 +862,6 @@ uint32_t UiSubsystem::HideNonEditDocuments() {
         }
         d.shown = false;
         d.showSeq = 0;
-        d.shownDuringPlay = false; // stale 清（下局声明/C# Show 重置）
     }
     return hidden;
 }
@@ -886,7 +895,6 @@ void UiSubsystem::ApplyOps(const UiOpC* ops, uint32_t count, const char* arena,
         switch ((UiOpType)op.type) {
         case UiOpType::Show:
             d->modal = (op.flags & 1) != 0; // M1 模态标记（让出面/事件携带）
-            d->shownDuringPlay = true;      // stale：EnterPlay 归位判据（C# 动态 Show）
             d->doc->Show();
             d->doc->PullToFront(); // D1 甲-轻量：层级序 = 最近 Show 序（装载序为初值）
             d->shown = true;
@@ -1135,6 +1143,11 @@ bool UiSubsystem::TryGetElementAttrF(const char* docName, const char* elementId,
 void UiSubsystem::SetDpReferenceHeight(uint32_t refH) {
     if (!impl_) return;
     impl_->dpRefH = refH;
+    if (refH == 0 && impl_->dpRatio != 1.0f) {
+        // #73：改回 0 = 不缩放契约（px=dp）——旧比率须复位，否则 ctx 挂着旧缩放
+        impl_->dpRatio = 1.0f;
+        if (impl_->ctx) impl_->ctx->SetDensityIndependentPixelRatio(1.0f);
+    }
 }
 
 uint32_t UiSubsystem::DpReferenceHeight() const {

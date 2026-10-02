@@ -798,7 +798,11 @@ void InspectorPanel::OnGui(EditorApp& app) {
                                 break;
                             }
                         }
+                        // #94：换绑入结构轨——ScriptBox 不入 ComponentRegistry（属性轨
+                        // 够不到），相邻挂载/移除都有 Undo，同槽换类型不得裸奔
+                        const std::string before = ctx.SnapshotSceneJson();
                         ctx.SetSlotScript(e, i, guid, n.c_str());
+                        if (!ctx.Playing()) ctx.PushStructuralUndo("换绑脚本", before);
                     }
                     ImGui::EndCombo();
                 }

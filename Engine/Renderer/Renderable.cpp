@@ -244,8 +244,12 @@ std::span<const SpritePacket> RenderableManager::Extract(const AtlasRegistry& at
     if (anyOrder_) {
         for (uint32_t si = 0; si < slotCount_; ++si) {
             uint32_t s0 = slots_[si].cursor - slots_[si].count;
-            std::sort(packets_.begin() + s0, packets_.begin() + slots_[si].cursor,
-                      [](const SpritePacket& a, const SpritePacket& b) { return a.sortKey < b.sortKey; });
+            // stable（#45）：sortKey 末 24 位装创建序——16.7M 次创建后回绕产生
+            // 同键并列，非稳定 sort 帧间可变（alpha 混合闪跳）；stable 并列按池序
+            std::stable_sort(packets_.begin() + s0, packets_.begin() + slots_[si].cursor,
+                             [](const SpritePacket& a, const SpritePacket& b) {
+                                 return a.sortKey < b.sortKey;
+                             });
         }
     }
 

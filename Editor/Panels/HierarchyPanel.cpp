@@ -269,11 +269,21 @@ bool HierarchyPanel::PassFilter(ecs::Scene& s, ecs::Entity e, const char* filter
 }
 
 bool HierarchyPanel::SubtreeMatches(ecs::Scene& s, ecs::Entity e, const char* filter) {
+    // #35：递归全子树（原只看直接子节点——A→B→C→D 搜 D 名时 SubtreeMatches(A)
+    // 只验 B，根被过滤掉后匹配实体永不可见）。深度帽 64 防坏档环链（SubtreeSizeOf
+    // 同款），命中即短路。
     if (!filter[0]) return true;
+    return SubtreeMatchesRec(s, e, filter, 0);
+}
+
+bool HierarchyPanel::SubtreeMatchesRec(ecs::Scene& s, ecs::Entity e, const char* filter,
+                                       int depth) {
+    if (depth > 64) return false; // 环链防线（正常树高远低于此）
     const ecs::Hierarchy* h = s.TryGet<ecs::Hierarchy>(e);
     if (!h) return false;
     for (ecs::Entity c = h->firstChild; !c.IsNull() && s.Alive(c);) {
         if (PassFilter(s, c, filter)) return true;
+        if (SubtreeMatchesRec(s, c, filter, depth + 1)) return true;
         const ecs::Hierarchy* ch = s.TryGet<ecs::Hierarchy>(c);
         c = ch && !ch->next.IsNull() ? ch->next : ecs::Entity::Null();
     }

@@ -159,7 +159,10 @@ struct ImGuiBackend::Impl {
 
     void ApplyScale(float newScale) {
         scale = newScale;
-        SetupStyle(scale);
+        // #25：主题铺设计值（k=1），DPI 缩放只走 ScaleAllSizes 一道——原 ApplyTheme(k)
+        // 已把全部尺寸乘 k 再 ScaleAllSizes(k) 追乘 = 密度 2.0（Retina）时间距/圆角
+        // = 设计值 ×4 的双重缩放
+        SetupStyle(1.0f);
         ImGui::GetStyle().ScaleAllSizes(scale); // 1.92：尺寸缩放（字体另行重栅格化）
         RebuildFonts(scale);
     }

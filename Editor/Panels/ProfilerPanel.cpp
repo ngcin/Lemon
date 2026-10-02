@@ -38,35 +38,40 @@ void ProfilerPanel::OnGui(EditorApp& app) {
 
     // GPU 时间戳（EnableTimestamps 于启动开启）
     const rhi::FrameTiming gpu = app.Device().LastFrameTiming();
-    ImGui::Text("GPU %.2f ms   CPU(fps) %.0f", gpu.valid ? gpu.gpuMs : -1.0f,
-                ImGui::GetIO().Framerate);
+    if (showGpu_) // #92：原死控件（只写不读）——接线 = 门控 GPU 时间行
+        ImGui::Text("GPU %.2f ms   CPU(fps) %.0f", gpu.valid ? gpu.gpuMs : -1.0f,
+                    ImGui::GetIO().Framerate);
+    else
+        ImGui::Text("CPU(fps) %.0f", ImGui::GetIO().Framerate);
 
     ImGui::Separator();
     // 系统表（与 --stats 同一数据源；执行序 = 注册序）
-    if (!ImGui::BeginTable("sys", 4,
-                           ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders |
-                               ImGuiTableFlags_SizingStretchProp))
-        return;
-    ImGui::TableSetupColumn("system");
-    ImGui::TableSetupColumn("last", ImGuiTableColumnFlags_WidthFixed, 70);
-    ImGui::TableSetupColumn("max", ImGuiTableColumnFlags_WidthFixed, 70);
-    ImGui::TableSetupColumn("runs", ImGuiTableColumnFlags_WidthFixed, 80);
-    ImGui::TableHeadersRow();
-    // ActiveWorld：Play 中 = Play World（真正在 Step 的世界），否则 = 编辑世界
-    // （BUG-2：读 World() 恒为不 Step 的编辑世界，Play 时系统表恒空）
-    for (const ecs::SystemProfile& p : ctx.ActiveWorld().Pipeline().Profiles()) {
-        if (p.runs == 0) continue;
-        ImGui::TableNextRow();
-        ImGui::TableNextColumn();
-        ImGui::TextUnformatted(p.name);
-        ImGui::TableNextColumn();
-        ImGui::Text("%.3f", p.lastMs);
-        ImGui::TableNextColumn();
-        ImGui::Text("%.3f", p.maxMs);
-        ImGui::TableNextColumn();
-        ImGui::Text("%llu", (unsigned long long)p.runs);
+    // #91：BeginTable 失败不得早退跳过 ImGui::End()（窗口栈失衡——当前 flags 下
+    // 不可达，加滚动 flag 即触发，ImGui 契约地雷）
+    if (ImGui::BeginTable("sys", 4,
+                          ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders |
+                              ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("system");
+        ImGui::TableSetupColumn("last", ImGuiTableColumnFlags_WidthFixed, 70);
+        ImGui::TableSetupColumn("max", ImGuiTableColumnFlags_WidthFixed, 70);
+        ImGui::TableSetupColumn("runs", ImGuiTableColumnFlags_WidthFixed, 80);
+        ImGui::TableHeadersRow();
+        // ActiveWorld：Play 中 = Play World（真正在 Step 的世界），否则 = 编辑世界
+        // （BUG-2：读 World() 恒为不 Step 的编辑世界，Play 时系统表恒空）
+        for (const ecs::SystemProfile& p : ctx.ActiveWorld().Pipeline().Profiles()) {
+            if (p.runs == 0) continue;
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextUnformatted(p.name);
+            ImGui::TableNextColumn();
+            ImGui::Text("%.3f", p.lastMs);
+            ImGui::TableNextColumn();
+            ImGui::Text("%.3f", p.maxMs);
+            ImGui::TableNextColumn();
+            ImGui::Text("%llu", (unsigned long long)p.runs);
+        }
+        ImGui::EndTable();
     }
-    ImGui::EndTable();
 
     ImGui::Spacing();
     // C# GC 纪律（§6 #7）：每帧托管分配 = GcAllocated 差分；> 0 红字（04 §5 热路径零分配）

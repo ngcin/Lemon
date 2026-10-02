@@ -93,8 +93,10 @@ uint32_t NativeSpriteOfGuid(const char* guidHex) {
 }
 
 uint64_t NativeSpawnSprite(uint32_t spriteId, float x, float y) {
-    // 就地建实体（当帧 C# 批量块已构造完毕，新实体下帧可见——与 SceneOps 命令缓冲
-    // 的跨帧生效语义一致；省去占位句柄两段式）。Meta.guid=0 = 运行时生成实体。
+    // 就地建实体：当帧 C# 批量块已构造完毕 → 新实体对后续系统下帧可见，比
+    // SceneOps 命令缓冲（帧首生效）晚一拍的可见性是有意为之（省占位句柄两段式），
+    // 是 04 §「结构变更全走命令缓冲」成文语义的登记偏差（#56—— Instantiate.Spawn
+    // 同径）。Meta.guid=0 = 运行时生成实体。
     if (!g_scene) return 0;
     ecs::Entity e = g_scene->Create();
     auto& tf = g_scene->Emplace<ecs::Transform2D>(e);
@@ -480,14 +482,12 @@ bool ScriptHost::Initialize(const char* dotnetRoot, const char* runtimeConfigPat
 
     const char* kType = "Lemon.Entry.Exports, Lemon.Entry";
     dmLoad_ = (int (*)(const char*))host_.GetExport(kType, "lemon_dm_load");
-    dmUnload_ = (int (*)())host_.GetExport(kType, "lemon_dm_unload");
     // M4.5 换装族导出（旧宿主程序集无这些导出 = 空指针，热重载 API 返回失败态）
     dmReload_ = (int (*)(const char*, int*, int*))host_.GetExport(kType, "lemon_dm_reload");
     hrReloadsFn_ = (int (*)())host_.GetExport(kType, "lemon_hr_reloads");
     hrLeaksFn_ = (int (*)())host_.GetExport(kType, "lemon_hr_leaks");
     batchCountFn_ = (int (*)())host_.GetExport(kType, "lemon_batch_count");
     batchQueryFn_ = (int (*)(int, uint8_t*, int))host_.GetExport(kType, "lemon_batch_query");
-    batchTickFn_ = (void (*)(BatchSystemFrame*, int))host_.GetExport(kType, "lemon_batch_tick");
     eventsDispatchFn_ =
         (void (*)(const ecs::EventPacket*, int))host_.GetExport(kType, "lemon_events_dispatch");
     eventsPullFn_ = (int (*)(ecs::EventPacket*, int))host_.GetExport(kType, "lemon_events_pull");
@@ -515,7 +515,7 @@ bool ScriptHost::Initialize(const char* dotnetRoot, const char* runtimeConfigPat
     else if (auto reg = (void (*)(const NativeApiVtable*))host_.GetExport(
             kType, "lemon_api_register"))
         reg(&kNativeApi);
-    return dmLoad_ && dmUnload_ && batchCountFn_ && batchQueryFn_ && batchTickFn_ &&
+    return dmLoad_ && batchCountFn_ && batchQueryFn_ &&
            eventsDispatchFn_ && eventsPullFn_ && scriptsTickFn_ && scriptsAttachFn_ &&
            scriptsDestroyFn_ && opsPullFn_;
 }
@@ -581,7 +581,8 @@ void ScriptHost::PullBatchRegistry() {
 void ScriptHost::TickBatch(ecs::World& world, ecs::Scene& scene, float dt) {
     if (!userLoaded_ || !scriptsTickFn_) return;
     if (!batchPulled_) PullBatchRegistry(); // 惰性拉取（此时 World 已构造 = 注册表就绪）
-    if (batch_.empty() && !scriptsNeedTick_) return;
+    // 注：批量帧为空也继续——档① behaviours 可能存在（scriptsNeedTick_ 早退从未
+    // 接线已删，见 ScriptHost.h；空场景成本登记 M7a）
 
     auto& reg = ecs::ComponentRegistry::Instance();
     entBuf_.clear();
@@ -650,7 +651,8 @@ void ScriptHost::TickBatch(ecs::World& world, ecs::Scene& scene, float dt) {
     }
 
     // 档①+档② 一帧固定序：Start/Update → 批量 → LateUpdate（域线程；ADR-010 D1）
-    if (!frameBuf_.empty() || scriptsNeedTick_) {
+    // 无条件调（批量帧空时档① behaviours 仍需 tick）
+    {
         NativeApiWindow win(&world, &scene);
         scriptsTickFn_(frameBuf_.data(), (int)frameBuf_.size(), dt);
         // 回读禁用位（域线程已同步返回，栅栏保证可见）
@@ -894,6 +896,9 @@ void ScriptHost::NotifyPendingDestroys(ecs::World& world, ecs::Scene& scene) {
     // 在统一提交点前补发：DestroyQueueTag ∩ ScriptBox 且未通知过的实体。
     // 恰好一次由 kScriptFlagDestroyNotified 保证（脚本命令路径 ApplyStructural 已
     // 通知并置位）。池内部序遍历 = 确定序（回放两侧同源）。
+    // 迭代器不变量（#52）：循环体内跑任意托管 OnDestroy——当前所有导出（spawn/
+    // attach/destroy）都只投递命令不就地改池，View 迭代安全靠这一前提成立。日后
+    // vtable 若加"同步 native Destroy/Attach"导出，本循环必须先收集再回调。
     if (!scriptsDestroyFn_) return;
     NativeApiWindow win(&world, &scene);
     // 空 tag 不进 each() 载荷（entt 3.15 语义）——DestroyQueueTag 只作过滤器

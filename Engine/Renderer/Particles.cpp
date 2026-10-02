@@ -116,8 +116,13 @@ std::span<const SpritePacket> ParticleSystem::Extract(const AtlasRegistry& atlas
 
     for (uint32_t i = 0; i < alive_; ++i) {
         const ParticleData& p = pool_[i];
-        if (p.pos.x < view.min.x || p.pos.x > view.max.x || p.pos.y < view.min.y ||
-            p.pos.y > view.max.y)
+        // 剔除含粒子自身半径（#9）：渲染尺寸 = Lerp(size0,size1,t) 像素宽高，取
+        // 生命期较大端 + 旋转保守半对角线（RenderableManager 同口径）——原中心点
+        // 测试 + 硬编码 64px margin，大粒子（光晕/雾类）在屏幕边缘整颗突失
+        const float halfDiag =
+            0.70710678f * std::max(p.size0, p.size1); // √2/2（正方形粒子半对角线）
+        if (p.pos.x + halfDiag < view.min.x || p.pos.x - halfDiag > view.max.x ||
+            p.pos.y + halfDiag < view.min.y || p.pos.y - halfDiag > view.max.y)
             continue;
         // spriteId 无效（未设默认 0/越界/空洞退役号）= 不渲染，与 RenderableManager
         // 同语义（Unity Sprite=None）；EmitterConfig 默认 0，无此过滤 GetSprite(0) 必断言

@@ -20,11 +20,17 @@
 #include <cstdint>
 #include <vector>
 
-#include "Components/CoreComponents.h"
 #include "Core/FunctionRef.h"
 #include "Core/Math.h"
 #include "ECS/Entity.h"
-#include "ECS/Scene.h"
+
+// #66：Scene/Transform2D 前置声明收口——原整含 ECS/Scene.h + CoreComponents.h
+// 把 entt.hpp 传递扩散给 Physics2D 的全部消费者（01 §5 头文件纪律同族缺口；
+// 完整收口仍待 Scene.h 本身的 EnTT pimpl 化，见 review #43 登记项）
+namespace lemon::ecs {
+class Scene;
+struct Transform2D;
+}
 
 namespace lemon::physics2d {
 

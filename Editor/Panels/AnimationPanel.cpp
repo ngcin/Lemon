@@ -454,7 +454,7 @@ void AnimationPanel::DrawFilmstrip(EditorApp& app, bool ro, int playFrame) {
             }
             ImGui::EndPopup();
         }
-        // 拖拽源（重排）：拖到目标帧前插入（src<dst 插入位回退一格）
+        // 拖拽源（重排）：拖到目标帧前插入
         if (ImGui::BeginDragDropSource()) {
             ImGui::SetDragDropPayload("LemonAnimFrame", &i, sizeof(int));
             ImGui::Text("帧 %d", i);
@@ -466,8 +466,12 @@ void AnimationPanel::DrawFilmstrip(EditorApp& app, bool ro, int playFrame) {
                 if (src != i) {
                     const ClipFrame f = edit_.frames[(size_t)src];
                     edit_.frames.erase(edit_.frames.begin() + src);
-                    edit_.frames.insert(edit_.frames.begin() + i, f);
-                    selFrame_ = src < i ? i - 1 : i;
+                    // #36：统一"插到目标帧前"——原 src<i 分支 insert(i) 实为插到
+                    // 目标之后（拖到相邻下一帧表现为两帧交换）且选中位按回退算，
+                    // 注释/实现/高亮三者矛盾；erase 后目标帧在 i-1，前插 = i-1
+                    const int dst = src < i ? i - 1 : i;
+                    edit_.frames.insert(edit_.frames.begin() + dst, f);
+                    selFrame_ = dst;
                     selSet_.clear();
                     dirty_ = true;
                     saveMsg_.clear();

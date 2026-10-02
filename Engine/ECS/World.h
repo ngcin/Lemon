@@ -27,7 +27,7 @@
 
 namespace lemon::ecs {
 
-// ---- Game RT UI 最小通道（M5 批① D6；M8 打包 HUD 复用同通道）------------------
+// ---- Game RT UI 最小通道（M5 批① D6；M7a 出包 HUD 复用同通道）------------------
 // World 级定长槽（8 × key/text/frac）：C# Lemon.Ui.Set 写入，编辑器 GameView /
 // 打包 HUD 读出。命中 key 即覆写、空槽即占、满槽忽略；text 截断 47 字符。
 // 呈现层专用——不入 StateHash（ComputeStateHash 只哈希 Scene），EnterPlay 新建
@@ -191,7 +191,7 @@ public:
 
     // ---- 游戏存档通道（M5 批④ D1；M6a 批② T5 分档三通道——SaveChannel 头说明）----
     // C# Lemon.Save 写读（Chan 参数 → Saves(ch)）；IO 归宿主（编辑器钩子/打包
-    // 运行时 M8）。不入 StateHash。默认无参 = slot（既有调用点零改兼容）。
+    // 运行时 M7a；OS 用户目录位 M8）。不入 StateHash。默认无参 = slot（既有调用点零改兼容）。
     SaveChannel& Saves() { return saves_[kSaveSlot]; }
     const SaveChannel& Saves() const { return saves_[kSaveSlot]; }
     SaveChannel& Saves(uint8_t ch) { return saves_[ClampSaveChannel(ch)]; }

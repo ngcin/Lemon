@@ -27,7 +27,7 @@ using UiTextureResolver =
 /// 文档解析器（批③d 前置，通道 B / ADR-014 M1）：C# UI.Show 的文档名（relPath
 /// 惯例）未装载时现场解析（relPath → absPath）供 ApplyOps 兜底装载——治时序与
 /// 场景未声明的动态屏。安装方 = 编辑器（AssetDatabase FindByPath）；未安装的
-/// 宿主（M8 前裸运行时）维持响亮失败（EditorAssetHooks 先例形态）。
+/// 宿主（M7a 独立运行时落地前为裸运行时）维持响亮失败（EditorAssetHooks 先例形态）。
 using UiDocumentResolver =
     std::function<bool(const std::string& relPath, std::string& absPath)>;
 

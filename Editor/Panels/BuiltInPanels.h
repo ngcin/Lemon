@@ -49,6 +49,8 @@ private:
     void CommitRename(EditorApp& app, ecs::Entity e, bool apply);
     static bool PassFilter(ecs::Scene& s, ecs::Entity e, const char* filter);
     static bool SubtreeMatches(ecs::Scene& s, ecs::Entity e, const char* filter);
+    static bool SubtreeMatchesRec(ecs::Scene& s, ecs::Entity e, const char* filter,
+                                  int depth); // #35：递归实现（深度帽 64 防坏档环链）
 
     std::string filter_;
     std::unordered_set<uint64_t> openedOnce_;

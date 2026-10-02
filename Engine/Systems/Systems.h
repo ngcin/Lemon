@@ -1,6 +1,6 @@
-// Lemon 引擎 — 03 §4 系统管线 17 系统（13 真实现 + 4 里程碑占位）
-// 占位（空 Tick，保管线位置/执行序/F3 可见）：Director(M5 波次)、
-// Navigation(M6 FlowField)、CSharpBatch(M3)、Extract 侧无。
+// Lemon 引擎 — 03 §4 系统管线 20 系统（#67：AnimGraph/Tween/Audio 尾插后未回头
+// 改头注——原"17 系统（13 真实现 + 4 里程碑占位）"计数失真）。里程碑占位仅剩
+// Navigation(M6 FlowField)；Extract 侧仍无真实现（M7a 批③ 搬运，review #6）。
 // 并行系统均为"逐实体读邻居/配置、只写自身"模式（01 §3.1 原生并行形态②/③）：
 // 切分 = 组件池 packed 下标，块内独立、无共享写 → 与确定性回放兼容。
 #pragma once
@@ -50,7 +50,8 @@ private:
         uint32_t id;
         std::vector<TargetEntry> list;
         /// 网格桶最近邻（2026-09-25）：many-vs-many 场（红蓝对抗：13500 查询者 ×
-        /// 6500 候选 ≈ 25ms）暴露线性全扫的墙。Rebuild 建 CSR 桶（cell 64px），
+        /// 6500 候选 ≈ 25ms）暴露线性全扫的墙。Rebuild 建 CSR 桶（cell 32px——
+        /// 2026-09-26 五万场从 64 收窄），
         /// Nearest 环搜（ring min 距离平方 ≥ bestD2 即停）——密场 O(邻域桶)。
         /// 列表 < kMinList 保留线性快径 = 存量场景（survivor 查单玩家）行为
         /// 逐位不变。等距平局语义：线性保池序靠前者；网格保环扫序先见者——

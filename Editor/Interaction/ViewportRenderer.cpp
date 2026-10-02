@@ -283,6 +283,20 @@ rhi::Texture ProceduralAtlas::BuildIconPage(rhi::Device& device) {
 }
 
 // ------------------------------------------------------------- 调色板页 ----
+void ProceduralAtlas::ReleaseGpu(rhi::Device& device) {
+    // #95：换项目复位路径的旧代显式释放——Reset()+Build() 覆盖句柄 ≠ 释放资源，
+    // 每次项目切换净漏 3 张纹理（调色板/图标/字体页；字体页句柄只在 registry，
+    // 须在 Reset 前取回）。设备丢失路径不走这里（句柄已死，直接 Reset 重建）。
+    // 采样器不释放（RHI 无 DestroySampler API，对象轻量）——Build 会重建覆盖。
+    device.WaitIdle(); // 在途帧可能采样旧页
+    uint32_t w = 0, h = 0;
+    if (rhi::Texture f = atlas_.AtlasTexture(font_.AtlasSlot(), w, h); f.IsValid())
+        device.DestroyTexture(f);
+    if (page_.IsValid()) device.DestroyTexture(page_);
+    if (iconPage_.IsValid()) device.DestroyTexture(iconPage_);
+    page_ = iconPage_ = {};
+}
+
 void ProceduralAtlas::Build(rhi::Device& device) {
     constexpr uint32_t kPageW = kPaletteSprites * kCellPx; // 512×64
     constexpr uint32_t kPageH = kCellPx;

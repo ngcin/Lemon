@@ -58,7 +58,10 @@ flowchart TB
 
 1. **依赖只能向下**。编辑器依赖内核，内核绝不依赖编辑器；C# 与 C++ 只通过"桥"模块交互。
 2. **Vulkan 零泄漏**（借 MoteurJV 门面纪律）：Vulkan/VMA 类型只允许出现在 `Renderer/RHI/*.cpp` 与 `Renderer/*.cpp` 的实现文件中；一切头文件只暴露自有句柄类型（`HwTexture`、`HwBuffer`、`ShaderHandle`…）。将来若加 Metal 后端，上层一行不改。
-3. **C# ↔ C++ 边界只有两条通道**：批量 API（C# 主动调，块级数据进出）与事件队列（C++ 收集、帧末批量派发给 C#）。**禁止**逐实体逐帧跨语言调用（详见 04 文档 §4）。
+3. **C# ↔ C++ 边界通道族**（2026-10-02 修订注记，review #42：原文「只有两条通道」
+   为 M3 时点口径，随 M5/M6 演进实际长成通道族——批量 API vtable（46 槽，尾加纪律）、
+   结构命令缓冲、UI ops/事件对、生命周期钩子表，明细见 §8 与 04 §4）。不变式仍成立：
+   **禁止逐实体逐帧跨语言调用**（批量进出 + 帧级队列的初衷不变，详见 04 文档 §4）。
 4. **单一数据事实源**：场景/资产格式只有一份 schema，编辑器、运行时、C# SDK 读同一格式。渲染不做"编辑器预览版实现"（杜绝 yami 双实现漂移）。
 
 ## 2. 帧循环：固定步长模拟 + 双缓冲插值渲染
@@ -146,6 +149,16 @@ struct ISystem { virtual void OnStage(SystemStage, World&, float dt) = 0; };
 > 依赖治理规则：新增第三方库必须在 07 文档追加行（用途/许可/版本/锁定方式），并在 PR 描述回答"为什么不由引擎自研或裁剪"。**红线：不引入 DI 容器/服务注册器**（继承 Prowl 规划的架构原则；显式 Context 传参）。
 
 ## 5. 引擎目录结构（仓库级纪律）
+
+> **2026-10-02 修订（review #101）**：下树为 M0 设计基准。实际演进差异（以仓库为准）：
+> `Math/` 并入 `Core/Math.h`（仅 2D 数学单头足够）；`Input/` 并入 `ECS/Input.h`
+>（输入快照直挂 World）；`Navigation/`、`Engine/Assets/` 尚未建立（M6d / M7a 批②）；
+> `Renderer/` 无 `RHI/`、`Batch/`、`Particles/`、`Text/`、`Passes/` 子目录（RHI/
+> Batch/Particles/BitmapFont 皆平铺单文件，Shaders/ 在位）；新增 `Platform/`（窗口/
+> SDL 装配）、`Ui/`（RmlUi 集成，ADR-014）、`Scripting/dotnet/{Lemon.Entry,Lemon.SDK}`
+>（原规划的顶层 `CSharp/` 收进 Scripting）；`External/` 由 `~/.cache/Lemon-CPM` +
+> `Engine/Scripting/host`（vendored 头）承担；`Tools/` 现为 `tools/`。M7a 批⑧ 收官时
+> 按实况重绘本树并删除本注记。
 
 ```
 Lemon/

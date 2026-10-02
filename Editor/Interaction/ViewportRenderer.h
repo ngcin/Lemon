@@ -79,6 +79,9 @@ public:
     static constexpr uint32_t kIconPx = 32; // 形状页图标边长
 
     void Build(rhi::Device& device); // 页纹理 + 采样器 + 图集槽 0 / 字体槽 1 / 图标槽 2
+    /// #95：换项目 Reset+Build 前释放旧代活体纹理（字体页经 registry 取回）；
+    /// 设备丢失路径禁用（句柄已死）
+    void ReleaseGpu(rhi::Device& device);
     AtlasRegistry& Registry() { return atlas_; }
     const AtlasRegistry& Registry() const { return atlas_; }
     BitmapFont& Font() { return font_; }

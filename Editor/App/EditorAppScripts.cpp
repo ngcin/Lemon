@@ -76,6 +76,9 @@ bool EditorApp::OpenProjectPipeline(const std::string& projectRoot) {
     // 自动重开上个项目的新建向导流是稳定触发路径）。与设备重建回调同配方：
     // Reset + Build 复原内置页（spriteId 1..N 恒定）→ 下方按 DB 记账号接续导入。
     // 首次打开 = 幂等重建（同号）；既有项目的 id 稳定性仍由 manifest 记账保证。
+    // #95：Reset 覆盖句柄 ≠ 释放——先显式释放旧代活体纹理（须在 Reset 前，
+    // 字体页句柄只在 registry 里）
+    viewport_->Assets().ReleaseGpu(*device_);
     viewport_->Assets().Registry().Reset();
     viewport_->Assets().Build(*device_);
     viewport_->RebindProceduralIcons();
