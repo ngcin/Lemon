@@ -1702,12 +1702,18 @@ void TestUiSdk() {
         Expect(std::strcmp(CapStr(opItems.s1), "cards") == 0 &&
                    std::strcmp(CapStr(opItems.s2), "card") == 0,
                "ui: op2 容器/模板名命中");
-        // 行块解码（引擎 UiSubsystem::SetItems 同款口径）：每行 = key + 字段
+        // 行块解码（引擎 UiSubsystem::SetItems 同款口径）：每行 = key + 字段。
+        // 2026-10-03 收紧为字节精确对拍：key/值均以多字节字符结尾（"选项乙"9B、
+        // "移速加成"/"磁力提升"12B）——批① #22/#60 的编码回退若误剪完整码点或留
+        // 悬空导引字节，长度即不等，此处必红（原仅查 valLen 范围，坏串漏网）
         const uint8_t* rp = (const uint8_t*)CapStr(opItems.s3);
-        const char* keys[2] = {"opt0", "opt1"};
+        const struct { const char* key; const char* val; } rows[2] = {
+            {"opt0", "移速加成"}, {"选项乙", "磁力提升"}};
         for (int r = 0; r < 2; ++r) {
             const uint8_t keyLen = *rp++;
-            Expect(keyLen == 4 && std::memcmp(rp, keys[r], 4) == 0, "ui: 行 key 命中");
+            const size_t keyBytes = std::strlen(rows[r].key);
+            Expect(keyLen == keyBytes && std::memcmp(rp, rows[r].key, keyBytes) == 0,
+                   "ui: 行 key 字节精确命中（含 CJK key）");
             rp += keyLen;
             uint16_t fieldCount;
             std::memcpy(&fieldCount, rp, 2);
@@ -1719,7 +1725,9 @@ void TestUiSdk() {
             uint16_t valLen;
             std::memcpy(&valLen, rp, 2);
             rp += 2;
-            Expect(valLen > 0 && valLen < 32, "ui: 字段值长度合理");
+            const size_t valBytes = std::strlen(rows[r].val);
+            Expect(valLen == valBytes && std::memcmp(rp, rows[r].val, valBytes) == 0,
+                   "ui: 字段值 CJK 字节精确（不得截尾/产悬空导引字节）");
             rp += valLen;
         }
         Expect((size_t)(rp - (const uint8_t*)s_uiCapArena.data()) <= s_uiCapArena.size(),

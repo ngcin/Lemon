@@ -281,17 +281,35 @@ public static unsafe class UI
         }
     }
 
+    /// <summary>UTF-8 编码写入 + 字节上限（码点边界截断），返回写入字节数。
+    /// 两个实证约束（2026-10-03 探针）：① GetBytes 目标 span 不足是抛
+    /// ArgumentException 而非截断（.NET 无"写满即止"语义）——常路径须先
+    /// GetByteCount 判容再直写（零分配）；② 真截断只在截断发生时回退：先退
+    /// 延续字节、若停在导引字节上连导引一并退（留导引 = 非法 UTF-8）。**无条件**
+    /// 回退是错的——会把末尾完整多字节字符剪成悬空导引（批① #22/#60 引入的
+    /// 回归：中文 key/label 末字损坏；script-tests 行块字节对拍锁定）。ASCII
+    /// 输出与旧版逐字节相同。</summary>
+    private static int PutUtf8Capped(string s, int cap)
+    {
+        if (Encoding.UTF8.GetByteCount(s) <= cap)
+            return Encoding.UTF8.GetBytes(s.AsSpan(), s_arena.AsSpan(s_arenaLen, cap));
+        byte[] enc = Encoding.UTF8.GetBytes(s); // 低频超限路径（key>255B/值>64KB）
+        int n = Math.Min(enc.Length, cap);
+        while (n > 0 && (enc[n - 1] & 0xC0) == 0x80) n--; // 退延续字节
+        if (n > 0 && (enc[n - 1] & 0xC0) == 0xC0) n--; // 被劈序列的导引字节一并退
+        enc.AsSpan(0, n).CopyTo(s_arena.AsSpan(s_arenaLen, n));
+        return n;
+    }
+
     /// <summary>行块 u8 长度前缀串（key/字段名）。长度 = 实际 UTF-8 **字节数**、
     /// 超 255B 截断退码点边界——原实现写 char 数而字节按 UTF-8 落盘：非 ASCII
     /// （如中文 key）时引擎按字节解码即失步 = 行块整体错位（review 2026-10-02
-    /// #22；UiBridge.h 行块契约明文字节语义）。ASCII 输出与旧版逐字节相同。</summary>
+    /// #22；UiBridge.h 行块契约明文字节语义）。</summary>
     private static void PutStr8(string s)
     {
         PutU8(0); // 占位回填（字节长在截断边界定后才知道）
         int at = s_arenaLen;
-        int n = Encoding.UTF8.GetBytes(s.AsSpan(),
-            s_arena.AsSpan(at, Math.Min(255, s_arena.Length - at)));
-        while (n > 0 && (s_arena[at + n - 1] & 0xC0) == 0x80) n--; // 退到码点边界
+        int n = PutUtf8Capped(s, Math.Min(255, s_arena.Length - at));
         s_arena[at - 1] = (byte)n;
         s_arenaLen = at + n;
     }
@@ -302,11 +320,8 @@ public static unsafe class UI
     private static void PutBytes(string s, int maxBytes)
     {
         // 短串直写（值 ≤64K）；越界截断退码点边界（不产非法 UTF-8 半串——
-        // review 2026-10-02 #60；引擎侧响亮失败可见半串）
-        int n = Encoding.UTF8.GetBytes(s.AsSpan(),
-            s_arena.AsSpan(s_arenaLen, Math.Min(maxBytes, s_arena.Length - s_arenaLen)));
-        while (n > 0 && (s_arena[s_arenaLen + n - 1] & 0xC0) == 0x80) n--;
-        s_arenaLen += n;
+        // review 2026-10-02 #60；判容/回退语义见 PutUtf8Capped 头注）
+        s_arenaLen += PutUtf8Capped(s, Math.Min(maxBytes, s_arena.Length - s_arenaLen));
     }
 
     // ------------------------------------------------- Lemon.Entry 域线程侧 ----

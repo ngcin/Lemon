@@ -85,9 +85,13 @@ public static class GameMain
     {
         Lemon.UI.Show(UiDoc);
         Lemon.UI.SetText(UiDoc, "title", "升级！三选一");
+        // 行块非 ASCII 机器覆盖（批① #22/#60 回归锁，2026-10-03）：key 与值均以
+        // 多字节字符结尾——PutStr8/PutBytes 的编码回退若误剪完整码点（或留悬空
+        // 导引字节），script-tests 行块字节级对拍必红。opt0 保留（smoke-uirml 点击
+        // 注入/SetClass 寻址依赖）；第二行 key 换 CJK（引擎侧 data-key 原样透传）。
         Lemon.UI.SetItems(UiDoc, "cards", "card", new List<Lemon.UiItem> {
-            new() { Key = "opt0", Fields = { ["label"] = "移速+10%" } },
-            new() { Key = "opt1", Fields = { ["label"] = "磁力+25%" } },
+            new() { Key = "opt0", Fields = { ["label"] = "移速加成" } },
+            new() { Key = "选项乙", Fields = { ["label"] = "磁力提升" } },
         });
         Lemon.UI.SetClass(UiDoc, "cards/opt0", "rare", true);
         // 批③d 前置 T5：通道 B——dyn 未装载，Show 落空兜底现载；SetText 同批到达
