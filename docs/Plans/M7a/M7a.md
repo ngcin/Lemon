@@ -25,6 +25,7 @@ Status: planned（批⓪–批⑧ 拆解完毕待开工；决策点 D1–D8 待�
 | 9 | `demo/svr-test` 已入 git（批⓪ R5）。script-spawn FAIL 两因**已清零 2026-10-01**（[核清](../../DevLog/2026-10-01-m7a-prereq-update-guid-collision.md) + [修复](../../DevLog/2026-10-01-m7a-prereq-fix-low32-collision.md)）：①SpawnerBehaviour = `demo/test` 工程的类（用户已删整目录）；svr-test 残留 ui.scene 悬空槽 → 整场景已删；script-spawn 冒烟门控修正（挂装置类先解析，真项目不再恒 FAIL）；②prefab guid 低 32 位碰撞（Player `7e5741_…01`/Mob `7e5710_…01`，Director/BossMob 同 `…02`；前条目十六进制勘误见修复 DevLog）→ 数据修复**三同步**（.meta / manifest 十进制 / GameFlow 常量；新 guid 随机 + 全宽低 32 双重唯一校验）+ 引擎防线**独立落地**（用户拍板不进 M7a 批）：`GenerateUniqueGuid`（发号期全宽 + 同域低 32 唯一）+ Rescan 五域碰撞红字体检（prefab/clip/animset/controller/table 各自键空间，只报不重发）；"键升 u64"被 03 §69 冻结 schema 否决（Spawner/Shooter.prefabId 恒 u32），C# Instantiate 路径本就全宽 | 已收口；孤儿 meta 一条已随清扫策略落地**自动清除**（2026-10-01 第三轮，[DevLog](../../DevLog/2026-10-01-orphan-meta-sweep-and-tombstone-retirement.md)——svr-test 体检红字归零）；回归夹具用 vs-survivor 模板拷贝件（hermetic）不变 |
 | 10 | `Tools/` 目录已存在（editor-regression.sh）；根 CMake 无 `Tools/` 子目录、全仓无 `install()` 规则 | packager 落位 `Tools/packager/` + 新子目录挂载 |
 | 11 | 收官基线（M6c 出口）：回归 full 17 步 / ctest 3/3 / 单测 34036 / script-tests 1771 / bench-survivor fps=82 / vtable 46 槽 / 系统 20 / 组件 id 至 31 | 全里程碑的"零降级"对表基线；**M7a 纪律：vtable/组件 id/系统序零变动 → 金回放零重录预期成立**（例外仅批⑥ 若编辑器侧采纳图集） |
+| 12 | ECS→渲染提取现存**两套实现**且引擎管线 Extract 阶段空转：产品级 `ViewportRenderer::ExtractScene`（`Editor/Interaction/ViewportRenderer.cpp:404`——视口剔除/分桶/sortKey，签名锚 `EditorContext&` 不可直接搬运）+ 样例简化版 `Samples/anim-smoke/main.cpp:139-168`（匿名 namespace 简化版不可链接复用）；`SystemStage::Extract`（`SystemPipeline.h:17`）全仓零实现、`World::Step` 只跑 Essential+FixedTick（review 2026-10-02 #6） | 批③④ 补提取搬运项——漏列则 GameEntry 按计划对标 anim-smoke 极可能写出**第三套**实现 |
 
 ## 2. 决策点（D1–D8，开工日拍板 → ADR-016）
 
@@ -102,6 +103,7 @@ MyGame-mac/                       # 出包根（zip 归 M7b；.app bundle/签名
 | UIDocument 挂载 | `EditorAppUiBridge::MountSceneUiDocuments`（`EditorAppUiBridge.cpp:178-222`；批① D8 修复随迁） | `Engine/Ui/UiMount` |
 | 音频挂载 | `EditorAppScripts::MountPlayAudio/WirePlayAudioBackend`（`EditorAppScripts.cpp:172-298`；EnsureClipLoaded/烤制落 `.lemon/baked/audio/`（目录可写即建——判据允许运行期生成，不允许依赖预存在）/流式分流） | `Engine/Audio/AudioMount` |
 | 相机 follow | `EditorApp::UpdateGameCameraFollow`（`EditorApp.cpp:1060-1109`）纯函数化 | `Engine/`（EditorApp/GameEntry 两薄壳，杜绝双实现漂移） |
+| ECS→渲染提取 | `ViewportRenderer::ExtractScene`（`Editor/Interaction/ViewportRenderer.cpp:404-470`：视口剔除/分桶搬运/sortKey 装配） | `Engine/` 提取下沉（去 `EditorContext&` 锚定改世界参数，`SystemStage::Extract` 首个真实现 + `World::Step` 补跑 Extract 阶段；ViewportRenderer/GameEntry 两薄壳消费——现状盘点 #12 / review 2026-10-02 #6，防第三套实现） |
 
 出口 = 回归 17 步 + 金回放零重录 + 三 smoke 链绿 + 编辑器侧净删行数（diff 佐证）。
 
@@ -109,7 +111,7 @@ MyGame-mac/                       # 出包根（zip 归 M7b；.app bundle/签名
 
 - `Engine/Entry/GameEntry.cpp` + CMake：`add_executable(lemon-game)` 链 lemon-engine + lemon-csharp（**不链 editor-core/ImGui**）。
 - CLI：`--project <dir>`（缺省 = exe 旁 `data/`，包形态零参启动）+ `--scene <rel>` 覆盖 + `--frames N --smoke`（RESULT 行，回归口径）+ fps 采样打印。
-- 装配序列（对标 `Samples/anim-smoke/main.cpp` 循环 + 批②③ 引擎件）：Window → Device/swapchain（pipeline cache 显式传包内可写路径或 null——cwd 相对默认不再触发）→ AssetIndex/TextureStore → AudioEngine → UiSubsystem（字体解析链：包内 `data/Fonts/` → 引擎源树回退）→ ScriptHost::Initialize（entry dll = exe 旁 `runtime/` 定位，**替换 LEMON_SCRIPT_DIR 编译期宏依赖**）→ LoadUserAssembly（dev 形态 `<root>/.lemon/bin/`，构建归编辑器/packager，lemon-game 只消费）→ hooks 三族安装（spriteOfGuid=AssetIndex / instantiatePrefab=PrefabCache / saveFlush=SaveStore / UI hooks=UiSubsystem）→ `SceneArchive::Load(entryScene)` + GUID 归一 → 四缓存 → UiMount/AudioMount → 主循环（InputState 直取 `Window::IsKeyDown` / fixed-step 1/60 / audio tick / camera follow / sprite pass + UI pass 直渲染，D8）。
+- 装配序列（对标 `Samples/anim-smoke/main.cpp` 循环 + 批②③ 引擎件）：Window → Device/swapchain（pipeline cache 显式传包内可写路径或 null——cwd 相对默认不再触发）→ AssetIndex/TextureStore → AudioEngine → UiSubsystem（字体解析链：包内 `data/Fonts/` → 引擎源树回退）→ ScriptHost::Initialize（entry dll = exe 旁 `runtime/` 定位，**替换 LEMON_SCRIPT_DIR 编译期宏依赖**）→ LoadUserAssembly（dev 形态 `<root>/.lemon/bin/`，构建归编辑器/packager，lemon-game 只消费）→ hooks 三族安装（spriteOfGuid=AssetIndex / instantiatePrefab=PrefabCache / saveFlush=SaveStore / UI hooks=UiSubsystem）→ `SceneArchive::Load(entryScene)` + GUID 归一 → 四缓存 → UiMount/AudioMount → 主循环（InputState 直取 `Window::IsKeyDown` / fixed-step 1/60 / audio tick / camera follow / **ECS→渲染提取（批③ 下沉件，`SystemStage::Extract`）** / sprite pass + UI pass 直渲染，D8）。
 - 回归：`tools/editor-regression.sh` 增 game-smoke 步（夹具 = 向导复制 vs-survivor 模板拷贝件，hermetic；17→18）；svr-test 留真人验收。
 
 ### 批⑤ packager 最简 + mac 干净包

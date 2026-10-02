@@ -36,6 +36,11 @@ ClipData ParseClipJson(std::string_view text) {
         const int64_t m = doc.at("loopMode").get<int64_t>();
         out.loopMode = m >= 0 && m <= 2 ? (int)m : 1; // 越界防御 = Loop
     } else {
+        // legacy "loop" 需类型预检（review 2026-10-02 #30）：手写/外部工具常见的
+        // "loop": 1 直接 get<bool>() 会抛 nlohmann type_error 穿透调用链（调用点
+        // 均 bare 调用无 try/catch）= std::terminate——本函数契约"坏档不炸编辑器"
+        if (doc.contains("loop") && !doc.at("loop").is_boolean())
+            return Fail("clip 解析失败：loop 非布尔（手写档请用 true/false）", 0);
         out.loopMode = !doc.contains("loop") || doc.at("loop").get<bool>() ? 1 : 0;
     }
     for (const nlohmann::json& fr : doc.at("frames")) {
@@ -97,9 +102,11 @@ std::string ClipToJson(const ClipData& c) {
         std::snprintf(fpsBuf, sizeof(fpsBuf), "%lld", (long long)c.fps);
     else
         std::snprintf(fpsBuf, sizeof(fpsBuf), "%.1f", c.fps);
-    std::string out = "{\n  \"schemaVersion\": 1,\n  \"name\": \"";
-    out += c.name;
-    out += "\",\n  \"fps\": ";
+    // 名字字段必须经 JsonEscape（review 2026-10-02 #5）——名字含引号/反斜杠时
+    // 原样拼接写出非法 JSON，TrySave 覆写原档即数据丢失
+    std::string out = "{\n  \"schemaVersion\": 1,\n  \"name\": ";
+    out += JsonEscape(c.name);
+    out += ",\n  \"fps\": ";
     out += fpsBuf;
     out += ",\n  \"loop\": ";
     out += c.loopMode != 0 ? "true" : "false";
@@ -175,19 +182,26 @@ AnimSetData ParseAnimSetJson(std::string_view text) {
 
 std::string AnimSetToJson(const AnimSetData& s) {
     if (!s.ok) return {};
-    std::string out = "{\n  \"schemaVersion\": 1,\n  \"name\": \"";
-    out += s.name;
-    out += "\",\n  \"segments\": [";
+    std::string out = "{\n  \"schemaVersion\": 1,\n  \"name\": ";
+    out += JsonEscape(s.name);
+    out += ",\n  \"segments\": [";
+    // 定长 char[128] snprintf 换直接拼接（review 2026-10-02 #5）：段名 >约 63 字符
+    // 被静默截断——下次解析名不符/长度失真；名字同时走 JsonEscape
     for (size_t i = 0; i < s.segments.size(); ++i) {
-        char sg[128];
-        std::snprintf(sg, sizeof(sg),
-                      "%s\n    {\n      \"name\": \"%s\",\n      \"clip\": \"%s\"\n    }",
-                      i ? "," : "", s.segments[i].name.c_str(),
-                      AssetDatabase::GuidToHex(s.segments[i].clipGuid).c_str());
-        out += sg;
+        out += i ? ",\n    {\n      \"name\": " : "\n    {\n      \"name\": ";
+        out += JsonEscape(s.segments[i].name);
+        out += ",\n      \"clip\": \"";
+        out += AssetDatabase::GuidToHex(s.segments[i].clipGuid);
+        out += "\"\n    }";
     }
     out += s.segments.empty() ? "]\n}" : "\n  ]\n}";
     return out;
+}
+
+std::string JsonEscape(std::string_view s) {
+    // 转义规则单源：nlohmann dump（RFC 8259；ensure_ascii=false——中文原样可读）。
+    // 输出含首尾引号，直接作为 JSON 字符串字面量嵌入
+    return nlohmann::json(s).dump();
 }
 
 } // namespace lemon::editor

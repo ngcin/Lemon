@@ -953,7 +953,9 @@ uint32_t UiSubsystem::DrainEvents(UiEventC* dst, uint32_t cap) {
     if (!impl_ || !dst || !cap) return 0;
     Impl& i = *impl_;
     const uint32_t n = (uint32_t)std::min<size_t>(i.events.size(), cap);
-    for (uint32_t k = 0; k < n; ++k) dst[k] = i.events.front();
+    // review 2026-10-02 #3：原实现恒拷 front()——多事件排水时队首被拷 n 份、
+    // 其余 n-1 条静默丢失（RmlUi 复选框单击即同时产 Click+Change 两条）
+    for (uint32_t k = 0; k < n; ++k) dst[k] = i.events[k];
     i.events.erase(i.events.begin(), i.events.begin() + n);
     return n;
 }

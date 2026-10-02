@@ -24,9 +24,13 @@ void Scene::Destroy(Entity e) {
     if (e.IsNull()) return;
     entt::entity ent = ToEntt(e);
     {
-        // 线程安全：ProjectileLifetimeSystem 在 ParallelFor worker 中调用本函数
-        //（裸 vector 并发 push_back 是数据竞争——审计修复）。锁内同时打销毁标记，
-        // 提取/查询层按 DestroyQueueTag 过滤当帧待删实体；Commit 时随 destroy 移除。
+        // 线程安全（2026-09 审计）：裸 vector 并发 push_back 是数据竞争，此处上锁。
+        // 锁只保证不炸，不保证确定：入队序 = 锁获取序。03 §4 契约第 3 条要求并行
+        // 段销毁走"收集意图 → 主线程稳定归并提交"（ProjectileLifetimeSystem 的
+        // chunk 分桶即示范，review 2026-10-02 #2）——CommitDestroys 按入队序执行，
+        // worker 直接调用本函数会让提交序随线程交错漂移，破坏状态哈希/金回放。
+        // 锁内同时打销毁标记，提取/查询层按 DestroyQueueTag 过滤当帧待删实体；
+        // Commit 时随 destroy 移除。
         std::lock_guard<std::mutex> lock(destroyMutex_);
         if (registry_.valid(ent) && !registry_.all_of<DestroyQueueTag>(ent))
             registry_.emplace<DestroyQueueTag>(ent);

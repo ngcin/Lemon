@@ -190,6 +190,9 @@ struct Device::Impl {
         std::function<void(Device&)> fn;
     };
     std::vector<RecreateCallback> recreateCallbacks;
+    // 设备丢失销毁前回调（review 2026-10-02 #24）：与 recreateCallbacks 同构，
+    // 触发点在销毁任何句柄之前（原生对象持有者的合法释放窗口）
+    std::vector<RecreateCallback> preDestroyCallbacks;
     uint64_t nextRecreateCallbackId = 1;
     bool deviceLost = false;
 
@@ -764,11 +767,23 @@ struct Device::Impl {
         LogMsg(LogLevel::Error, "device lost (%s) — rebuilding all GPU state", reason);
         vkDeviceWaitIdle(device); // 尽力而为；丢失态失败不致命
 
+        // 原生对象持有者的合法释放窗口（review 2026-10-02 #24）：设备已丢失但
+        // 句柄未销毁——ImGui_ImplVulkan_Shutdown 等直接释放调用在此规范允许
+        // （丢失设备上可能 no-op）；一旦走完下面的销毁序列就是死句柄 UB
+        for (auto& cb : preDestroyCallbacks) {
+            LEMON_LOG("pre-destroy: %s", cb.name);
+            cb.fn(*ownerDevice);
+        }
+
         DestroyAllGpuState();
         vmaDestroyAllocator(allocator);
         allocator = VK_NULL_HANDLE;
         vkDestroyDevice(device, nullptr);
         device = VK_NULL_HANDLE;
+        // 桥缓存随旧设备整体作废（review 2026-10-02 #1）：不重置则下次
+        // GetInternalBridge 返回已销毁的旧 VkDevice/VmaAllocator，RmlUi 后端
+        // 重建路径在其上创建资源 = UB
+        bridgeFilled = false;
 
         PickPhysicalAndLogical();
         CreateCommandInfrastructure();
@@ -1317,6 +1332,22 @@ Device::RecreateCallbackId Device::AddRecreateCallback(const char* name,
 
 void Device::RemoveRecreateCallback(RecreateCallbackId id) {
     auto& cbs = m->recreateCallbacks;
+    for (size_t i = 0; i < cbs.size(); ++i)
+        if (cbs[i].id == id) {
+            cbs.erase(cbs.begin() + i);
+            return;
+        }
+}
+
+Device::RecreateCallbackId Device::AddPreDestroyCallback(const char* name,
+                                                         std::function<void(Device&)> fn) {
+    uint64_t id = m->nextRecreateCallbackId++; // 与 recreateCallbacks 共用发号器，token 全局唯一
+    m->preDestroyCallbacks.push_back({id, name, std::move(fn)});
+    return id;
+}
+
+void Device::RemovePreDestroyCallback(RecreateCallbackId id) {
+    auto& cbs = m->preDestroyCallbacks;
     for (size_t i = 0; i < cbs.size(); ++i)
         if (cbs[i].id == id) {
             cbs.erase(cbs.begin() + i);

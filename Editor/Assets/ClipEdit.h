@@ -83,4 +83,10 @@ AnimSetData ParseAnimSetJson(std::string_view text);
 /// AnimSetData → .override JSON 文本（ClipToJson 同款手写定版格式）。ok=false 输入 → 空串。
 std::string AnimSetToJson(const AnimSetData& s);
 
+/// JSON 字符串字面量转义（含首尾引号；nlohmann dump 同款规则，非 ASCII 原样保留）。
+/// 手写序列化器嵌名字字段共用（clip/animset/controller）——名字含 `"`/`\`/控制
+/// 字符时不转义会写出非法 JSON，下次解析失败且原档已被覆写 = 数据丢失
+///（review 2026-10-02 #5）
+std::string JsonEscape(std::string_view s);
+
 } // namespace lemon::editor

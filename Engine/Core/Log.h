@@ -39,7 +39,9 @@ uint64_t LogCountOf(LogLevel level);
 #define LEMON_WARN(...) ::lemon::LogMsg(::lemon::LogLevel::Warn, __VA_ARGS__)
 #define LEMON_ERROR(...) ::lemon::LogMsg(::lemon::LogLevel::Error, __VA_ARGS__)
 
-// 不可达/引擎内部不变量破坏：立即终止（不 recover，错误应在开发期暴露）
+// 不可达/引擎内部不变量破坏：立即终止（不 recover，错误应在开发期暴露）。
+// 恒生效（release 不编译掉——01 §7 2026-10-02 收敛口径：错误一律响亮暴露，
+// review 2026-10-02 #20）
 #define LEMON_ASSERT(cond, ...)                                              \
     do {                                                                     \
         if (!(cond)) {                                                       \

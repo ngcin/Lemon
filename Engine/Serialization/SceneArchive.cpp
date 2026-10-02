@@ -160,6 +160,9 @@ Json WriteEntity(Scene& scene, Entity e,
     Json comps = Json::object();
     for (uint16_t id = 0; id < reg.Count(); ++id) {
         const ComponentMeta& m = reg.At(id);
+        // 运行时销毁队列标记永不入档（review 2026-10-02 #10）：空字段组件命中才
+        // 比名，热路径零 strcmp
+        if (m.fieldCount == 0 && std::strcmp(m.name, "DestroyQueueTag") == 0) continue;
         const char* comp = (const char*)m.readFn(scene, e);
         if (!comp) continue;
         Json obj = Json::object();
@@ -198,6 +201,10 @@ void ReadEntity(Scene& scene, const Json& ent, Entity e, const Entity* remap,
             LEMON_WARN("unknown component '%s' skipped (newer scene?)", it.key().c_str());
             continue;
         }
+        // 运行时销毁队列标记拒读（review 2026-10-02 #10）：旧档若含（保存窗口期
+        // 写出），emplace 出无队列项的空标记 = 读档即永生僵尸（CommitDestroys 只
+        // 消费当帧队列，永不回收）
+        if (std::strcmp(m->name, "DestroyQueueTag") == 0) continue;
         if (!it.value().is_object()) continue;
         char* comp = (char*)m->emplaceFn(scene, e);
         const Json& obj = it.value();
@@ -291,7 +298,14 @@ std::string SceneArchive::Save(Scene& scene) {
     // 输出序 = 句柄升序（EnTT 遍历序与创建/回收历史有关，不排序则同一场景
     // 两次 Save 文本漂移，破坏 diff 与 roundtrip 不动点）
     std::vector<Entity> ordered;
-    scene.Each([&](Entity e) { ordered.push_back(e); });
+    // 待销毁实体不入档（review 2026-10-02 #10）：窗口期保存含『死实体』，读档
+    // 复活且永不入队（CommitDestroys 只消费当帧队列）= 每帧 tick 的永生僵尸。
+    // 引擎侧防线——此前只靠调用方"保存前先 Commit"约定，编辑器侧已实录过漏配
+    // 事故（smoke-ui 真人链路）
+    scene.Each([&](Entity e) {
+        if (scene.Has<DestroyQueueTag>(e)) return;
+        ordered.push_back(e);
+    });
     std::sort(ordered.begin(), ordered.end(),
               [](Entity a, Entity b) { return a.id < b.id; });
 
@@ -307,8 +321,13 @@ std::string SceneArchive::Save(Scene& scene) {
 
 std::string SceneArchive::SaveEntityTree(Scene& scene, Entity root) {
     if (!scene.Alive(root)) return {};
+    if (scene.Has<DestroyQueueTag>(root)) return {}; // 待销毁根：导出即死树，拒绝
     std::vector<Entity> subtree;
     CollectSubtree(scene, root, subtree);
+    // 子树内待销毁成员剪除（Save 同款口径，review 2026-10-02 #10）
+    subtree.erase(std::remove_if(subtree.begin(), subtree.end(),
+                                 [&](Entity e) { return scene.Has<DestroyQueueTag>(e); }),
+                  subtree.end());
 
     std::unordered_map<Entity, uint32_t> entityIds;
     for (Entity e : subtree) entityIds.emplace(e, (uint32_t)entityIds.size());

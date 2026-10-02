@@ -63,6 +63,14 @@ static const uint8_t kFont5x7[kGlyphCount * 5] = {
 };
 
 bool BitmapFont::Init(rhi::Device& device, AtlasRegistry& atlas, uint32_t bindlessSlot) {
+    // 槽位冲突走头文件承诺的 return false（review 2026-10-02 #47）——原先实现
+    // 恒 return true，冲突实际由 RegisterAtlas 内 LEMON_ASSERT 中止（release 亦
+    // 然）。先查后建：冲突时不创建纹理不留半登记
+    uint32_t probeW = 0, probeH = 0;
+    if (atlas.AtlasTexture(bindlessSlot, probeW, probeH).IsValid()) {
+        LEMON_WARN("BitmapFont::Init 失败：槽位 %u 已被占用", bindlessSlot);
+        return false;
+    }
     // 页布局：每行 16 字符（16×6=96px），95 字符 → 6 行 ×8 = 48px；页 128×64
     constexpr uint32_t kPageW = 128, kPageH = 64, kCols = 16;
     std::vector<uint8_t> px((size_t)kPageW * kPageH * 4, 0);

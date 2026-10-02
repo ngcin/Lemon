@@ -359,8 +359,17 @@ void EditorApp::EnqueueAudioBake(const AssetEntry& e) {
                     audioBakeQueue_.pop_front();
                 }
                 const auto& [guid, src, dst, loopS, loopE] = job;
-                if (BakeStale(src, dst)) // 入队到执行间可能已被兜底烤过
-                    audio::BakeAudioFile(src.c_str(), dst.c_str(), loopS, loopE);
+                // 工作线程未捕获异常 = std::terminate 崩整个编辑器（review
+                // 2026-10-02 #21）——烤制失败按件隔离，红字后继续吃队列
+                try {
+                    if (BakeStale(src, dst)) // 入队到执行间可能已被兜底烤过
+                        audio::BakeAudioFile(src.c_str(), dst.c_str(), loopS, loopE);
+                } catch (const std::exception& ex) {
+                    LEMON_ERROR("audio: 后台烤制异常中止（%s）：%s", ex.what(),
+                                src.c_str());
+                } catch (...) {
+                    LEMON_ERROR("audio: 后台烤制未知异常：%s", src.c_str());
+                }
                 --audioBakePending_;
             }
         });

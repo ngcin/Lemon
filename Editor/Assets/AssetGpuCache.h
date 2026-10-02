@@ -29,8 +29,10 @@ public:
 
     /// 导入/热重导入一个 sprite 资产（Rescan 的 ChangeSet 消费端）。失败红字。
     void ImportSprite(const AssetEntry& e);
-    /// 文件删除（墓碑）：纹理/缩略图释放（spriteId 号保留在 DB；场景引用悬空
-    /// 由 Inspector 槽红显——不再渲染占位）。
+    /// 文件删除：纹理与缩略图**保留**（"幽灵页"到重启——销毁纹理会使仍指向该
+    /// spriteId 的场景实体采样悬空描述符；spriteId 号保留在 DB，场景引用悬空由
+    /// Inspector 槽红显）。墓碑措辞随 2026-10-01 墓碑退役修订（review
+    /// 2026-10-02 #87 契约对齐：DB 条目同轮出表，本函数只处理 GPU 侧）。
     void Evict(uint64_t guid);
     /// 换项目复位（M5 批④后修②）：旧项目导入页整体释放（纹理/缩略图注销）。
     /// 必须与 AtlasRegistry::Reset 成对——槽位序（firstSlot_+pages_.size()）与

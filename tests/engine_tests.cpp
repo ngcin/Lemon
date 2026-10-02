@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdint>
 #include <algorithm>
+#include <limits>
 
 #include "Audio/AudioChannel.h" // M6c 批②：命令通道（World.h 链亦达，显式声明测试意图）
 #include "Audio/AudioEngine.h"
@@ -1603,6 +1604,37 @@ void TestTargetBoardGridEquivalence() {
     Expect(tied == 0, "random floats must not produce exact ties");
 }
 
+// TargetBoard 坏坐标防御（review 2026-10-02 #19）：NaN/极端坐标（脚本写
+// Transform、手改场景档可达）不得把进程炸掉——原实现 NaN 的 float→int 是 UB、
+// 1e9×1e9 两簇要分配 >百 TB 占位位图 = bad_alloc terminate。修复后：NaN 剪除、
+// 跨度弃格降级线性，Nearest 仍正确返回最近正常目标。
+void TestTargetBoardBadCoordDefense() {
+    World world;
+    Scene& s = world.CreateScene("board-bad");
+    auto spawn = [&s](uint32_t team, Vec2 pos) {
+        Entity e = s.Create();
+        s.Emplace<Transform2D>(e, Transform2D{pos});
+        s.Emplace<Meta>(e).team = team;
+        return e;
+    };
+    // 100 正常点（≥ kMinList=64 触发网格路径）+ NaN / ±Inf / 1e9 三簇毒点
+    Entity near0 = spawn(1, {10.0f, 0.0f});
+    for (int i = 0; i < 99; ++i) spawn(1, {(float)(100 + i * 8), 0.0f});
+    spawn(1, {std::numeric_limits<float>::quiet_NaN(), 0.0f});
+    spawn(1, {0.0f, std::numeric_limits<float>::infinity()});
+    spawn(1, {1e9f, 1e9f});
+    spawn(1, {-1e9f, -1e9f});
+    TargetBoard board;
+    board.DeclareTeams({1u});
+    board.Rebuild(s, false); // 修复前：此处 bad_alloc / UB
+    Expect(board.Nearest(1u, {0.0f, 0.0f}, 500.0f, Entity::Null()) == near0,
+           "bad-coord board still finds nearest sane target");
+    Expect(board.Nearest(1u, {std::numeric_limits<float>::quiet_NaN(), 0.0f}, 500.0f,
+                         Entity::Null())
+               .IsNull(),
+           "NaN query point returns null safely");
+}
+
 // TargetBoard 并行 Rebuild 同构钉板（2026-09-26 并行化批）：大场（≥kParallelMin）
 // 下并行收集/归并/逐队建桶与串行路径逐位一致——list 内容（序+值）强比较 +
 // NearestAny/Nearest 行为对拍。平局布点（同 cell ±8px 等距对）专钉"收集序 = view
@@ -2539,6 +2571,43 @@ void TestVerifySaveExcludesDestroyed() {
     Scene& dst = w2.CreateScene("dead2");
     Expect(SceneArchive::Load(dst, text), "load after destroy ok");
     Expect(dst.AliveCount() == 1, "reload alive count exact");
+
+    // review 2026-10-02 #10：销毁窗口期（已入队未提交）保存——引擎侧防线。
+    // 修复前死实体 + "DestroyQueueTag":{} 一并入档，读档复活成永生僵尸
+    //（Load 后永不入队，CommitDestroys 只消费当帧队列）
+    World w3;
+    Scene& s3 = w3.CreateScene("win");
+    Entity keep3 = s3.Create();
+    s3.Emplace<Transform2D>(keep3, Transform2D{{3, 3}});
+    Entity dying = s3.Create();
+    s3.Emplace<Transform2D>(dying, Transform2D{{4, 4}});
+    s3.Destroy(dying); // 只入队，不提交（真实事故 = 结构轨 after 快照先于清队）
+    std::string text3 = SceneArchive::Save(s3);
+    size_t slots3 = 0;
+    for (size_t p = text3.find("\"Transform2D\""); p != std::string::npos;
+         p = text3.find("\"Transform2D\"", p + 1))
+        ++slots3;
+    Expect(slots3 == 1, "save excludes queued-destroy entity (window)");
+    Expect(text3.find("DestroyQueueTag") == std::string::npos,
+           "save never serializes queue tag");
+    World w4;
+    Scene& dst4 = w4.CreateScene("win2");
+    Expect(SceneArchive::Load(dst4, text3), "load queued-window save ok");
+    Expect(dst4.AliveCount() == 1, "queued-window reload has no zombie");
+    // 旧档防御：手工构造含 DestroyQueueTag 的档（历史版本写出的形态）拒读标记
+    const std::string legacy =
+        "{\"schemaVersion\":2,\"name\":\"lz\",\"entities\":[{\"components\":"
+        "{\"Transform2D\":{\"pos\":[5,5]}},\"DestroyQueueTag\":{}}]}";
+    World w5;
+    Scene& dst5 = w5.CreateScene("lz");
+    Expect(SceneArchive::Load(dst5, legacy), "legacy tag archive loads");
+    Entity first5{};
+    dst5.Each([&](Entity e) {
+        if (first5.IsNull()) first5 = e;
+    });
+    Expect(dst5.AliveCount() == 1 && !first5.IsNull() &&
+               !dst5.Has<DestroyQueueTag>(first5),
+           "legacy tag refused on read (no zombie marker)");
 }
 
 // ---- schema 版本防线 ----
@@ -3410,6 +3479,44 @@ void TestVerifyProjectileLifetime() {
         w.Step(1.0f / 60.0f);
         Expect(!s.Alive(p), "proj: out-of-bounds committed");
     }
+}
+
+// ---- 并行销毁稳定归并（review 2026-10-02 #2）：chunk 分桶归并 = 串行序 ----
+// 同帧多 chunk 投射物半数到期，多 worker 档与单线程档的状态哈希必须逐位一致。
+// 修复前 worker 直接 Destroy：入队序 = 锁获取序（跨线程漂移）→ 提交序漂移 →
+// 池 swap_and_pop 终态与幸存实体 packed 序不定。半数存活使池布局差异进哈希
+// （全灭则两档池皆空、顺序不可见）；偶数下标到期使每个 chunk 都有意图。
+void TestVerifyParallelDestroyDeterminism() {
+    auto run = [](int threads) {
+        WorldDesc d;
+        d.seed = 7;
+        d.threadCount = threads;
+        World w(d);
+        Scene& s = w.CreateScene("pd");
+        w.SetActiveScene(&s);
+        for (int i = 0; i < 4096; ++i) { // 16 chunks @ grain 256
+            Entity e = s.Create();
+            s.Emplace<Transform2D>(e, Transform2D{{(float)(i % 32), (float)(i / 32)}});
+            Projectile& pr = s.Emplace<Projectile>(e);
+            pr.lifetime = 1.0f;
+            pr.age = (i % 2 == 0) ? 1.0f : 0.0f; // 偶下标当帧到期
+        }
+        ProjectileLifetimeSystem sys;
+        sys.Tick(w, s, 1.0f / 60.0f);
+        s.CommitDestroys();
+        Expect(s.AliveCount() == 2048, "pdestroy: half survived");
+        // 槽回收序也须一致：销毁后再创建（entt 从 free_list 取最近销毁槽）
+        for (int i = 0; i < 64; ++i) {
+            Entity e = s.Create();
+            s.Emplace<Transform2D>(e, Transform2D{{0, 0}});
+            Projectile& pr = s.Emplace<Projectile>(e);
+            pr.lifetime = 9.0f;
+        }
+        return ComputeStateHash(s);
+    };
+    const uint64_t hSt = run(1);
+    const uint64_t hMt = run(8);
+    Expect(hSt == hMt, "pdestroy: mt hash == st hash");
 }
 
 // ---- Spawn 配额：maxAlive 有界且稳定 ----
@@ -4450,6 +4557,28 @@ void TestClipEdit() {
     c = ParseClipJson(
         "{\"fps\":8,\"loopMode\":5,\"frames\":[{\"sheet\":\"000000000000000f\",\"cell\":0}]}");
     Expect(c.ok && c.loopMode == 1, "clip loopMode out of range falls back to Loop");
+
+    // review 2026-10-02 #30：legacy loop 非布尔（手写档 "loop":1）预检拒绝——
+    // 原裸 get<bool>() 抛 nlohmann type_error 穿透调用链（无 try/catch）=
+    // std::terminate，违背"坏档不炸编辑器"契约
+    c = ParseClipJson(
+        "{\"fps\":8,\"loop\":1,\"frames\":[{\"sheet\":\"000000000000000f\",\"cell\":0}]}");
+    Expect(!c.ok, "clip non-bool loop rejected (no throw)");
+
+    // review 2026-10-02 #5：名字含引号/反斜杠转义 roundtrip——原样样拼接写出
+    // 非法 JSON，面板保存覆写原档 = 数据丢失；长名不再经定长缓冲
+    c = ParseClipJson(doc);
+    c.name = "atk\"idle\\v2";
+    {
+        const std::string esc = ClipToJson(c);
+        const ClipData rt = ParseClipJson(esc);
+        Expect(rt.ok && rt.name == c.name, "clip quoted/backslash name roundtrip");
+    }
+    c.name = std::string(200, 'n'); // 超一切定长缓冲
+    {
+        const ClipData rt = ParseClipJson(ClipToJson(c));
+        Expect(rt.ok && rt.name == c.name, "clip 200-char name roundtrip");
+    }
 }
 
 // ---- M6a 批② T3c：.override 动画集解析/序列化 + ClipTable 集按名索引 ----
@@ -4481,6 +4610,16 @@ void TestAnimSetAndClipIndex() {
     const AnimSetData back = ParseAnimSetJson(AnimSetToJson(s));
     Expect(back.ok && back.name == s.name && back.segments == s.segments,
            "animset roundtrip after edit");
+
+    // review 2026-10-02 #5：段名引号/反斜杠转义 + 超长段名（原 char[128] 定长
+    // snprintf >约 63 字符静默截断；转义缺失写坏档覆写即数据丢失）
+    s.segments.push_back({"atk\"x\\y", 0x5bd31a7c30000007ull});
+    s.segments.push_back({std::string(100, 's'), 0x5bd31a7c30000008ull});
+    {
+        const AnimSetData rt = ParseAnimSetJson(AnimSetToJson(s));
+        Expect(rt.ok && rt.segments == s.segments,
+               "animset escaped/long segment names roundtrip");
+    }
 
     // 空集合法（新建起步态）+ name 缺省空（面板补文件名）
     s = ParseAnimSetJson("{\"schemaVersion\":1,\"segments\":[]}");
@@ -6475,6 +6614,7 @@ int main() {
     TestSpatialHash();
     TestSpatialHashQueryFastPath();
     TestTargetBoardGridEquivalence();
+    TestTargetBoardBadCoordDefense(); // review 2026-10-02 #19：坏坐标不炸进程
     TestTargetBoardParallelRebuildIsomorphic();
     TestSystemPipelineOrder();
     TestSimulationEndToEnd();
@@ -6510,6 +6650,7 @@ int main() {
     TestVerifyStatEffectsAndXp();
     TestVerifyMovementKnockbackAndClamp();
     TestVerifyProjectileLifetime();
+    TestVerifyParallelDestroyDeterminism(); // review 2026-10-02 #2：并行销毁确定性
     TestVerifySpawnQuota();
     TestVerifyTriggerOnceSemantics();
     TestVerifyNullEntityRefRoundtrip();

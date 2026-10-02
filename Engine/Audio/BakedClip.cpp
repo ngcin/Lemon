@@ -104,7 +104,21 @@ bool BakeAudioFile(const char* srcPath, const char* dstPath, float loopStartSec,
                                    // ma_decoder_read_pcm_frames_data 同款判据）
     size_t gotTotal = 0;
     bool decodeOk = true;
+    // 解码载荷上限（review 2026-10-02 #21）：与装载侧 kMaxBakedPayloadBytes 同源
+    // 1GiB——超长源（≥约 89 分钟立体声）无界解码先炸内存，产物即使写出也永久
+    // 不可载（装载侧拒载且报"字段不一致"误导）。烤制期直白拒绝；上限同时钳住
+    // resize 增长（天量 bad_alloc 防线）
+    const uint64_t maxFrames = kMaxBakedPayloadBytes / (uint64_t(channels) * 2);
     for (;;) {
+        if (uint64_t(gotTotal) + kChunk > maxFrames) {
+            LogMsg(LogLevel::Error,
+                   "audio: 源过长（解码载荷超 %llu 字节上限，约 %.0f 分钟/%u 声道）"
+                   "拒绝烤制：%s",
+                   (unsigned long long)kMaxBakedPayloadBytes,
+                   double(maxFrames) / kMixSampleRate / 60.0, channels, srcPath);
+            ma_decoder_uninit(&dec);
+            return false;
+        }
         pcm.resize(pcm.size() + size_t(kChunk) * channels);
         ma_uint64 got = 0;
         // review 2026-09-30：流中错误（截断/坏帧）此前静默 break 仍落部分产物——
@@ -193,9 +207,18 @@ bool ParseLbaHead(const uint8_t* head, const char* path, BakedClipInfo& outInfo)
     const uint32_t payloadBytes = GetLE32(head + 28);
     // 期望载荷在 64 位域计算（uint32 乘法回绕 = 构造头通过校验，见 kMaxBakedPayloadBytes 注释）
     const uint64_t payloadExpect = uint64_t(frameCount) * channels * 2;
+    if (payloadExpect > kMaxBakedPayloadBytes) { // 单列报错（review 2026-10-02 #21）：
+        // 与其余"字段不一致"分开——超限是内容规模问题不是档损坏，
+        // 用户可裁源重烤；混报误导排障
+        LogMsg(LogLevel::Error,
+               "audio: .baked 载荷超 sane 上限 %llu 字节（约 %.0f 分钟）拒绝装载"
+               "——请裁剪源后重烤：%s",
+               (unsigned long long)kMaxBakedPayloadBytes,
+               double(kMaxBakedPayloadBytes) / (kMixSampleRate * 2) / 60.0, path);
+        return false;
+    }
     if ((channels != 1 && channels != 2) || sampleRate != uint32_t(kMixSampleRate) ||
-        frameCount == 0 || payloadBytes != payloadExpect ||
-        payloadExpect > kMaxBakedPayloadBytes) {
+        frameCount == 0 || payloadBytes != payloadExpect) {
         LogMsg(LogLevel::Error, "audio: .baked 字段不一致（声道/采样率/载荷）：%s", path);
         return false;
     }

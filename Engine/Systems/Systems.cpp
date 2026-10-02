@@ -136,15 +136,23 @@ void TargetBoard::TeamList::Grid::Build(const std::vector<TargetEntry>& list) {
     maxX = maxY = -1;
     occ.clear();
     if (list.size() < kMinList) return; // 线性快径（存量场景行为逐位不变）
-    scratch_.resize(list.size());
+    // 坏坐标防御（review 2026-10-02 #19）：非有限坐标（脚本写 Transform、手改
+    // 场景档可达）静默剪除——原实现对 NaN 的 float→int 是 UB、对 1e9 量级坐标
+    // 会算出天量 bbox。剪后不足建格 → Nearest 线性兜底（occ 空 = 兜底路径）
+    scratch_.clear();
     for (uint32_t i = 0; i < list.size(); ++i) {
-        const int cx = (int)std::floor(list[i].pos.x / kCell);
-        const int cy = (int)std::floor(list[i].pos.y / kCell);
-        scratch_[i] = {TargetCellKey(cx, cy), i};
+        const Vec2 p = list[i].pos;
+        if (!std::isfinite(p.x) || !std::isfinite(p.y)) continue;
+        const int cx = (int)std::floor(p.x / kCell);
+        const int cy = (int)std::floor(p.y / kCell);
+        scratch_.push_back({TargetCellKey(cx, cy), i});
         minX = std::min(minX, cx); maxX = std::max(maxX, cx);
         minY = std::min(minY, cy); maxY = std::max(maxY, cy);
     }
-    const int w = maxX - minX + 1, h = maxY - minY + 1;
+    if (scratch_.size() < kMinList) return;
+    const int64_t spanW = (int64_t)maxX - minX + 1, spanH = (int64_t)maxY - minY + 1;
+    if (spanW * spanH > kMaxCells) return; // 跨度极端（坏数据特征）：弃格降级线性
+    const int w = (int)spanW, h = (int)spanH;
     occ.assign((size_t(w) * h + 63) / 64, 0);
     const auto bitOf = [&](int cx, int cy) {
         const size_t i = size_t(cy - minY) * w + (cx - minX);
@@ -175,6 +183,21 @@ Entity TargetBoard::TeamList::Grid::Nearest(const std::vector<TargetEntry>& list
                                             Entity exclude) const {
     Entity best = Entity::Null();
     float bestD2 = range * range;
+    // 坏查询防御（review 2026-10-02 #19）：NaN 查询点的 float→int 网格换算是 UB
+    if (!std::isfinite(from.x) || !std::isfinite(from.y)) return best;
+    // 未建格（Build 坏坐标剪除 / 跨度弃格）：线性兜底——语义与快径同（严格
+    // 小于 + 池序），坏数据只降性能不丢功能
+    if (occ.empty()) {
+        for (const TargetEntry& te : list) {
+            if (te.e == exclude) continue;
+            const float d2 = LengthSq(te.pos - from);
+            if (d2 < bestD2) {
+                bestD2 = d2;
+                best = te.e;
+            }
+        }
+        return best;
+    }
     const int cx0 = (int)std::floor(from.x / kCell);
     const int cy0 = (int)std::floor(from.y / kCell);
     auto scanCell = [&](int cx, int cy) {
@@ -1159,15 +1182,26 @@ void AnimatorSystem::Tick(World& world, Scene& scene, float dt) {
 void ProjectileLifetimeSystem::Tick(World& world, Scene& scene, float dt) {
     auto& pool = scene.Pool<Projectile>();
     const uint32_t n = (uint32_t)pool.size();
-    world.Jobs().ParallelFor(n, 256, [&](uint32_t b, uint32_t e) {
+    // 并行销毁的稳定归并（03 §4 契约第 3 条；review 2026-10-02 #2）：worker 内
+    // 直接 Destroy 的入队序 = 互斥锁获取序（随线程交错漂移）→ CommitDestroys
+    // 提交序漂移 → 池 swap_and_pop 终态与实体槽回收序不定。改为 chunk 分桶收集
+    // 意图、ParallelFor 返回后主线程按 chunk 序提交（块界 grain 对齐，JobSystem.cpp
+    // 保证；桶内池索引升序）——归并序 = 串行迭代序，与单线程档逐位同构
+    constexpr uint32_t kGrain = 256;
+    chunkIntents_.resize((n + kGrain - 1) / kGrain);
+    for (auto& c : chunkIntents_) c.clear();
+    world.Jobs().ParallelFor(n, kGrain, [&](uint32_t b, uint32_t e) {
+        std::vector<Entity>& out = chunkIntents_[b / kGrain];
         for (uint32_t i = b; i < e; ++i) {
             entt::entity ent = pool[i];
             Projectile& pr = pool.get(ent);
             pr.age += dt;
             if (pr.age < pr.lifetime) continue;
-            scene.Destroy(Scene::FromEntt(ent)); // 两阶段：回收仍走统一提交
+            out.push_back(Scene::FromEntt(ent));
         }
     });
+    for (const auto& bucket : chunkIntents_)
+        for (Entity ent : bucket) scene.Destroy(ent); // 两阶段：回收仍走统一提交
     // 越界回收（有界世界时）：单遍兜底（命中销毁同帧由 Commit 统一）
     if (world.HasBounds()) {
         Rect bounds = world.Bounds().Expanded(64.0f);

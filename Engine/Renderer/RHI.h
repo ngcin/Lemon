@@ -204,6 +204,12 @@ public:
     using RecreateCallbackId = uint64_t;
     RecreateCallbackId AddRecreateCallback(const char* name, std::function<void(Device&)> fn);
     void RemoveRecreateCallback(RecreateCallbackId id);
+    /// 设备丢失销毁前回调（review 2026-10-02 #24）：HandleDeviceLost 在销毁任何
+    /// 句柄前调用——持有原生 VkDevice 对象、不经 RHI 资源表回收的拥有者（编辑器
+    /// ImGui 后端）在此窗口合法释放（丢失态下的销毁调用被规范允许，可能 no-op）。
+    /// 按注册序调用；token/反注册语义与 RecreateCallback 一致。
+    RecreateCallbackId AddPreDestroyCallback(const char* name, std::function<void(Device&)> fn);
+    void RemovePreDestroyCallback(RecreateCallbackId id);
     void SavePipelineCache();                 // preheat 后 / 退出前调用
 
     const DeviceInfo& Info() const;

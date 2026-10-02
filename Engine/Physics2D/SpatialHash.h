@@ -61,7 +61,11 @@ public:
     void OverlapBox(ecs::Scene& scene, Rect box, const QueryFilter& f, float probeRadius,
                     FunctionRef<bool(ecs::Entity, const ecs::Transform2D&)> cb) const;
 
-    /// 射线查询：返回最近命中（DDA 走格 + 圆判定）；无命中 entity.IsNull()
+    /// 射线查询：返回最近命中；无命中 entity.IsNull()。实现 = 沿线段**采样粗扫**
+    ///（步长 = cell 对角线一半 + 邻接 cell 展开）+ 点线垂距精确圆判定，非 DDA
+    /// 走格（DDA 优化待 profile 数据，SpatialHash.cpp 实现头注）。已知边界：
+    /// probeRadius 大于步长（cell/2）时覆盖保守、极端几何下可能漏最近命中
+    ///（review 2026-10-02 #62 契约对齐；当前零调用方，休眠 API）
     RayHit Raycast(ecs::Scene& scene, Vec2 origin, Vec2 dir, float maxDist,
                    const QueryFilter& f, float probeRadius) const;
 

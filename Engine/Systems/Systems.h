@@ -59,6 +59,11 @@ private:
             static constexpr float kCell = 32.0f; // 2026-09-26 五万场：对穿乱斗密场
                                              // 环扫候选减半（64→32 AI 28.5→~15ms）
             static constexpr size_t kMinList = 64;
+            /// bbox 格数上限（review 2026-10-02 #19）：超限 = 极端/坏坐标特征
+            ///（1e9×1e9 两簇 ≈ 百 TB 占位位图 = bad_alloc terminate）。弃格降级
+            /// 线性扫描（occ 空 = Nearest 兜底路径）；1M 格 = 128KB occ，
+            /// 32768px 轴向跨度对 2D 游戏世界已极端宽裕
+            static constexpr int64_t kMaxCells = 1 << 20;
             std::vector<uint64_t> keys;  // 排序唯一 cell 键（(cx<<32)|cy）
             std::vector<uint32_t> offs;  // CSR 偏移（keys.size()+1）
             std::vector<uint32_t> items; // 指向 list 的索引（同 cell 保池序）
@@ -222,6 +227,12 @@ class ProjectileLifetimeSystem final : public ISystem {
 public:
     const char* Name() const override { return "ProjectileLifetime"; }
     void Tick(World& world, Scene& scene, float dt) override;
+
+private:
+    // 并行销毁意图 chunk 分桶（review 2026-10-02 #2；TargetBoard chunkTeams_ 同款
+    // "只增不减"容量策略）：worker 内直接 Destroy 的入队序 = 互斥锁获取序，跨线程
+    // 漂移 → CommitDestroys 提交序漂移 → 池布局/槽回收序不定（03 §4 契约第 3 条）
+    std::vector<std::vector<Entity>> chunkIntents_;
 };
 
 /// #15 C# 批量系统：M3（IForEachSystem 块回调）；占位

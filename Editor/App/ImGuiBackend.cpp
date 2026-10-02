@@ -21,6 +21,8 @@
 #include "Platform/Window.h"
 #include "Renderer/RHI.h"
 
+#include <unordered_set>
+
 namespace lemon::editor {
 
 // ------------------------------------------------------------- 字体来源 ----
@@ -75,9 +77,64 @@ struct ImGuiBackend::Impl {
     float scale = 1.0f;
     std::string iniFilename;      // io.IniFilename 指向本串，须长寿
 
+    // 设备丢失恢复链（review 2026-10-02 #24）：pre-destroy 窗口内 Shutdown（释放
+    // 后端自有 descriptor pool/管线/字体纹理——设备已丢失但句柄未销毁，规范允许），
+    // 重建回调内重新 Init（拿新句柄）。此前两头都不挂 → 重建后全在死句柄上跑
+    rhi::Device::RecreateCallbackId preDestroyCb = 0;
+    rhi::Device::RecreateCallbackId recreateCb = 0;
+    bool vulkanInited = false;
+    // 经 RegisterViewportTexture 发出的描述符集记账：1.92.9b 的 AddTexture/RemoveTexture
+    // 是无注册表的旧式 API——RemoveTexture 盲目 vkFreeDescriptorSets(当前池)。设备
+    // 重建后旧调用方手里的旧代集若直接释放 = 外来集 UB，须跳过（集已随旧池销毁）
+    std::unordered_set<void*> liveViewportSets;
+
     void SetupStyle(float scale) {
         // M4.7a：主题单点（Tooling/Theme——Unity 深色系；本函数不再自写色值）
         theme::ApplyTheme(scale);
+    }
+
+    // ImGui_ImplVulkan_Init 与其 InitInfo 组装（Init 与设备重建回调共用）
+    bool InitVulkanBackend() {
+        rhi::VulkanInteropHandles vi = device->GetVulkanInterop();
+        ImGui_ImplVulkan_InitInfo info{};
+        info.ApiVersion = vi.apiVersion;
+        info.Instance = (VkInstance)vi.instance;
+        info.PhysicalDevice = (VkPhysicalDevice)vi.physicalDevice;
+        info.Device = (VkDevice)vi.device;
+        info.QueueFamily = vi.queueFamily;
+        info.Queue = (VkQueue)vi.queue;
+        info.DescriptorPoolSize = 512; // 后端自建池（FREE_DESCRIPTOR_SET 位由后端置位）。
+        // T3d 64→256（资产缩略图逐张 AddTexture，svr-test 111 帧图曾 OUT_OF_POOL）→
+        // T3-UX4 256→512：FilePicker 缩略图网格叠加（128 LRU + 资产页 + 视口句柄；
+        // 描述符集轻量，宽给防 OUT_OF_POOL；与 kMaxTextureSlots 同批口径）
+        info.MinImageCount = vi.swapchainImageCount;
+        info.ImageCount = vi.swapchainImageCount;
+        info.UseDynamicRendering = true; // 引擎动态渲染（无 renderPass 对象），RHI.cpp 同款约定
+        info.MinAllocationSize = 1024 * 1024;
+        info.CheckVkResultFn = [](VkResult err) {
+            if (err != VK_SUCCESS)
+                LEMON_WARN("imgui-vulkan: VkResult %d", (int)err);
+        };
+        VkFormat colorFmt = ToVkFormat(device->SwapchainFormat());
+        VkPipelineRenderingCreateInfo prci{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
+        prci.colorAttachmentCount = 1;
+        prci.pColorAttachmentFormats = &colorFmt;
+        info.PipelineInfoMain.PipelineRenderingCreateInfo = prci;
+        info.PipelineInfoForViewports.PipelineRenderingCreateInfo = prci; // 多视口未启用，仅占位
+
+        if (!ImGui_ImplVulkan_Init(&info)) {
+            LEMON_WARN("ImGui_ImplVulkan_Init failed");
+            return false;
+        }
+        vulkanInited = true;
+        return true;
+    }
+
+    void ShutdownVulkanBackend() {
+        if (!vulkanInited) return;
+        vulkanInited = false;
+        liveViewportSets.clear(); // 全部旧代集随后端 descriptor pool 一并销毁
+        ImGui_ImplVulkan_Shutdown();
     }
 
     void RebuildFonts(float scale) {
@@ -156,43 +213,32 @@ bool ImGuiBackend::Init(Window& window, rhi::Device& device, const char* iniDir,
     }
     window.SetEventObserver(&Impl::EventThunk, nullptr);
 
-    rhi::VulkanInteropHandles vi = device.GetVulkanInterop();
-    ImGui_ImplVulkan_InitInfo info{};
-    info.ApiVersion = vi.apiVersion;
-    info.Instance = (VkInstance)vi.instance;
-    info.PhysicalDevice = (VkPhysicalDevice)vi.physicalDevice;
-    info.Device = (VkDevice)vi.device;
-    info.QueueFamily = vi.queueFamily;
-    info.Queue = (VkQueue)vi.queue;
-    info.DescriptorPoolSize = 512; // 后端自建池（FREE_DESCRIPTOR_SET 位由后端置位）。
-    // T3d 64→256（资产缩略图逐张 AddTexture，svr-test 111 帧图曾 OUT_OF_POOL）→
-    // T3-UX4 256→512：FilePicker 缩略图网格叠加（128 LRU + 资产页 + 视口句柄；
-    // 描述符集轻量，宽给防 OUT_OF_POOL；与 kMaxTextureSlots 同批口径）
-    info.MinImageCount = vi.swapchainImageCount;
-    info.ImageCount = vi.swapchainImageCount;
-    info.UseDynamicRendering = true; // 引擎动态渲染（无 renderPass 对象），RHI.cpp 同款约定
-    info.MinAllocationSize = 1024 * 1024;
-    info.CheckVkResultFn = [](VkResult err) {
-        if (err != VK_SUCCESS)
-            LEMON_WARN("imgui-vulkan: VkResult %d", (int)err);
-    };
-    VkFormat colorFmt = ToVkFormat(device.SwapchainFormat());
-    VkPipelineRenderingCreateInfo prci{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
-    prci.colorAttachmentCount = 1;
-    prci.pColorAttachmentFormats = &colorFmt;
-    info.PipelineInfoMain.PipelineRenderingCreateInfo = prci;
-    info.PipelineInfoForViewports.PipelineRenderingCreateInfo = prci; // 多视口未启用，仅占位
+    if (!m->InitVulkanBackend()) return false;
 
-    if (!ImGui_ImplVulkan_Init(&info)) {
-        LEMON_WARN("ImGui_ImplVulkan_Init failed");
-        return false;
-    }
+    // 设备丢失恢复链（review 2026-10-02 #24）：本后端是全编辑器唯一持有原生
+    // VkDevice 对象却不注册任何重建回调的持有者——丢失重建后 ImGui_ImplVulkan
+    // 内部 descriptor pool/字体纹理/管线全绑旧死句柄。注册序：本 Init 先于
+    // viewport_/gameUi_ 等 → 重建回调最先执行，后续持有者重注册视口纹理时
+    // 后端已就绪
+    Impl* impl = m.get();
+    m->preDestroyCb = device.AddPreDestroyCallback("imgui-backend-predestroy", [impl](rhi::Device&) {
+        impl->ShutdownVulkanBackend();
+    });
+    m->recreateCb = device.AddRecreateCallback("imgui-backend", [impl](rhi::Device&) {
+        if (!impl->InitVulkanBackend())
+            LEMON_ERROR("imgui-backend: 设备重建后 ImGui_ImplVulkan_Init 失败——"
+                        "后续帧 UI 渲染将不可用");
+    });
     return true;
 }
 
 void ImGuiBackend::Shutdown() {
     if (!ImGui::GetCurrentContext()) return;
-    ImGui_ImplVulkan_Shutdown();
+    if (m->device) { // 反注册先于 ShutdownVulkanBackend（回调捕获的是 Impl*，须防悬垂）
+        m->device->RemovePreDestroyCallback(m->preDestroyCb);
+        m->device->RemoveRecreateCallback(m->recreateCb);
+    }
+    m->ShutdownVulkanBackend();
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();
     if (m->window) m->window->SetEventObserver(nullptr, nullptr);
@@ -251,12 +297,15 @@ void ImGuiBackend::BeginFrame(Window& window) {
         if (textIn_) ImGui::GetIO().AddInputCharactersUTF8(textIn_);
         textIn_ = nullptr;
     }
-    ImGui_ImplVulkan_NewFrame();
+    if (m->vulkanInited) { // 重建回调 Init 失败的降级态：跳过后端 NewFrame 防断言中止
+        ImGui_ImplVulkan_NewFrame();
+    }
     ImGui::NewFrame();
 }
 
 void ImGuiBackend::Render(rhi::CommandList& cl) {
     ImGui::Render();
+    if (!m->vulkanInited) return; // 降级态：draw data 已构建，跳过 Vulkan 录制
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(),
                                     (VkCommandBuffer)cl.NativeCommandBuffer());
 }
@@ -271,12 +320,19 @@ void* ImGuiBackend::RegisterViewportTexture(uint32_t rhiTextureId) {
     if (!view) return nullptr;
     // 描述符集句柄 = ImTextureID（1.92 Vulkan 后端纹理通道；SHADER_READ 布局与
     // EndPass 的离屏转换一致）
-    return (void*)ImGui_ImplVulkan_AddTexture((VkImageView)view,
-                                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    void* set = (void*)ImGui_ImplVulkan_AddTexture((VkImageView)view,
+                                                   VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    if (set) m->liveViewportSets.insert(set);
+    return set;
 }
 
 void ImGuiBackend::UnregisterViewportTexture(void* imguiTexId) {
-    if (imguiTexId) ImGui_ImplVulkan_RemoveTexture((VkDescriptorSet)imguiTexId);
+    if (!imguiTexId) return;
+    // 只释放本代登记的集（review 2026-10-02 #24）：设备重建后调用方手里的旧代
+    // 集已随旧池销毁——1.92 RemoveTexture 无注册表、盲目对当前池 vkFree，
+    // 外来集 = UB，必须跳过
+    if (m->liveViewportSets.erase(imguiTexId) == 0) return;
+    ImGui_ImplVulkan_RemoveTexture((VkDescriptorSet)imguiTexId);
 }
 
 } // namespace lemon::editor

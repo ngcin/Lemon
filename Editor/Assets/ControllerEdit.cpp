@@ -3,6 +3,7 @@
 
 #include <cstdio>
 
+#include "Assets/ClipEdit.h" // JsonEscape（名字字段转义单源，review 2026-10-02 #5）
 #include "nlohmann/json.hpp"
 
 namespace lemon::editor {
@@ -165,15 +166,17 @@ ControllerData ParseControllerJson(std::string_view text) {
 
 std::string ControllerToJson(const ControllerData& c) {
     if (!c.ok) return {};
-    std::string out = "{\n  \"schemaVersion\": 1,\n  \"name\": \"";
-    out += c.name;
-    out += "\",\n  \"params\": [";
+    // 名字字段（name/entry/状态名/param 名）一律经 JsonEscape，from/to 拼接弃用
+    // 定长 char[192]（>约 163 字符静默截断；review 2026-10-02 #5）
+    std::string out = "{\n  \"schemaVersion\": 1,\n  \"name\": ";
+    out += JsonEscape(c.name);
+    out += ",\n  \"params\": [";
     for (size_t i = 0; i < c.params.size(); ++i) {
         const ControllerParamEdit& p = c.params[i];
         out += i ? ",\n    " : "\n    ";
-        out += "{ \"name\": \"";
-        out += p.name;
-        out += "\", \"kind\": \"";
+        out += "{ \"name\": ";
+        out += JsonEscape(p.name);
+        out += ", \"kind\": \"";
         out += KindName(p.kind);
         if (p.def != 0.0f) {
             out += "\", \"def\": ";
@@ -184,22 +187,21 @@ std::string ControllerToJson(const ControllerData& c) {
         }
     }
     out += c.params.empty() ? "]" : "\n  ]";
-    out += ",\n  \"entry\": \"";
-    out += c.entry.empty() ? (c.states.empty() ? "" : c.states[0]) : c.entry;
-    out += "\",\n  \"states\": [";
+    out += ",\n  \"entry\": ";
+    out += JsonEscape(c.entry.empty() ? (c.states.empty() ? std::string() : c.states[0])
+                                      : c.entry);
+    out += ",\n  \"states\": [";
     for (size_t i = 0; i < c.states.size(); ++i) {
         out += i ? ", " : "";
-        out += "\"";
-        out += c.states[i];
-        out += "\"";
+        out += JsonEscape(c.states[i]);
     }
     out += "],\n  \"transitions\": [";
     for (size_t i = 0; i < c.transitions.size(); ++i) {
         const ControllerTransitionEdit& t = c.transitions[i];
-        char head[192];
-        std::snprintf(head, sizeof(head), "%s\n    { \"from\": \"%s\", \"to\": \"%s\"",
-                      i ? "," : "", t.from.c_str(), t.to.c_str());
-        out += head;
+        out += i ? ",\n    { \"from\": " : "\n    { \"from\": ";
+        out += JsonEscape(t.from);
+        out += ", \"to\": ";
+        out += JsonEscape(t.to);
         if (t.exitTime) out += ", \"on\": \"exitTime\"";
         if (!t.conds.empty()) {
             out += ", \"when\": [";
@@ -207,13 +209,13 @@ std::string ControllerToJson(const ControllerData& c) {
                 const ControllerCondEdit& cd = t.conds[j];
                 out += j ? ", " : "";
                 if (cd.op == 5) {
-                    out += "{ \"trigger\": \"";
-                    out += cd.param;
-                    out += "\" }";
+                    out += "{ \"trigger\": ";
+                    out += JsonEscape(cd.param);
+                    out += " }";
                 } else {
-                    out += "{ \"param\": \"";
-                    out += cd.param;
-                    out += "\", \"";
+                    out += "{ \"param\": ";
+                    out += JsonEscape(cd.param);
+                    out += ", \"";
                     out += OpName(cd.op);
                     out += "\": ";
                     AppendFloat(out, cd.value);

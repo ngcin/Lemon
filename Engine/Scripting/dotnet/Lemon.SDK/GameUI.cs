@@ -267,12 +267,10 @@ public static unsafe class UI
     private static void PutRowBlock(List<UiItem> items)
     {
         foreach (var it in items) {
-            PutU8((byte)Math.Min(it.Key.Length, 255));
-            PutBytes(it.Key, 255);
+            PutStr8(it.Key); // review 2026-10-02 #22：长度=字节数（原写 char 数）
             PutU16((ushort)Math.Min(it.Fields.Count, ushort.MaxValue));
             foreach (var kv in it.Fields) {
-                PutU8((byte)Math.Min(kv.Key.Length, 255));
-                PutBytes(kv.Key, 255);
+                PutStr8(kv.Key);
                 PutU16(0); // 值长占位 → 写值后回填（值长理论 ≤64K，UI 语义远低）
                 int lenAt = s_arenaLen - 2;
                 PutBytes(kv.Value, ushort.MaxValue);
@@ -283,14 +281,31 @@ public static unsafe class UI
         }
     }
 
+    /// <summary>行块 u8 长度前缀串（key/字段名）。长度 = 实际 UTF-8 **字节数**、
+    /// 超 255B 截断退码点边界——原实现写 char 数而字节按 UTF-8 落盘：非 ASCII
+    /// （如中文 key）时引擎按字节解码即失步 = 行块整体错位（review 2026-10-02
+    /// #22；UiBridge.h 行块契约明文字节语义）。ASCII 输出与旧版逐字节相同。</summary>
+    private static void PutStr8(string s)
+    {
+        PutU8(0); // 占位回填（字节长在截断边界定后才知道）
+        int at = s_arenaLen;
+        int n = Encoding.UTF8.GetBytes(s.AsSpan(),
+            s_arena.AsSpan(at, Math.Min(255, s_arena.Length - at)));
+        while (n > 0 && (s_arena[at + n - 1] & 0xC0) == 0x80) n--; // 退到码点边界
+        s_arena[at - 1] = (byte)n;
+        s_arenaLen = at + n;
+    }
+
     private static void PutU8(byte v) { s_arena[s_arenaLen++] = v; }
     private static void PutU16(ushort v) { s_arena[s_arenaLen++] = (byte)(v & 0xFF);
                                            s_arena[s_arenaLen++] = (byte)(v >> 8); }
     private static void PutBytes(string s, int maxBytes)
     {
-        // 短串直写（key/字段名 ≤255B；值 ≤64K）；越界截断（引擎侧响亮失败可见半串）
+        // 短串直写（值 ≤64K）；越界截断退码点边界（不产非法 UTF-8 半串——
+        // review 2026-10-02 #60；引擎侧响亮失败可见半串）
         int n = Encoding.UTF8.GetBytes(s.AsSpan(),
             s_arena.AsSpan(s_arenaLen, Math.Min(maxBytes, s_arena.Length - s_arenaLen)));
+        while (n > 0 && (s_arena[s_arenaLen + n - 1] & 0xC0) == 0x80) n--;
         s_arenaLen += n;
     }
 

@@ -195,8 +195,21 @@ bool AnimationPanel::TrySave(EditorApp& app, const AssetEntry& e) {
     edit_.fps = (float)fpsI_;
     const std::string json = ClipToJson(edit_);
     const std::string abs = app.Ctx().Assets().AbsolutePath(e);
+    if (json.empty()) {
+        saveMsg_ = "× 写盘失败（序列化产物为空）：" + abs;
+        saveOk_ = false;
+        return false;
+    }
+    // 落盘前 roundtrip 预验（review 2026-10-02 #5）：坏 JSON 直接拒写——序列化器
+    // 缺陷不再能覆写原档（数据丢失防线；正常路径 Parse(ClipToJson(x)) 恒过）
+    if (ClipData back = ParseClipJson(json); !back.ok || back.name != edit_.name ||
+        back.frames != edit_.frames) {
+        saveMsg_ = "× 保存中止：序列化 roundtrip 校验失败（名字含非法字符？）";
+        saveOk_ = false;
+        return false;
+    }
     // 注意：Rescan 会重建 entries_——调用方在 TrySave 后不得再用本引用
-    if (json.empty() || !WriteFileAtomic(abs, json + "\n")) {
+    if (!WriteFileAtomic(abs, json + "\n")) {
         saveMsg_ = "× 写盘失败（磁盘满/权限？）：" + abs;
         saveOk_ = false;
         return false;
@@ -1116,7 +1129,18 @@ bool AnimationPanel::TrySaveSet(EditorApp& app, const AssetEntry& setEntry) {
     }
     const std::string json = AnimSetToJson(setEdit_);
     const std::string abs = db.AbsolutePath(setEntry);
-    if (json.empty() || !WriteFileAtomic(abs, json + "\n")) {
+    if (json.empty()) {
+        setMsg_ = "× 写盘失败（序列化产物为空）：" + abs;
+        setOk_ = false;
+        return false;
+    }
+    // 落盘前 roundtrip 预验（review 2026-10-02 #5，TrySave 同款防线）
+    if (AnimSetData back = ParseAnimSetJson(json); !back.ok || back.segments != setEdit_.segments) {
+        setMsg_ = "× 保存中止：序列化 roundtrip 校验失败（段名含非法字符/过长？）";
+        setOk_ = false;
+        return false;
+    }
+    if (!WriteFileAtomic(abs, json + "\n")) {
         setMsg_ = "× 写盘失败（磁盘满/权限？）：" + abs;
         setOk_ = false;
         return false;

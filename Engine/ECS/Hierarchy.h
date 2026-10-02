@@ -29,7 +29,10 @@ bool SceneSetParent(Scene& s, Entity child, Entity newParent);
 bool SceneDetach(Scene& s, Entity e);
 
 /// 销毁实体并递归销毁后代（编辑器删除/场景清理用；游戏侧通常走两阶段 Destroy）。
-/// 直接提交销毁（不经 destroyQueue_）——编辑器在帧外调用，无遍历中危险。
+/// 销毁走两阶段：整树入 destroyQueue_ 并打 DestroyQueueTag，真正回收延迟到
+/// CommitDestroys——入队后 Alive() 仍为 true，依赖"调用返回即已删"的即时性
+/// 契约是错的（review 2026-10-02 #11：头注释曾误称"直接提交销毁"）。需要
+/// 立即生效（如结构轨快照前）由调用方显式 CommitDestroys。
 void SceneDestroyEntityTree(Scene& s, Entity e);
 
 /// parent 链上行合成世界变换（TRS 复合，语义同 Mat3x2::FromTRS 乘积）。

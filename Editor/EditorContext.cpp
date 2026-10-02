@@ -319,11 +319,15 @@ int EditorContext::ResolveScriptTypeId(const char* className) const {
 }
 
 void EditorContext::AttachScript(ecs::Entity e, uint64_t assetGuid, const char* className) {
-    if (e.IsNull() || !scene_->Alive(e)) return;
+    // Play 中经 Inspector 调用时句柄属 play 世界——恒走 scene_ = 拿 play 句柄戳
+    // edit 世界（no-op 或 id 撞车暗改编辑侧；review 2026-10-02 #4，与
+    // CreateEntity/DuplicateEntity 同一已修 bug 模式补齐）
+    ecs::Scene& s = ActiveScene();
+    if (e.IsNull() || !s.Alive(e)) return;
     const char* cls = className ? className : "";
     // M6a 批⓪ 决策 4：同类型唯一入口闸（Inspector 菜单已置灰，此处兜底 combo/
     // 程序化调用）；槽满拒绝。先查后建——不留空 count=0 组件。
-    if (scripting::ScriptBox* box = scene_->TryGet<scripting::ScriptBox>(e)) {
+    if (scripting::ScriptBox* box = s.TryGet<scripting::ScriptBox>(e)) {
         if (scripting::FindSlot(*box, cls) >= 0) {
             LEMON_WARN("同实体同类型脚本唯一：'%s' 已挂载，拒绝重复追加", cls);
             return;
@@ -334,18 +338,26 @@ void EditorContext::AttachScript(ecs::Entity e, uint64_t assetGuid, const char* 
             return;
         }
     } else {
-        scripting::ScriptBox& fresh = scene_->Emplace<scripting::ScriptBox>(e);
+        scripting::ScriptBox& fresh = s.Emplace<scripting::ScriptBox>(e);
         scripting::AppendSlot(fresh, assetGuid, cls);
     }
-    scripting::ScriptBox& sb = scene_->Get<scripting::ScriptBox>(e);
+    scripting::ScriptBox& sb = s.Get<scripting::ScriptBox>(e);
     sb.slots[sb.count - 1].typeId = ResolveScriptTypeId(cls);
-    dirty = true;
+    // Play 中挂载 = 落 play 世界并当帧挂活实例（05 §4"Play 中允许编辑、改动只落
+    // Play World"；ResolvePlayScripts 只在 EnterPlay 跑一次，此处补挂与
+    // RefreshScriptsAfterReload 同款解析）
+    if (Playing() && scripts_ && sb.slots[sb.count - 1].typeId >= 0)
+        scripts_->ResolveSlotBehaviour(ActiveWorld(), s, e, sb.count - 1,
+                                       sb.slots[sb.count - 1].typeId);
+    dirty = !Playing(); // Play 中编辑不动编辑侧脏标记（EditorContext.h 约定）
 }
 
 bool EditorContext::SetSlotScript(ecs::Entity e, uint32_t slotIdx, uint64_t assetGuid,
                                   const char* className) {
+    // 同 AttachScript：句柄属 ActiveScene（review 2026-10-02 #4）
+    ecs::Scene& s = ActiveScene();
     scripting::ScriptBox* sb =
-        (e.IsNull() || !scene_->Alive(e)) ? nullptr : scene_->TryGet<scripting::ScriptBox>(e);
+        (e.IsNull() || !s.Alive(e)) ? nullptr : s.TryGet<scripting::ScriptBox>(e);
     if (!sb || slotIdx >= sb->count) return false;
     const char* cls = className ? className : "";
     for (uint32_t i = 0; i < sb->count; ++i) {
@@ -355,23 +367,29 @@ bool EditorContext::SetSlotScript(ecs::Entity e, uint32_t slotIdx, uint64_t asse
             return false;
         }
     }
-    scripting::ScriptSlot& s = sb->slots[slotIdx];
-    s.scriptGuid = assetGuid;
-    std::memset(s.className, 0, sizeof(s.className));
-    std::snprintf(s.className, sizeof(s.className), "%s", cls);
-    s.typeId = ResolveScriptTypeId(cls);
-    s.flags &= ~scripting::kScriptFlagDisabled;
-    dirty = true;
+    scripting::ScriptSlot& sl = sb->slots[slotIdx];
+    sl.scriptGuid = assetGuid;
+    std::memset(sl.className, 0, sizeof(sl.className));
+    std::snprintf(sl.className, sizeof(sl.className), "%s", cls);
+    sl.typeId = ResolveScriptTypeId(cls);
+    sl.flags &= ~scripting::kScriptFlagDisabled;
+    // Play 中换绑 = 换活实例（同 AttachScript 批挂；typeId 未注册则保持挂起，
+    // 下次热重载再解析）
+    if (Playing() && scripts_ && sl.typeId >= 0)
+        scripts_->ResolveSlotBehaviour(ActiveWorld(), s, e, slotIdx, sl.typeId);
+    dirty = !Playing();
     return true;
 }
 
 void EditorContext::RemoveScriptSlot(ecs::Entity e, uint32_t slotIdx) {
-    if (e.IsNull() || !scene_->Alive(e)) return;
-    scripting::ScriptBox* sb = scene_->TryGet<scripting::ScriptBox>(e);
+    // 同 AttachScript：句柄属 ActiveScene（review 2026-10-02 #4）
+    ecs::Scene& s = ActiveScene();
+    if (e.IsNull() || !s.Alive(e)) return;
+    scripting::ScriptBox* sb = s.TryGet<scripting::ScriptBox>(e);
     if (!sb || slotIdx >= sb->count) return;
     scripting::RemoveSlot(*sb, slotIdx);
-    if (sb->count == 0) scene_->Remove<scripting::ScriptBox>(e);
-    dirty = true;
+    if (sb->count == 0) s.Remove<scripting::ScriptBox>(e);
+    dirty = !Playing();
 }
 
 uint32_t EditorContext::SpriteIdOfGuidHex(const char* hex) const {
@@ -430,10 +448,13 @@ int EditorContext::RefreshScriptsAfterReload() {
 
 // ------------------------------------------------------ Prefab（§3.9）----
 uint64_t EditorContext::MakePrefabFrom(ecs::Entity e) {
-    if (e.IsNull() || !scene_->Alive(e)) return 0;
-    const ecs::Meta* m = scene_->TryGet<ecs::Meta>(e);
+    // 句柄属 ActiveScene（review 2026-10-02 #4；UI 入口在 Play 中置灰，此处为
+    // 程序化调用的同款世界路由防线）
+    ecs::Scene& s = ActiveScene();
+    if (e.IsNull() || !s.Alive(e)) return 0;
+    const ecs::Meta* m = s.TryGet<ecs::Meta>(e);
     const std::string tag = m && m->tag[0] ? m->tag : "entity";
-    std::string json = SceneArchive::SaveEntityTree(*scene_, e);
+    std::string json = SceneArchive::SaveEntityTree(s, e);
     if (json.empty()) return 0;
 
     // 落盘根级 Prefabs/<tag>.prefab（06 §1；M4.5 起随向导统一根级目录）重名自动 -2/-3…
@@ -456,8 +477,8 @@ uint64_t EditorContext::MakePrefabFrom(ecs::Entity e) {
         LEMON_WARN("Prefab 导出后登记失败：%s", rel.c_str());
         return 0;
     }
-    scene_->Get<ecs::Meta>(e).prefabId = entry->guid; // 回链（§3.9）
-    dirty = true;
+    s.Get<ecs::Meta>(e).prefabId = entry->guid; // 回链（§3.9）
+    dirty = !Playing();
     LEMON_LOG("Prefab 化：%s → %s（guid %016llx）", tag.c_str(), rel.c_str(),
               (unsigned long long)entry->guid);
     return entry->guid;
@@ -781,15 +802,19 @@ void EditorContext::BuildPlayTableCache() {
 }
 
 bool EditorContext::ApplyPrefabInstance(ecs::Entity e) {
-    if (e.IsNull() || !scene_->Alive(e)) return false;
-    const ecs::Meta* m = scene_->TryGet<ecs::Meta>(e);
+    // 句柄属 ActiveScene（review 2026-10-02 #4）：原恒走 scene_ = Play 中 Apply 拿
+    // play 句柄戳 edit 世界，id 撞车时把撞号实体的子树写进 .prefab 资产文件
+    //（Stop 重建无法回滚的持久数据丢失）
+    ecs::Scene& s = ActiveScene();
+    if (e.IsNull() || !s.Alive(e)) return false;
+    const ecs::Meta* m = s.TryGet<ecs::Meta>(e);
     const AssetEntry* entry = m ? assets_.FindByGuid(m->prefabId) : nullptr;
     if (!entry || entry->missing) {
         LEMON_WARN("Apply 失败：prefab 资产缺失（guid %016llx）",
                    (unsigned long long)(m ? m->prefabId : 0));
         return false;
     }
-    std::string json = SceneArchive::SaveEntityTree(*scene_, e);
+    std::string json = SceneArchive::SaveEntityTree(s, e);
     if (!WriteFileAtomic(assets_.AbsolutePath(*entry), json.data(), json.size()))
         return false; // F-04：原子写——Apply 中断不再截断源 Prefab 资产
     LEMON_LOG("Prefab Apply：实例写回 %s", entry->relPath.c_str());
@@ -797,8 +822,10 @@ bool EditorContext::ApplyPrefabInstance(ecs::Entity e) {
 }
 
 bool EditorContext::RevertPrefabInstance(ecs::Entity e) {
-    if (e.IsNull() || !scene_->Alive(e)) return false;
-    const ecs::Meta* m = scene_->TryGet<ecs::Meta>(e);
+    // 同 Apply：句柄属 ActiveScene（review 2026-10-02 #4）
+    ecs::Scene& s = ActiveScene();
+    if (e.IsNull() || !s.Alive(e)) return false;
+    const ecs::Meta* m = s.TryGet<ecs::Meta>(e);
     const AssetEntry* entry = m ? assets_.FindByGuid(m->prefabId) : nullptr;
     if (!entry || entry->missing) return false;
     std::ifstream f(assets_.AbsolutePath(*entry), std::ios::binary);
@@ -814,32 +841,38 @@ bool EditorContext::RevertPrefabInstance(ecs::Entity e) {
         }
     }
 
-    const ecs::Hierarchy* h = scene_->TryGet<ecs::Hierarchy>(e);
+    const ecs::Hierarchy* h = s.TryGet<ecs::Hierarchy>(e);
     const ecs::Entity parent = h ? h->parent : ecs::Entity::Null();
     // guid/prefabId 都按值保存：下方销毁 + LoadEntityTree 都可能使 Meta 池扩容搬移，
     // 旧指针 m 在 rm->prefabId = m->prefabId 处即悬空（keepGuid 同理，2026-09-24 审查）
     const uint64_t keepGuid = m ? m->guid : 0; // Revert 保持实例自身 guid（选中集/引用找回）
     const uint64_t keepPrefabId = m ? m->prefabId : 0;
-    SceneDestroyEntityTree(*scene_, e);
-    ecs::Entity root = SceneArchive::LoadEntityTree(*scene_, json);
+    SceneDestroyEntityTree(s, e);
+    // 立即提交销毁（review 2026-10-02 #4/#10）：两阶段队列不清则①重建实体与待删
+    // 实体并存到帧末（Hierarchy 闪烁）②调用方随后的结构轨 after 快照含待删实体
+    // → Redo 复活（smoke-ui 实录事故的 Revert 路径漏修）
+    s.CommitDestroys();
+    ecs::Entity root = SceneArchive::LoadEntityTree(s, json);
     if (root.IsNull()) return false;
-    if (ecs::Meta* rm = scene_->TryGet<ecs::Meta>(root)) {
+    if (ecs::Meta* rm = s.TryGet<ecs::Meta>(root)) {
         rm->prefabId = keepPrefabId;
         if (keepGuid) rm->guid = keepGuid;
     }
-    if (!parent.IsNull()) SceneSetParent(*scene_, root, parent);
+    if (!parent.IsNull()) SceneSetParent(s, root, parent);
     PruneSelection();
     Select(root, false);
-    dirty = true;
+    dirty = !Playing();
     LEMON_LOG("Prefab Revert：实例回到源资产态 %s", entry->relPath.c_str());
     return true;
 }
 
 void EditorContext::BreakPrefabInstance(ecs::Entity e) {
-    if (e.IsNull() || !scene_->Alive(e)) return;
-    if (ecs::Meta* m = scene_->TryGet<ecs::Meta>(e); m && m->prefabId) {
+    // 同 Apply：句柄属 ActiveScene（review 2026-10-02 #4）
+    ecs::Scene& s = ActiveScene();
+    if (e.IsNull() || !s.Alive(e)) return;
+    if (ecs::Meta* m = s.TryGet<ecs::Meta>(e); m && m->prefabId) {
         m->prefabId = 0;
-        dirty = true;
+        dirty = !Playing();
         LEMON_LOG("Prefab Break：断链成普通实体");
     }
 }

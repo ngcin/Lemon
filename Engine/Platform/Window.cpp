@@ -20,8 +20,10 @@ struct Window::Impl {
 };
 
 std::unique_ptr<Window> Window::Create(const WindowDesc& desc) {
+    // 可恢复初始化失败走红字 + nullptr（调用方检查）——原先 LEMON_ASSERT(false)
+    // 先 abort，后面的 return nullptr 是死代码（review 2026-10-02 #20）
     if (!SDL_Init(SDL_INIT_VIDEO)) {
-        LEMON_ASSERT(false, "SDL_Init(VIDEO) failed: %s", SDL_GetError());
+        LEMON_ERROR("SDL_Init(VIDEO) failed: %s", SDL_GetError());
         return nullptr;
     }
     // 自动化/回归跑窗口不抢前台焦点：显示时不激活（SDL3 hint）。smoke 输入是
@@ -34,7 +36,7 @@ std::unique_ptr<Window> Window::Create(const WindowDesc& desc) {
                                     SDL_WINDOW_VULKAN |
                                         (desc.resizable ? SDL_WINDOW_RESIZABLE : 0));
     if (!w->m->window) {
-        LEMON_ASSERT(false, "SDL_CreateWindow failed: %s", SDL_GetError());
+        LEMON_ERROR("SDL_CreateWindow failed: %s", SDL_GetError());
         return nullptr;
     }
     return w;
