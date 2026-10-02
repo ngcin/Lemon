@@ -834,10 +834,11 @@ void EditorApp::BuildPickersAndModals() {
         if (ImGui::Button("重新编译并进入 Play", ImVec2(210, 0))) {
             ImGui::CloseCurrentPopup();
             if (TryHotReloadScripts("Play 阻断重试")) {
-                if (ctx_.EnterPlay()) {
-                    MountSceneUiDocuments(); // 批③d 前置（通道 A）
+                // review 2026-10-02 #9：统一走 TryEnterPlay——此前直调 ctx_.EnterPlay
+                // 漏 MountPlayAudio/WirePlayAudioBackend 双挂点，该路径整段无声
+                //（新 World 的 audioSink_ 为 null，C# 音频命令纯记账）
+                if (TryEnterPlay())
                     tabFocusPending_ = 1;
-                }
             } else if (!host_) {
                 playBlockedOpen_ = true; // 仍失败：重开模态（新错误已进 Console）
             }

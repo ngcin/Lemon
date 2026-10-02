@@ -19,8 +19,10 @@ public enum AudioGroup : int
 
 public static class Audio
 {
-    /// <summary>按资产 GUID 播放（非空间）。返回逻辑 voiceId（0 = 失败：未装载/
-    /// 池满/旧宿主）。loop = true 时循环区间 = clip 烤制期 loop 点（meta importer）。</summary>
+    /// <summary>按资产 GUID 播放（非空间）。返回逻辑 voiceId（单调不回收；0 = 未装载/
+    /// 坏 GUID/旧宿主——review 2026-10-02 #21 勘误：池满/同 clip 节流等提交期引擎拒绝
+    /// 返回**非零**但声部即刻失效，勿以 id==0 判池满，存活判定跨帧用 Alive 语义/回读）。
+    /// loop = true 时循环区间 = clip 烤制期 loop 点（meta importer）。</summary>
     public static unsafe uint Play(string clipGuidHex, float volume = 1f,
                                    AudioGroup group = AudioGroup.Sfx, float pan = 0f,
                                    bool loop = false)

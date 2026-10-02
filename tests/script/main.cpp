@@ -568,9 +568,11 @@ void TestAudioSdk() {
     int mark1 = 0, mark2 = 0, mark3 = 0;
     w.SetEventSink([&](World&, const EventPacket& p) {
         if (p.type != GameEvent::Custom) return;
-        if (p.user >= 1300 && p.user < 1320) mark1 = (int)p.user - 1300;
-        else if (p.user >= 1320 && p.user < 1340) mark2 = (int)p.user - 1320;
-        else if (p.user >= 1340) mark3 = (int)p.user - 1340;
+        // review 2026-10-02 #22：AudioProbe 号段迁 1500..1559（原 1300..1307 与
+        // AnimFx 1300/1400 撞段且 mark3 无上界会误收 1400）
+        if (p.user >= 1500 && p.user < 1520) mark1 = (int)p.user - 1500;
+        else if (p.user >= 1520 && p.user < 1540) mark2 = (int)p.user - 1520;
+        else if (p.user >= 1540 && p.user < 1560) mark3 = (int)p.user - 1540;
     });
 
     opsSubmit(0, 0, 0x800000000000A001ull);            // Create
@@ -583,15 +585,26 @@ void TestAudioSdk() {
     Expect(eng.ActiveVoiceCount() == 3, "play + playat + bgm voices active");
     const uint64_t h1 = ComputeStateHash(s); // 探针实体 + Transform 在场
 
-    w.Step(0.25f); // 帧2：Stop 真 + MasterVolume 写 + StopBgm(0) + Paused 对
+    w.Step(0.25f); // 帧2：Stop 真 + MasterVolume/组音量写 + StopBgm(0) 硬切
     Expect(mark2 == 1, "probe f2: stop submitted voice true");
     Expect(w.Audio().bgmVoice() == 0, "bgm slot released (hard stop)");
     Expect(eng.ActiveVoiceCount() == 1, "only playat remains after stops");
+    // review 2026-10-02 #23：SDK 组音量桥首覆盖（NativeAudioSetGroupVolume 此前
+    // 经脚本零覆盖）
+    Expect(std::fabs(eng.GroupVolume(lemon::audio::Group::Bgm) - 0.25f) < 1e-6f,
+           "group volume bridge applied via C# staging");
     Expect(ComputeStateHash(s) == h1,
            "audio calls never touch state hash (zero-replay counterexample)");
 
-    w.Step(0.25f); // 帧3：二次 Stop 假 + MasterVolume 上帧写已落地 + StopAll + 自毁
-    Expect(mark3 == 3, "probe f3: second stop false + master roundtrip (next frame)");
+    w.Step(0.25f); // 帧3：二次 Stop 假 + MasterVolume 读回 + Paused 置真 + 挂起出生
+    Expect(mark3 == 7, "probe f3: second stop false + master roundtrip + paused loop issued");
+    // review 2026-10-02 #34：D5 Paused 的 C# staging→命令落地链（此前只演练未断言）
+    Expect(w.Audio().pausedStaged(), "paused staged flag landed via C# command");
+    Expect(eng.ActiveVoiceCount() == 2,
+           "paused Bgm loop occupies slot alongside playat oneshot");
+
+    w.Step(0.25f); // 帧4：Paused 复位 + StopAll 清场 + 自毁
+    Expect(!w.Audio().pausedStaged(), "pause released via C# command");
     Expect(eng.ActiveVoiceCount() == 0, "stopall cleared engine voices");
     w.Step(0.25f); // 销毁提交 + 派发
     Expect(ComputeStateHash(s) == h0, "scene back to empty after destroy");

@@ -196,6 +196,13 @@ private:
     // 按需工具窗，不进 CreateAllPanels/DockBuilder = 不破 05 §3 面板集冻结。
     bool tableWinOpen_ = false;
     uint64_t tableWinGuid_ = 0;  // 编辑目标（guid 稳定；条目被删自动关窗）
+
+    // ---- 音频 tooltip 烤制状态缓存（review 2026-10-02 #25）----
+    // 悬停期每帧 PeekBakedClip（fopen/fread）→ 大项目卡顿 + 头坏时每帧重复红字；
+    // 三键 guid+源hash+.baked mtime 失效，仅变更时重读一次
+    uint64_t audioTipGuid_ = 0, audioTipHash_ = 0;
+    int64_t audioTipBakedWrite_ = -2; // .baked mtime 计数（-2 = 初值必失效）
+    std::string audioTipText_;
 };
 
 class ProfilerPanel final : public IEditorPanel {

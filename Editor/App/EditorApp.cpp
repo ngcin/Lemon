@@ -269,7 +269,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
         return 1;
     }
     // M6c 批③：--smoke-audio 夹具（temp 项目 + smoke-tone.wav；真项目零播种）
-    if (launch.smokeAudio) SeedSmokeAudioProject();
+    if (launch.smokeAudio && !SeedSmokeAudioProject()) return 1; // #37：播种失败 fail-fast
     // 最近项目（M4.6 §4-4）：--project 缺省时自动重开上次（--no-reopen 跳过；
     // 冒烟/终验不适用——确定性优先）。菜单最近列表同源本 vector。
     recentProjects_ = LoadRecentProjects();

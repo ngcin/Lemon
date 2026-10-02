@@ -227,7 +227,7 @@ private:
     void SeedSmokeScene();   // 冒烟播种：父子链 + 常用组件（面板验收有内容）
     void SeedSmokeProject(); // 冒烟播种：临时项目 + 预置 PNG（固定 guid，M4.4 资产链验收）
     void SeedSmokeUiRmlProject(); // 批③b：--smoke-uirml 资产夹具（temp 项目 + .rml/.rcss/贴图）
-    void SeedSmokeAudioProject(); // 批③：--smoke-audio 资产夹具（temp 项目 + WAV；
+    bool SeedSmokeAudioProject(); // 批③：--smoke-audio 资产夹具（temp 项目 + WAV；
                                   // 目标已是真项目则零播种——夹具纪律，smoke-anim 同款）
     void SeedSmokeUiDocument(); // 批③b：--smoke-uirml 文档装载（从夹具资产走 LoadDocumentFromFile）
     /// 批③b 贴图桥解析器（安装给 gameUi_）：RmlUi JoinPath 后的路径 → 项目精灵

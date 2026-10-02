@@ -70,6 +70,18 @@ uint32_t AudioChannel::StagePlayAt(uint32_t clipId, float x, float y, float volu
 
 int32_t AudioChannel::StageBgm(uint32_t clipId, float volume, float fadeSec) {
     if (clipId == 0) return 0;
+    // staging 期替换（review 2026-10-02 #16）：同 tick 未提交的上一条 Bgm 直接撤
+    // （引擎从未起声部）——否则提交期两条 Bgm 按序处理会真实起播再交叉淡出，
+    // 与 StageStop 对未提交 Play* 的撤命令快路径同款语义
+    for (size_t i = 0; i < pending_.size(); ++i) {
+        if (pending_[i].kind == AudioCmdKind::Bgm) {
+            const uint32_t vid = pending_[i].voice;
+            pending_.erase(pending_.begin() + i);
+            if (AudioLogicalVoice* lv = FindLogical(vid))
+                KillLogical(voices_, lv);
+            break;
+        }
+    }
     AudioCmd c;
     c.kind = AudioCmdKind::Bgm;
     c.clipId = clipId;
@@ -81,6 +93,17 @@ int32_t AudioChannel::StageBgm(uint32_t clipId, float volume, float fadeSec) {
 }
 
 void AudioChannel::StageBgmStop(float fadeSec) {
+    // staging 期撤销（review 2026-10-02 #16 同族）：撤未提交 Bgm = 净效果零；
+    // 已提交曲（bgmId_）仍走下方淡停命令
+    for (size_t i = 0; i < pending_.size(); ++i) {
+        if (pending_[i].kind == AudioCmdKind::Bgm) {
+            const uint32_t vid = pending_[i].voice;
+            pending_.erase(pending_.begin() + i);
+            if (AudioLogicalVoice* lv = FindLogical(vid))
+                KillLogical(voices_, lv);
+            break;
+        }
+    }
     AudioCmd c;
     c.kind = AudioCmdKind::BgmStop;
     c.fadeSec = fadeSec;
@@ -212,7 +235,9 @@ void AudioChannel::Submit(AudioEngine* engine, const AudioListener& listener) {
             if (AudioLogicalVoice* lv = FindLogical(c.voice)) {
                 if (engine && lv->engineId != 0)
                     engine->Stop(lv->engineId);
-                lv->engineId = 0; // 停后即亡，下次提交回收
+                lv->engineId = 0; // 停后即亡：本次提交末尾的回收遍历（engineId==0
+                                  // 判据）就会清掉该条目——LogicalAlive 可见窗口
+                                  // 不跨 tick（review 2026-10-02 #19 勘误）
             }
             break;
         }
@@ -227,6 +252,7 @@ void AudioChannel::Submit(AudioEngine* engine, const AudioListener& listener) {
             if (engine) engine->SetPaused(paused_);
             break;
         case AudioCmdKind::StopAll:
+            paused_ = false; // 引擎 StopAll 复位 pausedAll（#14 兜底）——记账同频
             if (engine) engine->StopAll();
             break;
         }
@@ -253,7 +279,8 @@ void AudioChannel::Clear() {
     voices_.clear();
     bgmId_ = 0;
     paused_ = false;
-    nextId_ = 1;
+    // review 2026-10-02 #18：nextId_ 不归 1——逻辑句柄单调发号不回收是头文件契约
+    //（旧句柄撞车防线），会话中途清记账不得重置发号器
 }
 
 } // namespace lemon::audio

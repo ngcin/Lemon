@@ -17,8 +17,11 @@ live_pids=""
 for pid in $(pgrep -f lemon-editor 2>/dev/null); do
     cmd="$(ps -p "${pid}" -o command= 2>/dev/null)" || continue
     [ -z "${cmd}" ] && continue
-    exe="${cmd%% *}"
-    [ "$(basename "${exe}")" = "lemon-editor" ] || continue
+    # review 2026-10-02 #30：可执行名改取 ucomm——此前 "${cmd%% *}" 取首空格前段，
+    # build 目录含空格时截成目录名 → 残留实例既不清理也不中止（守卫静默失效，
+    # 正是本守卫要防的 GPU 争用场景）。ucomm = 可执行名，与路径空格无关。
+    exe="$(basename "$(ps -p "${pid}" -o ucomm= 2>/dev/null)")"
+    [ "${exe}" = "lemon-editor" ] || continue
     case "${cmd}" in
         *--smoke*|*--bench*|*--frames*|*--final*|*--play*|*--scene*|*--save-scene*|*--screenshot*|*--gen-vs-template*)
             stale_pids="${stale_pids} ${pid}" ;;

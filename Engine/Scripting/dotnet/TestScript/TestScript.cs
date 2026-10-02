@@ -660,13 +660,18 @@ public sealed class UiProbeBehaviour : Lemon.LemonBehaviour
 /// <summary>M6c 批②（typeId 18）：Lemon.Audio 全 API 验收（script-tests TestAudioSdk
 /// 装配——宿主注册静音引擎 + guid 0x1111 单 clip + resolver）。帧1 = Play/PlayAt
 /// 返回非零 + 坏 guid 返 0 + PlayBgm 受理（引擎侧对拍 bgm 槽）；帧2 = Stop 真值 +
-/// MasterVolume set/get 往返 + StopBgm(0) 硬切 + Paused 对拍（引擎侧对拍组音量/
-/// 暂停声部占槽）；帧3 = 二次 Stop 假 + StopAll 清场 + 自毁。C++ 侧断言
-/// ComputeStateHash 跨帧不变（音频调用零哈希面反例——零重录纪律机械证据）。</summary>
+/// MasterVolume 写 + SetGroupVolume 写（#23 首覆盖）+ StopBgm(0) 硬切；帧3 = 二次
+/// Stop 假 + MasterVolume 读回 + Paused 置真 + 全局暂停下 Bgm 循环挂起态出生
+///（引擎侧对拍 pausedStaged/组音量/挂起占槽计数——#34：此前 true→false 连写净零
+/// 效果无断言）；帧4 = Paused 复位 + StopAll 清场 + 自毁。事件号段 1500..1559
+///（review 2026-10-02 #22：原 1300..1307 与 AnimFx 1300/1400 撞段且 mark3 无上界
+///——迁 1500 段与 Tween 1600/Ui 1281 段互不重叠）。C++ 侧断言 ComputeStateHash
+/// 跨帧不变（音频调用零哈希面反例——零重录纪律机械证据）。</summary>
 public sealed class AudioProbeBehaviour : Lemon.LemonBehaviour
 {
     private const string Clip = "0000000000001111"; // 宿主侧注册的 guid（16 位 hex）
     private uint played_;
+    private uint pausedLoop_;
 
     private void Mark(ushort id)
         => Lemon.Events.Push(Lemon.Interop.GameEvent.Custom, id, default, default);
@@ -680,21 +685,26 @@ public sealed class AudioProbeBehaviour : Lemon.LemonBehaviour
                                         Lemon.AudioGroup.Sfx, 256f, 1024f);
             var bad = Lemon.Audio.Play("nothex"); // 坏 guid：TryParse 失败 = 0，不崩
             Lemon.Audio.PlayBgm(Clip, 0.55f, 0.5f); // D4 交叉淡出参（受理经引擎侧槽位对拍）
-            Mark((ushort)(1300 + (played_ != 0 ? 1 : 0) + (at != 0 ? 2 : 0)
+            Mark((ushort)(1500 + (played_ != 0 ? 1 : 0) + (at != 0 ? 2 : 0)
                           + (bad == 0 ? 4 : 0)));
         } else if (fc == 2) {
             Lemon.Audio.MasterVolume = 0.5f; // D6 写（staging——当帧提交期落地引擎）
+            Lemon.Audio.SetGroupVolume(Lemon.AudioGroup.Bgm, 0.25f); // #23：组音量桥首覆盖
             var stopped = Lemon.Audio.Stop(played_);     // 已提交声部：真
             Lemon.Audio.StopBgm(0f);                     // 硬切（D4 fadeSec=0）
-            Lemon.Audio.Paused = true;                   // D5 显式暂停对（提交期引擎落地）
-            Lemon.Audio.Paused = false;
-            Mark((ushort)(1320 + (stopped ? 1 : 0)));
+            Mark((ushort)(1520 + (stopped ? 1 : 0)));
         } else if (fc == 3) {
             var mget = Lemon.Audio.MasterVolume == 0.5f; // 上帧提交已落地（set 异步
                                                          // 语义：同帧写读 = 旧值）
             var stoppedAgain = Lemon.Audio.Stop(played_); // 上帧已停：假（条目已回收）
+            Lemon.Audio.Paused = true; // #34：留置可观测（C# staging→命令落地链）
+            pausedLoop_ = Lemon.Audio.Play(Clip, 1f, Lemon.AudioGroup.Bgm, 0f,
+                                           true); // Bgm 循环：全局暂停下挂起态出生
+            Mark((ushort)(1540 + (stoppedAgain ? 0 : 1) + (mget ? 2 : 0)
+                          + (pausedLoop_ != 0 ? 4 : 0)));
+        } else if (fc == 4) {
+            Lemon.Audio.Paused = false; // 复位（引擎侧对拍旗清 + 挂起声部可解）
             Lemon.Audio.StopAll();
-            Mark((ushort)(1340 + (stoppedAgain ? 0 : 1) + (mget ? 2 : 0)));
             gameObject.Destroy();
         }
     }

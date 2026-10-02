@@ -84,6 +84,14 @@ bool WriteAudioAssets(const std::filesystem::path& assets) {
         }
         fs::copy(src / f, assets / "Audio" / f, fs::copy_options::overwrite_existing,
                  ec);
+        // review 2026-10-02 #26：拷贝失败（磁盘满/权限）即断——此前不查 ec 无条件
+        // 返回 true，会产出缺音频的"成功"模板入库，违背「全程有声」判据
+        if (ec) {
+            LEMON_ERROR("gen-vs-template：音频拷贝失败 %s → %s（%s）",
+                        (src / f).string().c_str(),
+                        (assets / "Audio" / f).string().c_str(), ec.message().c_str());
+            return false;
+        }
     }
     return true;
 }

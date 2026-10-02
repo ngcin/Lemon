@@ -369,7 +369,9 @@ public struct AudioSource : IComponent  // 24B（u64+f32×3+u16+u8+u8 自然对�
     public ushort Flags;     // bit0 循环 bit1 进 Play 自动起播。注意：C++ 默认
                              // PlayOnStart(0x2)，C# default = 0——整写须显式置位
                              //（UIDocument.ShowOnStart 同款镜像默认值坑）
-    public byte Group;       // 混音组 0 Bgm/1 Sfx/2 Ui
+    public byte Group;       // 混音组 0 Bgm/1 Sfx/2 Ui。注意：C++ 默认 1(Sfx)，
+                             // C# default = 0(Bgm)——整写须显式设组（Flags 同款镜像
+                             // 默认值坑；漏设落 Bgm = 挂 BGM 组音量 + 暂停被挂起）
     internal byte _pad;      // C++ pad_ 衬齐（尾加纪律）
 }
 

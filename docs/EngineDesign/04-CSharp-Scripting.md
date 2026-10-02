@@ -223,7 +223,7 @@ public readonly struct Transform               // 视图结构：逐属性访问
 
 - 全部 API 落在两条通道上：低频控制类（Scene/Assets/Instantiate）走句柄 + GUID；数据类（Get/Set/Chunk）走 blittable slice。
 - **不自动生成整套绑定**（排除 XPremo 式全家桶）：SDK 手写（API 面小而稳，~150 个导出），后期用 Source Generator 只生成"组件 struct ↔ 注册表"的镜像（Inspector/序列化共用，见 05 §5）。
-  **分期落地（ADR-010 D4）**：M3 已交付 headless 核心子集（Chunk / 组件 CRUD / 事件 drain+push / RNG / Time / Log / SceneOps / LemonBehaviour 生命周期 / 异常隔离，实测 1264 checks）；Input / Audio / Assets / Instantiate(prefab) / LemonAwait / Profiler 随 M4/M5 消费者落地。
+  **分期落地（ADR-010 D4）**：M3 已交付 headless 核心子集（Chunk / 组件 CRUD / 事件 drain+push / RNG / Time / Log / SceneOps / LemonBehaviour 生命周期 / 异常隔离，实测 1264 checks）；Input / Assets / Instantiate(prefab) / LemonAwait / Profiler 随 M4/M5 消费者落地；**Audio 已随 M6c 落地**（`Lemon.Audio` 门面 + AudioSource 镜像，见下方 native 函数表 M6c 条目）。
 - **native 函数表**（`NativeApiVtable` ↔ `NativeApi.cs` 逐字节一致；表尾追加 = 旧宿主零扰动，SDK 侧判空）：
   M4.4 追加 4 项（GetInput/SpriteOfGuid/SpawnSprite/InstantiatePrefab）；**M5 批① 追加 3 项**——
   `get/setTimescale`（Time.Scale ↔ World）+ `rtUiSet`（Lemon.Ui.Set → World.RtUi 定长 8 槽，
@@ -270,6 +270,21 @@ public readonly struct Transform               // 视图结构：逐属性访问
   SetString/GetString 加可选 `Chan chan = Chan.Slot`（enum Slot/Settings/Meta
   ↔ 06 §10 三档三文件；Flush 全档；键约定见 06 §10 修订注——settings 版本化
   KV、meta 收集条目 `col.<id>.*`））。
+  **M6c 音频批追加 10 项（36→46 槽，ADR-015）**——竖切批⓪.5 4 项（`audioPlay/
+  audioPlayAt/audioStop/audioStopAll`：GUID 播放直连，**批② 已语义原位升级为
+  命令表 staging**——`Lemon.Audio.Play/PlayAt` 走 `g_world->Audio()` 当帧
+  staging、AudioSystem #20 统一提交，AudioHooks 退役归 `World::SetAudioBackend
+  (engine, resolver, ctx)`）；批② 尾加 6 项（`audioBgm` BGM 单槽换曲（D4 交叉
+  淡出）/ `audioBgmStop`（淡出停，0 = 硬切）/ `audioSetGroupVolume`（D3 三组）/
+  `audioMasterVol` + `audioMasterVolGet`（D6 对称，get 引擎态直读）/
+  `audioSetPaused`（D5 显式暂停——引擎不自动映射 TimeScale；ADR M4 口径：
+  循环/BGM 挂起、Ui 组免疫））。SDK 新面：`Lemon.Audio` 门面（Play/PlayOneShot/
+  PlayAt/PlayBgm/StopBgm/Stop/SetGroupVolume/MasterVolume/Paused/StopAll +
+  `AudioGroup` enum Bgm/Sfx/Ui）+ `AudioSource` 组件 C# 镜像（id 31，24B 冻结
+  ——镜像默认值坑：Flags C# default=0 而 C++ PlayOnStart、Group C# default=
+  0(Bgm) 而 C++ 1(Sfx)，整写须显式设全字段）。逻辑 voiceId 单调不回收（Tween
+  句柄同款；0 = 未装载/坏 GUID/旧宿主——池满/节流为提交期引擎拒绝，非零句柄
+  即刻失效）。
   **字符串跨界一律 UTF-8**（SDK `CopyUtf8`：ASCII 快路径零分配 + 多字节不切断——
   批④ 前逐 char 截字节只对 ASCII 正确，中文 HUD 会乱码）。
 

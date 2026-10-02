@@ -360,7 +360,7 @@ bool AssetDatabase::OpenProject(const std::string& projectRoot, uint32_t spriteI
     nextSpriteId_ = spriteIdBase;
     entries_.clear();
     refCorpusTried_ = false;
-    refCorpus_.clear();
+    refFiles_.clear(); // 切项目 = 语料全失效（旧项目文件不得复用，#24 缓存随项目走）
     opened_ = true;
 
     std::error_code ec;
@@ -506,13 +506,17 @@ bool AssetDatabase::GuidReferenced(uint64_t guid) {
     if (!opened_ || guid == 0) return false;
     if (!refCorpusTried_) {
         refCorpusTried_ = true;
-        refCorpus_.clear();
         // 引用面 = 项目数据文本（含资产扫描排除的 Game/Scenes/Data——引用常驻处）。
         // 不含 .meta（自引用假阳性）；单文件 16 MiB 上限防怪物档撑爆语料。
+        // review 2026-10-02 #24：逐文件 mtime+size 增量装配——未变更文件复用缓存
+        // 内容、消失文件出缓存，只重读变更/新增（此前每次 Rescan 失效全项目全量
+        // 重读并拼大串，保存/删除触发的重扫在 UI 线程同步卡顿）；查找逐文件进行，
+        // 免整体拼接的瞬态大分配
         static const char* kRefExt[] = {".scene", ".prefab", ".anim",   ".override",
                                         ".controller", ".tab", ".rml",  ".rcss",
                                         ".cs",     ".asset"};
         std::error_code ec;
+        std::unordered_map<std::string, RefFile> next;
         for (auto it = fs::recursive_directory_iterator(
                  root_, fs::directory_options::skip_permission_denied, ec);
              it != fs::recursive_directory_iterator(); it.increment(ec)) {
@@ -532,31 +536,56 @@ bool AssetDatabase::GuidReferenced(uint64_t guid) {
                 if (ext == re) { isRef = true; break; }
             std::error_code ec2;
             if (!isRef || !fs::is_regular_file(de.path(), ec2)) continue;
-            if (fs::file_size(de.path(), ec2) > (uintmax_t)16 << 20) continue;
+            const uintmax_t size = fs::file_size(de.path(), ec2);
+            if (ec2 || size > (uintmax_t)16 << 20) continue;
+            const auto mtime = fs::last_write_time(de.path(), ec2);
+            if (ec2) continue;
+            const std::string rel =
+                fs::relative(de.path(), root_, ec2).generic_string();
+            if (ec2 || rel.empty()) continue;
+            const auto old = refFiles_.find(rel);
+            if (old != refFiles_.end() && old->second.size == size &&
+                old->second.mtime == uint64_t(mtime.time_since_epoch().count())) {
+                next.emplace(rel, std::move(old->second)); // 未变更：复用
+                continue;
+            }
             std::ifstream f(de.path(), std::ios::binary);
-            if (!f) continue;
-            refCorpus_.append((std::istreambuf_iterator<char>(f)),
-                              std::istreambuf_iterator<char>());
-            refCorpus_.push_back('\n');
+            if (!f) continue; // 读失败不入缓存 = 下轮重试（不误判"零引用"）
+            RefFile rf;
+            rf.mtime = uint64_t(mtime.time_since_epoch().count());
+            rf.size = size;
+            rf.text.assign((std::istreambuf_iterator<char>(f)),
+                           std::istreambuf_iterator<char>());
+            next.emplace(rel, std::move(rf));
         }
+        refFiles_ = std::move(next); // 消失文件随旧 map 丢弃
     }
-    if (refCorpus_.empty()) return false;
+    if (refFiles_.empty()) return false;
     // guid 在数据文本的三种形态：引擎写出的 hex 小写串 / 十进制数（.scene 组件字段）、
     // 用户代码常量可能的大小写 hex。十进制全串（19-20 位）子串命中 ≠ 巧合数字。
     const std::string hex = GuidToHex(guid);
-    if (refCorpus_.find(hex) != std::string::npos) return true;
     std::string hexUp = hex;
     for (char& c : hexUp) c = (char)std::toupper((unsigned char)c);
-    if (refCorpus_.find(hexUp) != std::string::npos) return true;
-    return refCorpus_.find(std::to_string(guid)) != std::string::npos;
+    const std::string dec = std::to_string(guid);
+    for (const auto& [path, rf] : refFiles_) {
+        if (rf.text.find(hex) != std::string::npos) return true;
+        if (rf.text.find(hexUp) != std::string::npos) return true;
+        if (rf.text.find(dec) != std::string::npos) return true;
+    }
+    return false;
 }
 
 void AssetDatabase::Rescan() {
     if (!opened_) return;
+    // review 2026-10-02 #7：Remove() 预入队的 removed 事件须穿越本次重扫——此前
+    // 首行整体清空使唯一消费者（RescanAssets 先 Rescan 再读）永远读不到，GPU
+    // 幽灵页回收「即时触达」承诺不成立；出表路径对 missing 态不重推，不会双发
+    std::vector<uint64_t> stagedRemoved = std::move(lastChange_.removed);
     lastChange_ = {};
+    lastChange_.removed = std::move(stagedRemoved);
     healthIssues_ = 0;
-    refCorpusTried_ = false; // 引用语料随磁盘态失效（SweepOrphanMetas/删除引用检查共用）
-    refCorpus_.clear();
+    refCorpusTried_ = false; // 引用语料随磁盘态失效（SweepOrphanMetas/删除引用检查
+                             // 共用）；refFiles_ 保留供增量复用（#24——只重读变更文件）
 
     // 旧表按路径索引（保 guid/spriteId）
     std::unordered_map<std::string, AssetEntry> old;
@@ -620,6 +649,14 @@ void AssetDatabase::Rescan() {
             if (prev.missing) {
                 lastChange_.added.push_back(e.guid); // 墓碑复活
             } else if (prev.hash != e.hash) {
+                lastChange_.modified.push_back(e.guid);
+            } else if (e.type == AssetType::Audio &&
+                       (prev.audioLoopStart != e.audioLoopStart ||
+                        prev.audioLoopEnd != e.audioLoopEnd ||
+                        prev.audioPreload != e.audioPreload)) {
+                // review 2026-10-02 #8：音频 .meta importer 段热改也算 modified——
+                // loop 冻结在 .baked 头里，源 hash 不变时此前不触发重烤，热改
+                // 永不生效（与 06 §2.1「热改 meta 即生效（下次烤制消费）」对齐）
                 lastChange_.modified.push_back(e.guid);
             }
         } else {
@@ -819,8 +856,9 @@ bool AssetDatabase::Remove(AssetEntry& e) {
     fs::remove(AbsolutePath(e) + ".meta", ec);
     // 条目本轮隐藏（missing 位立即失效化浏览器/查询），下轮 Rescan 出表——不就地
     // erase：调用方（浏览器瓦片循环）持有 entries_ 引用，就地删除 = 迭代器失效。
-    // removed 变更在此推送（Rescan 的出表路径对 missing 态不再重复推）→ GPU 幽灵页
-    // 回收（RescanAssets Evict）即时触达。
+    // removed 变更在此推送（Rescan 保留预入队、出表路径对 missing 态不重推——
+    // review 2026-10-02 #7 勘误：此前被 Rescan 首行清空，事件永不可达）→ GPU
+    // 幽灵页回收（RescanAssets Evict）即时触达。
     e.missing = true;
     lastChange_.removed.push_back(e.guid);
     SaveManifest();

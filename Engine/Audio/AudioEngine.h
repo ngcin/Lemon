@@ -68,6 +68,8 @@ public:
     // 播放控制（主线程调用；内部短临界区）。返回 voiceId，0 = 池满且无可偷/clip 无效。
     uint32_t Play(uint32_t clipId, const PlayParams& p = {});
     bool Stop(uint32_t voiceId);
+    /// 全停 = 会话清场：全部声部终结，且 pausedAll 一并复位（暂停意图不跨清场
+    /// 残留——review 2026-10-02 #14 引擎层兜底；再起播的新声部以非挂起态出生）。
     void StopAll();
 
     // M6c 批②（ADR-015 M4/D4）：声部音量包络——seconds 内从当前有效音量线性到

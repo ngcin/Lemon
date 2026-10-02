@@ -30,22 +30,34 @@ namespace lemon::editor {
 // 真项目（svr-test 等）零污染（smoke-anim 空目录自播种同纪律）。产物 =
 // project.lemon + Assets/smoke-tone.wav（48k mono PCM16 正弦 0.25s；24KB <
 // 1MiB 整载路径——流式分支归批①b 单测，此处不占）。
-void EditorApp::SeedSmokeAudioProject() {
+// review 2026-10-02 #37：写盘失败（磁盘满/权限）返 false fail-fast——此前误报
+// 为「项目无音频资产」的用户用法错误。
+bool EditorApp::SeedSmokeAudioProject() {
     namespace fs = std::filesystem;
     std::error_code ec;
     const fs::path root(launchCopy_.projectDir);
-    if (root.empty() || fs::exists(root / "project.lemon", ec)) return;
+    if (root.empty() || fs::exists(root / "project.lemon", ec)) return true;
     fs::create_directories(root / "Assets", ec);
     {
         std::ofstream f(root / "project.lemon", std::ios::trunc);
+        if (!f) {
+            LEMON_ERROR("smoke-audio：夹具播种失败（project.lemon 不可写——磁盘满/"
+                        "权限）：%s", root.string().c_str());
+            return false;
+        }
         f << "{\n  \"schemaVersion\": 1,\n  \"name\": \"smoke-audio\",\n"
              "  \"engineVersion\": \"0.6.0-m6c\"\n}\n";
     }
     const fs::path wav = root / "Assets" / "smoke-tone.wav";
-    if (fs::exists(wav, ec)) return;
+    if (fs::exists(wav, ec)) return true;
     constexpr uint32_t kFrames = 12000, kRate = 48000; // 0.25s
     constexpr uint32_t kDataBytes = kFrames * 2;        // mono PCM16
     std::ofstream f(wav, std::ios::binary | std::ios::trunc);
+    if (!f) {
+        LEMON_ERROR("smoke-audio：夹具播种失败（%s 不可写——磁盘满/权限）",
+                    wav.string().c_str());
+        return false;
+    }
     auto le32 = [&f](uint32_t x) {
         for (int i = 0; i < 4; ++i) f.put(char((x >> (8 * i)) & 0xFF));
     };
@@ -71,6 +83,7 @@ void EditorApp::SeedSmokeAudioProject() {
         const int16_t s = (int16_t)(12000.0 * std::sin(6.283185307179586 * 440.0 * t));
         le16((uint16_t)s);
     }
+    return true;
 }
 
 bool EditorApp::RunSmokeAudioChain() {
@@ -144,6 +157,11 @@ bool EditorApp::RunSmokeAudioChain() {
     // 对照不起播 + preview 已停（ActiveVoiceCount 只计 !done，Stop 当帧跌零）
     // 三事实合一。系统侧实现 = 批② AudioSystem::Tick ② 段扫描；本段是 Edit→Play
     // 全链（装载/后端注入/系统扫描）的机器验收。
+    // review 2026-10-02 #29 交底：==1 的第四个隐含前提 = 进 Play 的编辑场景无其他
+    // 音频活动（声源/会发音频命令的脚本）。当前成立靠调用时序——本链先于 --scene
+    // 打开逻辑执行、编辑场景恒为空场景 + 两个播种实体；若日后 --smoke-audio 组合
+    // --scene 或项目获得 startup scene 自动打开，真项目 EnterPlay 会多出声部，
+    // 断言将 FAIL 且错误行 voices>1 即此因。
     bool playOk = false;
     int liveAfterEnter = -1, liveAfterStop = -1;
     bool entered = false;
@@ -177,12 +195,16 @@ bool EditorApp::RunSmokeAudioChain() {
                             (int)entered, liveAfterEnter, liveAfterStop);
         }
     }
+    // review 2026-10-02 #11：metaOk 纳入裁决（>=1——至少一条音频 .meta 带 importer
+    // 段，锁「新建音频 meta 写入 loop/preload 段」这条验收点；此前只打印不裁决，
+    // importer 写坏时夹具 metaOk=0 回归仍全绿。全量 ==entries 不采用：预写老 meta
+    // 缺段 = 既有容错语义）
     std::printf("[lemon] editor-smoke audio: entries=%d baked=%d meta=%d preview=%d/%d "
                 "voices=%d/%d => %s\n",
                 entries, baked, metaOk, (int)voiceUp, (int)voiceDown, liveAfterEnter,
                 liveAfterStop,
-                (entries == baked && previewOk && playOk) ? "OK" : "FAIL");
-    return entries == baked && previewOk && playOk;
+                (entries == baked && metaOk >= 1 && previewOk && playOk) ? "OK" : "FAIL");
+    return entries == baked && metaOk >= 1 && previewOk && playOk;
 }
 
 } // namespace lemon::editor

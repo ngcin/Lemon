@@ -106,6 +106,9 @@ public sealed class GameFlow : LemonBehaviour
     /// RtUi 兼容层——ADR-014 D5；玩家已销毁无人再写，残留行在此清）。</summary>
     internal static void ReturnToMenu()
     {
+        // review 2026-10-02 #2：暂停中回菜单必须解挂——Audio.Paused 残留会使下局
+        // PlayBgm 新声部生而挂起（整局静音）；StopBgm 只停曲不清全局暂停态
+        Audio.Paused = false;
         Audio.StopBgm(0.5f); // M6c 批④：回菜单静场（0.5s 淡出）
         SweepArmed = true;
         SweepObserved = false;
@@ -189,6 +192,7 @@ public sealed class GameFlow : LemonBehaviour
 
     private static void CloseSettings()
     {
+        FlushVolIfDirty(); // review 2026-10-02 #32：音量落盘收口到关屏（拖动去抖）
         UI.Hide(GameMain.SettingsDoc);
         UI.Apply();
         St = settingsFrom; // 底层屏（菜单实底/暂停 scrim）未动——回即见
@@ -236,14 +240,29 @@ public sealed class GameFlow : LemonBehaviour
         else if (key == "vol-ui") { if (Math.Abs(v - GameMain.Settings.UiVol) < 0.001f) return; GameMain.Settings.UiVol = v; }
         else return;
         ApplyVolumes();
-        SaveSettings(); // 落盘 + 滑条/百分数回显
+        // review 2026-10-02 #32：拖动每步只应用 + 回显，落盘去抖到关屏——此前每个
+        // 步进 Change 都 Save.Flush 全档 + 10 条回显 op（拖动路径同步 IO 未去抖）
+        RefreshSettingsUi();
+        volDirty = true;
     }
 
     private static string Pct(float v) => ((int)Math.Round(v * 100f)).ToString(IC);
     private static readonly System.Globalization.CultureInfo IC =
         System.Globalization.CultureInfo.InvariantCulture;
 
-    private static void SaveSettings()
+    // #32 去抖记账：音量拖动中置位，关屏统一落盘
+    private static bool volDirty = false;
+
+    private static void FlushVolIfDirty()
+    {
+        if (!volDirty) return;
+        volDirty = false;
+        PersistSettings();
+    }
+
+    /// 落盘（含首开建档 version=1）。开关翻转/首开建档即时走全量；滑条拖动走
+    /// RefreshSettingsUi 回显 + volDirty，停拖关屏才 Flush（#32）。
+    private static void PersistSettings()
     {
         Save.SetString("version", "1", Save.Chan.Settings);
         Save.SetString("fx.text", GameMain.Settings.FxText ? "1" : "0", Save.Chan.Settings);
@@ -253,6 +272,11 @@ public sealed class GameFlow : LemonBehaviour
         Save.SetString("vol.sfx", Pct(GameMain.Settings.SfxVol), Save.Chan.Settings);
         Save.SetString("vol.ui", Pct(GameMain.Settings.UiVol), Save.Chan.Settings);
         Save.Flush();
+    }
+
+    /// 滑条 value 属性 + 开关/百分数回显（拖动路径即时调用，零磁盘 IO）。
+    private static void RefreshSettingsUi()
+    {
         UI.SetText(GameMain.SettingsDoc, "btn-fxtext", GameMain.Settings.FxText ? "开" : "关");
         UI.SetText(GameMain.SettingsDoc, "btn-fxbar", GameMain.Settings.FxBar ? "开" : "关");
         // 滑条 value 属性 + 右侧百分数（隐藏态可写——装载文档 DOM 常在，③d-2 先例）
@@ -265,6 +289,12 @@ public sealed class GameFlow : LemonBehaviour
         UI.SetText(GameMain.SettingsDoc, "vol-sfx-val", Pct(GameMain.Settings.SfxVol));
         UI.SetText(GameMain.SettingsDoc, "vol-ui-val", Pct(GameMain.Settings.UiVol));
         UI.Apply();
+    }
+
+    private static void SaveSettings()
+    {
+        PersistSettings();
+        RefreshSettingsUi();
     }
 
     // 热重载状态迁移（流程态 + 设置——静态随域重建必须经包走）

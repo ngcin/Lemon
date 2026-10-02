@@ -5863,10 +5863,11 @@ void TestAudioSpscRing() {
         while (p < kTotal) {
             const size_t got = big.Read(buf, 1 + r() % (sizeof buf) + 0);
             for (size_t i = 0; i < got; ++i)
-                if (buf[i] != uint8_t(((p + i) * 2654435761ull) >> 24)) {
-                    orderOk.store(false);
-                    return;
-                }
+                if (buf[i] != uint8_t(((p + i) * 2654435761ull) >> 24))
+                    orderOk.store(false); // review 2026-10-02 #33：序错继续排空到
+                                          // kTotal——首错即 return 会让生产者在环满
+                                          // 上忙转、prod.join() 挂到 ctest TIMEOUT
+                                          // 而非报 FAIL（挂死 ≠ 红字）
             p += got;
         }
     });
@@ -6033,8 +6034,10 @@ void TestAudioStreamVoice() {
     {
         float out[8];
         eng.MixOffline(out, 4);
-        const float ex = pcm[0] / 32768.0f * 0.70710678f;
-        ExpectNear(out[0], 2 * ex, 1e-4f, "dual stream voices sum");
+        // review 2026-10-02 #13：对拍帧 1（pcm[2]=10000·sin(0.05)≈4999 非零）——
+        // 原对拍帧 0 的 pcm[0]=sin(0)=0，期望 2×0 恒真，0/1/2 个声部全过（真空）
+        const float ex = pcm[2] / 32768.0f * 0.70710678f;
+        ExpectNear(out[2], 2 * ex, 1e-4f, "dual stream voices sum");
     }
     eng.StopAll();
     fs::remove_all(dir, ec);
@@ -6086,6 +6089,36 @@ void TestAudioMasterLimiter() {
     const float hot = mixPeak(3, 1.0f);
     Expect(hot < 1.0f && hot > 0.999f, "deep overload asymptotic under 1.0");
     Expect(hot > mid, "limiter monotonic (louder in = louder out)");
+
+    // review 2026-10-02 #35：联动限幅区分性用例——此前全部夹具单声道 L==R，
+    // 「L/R 共用同帧峰值增益」与逐通道独立限幅不可区分。立体声 L 满格/R 低幅
+    // 两声部叠加：L 过膝驱动单增益乘双声道 → R 同帧被拉低（独立限幅 R 原样）
+    {
+        std::vector<int16_t> spcm(kFrames * 2);
+        for (uint32_t i = 0; i < kFrames; ++i) {
+            spcm[i * 2 + 0] = 32767; // L 满格
+            spcm[i * 2 + 1] = 8000;  // R 低幅（膝下）
+        }
+        const uint32_t sclip = eng.RegisterClip(std::move(spcm), 2, kFrames, 0, 0);
+        Expect(sclip != 0, "stereo limiter clip registered");
+        eng.Play(sclip, {.volume = 1.0f});
+        eng.Play(sclip, {.volume = 1.0f});
+        std::vector<float> out(kFrames * 2);
+        eng.MixOffline(out.data(), kFrames);
+        eng.Tick(); // 回收，保案例间状态干净
+        const float center = 0.70710678f;
+        const float lIn = 2.0f * (32767.0f / 32768.0f) * center; // 叠加后 L 峰（过膝）
+        const float rIn = 2.0f * (8000.0f / 32768.0f) * center;  // 叠加后 R 峰（膝下）
+        float lPeak = 0, rPeak = 0;
+        for (uint32_t i = 0; i < kFrames; ++i) {
+            lPeak = std::max(lPeak, std::fabs(out[i * 2]));
+            rPeak = std::max(rPeak, std::fabs(out[i * 2 + 1]));
+        }
+        Expect(lPeak > 0.99f && lPeak < 1.0f, "stereo overload L limited soft");
+        const float linkedGain = softLimit(lIn) / lIn;
+        ExpectNear(rPeak, rIn * linkedGain, 1e-4f, "linked gain pulls R with L");
+        Expect(rPeak < rIn * 0.9f, "R measurably reduced (vs per-channel unity)");
+    }
 }
 
 void TestAudioVoiceCapSteal() {
@@ -6206,8 +6239,11 @@ void TestAudioFadeEnvelope() {
     const uint32_t clip = eng.RegisterClip(std::move(pcm), 2, 4800, 0, 0);
     Expect(clip != 0, "clip registered");
 
-    // fadeIn 0.05s：混 1200 帧（0.025s）后包络约半幅（等功率中心声像 0.707 计入）
-    const uint32_t v1 = eng.Play(clip, {.volume = 1.0f, .fadeInSec = 0.05f});
+    // fadeIn 0.05s：混 1200 帧（0.025s）后包络约半幅（等功率中心声像 0.707 计入）。
+    // review 2026-10-02 #12：v1 改循环声部——一次性版 3600/4800 帧后仅剩 1200 帧，
+    // 0.05s 淡出需 2400 帧，自然终点先亡 mask 掉 stopAtFadeEnd 断言（FadeVoice
+    // 完全失效断言也过）；循环声部无自然终点，终结只能来自淡出到 0
+    const uint32_t v1 = eng.Play(clip, {.volume = 1.0f, .fadeInSec = 0.05f, .loop = true});
     Expect(v1 != 0, "fade-in voice");
     float out[4800 * 2];
     eng.MixOffline(out, 1200);
@@ -6220,9 +6256,10 @@ void TestAudioFadeEnvelope() {
     for (int i = 0; i < 2400 * 2; ++i) peak = std::max(peak, std::fabs(out[i]));
     Expect(peak > full * 0.9f, "fade-in reached full");
 
-    // FadeVoice→0 + stopWhenDone：0.05s 后声部终结（一次性 clip 0.1s 未放完即被终结）
+    // FadeVoice→0 + stopWhenDone：0.05s 后声部终结（循环声部无自然终点——终结
+    // 只能来自包络 stopAtFadeEnd，未被 mask，review 2026-10-02 #12）
     Expect(eng.FadeVoice(v1, 0.0f, 0.05f, true), "fade-out accepted");
-    eng.MixOffline(out, 4800); // 足够跑完 0.1s
+    eng.MixOffline(out, 4800); // 足够跑完淡出窗
     Expect(!eng.VoiceAlive(v1), "voice dead after fade to zero");
     Expect(eng.ActiveVoiceCount() == 0, "no active voices left");
 
@@ -6335,9 +6372,12 @@ void TestAudioChannelCommands() {
     ch2.Submit(&eng, l);
     (void)lv;
     const uint32_t pausedLoop = ch2.StagePlay(clip, 0, 1.0f, 0, true);
+    (void)pausedLoop; // 计数断言按活跃口径（#36 恰 3），句柄本身不判
     ch2.Submit(&eng, l);
     eng.AdvanceSilentFrames(4800); // 暂停声部游标不动（放完一帧都不该退役）
-    Expect(eng.ActiveVoiceCount() >= 2, "paused loops still occupy slots");
+    // review 2026-10-02 #36：确定性恰 3（v3 Sfx 一次性 cursor 4800<48000 仍活 +
+    // 两条挂起 Bgm loop）——原 >=2 容忍「错杀一条挂起 loop」的缺陷照样通过
+    Expect(eng.ActiveVoiceCount() == 3, "paused loops still occupy slots");
 }
 
 void TestAudioSourceLifecycle() {

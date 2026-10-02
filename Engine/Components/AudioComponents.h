@@ -21,7 +21,10 @@ struct AudioSource {
     float refDist = 256.0f;  // 全增益半径（ADR-015 M5 线性衰减）
     float maxDist = 1024.0f; // 衰减到 0 半径
     uint16_t flags = kAudioPlayOnStart;
-    uint8_t group = 1;       // audio::Group（0 Bgm/1 Sfx/2 Ui；AudioSystem 钳界）
+    uint8_t group = 1;       // audio::Group（0 Bgm/1 Sfx/2 Ui；AudioSystem 钳界）。
+                              // 镜像坑（review 2026-10-02 #17）：C# 侧 default = 0(Bgm)
+                              // ——整写组件须显式设组（Flags 同款镜像默认值坑；漏设
+                              // 落 Bgm = 挂 BGM 组音量 + 暂停时被声部级挂起）
     uint8_t pad_ = 0;
 };
 

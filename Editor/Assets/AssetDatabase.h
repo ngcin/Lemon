@@ -93,9 +93,15 @@ public:
     bool OpenProject(const std::string& projectRoot, uint32_t spriteIdBase);
 
     /// 重扫（FileWatcher 触发/手动）：保 guid/spriteId；产出 LastChange。
+    /// removed 事件「保留至被消费」（review 2026-10-02 #7）：Remove() 预入队的
+    /// 删除事件经 Rescan 传递给消费者，重扫不清空（跨 Rescan 不丢）；消费者处理
+    /// 完调 ConsumeChange() 取走清零，不消费则下次原样再交付（不重复处理由
+    /// 消费者清零保证）。
     void Rescan();
 
     const ChangeSet& LastChange() const { return lastChange_; }
+    /// 消费者取走变更集（处理完 LastChange 后调用——防跨重扫重复处理）
+    void ConsumeChange() { lastChange_ = {}; }
 
     // ---- 查询（外部删除 = 条目同轮出表；missing 仅编辑器内 Remove 的同帧过渡位）----
     const AssetEntry* FindByGuid(uint64_t guid) const;
@@ -159,8 +165,16 @@ private:
     bool GuidReferenced(uint64_t guid);
     /// 清扫本体（自动/手动共用）：遍历源缺失的 .meta，零引用删之、被引用留之。
     OrphanSweepResult SweepOrphanMetasInternal();
-    std::string refCorpus_;      // 引用面语料（惰性）
-    bool refCorpusTried_ = false;
+    // 引用语料增量缓存（review 2026-10-02 #24）：路径 → {mtime,size,text}，失效后
+    // 只重读变更/新增文件、复用未变内容——此前单一大串每次 Rescan 全量重建
+    //（保存/删除触发重扫即全项目 IO，大项目同步卡顿 + 瞬态大分配）
+    struct RefFile {
+        uint64_t mtime = 0;
+        uintmax_t size = 0;
+        std::string text;
+    };
+    std::unordered_map<std::string, RefFile> refFiles_;
+    bool refCorpusTried_ = false; // true = refFiles_ 为本 Rescan 周期语料
 
     std::string root_;
     std::vector<AssetEntry> entries_; // relPath 升序（含墓碑）

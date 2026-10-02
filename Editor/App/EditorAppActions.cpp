@@ -136,7 +136,11 @@ void EditorApp::MenuSweepOrphanMetas() {
 void EditorApp::RescanAssets() {
     AssetDatabase& db = ctx_.Assets();
     db.Rescan();
-    const AssetDatabase::ChangeSet& cs = db.LastChange();
+    // review 2026-10-02 #7：按值取走 + 立即 ConsumeChange——Remove() 预入队的
+    // removed 事件此前被 Rescan 首行清空永不可达（GPU 幽灵页回收承诺落空）；
+    // 现语义 = 保留至消费，取走即清零防跨重扫重复 Evict/重载
+    const AssetDatabase::ChangeSet cs = db.LastChange();
+    db.ConsumeChange();
     for (uint64_t g : cs.added)
         if (const AssetEntry* e = db.FindByGuid(g); e && e->type == AssetType::Sprite)
             gpuAssets_.ImportSprite(*e);

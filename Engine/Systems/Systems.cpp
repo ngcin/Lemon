@@ -1348,9 +1348,25 @@ void AudioSystem::Tick(World& world, Scene& scene, float dt) {
             // 换片：停旧起新（运行时改 guid = 明确意图，与 playOnStart 无关）
             if (engine && b->engineVoice) engine->Stop(b->engineVoice);
             b->engineVoice = 0;
+            const uint64_t prevGuid = b->clipGuid;
             b->clipGuid = src.clipGuid;
-            if (src.clipGuid != 0 && engine)
+            if (src.clipGuid != 0 && engine) {
                 b->engineVoice = StartSourceVoice(world, scene, *engine, listener, e, src);
+                if (b->engineVoice == 0) {
+                    // review 2026-10-02 #5：换片起播失败不再永久静默——坏 guid 一次
+                    // 性告警（与起播路径共用 warnedClipMiss_ 旗）；池满/节流等可恢复
+                    // 拒绝则回滚 guid 记账制造失配，下 tick 重试（起播路径同语义）
+                    if (world.ResolveAudioClip(src.clipGuid) == 0) {
+                        if (!warnedClipMiss_) {
+                            warnedClipMiss_ = true;
+                            LEMON_WARN("AudioSource 换片 clipGuid %016llx 未注册（资产未装载/GUID 手误），该声源静默",
+                                       (unsigned long long)src.clipGuid);
+                        }
+                    } else {
+                        b->clipGuid = prevGuid;
+                    }
+                }
+            }
         }
         // 空间参数热更：监听器移动/组件调参逐 tick 生效（D7：组件声源跟随实体）
         if (engine && b && b->engineVoice) {
@@ -1363,6 +1379,11 @@ void AudioSystem::Tick(World& world, Scene& scene, float dt) {
 
     // ③ 绑定回收：实体亡/组件摘 → 停声部解绑（绑定 = "已起播"记账，playOnStart
     // 不复活；一次性放完的声部留记账至实体消亡——重触发语义见类注）
+    // review 2026-10-02 #20 交底：Entity 句柄无场景位（高 32 位保留，Entity.h），
+    // 判定只对当前活动场景 registry——World 中途 SetActiveScene 切场景时，旧场景
+    // 残留绑定理论上可被新场景同 (index,version) 实体撞号收养。当前宿主纪律 =
+    // 每 Play 新建单场景 World + StopPlay 先 StopAll 再退 World（EditorContext/
+    // EditorAppScripts），voice 清场由宿主保证；多场景 World 需先落句柄场景位。
     bindings_.erase(std::remove_if(bindings_.begin(), bindings_.end(),
                                    [&](SourceBinding& x) {
                                        if (scene.Alive(x.e) && scene.Has<AudioSource>(x.e))

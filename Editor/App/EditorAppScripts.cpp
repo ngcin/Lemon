@@ -146,7 +146,8 @@ bool EditorApp::OpenProjectPipeline(const std::string& projectRoot) {
     // 注入/冒烟会话不记（2026-09-22 测试报告复验时发现：smoke-ui 不带 --smoke
     // 标志，回归曾把 ${TMP}/ui 推成首条；trap 删目录后成死条目并挤掉真实项目）
     const bool injectionSession = launch_->smoke || launch_->smokeUi || launch_->smokeDrag ||
-                                  launch_->smokeUirml || launch_->finalTest ||
+                                  launch_->smokeUirml || launch_->smokeAudio ||
+                                  launch_->finalTest ||
                                   !launch_->smokeClose.empty();
     if (!injectionSession)
         PushRecentProject(ctx_.Assets().ProjectRoot(), recentProjects_);
@@ -181,6 +182,9 @@ bool EditorApp::TryEnterPlay() {
         return false;
     }
     if (!ctx_.EnterPlay()) return false;
+    paused_ = false; // review 2026-10-02 #28：会话边界复位——sim 冻结态不跨 Play
+                     // 残留（音频侧 MountPlayAudio 复位后两侧不再错位成
+                     //「画面冻结、BGM 照响」；工具栏暂停钮态随新会话归零）
     MountSceneUiDocuments(); // 批③d 前置（通道 A）：场景声明装载 + EnterPlay 归位
     MountPlayAudio();        // M6c 竖切批：烤制/装载音频资产（guid→clip）
     WirePlayAudioBackend();  // M6c 批②：命令表提交引擎 + guid 解析（AudioSystem #20 消费）
@@ -189,6 +193,11 @@ bool EditorApp::TryEnterPlay() {
 
 bool EditorApp::StopPlay() {
     audio_.StopAll(); // M6c 竖切批：声部清场（clip 注册表保留——重进 Play 全量重装）
+    // review 2026-10-02 #27：试听记账随清场复位——Play 中双击起试听后 Stop 回
+    // Edit，残留 previewVoice_ 会让下一次双击同资产命中「同曲再点 = 停」分支
+    // 静默空操作（第一次点击无声，需点第二次才播）
+    previewVoice_ = 0;
+    previewGuid_ = 0;
     if (!ctx_.ExitPlay()) return false;
     // 形态 D 清场（2026-09-29）：Unity「Stop = 运行时态归零」同构——Scene/CSharp
     // 来源文档 Hide（装载保留免 IO）；Edit 双击预览豁免（③b 跨 Play 保持）。
@@ -214,14 +223,18 @@ std::string BakedPathFor(const std::string& root, uint64_t guid) {
     std::snprintf(hex, sizeof(hex), "%016llx", (unsigned long long)guid);
     return root + "/.lemon/baked/audio/" + hex + ".baked";
 }
-// 缺烤/源新于产物（mtime；后台线程与 EnterPlay 兜底共用同一判定）
+// 缺烤/源新于产物（mtime；后台线程与 EnterPlay 兜底共用同一判定）。
+// review 2026-10-02 #8：.meta（importer 段：loop/preload）新于产物同样算 stale
+//——loop 冻结在 .baked 头里，不重烤则热改永不生效于已烤 clip
 bool BakeStale(const std::string& src, const std::string& dst) {
     std::error_code ec;
     if (!fs::exists(dst, ec)) return true;
-    const auto srcT = fs::last_write_time(src, ec);
-    const bool srcOk = !ec;
     const auto dstT = fs::last_write_time(dst, ec);
-    return srcOk && !ec && srcT > dstT;
+    if (ec) return true;
+    const auto srcT = fs::last_write_time(src, ec);
+    if (!ec && srcT > dstT) return true;
+    const auto metaT = fs::last_write_time(src + ".meta", ec);
+    return !ec && metaT > dstT;
 }
 } // namespace
 

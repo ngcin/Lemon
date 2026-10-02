@@ -394,19 +394,36 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
         if (e.type == AssetType::Rml) dims += "\n双击：装载到游戏 UI（Play 中显示）"; // 批③b
         if (e.type == AssetType::Rcss) dims += "\n经文档 <link> 引用；改动热重载生效"; // 批③b
         if (e.type == AssetType::Audio) { // 批①：烤制状态（Peek .baked 头）+ 试听
-            audio::BakedClipInfo bi;
+            // review 2026-10-02 #25：悬停期不再每帧 Peek（fopen/fread + 头坏时每帧
+            // 重复红字）——guid+源hash+.baked mtime 三键缓存，仅变更时重读一次
+            //（.baked mtime 变 = 后台烤制完成，悬停中也会刷新）
             char hex[17];
             std::snprintf(hex, sizeof(hex), "%016llx", (unsigned long long)e.guid);
             const std::string baked = ctx.Assets().ProjectRoot() + "/.lemon/baked/audio/" +
                                       hex + ".baked";
-            if (audio::PeekBakedClip(baked.c_str(), bi)) {
-                char dur[48];
-                std::snprintf(dur, sizeof(dur), "已烤 %uch / %.1fs / 48kHz", bi.channels,
-                              float(bi.frameCount) / audio::kMixSampleRate);
-                dims += std::string("\n") + dur;
-            } else {
-                dims += "\n未烤（进 Play / 试听时现烤）";
+            std::error_code ec;
+            const int64_t bakedWrite =
+                std::filesystem::exists(baked, ec)
+                    ? int64_t(std::filesystem::last_write_time(baked, ec)
+                                  .time_since_epoch()
+                                  .count())
+                    : -1;
+            if (e.guid != audioTipGuid_ || e.hash != audioTipHash_ ||
+                bakedWrite != audioTipBakedWrite_) {
+                audioTipGuid_ = e.guid;
+                audioTipHash_ = e.hash;
+                audioTipBakedWrite_ = bakedWrite;
+                audio::BakedClipInfo bi;
+                if (bakedWrite >= 0 && audio::PeekBakedClip(baked.c_str(), bi)) {
+                    char dur[48];
+                    std::snprintf(dur, sizeof(dur), "已烤 %uch / %.1fs / 48kHz", bi.channels,
+                                  float(bi.frameCount) / audio::kMixSampleRate);
+                    audioTipText_ = std::string("\n") + dur;
+                } else {
+                    audioTipText_ = "\n未烤（进 Play / 试听时现烤）";
+                }
             }
+            dims += audioTipText_;
             dims += "\n双击：试听 / 停止";
         }
         ImGui::SetTooltip("%s\n%s  guid %s\n%s", e.FileName().c_str(), AssetTypeName(e.type),

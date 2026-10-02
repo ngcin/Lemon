@@ -214,7 +214,12 @@ struct AudioEngine::Impl {
     }
 
     // ---- 主线程：声部/音量变更（锁内）----
-    uint32_t PlayLocked(uint32_t clipId, const PlayParams& p, FeedRef feed) {
+    // outFeedJob：流式声部需挂填充队列时置为其 feed（调用方在 mtx **外**入队——
+    // review 2026-10-02 #4：mtx 内取 fillMtx_ 会与填充线程 PumpFeed 的阻塞 fread
+    // 成链，设备回调等 mtx 即被磁盘 IO 间接卡；预填整环 256KiB ≈1.4s 余量，
+    // job 迟到微秒级无害）
+    uint32_t PlayLocked(uint32_t clipId, const PlayParams& p, FeedRef feed,
+                        FeedRef& outFeedJob) {
         if (clipId == 0 || clipId > clips.size() || clips[clipId - 1].frameCount == 0)
             return 0;
         const Clip& c = clips[clipId - 1];
@@ -241,7 +246,11 @@ struct AudioEngine::Impl {
             }
         }
         if (slot < 0) {
-            // 池满：偷最旧一次性声部；全是循环声部则拒绝（ADR-015 M4）
+            // 池满：偷最旧一次性声部；全是循环声部则拒绝（ADR-015 M4）。
+            // review 2026-10-02 #15 交底：偷 = 槽位即刻被新声部整体覆盖，被偷声部
+            //（含其在途释放包络）无法像 per-clip 超限路径那样走 5ms 释放——固定
+            // 池下无槽容纳释放尾巴，残余为硬切；常态饱和由下方同 clip 上限路径
+            //（kMaxVoicesPerClip=4 ≪ 64）以释放治理，真池尽属病态场景
             uint64_t oldest = UINT64_MAX;
             int stealSlot = -1;
             for (int i = 0; i < kMaxVoices; ++i) {
@@ -257,12 +266,16 @@ struct AudioEngine::Impl {
         // 同 clip 并发上限（听感验收 2026-10-01：叠音第二源头——同 clip 重触发无限
         // 叠，相干求和最坏 +6dB/份）：业界 per-sound voice limit 同构，超限偷最老；
         // 释放复用 D4 包络（硬停切波前有咔哒）。释放中（stopAtFadeEnd）不计活跃
-        // ——突发连发下"活"声部恒 ≤ 上限
+        // ——突发连发下"活"声部恒 ≤ 上限。
+        // review 2026-10-02 #15：victim 跳过被偷槽位——池满偷槽在先，若 victim 恰为
+        // 该槽，刚设的释放包络随即被新声部字段整体覆盖（释放彻底失效），改选次老
         {
             int live = 0;
             uint64_t oldest = UINT64_MAX;
             Voice* victim = nullptr;
             for (Voice& o : voices) {
+                if (&o == &voices[slot])
+                    continue; // 被偷槽位即将整体覆盖（其包络无处安放，见池满注释）
                 if (o.id == 0 || o.done || o.clipRef != clipId || o.stopAtFadeEnd)
                     continue;
                 ++live;
@@ -300,16 +313,15 @@ struct AudioEngine::Impl {
         if (pitchJitter_ > 0.0f && !v.loop && !v.stream && group != Group::Bgm) {
             // 音高微扰：同素材连发去相干（拍频/梳状叠加的根治项）。±range 均匀；
             // 序列固定种子可复现。BGM 组不扰（乐律精确的音乐性一次性素材）
-            const float u = float(Xorshift() >> 8) / 8388607.0f; // [0,1]
+            // review 2026-10-02 #3：24 位随机值（(2^32-1)>>8 = 2^24-1）除以 2^23-1
+            // 曾使 u∈[0,2]（扰动区间 −range..+3range 整体偏尖）——除数对齐满幅
+            const float u = float(Xorshift() >> 8) / 16777215.0f; // [0,1]
             v.rate = 1.0f + (u * 2.0f - 1.0f) * pitchJitter_;
         }
-        if (v.stream) { // 设备模式挂填充队列（静音/离线无线程——PumpStreams 手动驱动）
+        if (v.stream) { // 流式：loop 语义落位；填充队列由调用方在 mtx 外挂（#4）
             v.stream->loop = v.loop;
-            if (fillThread_.joinable()) {
-                std::lock_guard<std::mutex> flk(fillMtx_);
-                fillJobs_.push_back(v.stream);
-                fillCv_.notify_one();
-            }
+            if (fillThread_.joinable())
+                outFeedJob = v.stream;
         }
         // D4 起播淡入：包络从 0 爬到 volume（fadeDur<=0 = 直起，包络退役态）
         v.fadeFrom = 0.0f;
@@ -565,6 +577,12 @@ void AudioEngine::Shutdown() {
             v.stream->dead.store(true, std::memory_order_relaxed);
         v = {}; // 原生数组不能整体赋值；号不复用（nextVoiceId 只增）
     }
+    // review 2026-10-02 #14：会话边界复位兜底——pausedAll 跨 Shutdown/Init 周期
+    // 残留会使新会话起播即挂起变哑（此前只在宿主侧 MountPlayAudio 打补丁）；
+    // 观测计数（欠载帧/告警旗）随周期归零
+    impl_->pausedAll = false;
+    impl_->streamUnderruns_.store(0, std::memory_order_relaxed);
+    impl_->underrunWarned_ = false;
     impl_->silent_ = false;
     impl_->inited_ = false;
 }
@@ -667,8 +685,18 @@ uint32_t AudioEngine::Play(uint32_t clipId, const PlayParams& p) {
             return 0;
         }
     }
-    std::lock_guard<std::mutex> lk(impl_->mtx);
-    return impl_->PlayLocked(clipId, p, std::move(feed));
+    Impl::FeedRef feedJob;
+    uint32_t voiceId = 0;
+    {
+        std::lock_guard<std::mutex> lk(impl_->mtx);
+        voiceId = impl_->PlayLocked(clipId, p, std::move(feed), feedJob);
+    }
+    if (feedJob) { // 填充队列在 mtx 外挂（#4：设备回调不得经 fillMtx_ 间接受阻）
+        std::lock_guard<std::mutex> flk(impl_->fillMtx_);
+        impl_->fillJobs_.push_back(std::move(feedJob));
+        impl_->fillCv_.notify_one();
+    }
+    return voiceId;
 }
 
 bool AudioEngine::Stop(uint32_t voiceId) {
@@ -689,6 +717,10 @@ void AudioEngine::StopAll() {
     for (auto& v : impl_->voices)
         if (v.id != 0)
             v.done = true;
+    // review 2026-10-02 #14：全停 = 会话清场，暂停意图一并复位——宿主「暂停中停
+    // 场/退 Play」后残留 pausedAll 会使下局 BGM 生而挂起（引擎层兜底，替代宿主
+    // 侧逐点 SetPaused(false) 补丁）
+    impl_->pausedAll = false;
 }
 
 bool AudioEngine::FadeVoice(uint32_t voiceId, float targetVolume, float seconds,
