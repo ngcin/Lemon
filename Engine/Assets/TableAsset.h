@@ -1,5 +1,6 @@
-// Lemon 编辑器 — CSV 解析 + .tab 表格资产序列化（M6a 批② T1；ADR-012 D1）
-// 纯文本逻辑，零 ImGui/GPU 依赖（lemon-editor-core，可单测）。
+// Lemon 引擎 — CSV 解析 + .tab 表格资产序列化（M6a 批② T1；ADR-012 D1；M7a 批②
+// 自 Editor/Assets/Csv 下沉引擎——运行时 BuildPlayTableCache 与编辑器共用）。
+// 纯文本逻辑，零 ImGui/GPU 依赖（可单测）。
 //   * .tab = JSON 全字符串格网格（第 0 行 = 列头；后缀 .tab 为 2026-09-26 用户定名，
 //     ADR-012 原文 .table 按修订注记读取）：
 //       { "schemaVersion": 1, "name": "weapons", "rows": [["id","label"], ["a","甲"]] }
@@ -12,7 +13,7 @@
 #include <string_view>
 #include <vector>
 
-namespace lemon::editor {
+namespace lemon::assets {
 
 inline constexpr uint32_t kTableMaxCols = 64;
 inline constexpr uint32_t kTableMaxRows = 1024;
@@ -46,4 +47,4 @@ TableData NormalizeTable(std::vector<std::vector<std::string>> rows);
 /// UTF-8 合法性（过长编码/代理区/截断续字节全拒；ParseCsv 的 GBK 拒入依据）
 bool IsValidUtf8(std::string_view s);
 
-} // namespace lemon::editor
+} // namespace lemon::assets

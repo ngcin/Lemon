@@ -1,0 +1,84 @@
+// Lemon 引擎 — 运行时只读资产索引（M7a 批②；ADR-016 M2 / 06 §2）
+// 编辑器 AssetDatabase（写侧 DB：发号/写 .meta/manifest 落盘）的只读镜像——
+// 两侧共同事实源 = .meta（guid 随文件走）与 .lemon/manifest.json（spriteId 记账），
+// 故无漂移；双扫描器合并归 M8（ADR-016 登记项）。
+//   * 快路径：manifest 在场且合法 → 直读 {guid,type,spriteId,slice}，零目录扫描
+//    （收 manifest 全账——含编辑器侧索引的根级 Generic 散件，如 README.md；
+//     与回退的集合差无消费者：hooks/四缓存/TextureStore 只认强类型资产）；
+//   * 回退：manifest 缺失/损坏 → 扫 Assets/** + 根级 Prefabs/**（06 §1 布局，
+//     与 AssetDatabase.Rescan 同款排除规则）+ .meta 读 guid + **确定性 spriteId
+//     派生**（路径排序单调发号 + 切片连号块）——「git clean -xfd 后可启动」的
+//     机器保证（M7a 出口判据）。
+//   * guid 是真源、spriteId 是进程内派生号：runtime 与编辑器 id 数值不同无害，
+//     装载后 ResolveSpriteRefs 按 guid 归一（M6a 批⓪ 口径）。
+// 零写侧：不发号、不写 .meta/manifest（打包/编辑态操作归编辑器与 packager）。
+#pragma once
+
+#include <cstdint>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+#include "Assets/AssetTypes.h"
+
+namespace lemon::assets {
+
+/// 只读条目（AssetEntry 的运行时子集：无 hash/missing/audio importer 等编辑器字段）
+struct IndexedEntry {
+    uint64_t guid = 0;
+    std::string relPath;   // 相对项目根（'/' 分隔，含扩展名）
+    AssetType type = AssetType::Generic;
+    uint32_t spriteId = 0; // Sprite：AtlasRegistry 稳定 id（0 = 非 sprite）
+    // 网格切片（.meta importer 段声明；cell 序号 → sliceBase+cell 连号，行优先）
+    uint16_t cellW = 0, cellH = 0;
+    uint16_t gridCols = 0, gridRows = 0;
+    uint32_t sliceBase = 0;
+    uint32_t sliceCount = 0;
+    bool Sliced() const { return sliceBase != 0 && sliceCount != 0; }
+    uint32_t SliceSpriteId(uint32_t cell) const {
+        return cell < sliceCount ? sliceBase + cell : 0;
+    }
+    std::string FileName() const;
+    std::string Dir() const;
+};
+
+class AssetIndex {
+public:
+    /// 打开项目（root 含 Assets/）。spriteIdBase = 程序化图集之后首个可用号
+    ///（调用方装配后 SpriteCount()+1，与 AssetDatabase::OpenProject 同口径）。
+    /// 返回 false = root 无 Assets 目录（不可用）。
+    bool Open(const std::string& projectRoot, uint32_t spriteIdBase);
+
+    const IndexedEntry* FindByGuid(uint64_t guid) const;
+    const IndexedEntry* FindByPath(const std::string& relPath) const;
+    /// 全幅号 ∪ 切片区间（资产反查；SpriteRefSource 回填面**不可**用此口——
+    /// cell 号命中会把切片引用升级成整图 guid，本体号专用查询见下）
+    const IndexedEntry* FindBySpriteId(uint32_t spriteId) const;
+    /// 仅本体号（SpriteRefs 回填契约：cell 号/程序化页号查无 = 不回填）
+    const IndexedEntry* FindByWholeSpriteId(uint32_t spriteId) const;
+    /// clip/prefab/controller/table/animset 按 GUID 低 32 位反查（运行时映射约定，
+    /// 03 §69 组件 schema 恒 uint32；碰撞 = 路径序先登记者）
+    const IndexedEntry* FindByLowId(AssetType type, uint32_t lowId) const;
+    bool SpriteIdRegistered(uint32_t spriteId) const;
+
+    const std::vector<IndexedEntry>& Entries() const { return entries_; }
+    const std::string& ProjectRoot() const { return root_; }
+    std::string AssetsRoot() const { return root_ + "/Assets"; }
+    std::string AbsolutePath(const IndexedEntry& e) const { return root_ + "/" + e.relPath; }
+    uint32_t SpriteIdBase() const { return spriteIdBase_; }
+    /// 上次 Open 是否走 manifest 快路径（冒烟/单测探针位）
+    bool FromManifest() const { return fromManifest_; }
+
+private:
+    bool LoadFromManifest(const std::string& manifestPath);
+    void ScanFallback();
+
+    std::string root_;
+    std::vector<IndexedEntry> entries_; // relPath 升序
+    std::unordered_map<std::string, uint32_t> byPath_; // relPath → entries_ 下标
+    uint32_t spriteIdBase_ = 0;
+    bool fromManifest_ = false;
+    bool opened_ = false;
+};
+
+} // namespace lemon::assets

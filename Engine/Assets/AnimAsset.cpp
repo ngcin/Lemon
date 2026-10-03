@@ -1,13 +1,13 @@
-// Lemon 编辑器 — ClipEdit 实现（M6a 批② T3；见 ClipEdit.h 契约注记）
-#include "Assets/ClipEdit.h"
+// Lemon 引擎 — AnimAsset 实现（M6a 批② T3 / M7a 批② 下沉；见 AnimAsset.h 契约注记）
+#include "Assets/AnimAsset.h"
 
 #include <algorithm>
 #include <cstdio>
 
-#include "Assets/AssetDatabase.h"
+#include "Assets/AssetTypes.h"
 #include "nlohmann/json.hpp"
 
-namespace lemon::editor {
+namespace lemon::assets {
 
 namespace {
 ClipData Fail(const char* what, size_t frame) {
@@ -39,7 +39,7 @@ ClipData ParseClipJson(std::string_view text) {
     } else {
         // legacy "loop" 需类型预检（review 2026-10-02 #30）：手写/外部工具常见的
         // "loop": 1 直接 get<bool>() 会抛 nlohmann type_error 穿透调用链（调用点
-        // 均 bare 调用无 try/catch）= std::terminate——本函数契约"坏档不炸编辑器"
+        // 均 bare 调用无 try/catch）= std::terminate——本函数契约"坏档不炸调用方"
         if (doc.contains("loop") && !doc.at("loop").is_boolean())
             return Fail("clip 解析失败：loop 非布尔（手写档请用 true/false）", 0);
         out.loopMode = !doc.contains("loop") || doc.at("loop").get<bool>() ? 1 : 0;
@@ -51,7 +51,7 @@ ClipData ParseClipJson(std::string_view text) {
         if (!fr.at("sheet").is_string() || !fr.at("cell").is_number())
             return Fail("帧 sheet/cell 类型不对", idx);
         const std::string hex = fr.at("sheet").get<std::string>();
-        const uint64_t guid = AssetDatabase::HexToGuid(hex.c_str());
+        const uint64_t guid = HexToGuid(hex.c_str());
         if (guid == 0) return Fail("sheet 非 16 位 hex GUID", idx);
         const nlohmann::json& cell = fr.at("cell");
         if (cell.is_number_unsigned()) {
@@ -119,7 +119,7 @@ std::string ClipToJson(const ClipData& c) {
         char fr[112];
         std::snprintf(fr, sizeof(fr),
                       "%s\n    {\n      \"sheet\": \"%s\",\n      \"cell\": %u\n    }",
-                      i ? "," : "", AssetDatabase::GuidToHex(c.frames[i].sheetGuid).c_str(),
+                      i ? "," : "", GuidToHex(c.frames[i].sheetGuid).c_str(),
                       c.frames[i].cell);
         out += fr;
     }
@@ -171,7 +171,7 @@ AnimSetData ParseAnimSetJson(std::string_view text) {
         if (!sg.at("name").is_string() || !sg.at("clip").is_string())
             return FailSet("段 name/clip 类型不对", idx);
         out.segments.push_back({sg.at("name").get<std::string>(),
-                                AssetDatabase::HexToGuid(sg.at("clip").get<std::string>().c_str())});
+                                HexToGuid(sg.at("clip").get<std::string>().c_str())});
         if (out.segments.back().name.empty())
             return FailSet("段 name 为空", idx);
         if (out.segments.back().clipGuid == 0)
@@ -192,7 +192,7 @@ std::string AnimSetToJson(const AnimSetData& s) {
         out += i ? ",\n    {\n      \"name\": " : "\n    {\n      \"name\": ";
         out += JsonEscape(s.segments[i].name);
         out += ",\n      \"clip\": \"";
-        out += AssetDatabase::GuidToHex(s.segments[i].clipGuid);
+        out += GuidToHex(s.segments[i].clipGuid);
         out += "\"\n    }";
     }
     out += s.segments.empty() ? "]\n}" : "\n  ]\n}";
@@ -238,4 +238,4 @@ size_t SanitizeClipEvents(ClipData& c) {
     return before - c.events.size();
 }
 
-} // namespace lemon::editor
+} // namespace lemon::assets

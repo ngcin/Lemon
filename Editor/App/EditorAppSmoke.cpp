@@ -20,8 +20,8 @@
 
 #include "App/ImGuiBackend.h"
 #include "Assets/AssetDatabase.h"
-#include "Assets/ClipEdit.h" // M6a 批② T3：smoke-anim clip 编辑链（面板数据面同款）
-#include "Assets/ControllerEdit.h" // T3d：smoke-anim graph 链（controller 数据面）
+#include "Assets/AnimAsset.h" // M6a 批② T3：smoke-anim clip 编辑链（面板数据面同款）
+#include "Assets/ControllerAsset.h" // T3d：smoke-anim graph 链（controller 数据面）
 #include "Interaction/ViewportRenderer.h"
 #include "Components/BehaviorComponents.h"
 #include "Components/CoreComponents.h"
@@ -1230,7 +1230,7 @@ namespace {
 struct AnimSmokeState {
     // M6a 批② T3：--smoke-anim 扩 clip 编辑链（验收②）。专档 anim-edit.anim
     //（固定 guid，幂等重写基线）走 AnimationPanel 数据面同款链路：落盘 →
-    // ParseClipJson → 改 fps/增帧 → ClipToJson → 原子写 → Rescan → 回读 roundtrip。
+    // assets::ParseClipJson → 改 fps/增帧 → assets::ClipToJson → 原子写 → Rescan → 回读 roundtrip。
     // 不动 anim.anim 种子（既有帧映射/切段断言零改动）。
     bool smokeClipEditOk = false, smokeClipPlayCacheOk = false;
     bool smokeWholeOk = false;
@@ -1340,15 +1340,15 @@ void EditorApp::SmokeAnimSeed() {
         RescanAssets();
         std::ifstream rf(clipPath, std::ios::binary);
         std::string text((std::istreambuf_iterator<char>(rf)), std::istreambuf_iterator<char>());
-        if (ClipData c = ParseClipJson(text); c.ok) {
+        if (assets::ClipData c = assets::ParseClipJson(text); c.ok) {
             c.fps = 13.0f;                        // 改帧率（面板 DragInt 同字段）
             c.frames.push_back({kAnimSheetGuid, 3}); // 增帧（承接 sheet）
-            if (WriteFileAtomic(clipPath.string(), ClipToJson(c) + "\n")) {
+            if (WriteFileAtomic(clipPath.string(), assets::ClipToJson(c) + "\n")) {
                 RescanAssets(); // 保存 = 原子写 + 主动重扫（面板同款）
                 std::ifstream vf(clipPath, std::ios::binary);
                 std::string vtext((std::istreambuf_iterator<char>(vf)),
                                   std::istreambuf_iterator<char>());
-                const ClipData v = ParseClipJson(vtext);
+                const assets::ClipData v = assets::ParseClipJson(vtext);
                 g_animSmoke.smokeClipEditOk = v.ok && v.fps == 13.0f && v.frames.size() == 2 &&
                                   v.frames[1].cell == 3 && v.frames[1].sheetGuid == kAnimSheetGuid;
             }
@@ -1359,7 +1359,7 @@ void EditorApp::SmokeAnimSeed() {
             std::ifstream vf(setPath, std::ios::binary);
             std::string vtext((std::istreambuf_iterator<char>(vf)),
                               std::istreambuf_iterator<char>());
-            const AnimSetData v = ParseAnimSetJson(vtext);
+            const assets::AnimSetData v = assets::ParseAnimSetJson(vtext);
             g_animSmoke.smokeSetEditOk = v.ok && v.name == "smoke-anim-set" && v.segments.size() == 4 &&
                              v.segments[0].name == "walk" &&
                              v.segments[0].clipGuid == kAnimClipGuid;
@@ -1373,7 +1373,7 @@ void EditorApp::SmokeAnimSeed() {
             std::ifstream vf(graphPath, std::ios::binary);
             std::string vtext((std::istreambuf_iterator<char>(vf)),
                               std::istreambuf_iterator<char>());
-            const ControllerData v = ParseControllerJson(vtext);
+            const assets::ControllerData v = assets::ParseControllerJson(vtext);
             g_animSmoke.smokeGraphEditOk = v.ok && v.name == "smoke-anim-graph" &&
                                v.states.size() == 3 && v.params.size() == 2 &&
                                v.transitions.size() == 3 && v.transitions[2].exitTime;

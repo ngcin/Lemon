@@ -11,8 +11,8 @@
 #include "ECS/Hierarchy.h" // WorldTransform2D（Select resize 的父链世界变换缓存）
 
 #include "Assets/AssetDatabase.h"
-#include "Assets/ClipEdit.h" // ClipData（AnimationPanel 编辑态副本）
-#include "Assets/Csv.h" // TableData（AssetBrowserPanel .tab 表格区缓存）
+#include "Assets/AnimAsset.h" // assets::ClipData（AnimationPanel 编辑态副本）
+#include "Assets/TableAsset.h" // assets::TableData（AssetBrowserPanel .tab 表格区缓存）
 #include "Components/CoreComponents.h"
 #include "ECS/ComponentRegistry.h"
 #include "ECS/Entity.h"
@@ -188,7 +188,7 @@ private:
     // ---- .tab 表格区（M6a 批② T1 / ADR-012 D1）----
     uint64_t selectedGuid_ = 0;  // 单击选中（表格区只在选中 Table 条目时长出）
     bool tableOpen_ = true;      // CollapsingHeader 开合（空间预留用上一帧值）
-    TableData table_;            // 缓存网格（键 = guid + 内容 hash，写回后失效重读）
+    assets::TableData table_;            // 缓存网格（键 = guid + 内容 hash，写回后失效重读）
     uint64_t tableGuid_ = 0, tableHash_ = 0;
     int editRow_ = -1, editCol_ = -1; // 双击进入编辑的格（-1 = 无）
     bool editJustStarted_ = false;    // 编辑首帧抢键盘焦点（IME 输入前提）
@@ -291,11 +291,11 @@ private:
     /// 统一保存（v3）：段 TrySave 成功 → 集模式连存集（一个按钮，替代双保存位）
     bool SaveAll(EditorApp& app);
     /// 新建落盘共用：Assets 下 dir/<name>.anim 写盘 + Rescan + SetTarget（T3b-5/6）
-    bool TryCreateClip(EditorApp& app, const ClipData& c, const std::string& dir,
+    bool TryCreateClip(EditorApp& app, const assets::ClipData& c, const std::string& dir,
                        std::string& err);
     // ---- 帧操作原语（工具条/键盘/右键菜单三入口共用）----
     /// idx 后插入帧（idx=-1 = 末尾追加）并选中新帧
-    void InsertFrameAfter(int idx, const ClipFrame& f);
+    void InsertFrameAfter(int idx, const assets::ClipFrame& f);
     void DuplicateSelectedFrames(); // 复制选中帧插其后（多选 = 各自插后）
     void DeleteSelectedFrames();    // 删 selSet_（无多选 = selFrame_ 单帧）
     // ---- 右区三层 ----
@@ -327,7 +327,7 @@ private:
     bool TrySaveSet(EditorApp& app, const AssetEntry& setEntry);
     /// .override 新建落盘（TryCreateClip 同款：撞路拒 + 墓碑复活 + Rescan + OpenSet）
     bool TryCreateSet(EditorApp& app, const std::string& dir, const std::string& name,
-                      std::vector<AnimSetSeg> segs, std::string& err);
+                      std::vector<assets::AnimSetSeg> segs, std::string& err);
     /// 创建流程入口统一清编辑态（2026-09-27 热修②：面板常驻 PanelRegistry，
     /// 右键"新建…"弹窗背后不得照渲染上次打开的集/剪辑——历史数据误读源）
     void ResetEditingState();
@@ -357,7 +357,7 @@ private:
 
     uint64_t targetGuid_ = 0;               // 编辑目标（0 = 未选）
     uint64_t loadedGuid_ = 0, loadedHash_ = 0; // 缓存键（外部改动/保存回读 = 重读）
-    ClipData edit_;                         // 编辑态副本（ok=false = 坏档红字只读态）
+    assets::ClipData edit_;                         // 编辑态副本（ok=false = 坏档红字只读态）
     int fpsI_ = 8;                          // DragInt 镜像（1..60；schema 仍存 float）
     bool dirty_ = false;                    // 有未保存改动（关面板不拦——资产在 git）
     std::string saveMsg_;                   // 上次保存/校验结果（一行红/绿）
@@ -401,7 +401,7 @@ private:
     // targetGuid_ 指向当前段，setGuid_ 指向集容器）----
     uint64_t setGuid_ = 0;                    // 当前集（0 = 裸 clip 传统模式）
     uint64_t setLoadedGuid_ = 0, setLoadedHash_ = 0; // 集档缓存键
-    AnimSetData setEdit_;                     // 集编辑态副本（ok=false = 坏档红字）
+    assets::AnimSetData setEdit_;                     // 集编辑态副本（ok=false = 坏档红字）
     // M7a 批① M25：集面独立脏标（dirty_ 只由 clip 帧编辑置位，集名/加段/删段
     // 此前不置 = 无提示丢失）；setLoadedName_ = 集名改动判基准（Enter/失焦即存）
     bool setDirty_ = false;
@@ -423,7 +423,7 @@ private:
         bool ok = false;      // .anim 可解析（false = 坏档，行元信息标"坏档"）
         int frames = 0;
         float fps = 8.0f;
-        ClipFrame first{};    // 首帧（frames==0 时无效，画占位）
+        assets::ClipFrame first{};    // 首帧（frames==0 时无效，画占位）
     };
     const SegRowInfo& LoadSegRow(EditorApp& app, const AssetEntry& clip);
     void DrawSegRowThumb(EditorApp& app, const AssetEntry* sheet, uint32_t cell,

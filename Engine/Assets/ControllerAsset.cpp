@@ -1,12 +1,12 @@
-// Lemon 编辑器 — ControllerEdit 实现（M6a 批② T3d；见 ControllerEdit.h 契约注记）
-#include "Assets/ControllerEdit.h"
+// Lemon 引擎 — ControllerAsset 实现（M6a 批② T3d / M7a 批② 下沉；见 ControllerAsset.h 契约注记）
+#include "Assets/ControllerAsset.h"
 
 #include <cstdio>
 
-#include "Assets/ClipEdit.h" // JsonEscape（名字字段转义单源，review 2026-10-02 #5）
+#include "Assets/AnimAsset.h" // JsonEscape（名字字段转义单源，review 2026-10-02 #5）
 #include "nlohmann/json.hpp"
 
-namespace lemon::editor {
+namespace lemon::assets {
 
 namespace {
 
@@ -232,4 +232,4 @@ std::string ControllerToJson(const ControllerData& c) {
     return out;
 }
 
-} // namespace lemon::editor
+} // namespace lemon::assets

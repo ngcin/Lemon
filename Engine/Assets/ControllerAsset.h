@@ -1,6 +1,7 @@
-// Lemon 编辑器 — .controller 动画状态机资产解析/序列化（M6a 批② T3d；ADR-013
-// D1/D4；06 §2.2）。纯文本逻辑，零 ImGui/GPU 依赖（lemon-editor-core，ClipEdit 同款
-// 形态）。schema（字符串形态——运行时编译为下标形态入 ControllerTable）：
+// Lemon 引擎 — .controller 动画状态机资产解析/序列化（M6a 批② T3d；ADR-013
+// D1/D4；06 §2.2；M7a 批② 自 Editor/Assets/ControllerEdit 下沉引擎——运行时
+// BuildPlayControllerCache 与编辑器共用）。纯文本逻辑，零 ImGui/GPU 依赖（可单测）。
+// schema（字符串形态——运行时编译为下标形态入 ControllerTable）：
 //   { "schemaVersion": 1, "name": "BasicCharacter",
 //     "params": [ {"name":"speed","kind":"float","def":0.0},
 //                 {"name":"attack","kind":"trigger"} ],   // ≤8；kind 缺省 float
@@ -19,7 +20,7 @@
 #include <string_view>
 #include <vector>
 
-namespace lemon::editor {
+namespace lemon::assets {
 
 /// 参数（kind 值域 = AnimParamKind：0 float / 1 bool / 2 trigger）
 struct ControllerParamEdit {
@@ -46,7 +47,7 @@ struct ControllerTransitionEdit {
                            const ControllerTransitionEdit&) = default;
 };
 
-/// .controller 解析产物（ClipData 同款 ok/error 约定；坏档 ok=false 不炸编辑器）
+/// .controller 解析产物（ClipData 同款 ok/error 约定；坏档 ok=false 不炸调用方）
 struct ControllerData {
     bool ok = false;
     std::string error;
@@ -65,4 +66,4 @@ ControllerData ParseControllerJson(std::string_view text);
 /// ControllerData → .controller JSON 文本（手写定版格式，见文件头）。ok=false → 空串。
 std::string ControllerToJson(const ControllerData& c);
 
-} // namespace lemon::editor
+} // namespace lemon::assets

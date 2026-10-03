@@ -5,6 +5,15 @@ add_library(lemon-engine STATIC
   Core/FileOps.cpp
   Core/JobSystem.cpp
   Core/Log.cpp
+  Assets/AssetTypes.cpp
+  Assets/AssetIndex.cpp
+  Assets/ProjectFile.cpp
+  Assets/SpriteRefs.cpp
+  Assets/StbImage.cpp
+  Assets/TextureStore.cpp
+  Assets/AnimAsset.cpp
+  Assets/ControllerAsset.cpp
+  Assets/TableAsset.cpp
   Audio/AudioChannel.cpp
   Audio/AudioEngine.cpp
   Audio/BakedClip.cpp
@@ -38,13 +47,19 @@ add_library(lemon-engine STATIC
   Ui/UiSubsystem.cpp
 )
 
+if(NOT stb_SOURCE_DIR)
+  message(FATAL_ERROR "stb dependency missing (cmake/Dependencies.cmake)")
+endif()
+
 target_include_directories(lemon-engine
   PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
-  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Scripting/host) # hostfxr 头只供 CoreCLRHost.cpp
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Scripting/host # hostfxr 头只供 CoreCLRHost.cpp
+  PRIVATE ${stb_SOURCE_DIR}) # stb 头只供 Assets/StbImage.cpp 实现 TU
 
 # vendor 代码警告静音（M6c 批⓪/竖切批）：第三方编译噪音不进构建输出。
-# MiniAudioImpl.c = 实现 TU（stb_vorbis.c 全量 + miniaudio 实现）。
-set_source_files_properties(Audio/MiniAudioImpl.c PROPERTIES COMPILE_OPTIONS "-w")
+# MiniAudioImpl.c = 实现 TU（stb_vorbis.c 全量 + miniaudio 实现）；
+# StbImage.cpp = stb 三实现单 TU（M7a 批② 自 Editor/Tooling/StbImpl.cpp 迁入）。
+set_source_files_properties(Audio/MiniAudioImpl.c Assets/StbImage.cpp PROPERTIES COMPILE_OPTIONS "-w")
 target_compile_features(lemon-engine PUBLIC cxx_std_20)
 target_link_libraries(lemon-engine
   PRIVATE SDL3::SDL3 Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator nlohmann_json::nlohmann_json

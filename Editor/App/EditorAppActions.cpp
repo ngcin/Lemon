@@ -9,7 +9,7 @@
 #include <iterator>
 
 #include "Assets/AssetDatabase.h"
-#include "Assets/ClipEdit.h" // M6a 批② T3：smoke-anim clip 编辑链（面板数据面同款）
+#include "Assets/AnimAsset.h" // M6a 批② T3：smoke-anim clip 编辑链（面板数据面同款）
 #include "Components/CoreComponents.h"
 #include "Core/Log.h"
 #include "EditorContext.h"
@@ -207,9 +207,9 @@ void EditorApp::OpenAnimationEditor(uint64_t guid) {
                 if (!f) continue;
                 std::string text(
                     (std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-                const AnimSetData set = ParseAnimSetJson(text);
+                const assets::AnimSetData set = assets::ParseAnimSetJson(text);
                 bool member = false;
-                for (const AnimSetSeg& sg : set.segments)
+                for (const assets::AnimSetSeg& sg : set.segments)
                     if (sg.clipGuid == guid) member = true;
                 if (member) {
                     panel->OpenSet(s.guid);

@@ -22,26 +22,11 @@
 #include "Core/FileOps.h"
 #include "Core/Guid.h"
 #include "Core/Log.h"
-#include "Assets/Csv.h"
+#include "Assets/TableAsset.h" // ParseCsv/TableToJson（CSV 导入转换；M7a 批② 引擎件）
 
 namespace lemon::editor {
 namespace fs = std::filesystem;
 using Json = nlohmann::json;
-
-const char* AssetTypeName(AssetType t) {
-    switch (t) {
-        case AssetType::Sprite: return "sprite";
-        case AssetType::Prefab: return "prefab";
-        case AssetType::Script: return "script";
-        case AssetType::Clip: return "clip"; // M5 批③：06 §2.2 clip2d（.anim JSON）
-        case AssetType::Table: return "table"; // M6a 批②：.tab 配置表（ADR-012）
-        case AssetType::AnimSet: return "animset"; // M6a 批② T3c：.override 动画集容器
-        case AssetType::Controller: return "controller"; // T3d：.controller 状态机
-        case AssetType::Rml: return "rml";   // M6b 批③b：UI 文档（ADR-014 一屏一文档）
-        case AssetType::Rcss: return "rcss"; // M6b 批③b：UI 样式表（<link> 引用）
-        default: return "generic";
-    }
-}
 
 namespace {
 // M7a 批① M21：把已写文件内容钉进磁盘（rename 前调用——内容先于名字交换落盘，
@@ -181,48 +166,6 @@ uint32_t AssetDatabase::SpriteAssetCount() const {
 }
 
 std::string AssetDatabase::AssetsRoot() const { return root_ + "/Assets"; }
-
-std::string AssetDatabase::GuidToHex(uint64_t guid) {
-    char buf[32];
-    std::snprintf(buf, sizeof(buf), "%016llx", (unsigned long long)guid);
-    return buf;
-}
-
-uint64_t AssetDatabase::HexToGuid(const char* hex) {
-    if (!hex) return 0;
-    uint64_t v = 0;
-    int n = 0;
-    for (const char* p = hex; *p && p - hex < 16; ++p) {
-        v <<= 4;
-        ++n;
-        char c = *p;
-        if (c >= '0' && c <= '9') v |= (uint64_t)(c - '0');
-        else if (c >= 'a' && c <= 'f') v |= (uint64_t)(c - 'a' + 10);
-        else if (c >= 'A' && c <= 'F') v |= (uint64_t)(c - 'A' + 10);
-        else return 0; // 非 hex 字符
-    }
-    if (n != 16) return 0; // #88：短 hex 串按截断值放行会静默错绑资产——恰 16 位才合法
-    return v;
-}
-
-// ---------------------------------------------------------------- 类型 ----
-AssetType AssetDatabase::TypeOf(const std::string& relPath) {
-    fs::path p(relPath);
-    std::string ext = p.extension().string();
-    for (char& c : ext) c = (char)std::tolower((unsigned char)c);
-    if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp") return AssetType::Sprite;
-    if (ext == ".prefab") return AssetType::Prefab;
-    if (ext == ".cs") return AssetType::Script;
-    if (ext == ".anim") return AssetType::Clip; // M5 批③帧动画资产（06 §2.2）
-    if (ext == ".tab") return AssetType::Table; // M6a 批②配置表资产（ADR-012）
-    if (ext == ".override") return AssetType::AnimSet; // M6a 批② T3c 动画集容器
-    if (ext == ".controller") return AssetType::Controller; // T3d 动画状态机
-    if (ext == ".rml") return AssetType::Rml;     // M6b 批③b UI 文档（ADR-014）
-    if (ext == ".rcss") return AssetType::Rcss;   // M6b 批③b UI 样式表
-    if (ext == ".wav" || ext == ".ogg" || ext == ".mp3" || ext == ".flac")
-        return AssetType::Audio; // M6c 竖切批：音频源（ADR-015 D1 四格式）
-    return AssetType::Generic;
-}
 
 uint64_t AssetDatabase::HashFile(const std::string& absPath) {
     std::ifstream f(absPath, std::ios::binary);
@@ -699,7 +642,7 @@ void AssetDatabase::Rescan() {
 
         AssetEntry e;
         e.relPath = rel;
-        e.type = TypeOf(rel);
+        e.type = assets::TypeOf(rel);
         auto oldIt = old.find(rel);
         if (oldIt != old.end()) e.guid = oldIt->second.guid; // 路径命中：guid 先继承
 
@@ -820,12 +763,13 @@ void AssetDatabase::Rescan() {
     // 低 32 位碰撞体检（运行时映射域，见 IsLow32Keyed）。只红字不重发：碰撞对两
     // guid 全宽互异、全宽引用（场景/脚本）完好，重发反而断引用——修复动作 = 对其中
     // 之一重新生成 GUID（分配期防线见 GenerateUniqueGuid；本体检兜手工改 .meta 与
-    // 模板拼装两条不经发号函数的路径）。
+    // 模板拼装两条不经发号函数的路径）。（M7a 批② 审计：此处无 missing 检查——
+    // entries_ 在上方刚重建，同帧隐藏位只在查询/装配路径可达）
     {
         std::unordered_map<uint64_t, size_t> seen; // key = type<<32 | 低 32 位
         for (size_t i = 0; i < entries_.size(); ++i) {
             const AssetEntry& e = entries_[i];
-            if (e.missing || !IsLow32Keyed(e.type)) continue;
+            if (!IsLow32Keyed(e.type)) continue;
             const uint64_t key = ((uint64_t)e.type << 32) | (uint32_t)e.guid;
             const auto [it, first] = seen.emplace(key, i);
             if (!first) {
@@ -851,6 +795,32 @@ void AssetDatabase::Rescan() {
             ++healthIssues_;
         }
     }
+}
+
+// ------------------------------------------------- SpriteRefSource 面 ----
+// M7a 批②：引擎 assets::ResolveSpriteRefs 的编辑器查询面。查询现算（entries_
+// 即事实——Remove() 的 missing 同帧位即刻可见，与原 EditorContext::ResolveSpriteRefs
+// 直查 FindByGuid/FindBySpriteId 的语义逐行同源）；scratch 单槽返回，调用方
+//（归一循环）即刻消费不持有。
+const assets::SpriteEntryView* AssetDatabase::SpriteByGuid(uint64_t guid) const {
+    for (const AssetEntry& e : entries_) {
+        if (e.type != AssetType::Sprite || e.guid != guid) continue;
+        refScratch_ = {e.guid, e.spriteId, e.sliceBase, e.sliceCount, !e.missing};
+        return &refScratch_;
+    }
+    return nullptr;
+}
+
+const assets::SpriteEntryView* AssetDatabase::SpriteByWholeId(uint32_t spriteId) const {
+    if (spriteId == 0) return nullptr;
+    for (const AssetEntry& e : entries_) {
+        if (e.missing || e.type != AssetType::Sprite) continue;
+        if (e.spriteId == spriteId) {
+            refScratch_ = {e.guid, e.spriteId, e.sliceBase, e.sliceCount, true};
+            return &refScratch_;
+        }
+    }
+    return nullptr;
 }
 
 // ---------------------------------------------------------------- 操作 ----
@@ -894,7 +864,7 @@ bool AssetDatabase::Rename(AssetEntry& e, const std::string& newRelPath) {
     }
     hashCache_.erase(e.relPath); // #31：旧路径缓存键作废（改名后按新路径重记）
     e.relPath = newRelPath;
-    e.type = TypeOf(newRelPath);
+    e.type = assets::TypeOf(newRelPath);
     e.hash = HashFile(AbsolutePath(e));
     std::sort(entries_.begin(), entries_.end(),
               [](const AssetEntry& a, const AssetEntry& b) { return a.relPath < b.relPath; });
@@ -978,7 +948,7 @@ const AssetEntry* AssetDatabase::ImportFile(const std::string& absSrc, const std
             return nullptr;
         }
         std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-        const TableData t = ParseCsv(text);
+        const assets::TableData t = assets::ParseCsv(text);
         if (!t.ok) {
             LEMON_ERROR("CSV 导入失败（%s）：%s", t.error.c_str(), absSrc.c_str());
             return nullptr;
@@ -990,7 +960,7 @@ const AssetEntry* AssetDatabase::ImportFile(const std::string& absSrc, const std
         const std::string tabAbs = AssetsRoot() + "/" + tabRel;
         std::error_code ecDir;
         fs::create_directories(fs::path(tabAbs).parent_path(), ecDir);
-        const std::string json = TableToJson(stem, t.rows);
+        const std::string json = assets::TableToJson(stem, t.rows);
         if (json.empty() || !WriteFileAtomic(tabAbs, json + "\n")) {
             LEMON_ERROR("CSV 导入失败（.tab 写盘，磁盘满/权限？）：%s", tabAbs.c_str());
             return nullptr;
@@ -1024,7 +994,8 @@ void AssetDatabase::SaveManifest() const {
     doc["nextSpriteId"] = nextSpriteId_;
     Json arr = Json::array();
     for (const auto& e : entries_) {
-        if (e.missing) continue; // 墓碑不落盘（号已烧毁在 nextSpriteId 单调性里）
+        if (e.missing) continue; // 同帧隐藏位不落盘（Remove() 内即调本函数——此刻
+                                  // missing=true；号已烧毁在 nextSpriteId 单调性里）
         Json item{{"guid", e.guid},
                   {"path", e.relPath},
                   {"type", AssetTypeName(e.type)},

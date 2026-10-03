@@ -22,12 +22,8 @@ add_library(lemon-editor-core STATIC
   EditorContext.cpp
   Assets/AssetDatabase.cpp
   Assets/AssetGpuCache.cpp
-  Assets/ClipEdit.cpp
-  Assets/ControllerEdit.cpp
-  Assets/Csv.cpp
   Assets/FileWatcher.cpp
   Assets/ProjectWizard.cpp
-  Tooling/StbImpl.cpp
   Tooling/ThumbCache.cpp
   Tooling/UndoStack.cpp)
 target_include_directories(lemon-editor-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

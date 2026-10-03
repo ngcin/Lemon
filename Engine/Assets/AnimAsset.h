@@ -1,13 +1,14 @@
-// Lemon 编辑器 — .anim 帧动画资产解析/序列化（M6a 批② T3 AnimationPanel 的
-// 纯逻辑半；06 §2.2 / M5.md §16.2 D2 schema）。
-// 纯文本逻辑，零 ImGui/GPU 依赖（lemon-editor-core，可单测——Csv.h 同款形态）。
-//   * schema（与运行时 BuildPlayClipCache 同一宽容度）：
+// Lemon 引擎 — .anim 帧动画资产解析/序列化（M6a 批② T3 AnimationPanel 的
+// 纯逻辑半；06 §2.2 / M5.md §16.2 D2 schema；M7a 批② 自 Editor/Assets/ClipEdit
+// 下沉引擎——运行时 BuildPlayClipCache 与编辑器面板共用同一宽容度）。
+// 纯文本逻辑，零 ImGui/GPU 依赖（可单测）。
+//   * schema（与运行时装载同一宽容度）：
 //       { "schemaVersion": 1, "name": "hero-walk", "fps": 8, "loop": true,
 //         "frames": [ { "sheet": "<guidHex16>", "cell": 0 }, ... ] }
 //   * 帧引用存 精灵表资产 GUID + 切片序号（行优先），不存 spriteId（manifest
-//     重排不断链）——spriteId 解析归 EnterPlay 快照，编辑器面只管 guid+cell。
+//     重排不断链）——spriteId 解析归装载期（SpriteRefs 归一），编辑器面只管 guid+cell。
 //   * 序列化手写（非 nlohmann dump）：字段序/缩进与既有 .anim 文件逐字符同型
-//     ——AnimationPanel 保存后 git diff 只见被改字段（验收② roundtrip 口径）。
+//     ——面板保存后 git diff 只见被改字段（验收② roundtrip 口径）。
 //   * fps 整值输出整数、非整值一位小数（面板 DragInt 恒整；手写档 7.5 兼容）。
 #pragma once
 
@@ -16,7 +17,7 @@
 #include <string_view>
 #include <vector>
 
-namespace lemon::editor {
+namespace lemon::assets {
 
 /// 帧引用：sheet = 精灵表资产 GUID；cell = 切片序号（行优先，0 起）
 struct ClipFrame {
@@ -33,7 +34,7 @@ struct ClipEventEdit {
     friend bool operator==(const ClipEventEdit&, const ClipEventEdit&) = default;
 };
 
-/// 解析产物（TableData 同款 ok/error 约定；坏档 ok=false 不炸编辑器）
+/// 解析产物（TableData 同款 ok/error 约定；坏档 ok=false 不炸调用方）
 struct ClipData {
     bool ok = false;
     std::string error;
@@ -100,4 +101,4 @@ bool ValidateAssetName(std::string_view n, std::string* why = nullptr);
 /// roundtrip 预验必拒（解析侧对越界事件硬拒）→ 保存链自锁。
 size_t SanitizeClipEvents(ClipData& c);
 
-} // namespace lemon::editor
+} // namespace lemon::assets

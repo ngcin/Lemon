@@ -8,11 +8,18 @@
 #include <cstdint>
 #include <algorithm>
 #include <limits>
+#include <filesystem>
+#include <fstream>
+#include <thread>
+#include <unistd.h>
 
 #include "Audio/AudioChannel.h" // M6c 批②：命令通道（World.h 链亦达，显式声明测试意图）
 #include "Audio/AudioEngine.h"
 #include "Audio/BakedClip.h"
 #include "Audio/SpscRing.h" // M6c 批①b：SPSC 环序锁
+#include "Assets/AssetIndex.h"   // M7a 批②：运行时只读索引
+#include "Assets/ProjectFile.h"  // M7a 批②：project.lemon 只读解析
+#include "Assets/SpriteRefs.h"   // M7a 批②：guid 归一引擎本体
 #include "Core/Guid.h"
 #include "Core/Math.h"
 #include "Components/AudioComponents.h" // M6c 批②：AudioSource
@@ -3965,17 +3972,114 @@ void TestEditorMetaSanity() {
     Expect(allOk, "editor metadata sanity");
 }
 
+
+// ---- M7a 批②：project.lemon 只读解析 + entryScene 回退链 ----
+void TestProjectFile() {
+    namespace fs = std::filesystem;
+    using namespace lemon::assets;
+
+    const ProjectFile pf = ParseProjectFile(
+        "{\"schemaVersion\":1,\"name\":\"demo\",\"engineVersion\":\"0.4.0-m4\","
+        "\"guid\":\"9e9b2af4ee867201\",\"entryScene\":\"Scenes/MainMenu.scene\"}");
+    Expect(pf.ok && pf.name == "demo" && pf.guid == 0x9e9b2af4ee867201ull &&
+               pf.engineVersion == "0.4.0-m4" && pf.entryScene == "Scenes/MainMenu.scene",
+           "project file full parse");
+    Expect(ParseProjectFile("{\"name\":\"x\"}").ok, "minimal (name only) ok");
+    Expect(!ParseProjectFile("{\"nope\":1}").ok, "missing name rejected");
+    Expect(!ParseProjectFile("not json").ok, "bad json rejected");
+    Expect(ParseProjectFile("{\"name\":\"x\",\"engineVersion\":\"9.9.9\"}").ok,
+           "engineVersion mismatch tolerated (warn-not-block)");
+
+    // ResolveEntryScene 三态（临时项目夹具）
+    const fs::path root = fs::temp_directory_path() /
+                          ("lemon-test-projfile-" + std::to_string(::getpid()));
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root / "Scenes", ec);
+    { std::ofstream f(root / "Scenes" / "A.scene", std::ios::trunc); f << "{}"; }
+    { std::ofstream f(root / "project.lemon", std::ios::trunc); f << "{\"name\":\"p\"}"; }
+    ProjectFile bare = LoadProjectFile(root.string());
+    Expect(bare.ok && ResolveEntryScene(root.string(), bare) == "Scenes/A.scene",
+           "fallback: sole .scene resolves");
+    { std::ofstream f(root / "Scenes" / "B.scene", std::ios::trunc); f << "{}"; }
+    Expect(ResolveEntryScene(root.string(), bare).empty(),
+           "multi-scene without entryScene = empty (caller red-flags)");
+    bare.entryScene = "Scenes/B.scene";
+    Expect(ResolveEntryScene(root.string(), bare) == "Scenes/B.scene",
+           "declared entryScene honored");
+    bare.entryScene = "Scenes/Gone.scene";
+    Expect(ResolveEntryScene(root.string(), bare).empty(),
+           "dangling declaration = empty (no silent fallback)");
+    fs::remove_all(root, ec);
+}
+
+// ---- M7a 批②：assets::ResolveSpriteRefs 引擎本体四态（mock 查询面；编辑器
+// 端到端链路归 TestSpriteGuidResolve，此处在引擎侧锁进程独立性）----
+void TestSpriteRefsEngine() {
+    using namespace lemon::assets;
+    struct MockSource : SpriteRefSource {
+        std::vector<SpriteEntryView> views;
+        uint32_t base = 100;
+        const SpriteEntryView* SpriteByGuid(uint64_t g) const override {
+            for (const SpriteEntryView& v : views)
+                if (v.guid == g) return &v;
+            return nullptr;
+        }
+        const SpriteEntryView* SpriteByWholeId(uint32_t id) const override {
+            if (id == 0) return nullptr;
+            for (const SpriteEntryView& v : views)
+                if (v.spriteId == id) return &v;
+            return nullptr;
+        }
+        uint32_t SpriteIdBase() const override { return base; }
+    };
+
+    World w;
+    Scene& s = w.CreateScene("refs");
+    MockSource src;
+    const SpriteEntryView whole{0x1111222233334444ull, 100, 0, 0, true}; // 整图：本体 100
+    const SpriteEntryView sheet{0x5555666677778888ull, 101, 102, 4, true}; // 切片：本体 101、块 102..105
+    src.views = {whole, sheet};
+
+    SpriteRenderer& hitWhole = s.Emplace<SpriteRenderer>(s.Create()); // ① guid 命中：旧号区间外 → 本体号
+    hitWhole.spriteGuid = whole.guid;
+    hitWhole.spriteId = 777;
+    SpriteRenderer& hitCell = s.Emplace<SpriteRenderer>(s.Create()); // ①' 切片表区间外 → cell 0
+    hitCell.spriteGuid = sheet.guid;
+    hitCell.spriteId = 999;
+    SpriteRenderer& inRange = s.Emplace<SpriteRenderer>(s.Create()); // ①'' 区间内 → 保号
+    inRange.spriteGuid = sheet.guid;
+    inRange.spriteId = 104;
+    SpriteRenderer& dangl = s.Emplace<SpriteRenderer>(s.Create()); // ② 悬空：保号 + 计数
+    dangl.spriteGuid = 0xdeadbeefdeadbeefull;
+    dangl.spriteId = 555;
+    SpriteRenderer& legacy = s.Emplace<SpriteRenderer>(s.Create()); // ③ 存量：本体号 → 回填 guid
+    legacy.spriteId = 100;
+    SpriteRenderer& cell = s.Emplace<SpriteRenderer>(s.Create()); // ③' cell 号不回填
+    cell.spriteId = 103;
+    SpriteRenderer& proc = s.Emplace<SpriteRenderer>(s.Create()); // ③'' 程序化页号不回填
+    proc.spriteId = 4;
+
+    const SpriteRefStats st = ResolveSpriteRefs(s, src);
+    Expect(hitWhole.spriteId == 100, "whole: out-of-range re-normalized to body id");
+    Expect(hitCell.spriteId == 102, "sliced: out-of-range falls back to cell 0");
+    Expect(inRange.spriteId == 104, "in-range id kept (no rewrite)");
+    Expect(dangl.spriteId == 555 && st.danglingGuid == 1, "dangling keeps legacy id + counted");
+    Expect(legacy.spriteGuid == whole.guid && st.backfilled == 1, "legacy body id backfilled");
+    Expect(cell.spriteGuid == 0, "cell id NOT backfilled (only body ids)");
+    Expect(proc.spriteGuid == 0, "procedural page id NOT backfilled");
+    // 幂等：已归一场景再跑零写入
+    const SpriteRefStats st2 = ResolveSpriteRefs(s, src);
+    Expect(st2.backfilled == 0 && st2.danglingGuid == 1, "resolve idempotent");
+}
+
 #ifdef LEMON_EDITOR_CORE
 // ---- M4.4 测试面：资产数据库 / 实体子树档案 / ScriptBox 档案段 / Atlas 页热更新 ----
-#include <filesystem>
-#include <fstream>
-#include <thread>
-#include <unistd.h>
 
 #include "Assets/AssetDatabase.h"
-#include "Assets/ClipEdit.h"
-#include "Assets/ControllerEdit.h"
-#include "Assets/Csv.h"
+#include "Assets/AnimAsset.h"
+#include "Assets/ControllerAsset.h"
+#include "Assets/TableAsset.h"
 #include "Assets/FileWatcher.h"
 #include "Assets/ProjectWizard.h"
 #include "EditorContext.h"
@@ -4423,34 +4527,34 @@ void TestSaveChannelSplits() {
 // ---- M6a 批② T1：CSV 解析 + .tab 表格资产序列化（ADR-012 D1）----
 
 void TestCsvTable() {
-    using lemon::editor::ParseCsv;
-    using lemon::editor::ParseTableJson;
-    using lemon::editor::TableToJson;
-    using lemon::editor::TableData;
+    using lemon::assets::ParseCsv;
+    using lemon::assets::ParseTableJson;
+    using lemon::assets::TableToJson;
+    using lemon::assets::TableData;
 
     // 基本 + BOM 剥除 + CRLF 归一 + 中文表头
-    TableData t = ParseCsv("\xEF\xBB\xBFid,label\r\nshoot,直射\r\n");
+    assets::TableData t = assets::ParseCsv("\xEF\xBB\xBFid,label\r\nshoot,直射\r\n");
     Expect(t.ok && t.rows.size() == 2 && t.rows[0][0] == "id" && t.rows[1][1] == "直射",
            "csv basic + BOM + CRLF");
     // 引号包裹（格内逗号）+ "" 转义引号
-    t = ParseCsv("a,\"b,c\",\"d\"\"e\"\n");
+    t = assets::ParseCsv("a,\"b,c\",\"d\"\"e\"\n");
     Expect(t.ok && t.rows[0].size() == 3 && t.rows[0][1] == "b,c" && t.rows[0][2] == "d\"e",
            "csv quotes/escape");
     // 引号内换行原样入格
-    t = ParseCsv("a,\"line1\nline2\",b\n");
+    t = assets::ParseCsv("a,\"line1\nline2\",b\n");
     Expect(t.ok && t.rows.size() == 1 && t.rows[0][1] == "line1\nline2", "quoted newline");
     // 空行跳过（尾换行不产生幽灵行）；无尾换行的末行
-    t = ParseCsv("a,b\n\nc,d\n");
+    t = assets::ParseCsv("a,b\n\nc,d\n");
     Expect(t.ok && t.rows.size() == 2, "blank line skipped");
-    t = ParseCsv("a,b");
+    t = assets::ParseCsv("a,b");
     Expect(t.ok && t.rows.size() == 1 && t.rows[0][1] == "b", "no trailing newline");
     // 参差行 → 补空矩形化（以最长行为准）
-    t = ParseCsv("a\nb,c\n");
+    t = assets::ParseCsv("a\nb,c\n");
     Expect(t.ok && t.rows.size() == 2 && t.rows[0].size() == 2 && t.rows[0][1].empty(),
            "ragged rows padded");
 
     // 非 UTF-8（GBK "中" = D6 D0）拒入
-    t = ParseCsv(std::string_view("a,\xD6\xD0\n", 6));
+    t = assets::ParseCsv(std::string_view("a,\xD6\xD0\n", 6));
     Expect(!t.ok && t.error.find("UTF-8") != std::string::npos, "non-utf8 rejected");
     // 上限拒入：65 列 / 1025 行 / 129 码点格（128 汉字恰过线）
     std::string wide;
@@ -4458,51 +4562,51 @@ void TestCsvTable() {
         if (i) wide += ',';
         wide += 'c';
     }
-    t = ParseCsv(wide);
+    t = assets::ParseCsv(wide);
     Expect(!t.ok, "cols over limit rejected");
     std::string tall;
     for (int i = 0; i < 1025; ++i) tall += "r\n";
-    t = ParseCsv(tall);
+    t = assets::ParseCsv(tall);
     Expect(!t.ok, "rows over limit rejected");
-    t = ParseCsv(std::string(129, 'x') + "\n");
+    t = assets::ParseCsv(std::string(129, 'x') + "\n");
     Expect(!t.ok, "cell over limit rejected");
     std::string cjk;
     for (int i = 0; i < 129; ++i) cjk += "\xE4\xB8\xAD";
-    t = ParseCsv(cjk + "\n");
+    t = assets::ParseCsv(cjk + "\n");
     Expect(!t.ok, "129 CJK codepoints rejected");
     cjk.resize(128 * 3); // 128 码点恰在上限内
-    Expect(ParseCsv(cjk + "\n").ok, "128 CJK codepoints within limit");
+    Expect(assets::ParseCsv(cjk + "\n").ok, "128 CJK codepoints within limit");
 
-    // TableToJson → ParseTableJson roundtrip
-    t = ParseCsv("id,label,note\nshoot,直射,\"a,b\"\npierce,穿透,x\n");
+    // assets::TableToJson → assets::ParseTableJson roundtrip
+    t = assets::ParseCsv("id,label,note\nshoot,直射,\"a,b\"\npierce,穿透,x\n");
     Expect(t.ok, "parse for roundtrip");
-    const std::string json = TableToJson("weapons", t.rows);
+    const std::string json = assets::TableToJson("weapons", t.rows);
     Expect(!json.empty(), "table to json");
-    const TableData back = ParseTableJson(json);
+    const assets::TableData back = assets::ParseTableJson(json);
     Expect(back.ok && back.rows == t.rows, "table json roundtrip equal");
 
     // .tab 宽松归一：裸数值/布尔格转字符串（ADR-012 示例形态）
-    t = ParseTableJson(
+    t = assets::ParseTableJson(
         "{\"schemaVersion\":1,\"name\":\"w\",\"rows\":[[\"id\",\"v\",\"on\"],"
         "[\"a\",0.12,true]]}");
     Expect(t.ok && t.rows[1][1] == "0.12" && t.rows[1][2] == "true",
            "json bare number/bool coerced");
     // 坏档拒入：语法错 / schemaVersion 不符 / 空 rows / 嵌套对象格
-    Expect(!ParseTableJson("{").ok, "bad json rejected");
-    Expect(!ParseTableJson("{\"schemaVersion\":2,\"rows\":[[\"a\"]]}").ok,
+    Expect(!assets::ParseTableJson("{").ok, "bad json rejected");
+    Expect(!assets::ParseTableJson("{\"schemaVersion\":2,\"rows\":[[\"a\"]]}").ok,
            "bad schemaVersion rejected");
-    Expect(!ParseTableJson("{\"rows\":[]}").ok, "empty rows rejected");
-    Expect(!ParseTableJson("{\"rows\":[[{\"x\":1}]]}").ok, "object cell rejected");
-    // 非法网格过不了 TableToJson（超限 → 空串）
-    Expect(TableToJson("x", std::vector<std::vector<std::string>>(1025, {"a"})).empty(),
+    Expect(!assets::ParseTableJson("{\"rows\":[]}").ok, "empty rows rejected");
+    Expect(!assets::ParseTableJson("{\"rows\":[[{\"x\":1}]]}").ok, "object cell rejected");
+    // 非法网格过不了 assets::TableToJson（超限 → 空串）
+    Expect(assets::TableToJson("x", std::vector<std::vector<std::string>>(1025, {"a"})).empty(),
            "to json rejects oversized grid");
 }
 
 // ---- M6a 批② T3：.anim 解析/序列化（AnimationPanel 数据面；验收② roundtrip）----
 void TestClipEdit() {
-    using lemon::editor::ClipData;
-    using lemon::editor::ClipToJson;
-    using lemon::editor::ParseClipJson;
+    using lemon::assets::ClipData;
+    using lemon::assets::ClipToJson;
+    using lemon::assets::ParseClipJson;
 
     // 规范档（Samples/yami 同型多行格式）
     const char* doc =
@@ -4511,7 +4615,7 @@ void TestClipEdit() {
         "    {\n      \"sheet\": \"5bd31a7c10000001\",\n      \"cell\": 0\n    },\n"
         "    {\n      \"sheet\": \"5bd31a7c10000001\",\n      \"cell\": 8\n    }\n"
         "  ]\n}";
-    ClipData c = ParseClipJson(doc);
+    assets::ClipData c = assets::ParseClipJson(doc);
     Expect(c.ok && c.name == "hero-walk" && c.fps == 8.0f && c.loopMode == 1 &&
                c.frames.size() == 2 && c.frames[0].sheetGuid == 0x5bd31a7c10000001ull &&
                c.frames[0].cell == 0 && c.frames[1].cell == 8,
@@ -4520,135 +4624,135 @@ void TestClipEdit() {
     // 定版格式：序列化与规范档逐字符同型（AnimationPanel 保存后旧档 diff 只见
     // 被改字段——验收②"打开 hero-walk → 改字段 → 保存 → diff 仅预期"的依据）
     c.ok = true;
-    Expect(ClipToJson(c) == doc, "clip golden format stable");
+    Expect(assets::ClipToJson(c) == doc, "clip golden format stable");
 
     // roundtrip：改 fps/loop/增删帧/换 sheet → 序列化 → 再解析等值
     c.fps = 13.0f;
     c.loopMode = 0;
     c.frames.push_back({0x5bd31a7c10000005ull, 7});
     c.frames.erase(c.frames.begin());
-    const ClipData back = ParseClipJson(ClipToJson(c));
+    const assets::ClipData back = assets::ParseClipJson(assets::ClipToJson(c));
     Expect(back.ok && back.name == c.name && back.fps == c.fps &&
                back.loopMode == c.loopMode && back.frames == c.frames,
            "clip roundtrip after edit");
 
     // 缺省：loop 缺省 true / name 缺省空（面板补文件名）/ 小数 fps 往返
-    c = ParseClipJson(
+    c = assets::ParseClipJson(
         "{\"schemaVersion\":1,\"fps\":7.5,\"frames\":[{\"sheet\":\"000000000000000f\","
         "\"cell\":3}]}");
     Expect(c.ok && c.loopMode == 1 && c.name.empty() && std::fabs(c.fps - 7.5f) < 1e-6f,
            "clip defaults + fractional fps");
-    Expect(ParseClipJson(ClipToJson(c)).fps == c.fps, "clip fractional fps roundtrip");
+    Expect(assets::ParseClipJson(assets::ClipToJson(c)).fps == c.fps, "clip fractional fps roundtrip");
 
     // 空帧表合法（新建 clip 起步态；保存侧 ≥1 帧校验归面板）
-    c = ParseClipJson("{\"fps\":8,\"frames\":[]}");
+    c = assets::ParseClipJson("{\"fps\":8,\"frames\":[]}");
     Expect(c.ok && c.frames.empty(), "clip empty frames parse");
-    Expect(ClipToJson(c).find("\"frames\": []") != std::string::npos,
+    Expect(assets::ClipToJson(c).find("\"frames\": []") != std::string::npos,
            "clip empty frames serialize");
 
     // 坏档拒入（不炸面板）：非 JSON / 缺 frames / 缺 fps / 帧缺字段 /
     // sheet 非 hex / cell 负数 / cell 类型错
-    Expect(!ParseClipJson("{").ok, "clip bad json rejected");
-    Expect(!ParseClipJson("{\"fps\":8}").ok, "clip missing frames rejected");
-    Expect(!ParseClipJson("{\"frames\":[]}").ok, "clip missing fps rejected");
-    Expect(!ParseClipJson(
+    Expect(!assets::ParseClipJson("{").ok, "clip bad json rejected");
+    Expect(!assets::ParseClipJson("{\"fps\":8}").ok, "clip missing frames rejected");
+    Expect(!assets::ParseClipJson("{\"frames\":[]}").ok, "clip missing fps rejected");
+    Expect(!assets::ParseClipJson(
                "{\"fps\":8,\"frames\":[{\"sheet\":\"000000000000000f\"}]}")
                 .ok,
            "clip frame missing cell rejected");
-    Expect(!ParseClipJson(
+    Expect(!assets::ParseClipJson(
                "{\"fps\":8,\"frames\":[{\"sheet\":\"zz\",\"cell\":0}]}")
                 .ok,
            "clip non-hex sheet rejected");
-    Expect(!ParseClipJson(
+    Expect(!assets::ParseClipJson(
                "{\"fps\":8,\"frames\":[{\"sheet\":\"000000000000000f\",\"cell\":-1}]}")
                 .ok,
            "clip negative cell rejected");
-    Expect(!ParseClipJson(
+    Expect(!assets::ParseClipJson(
                "{\"fps\":8,\"frames\":[{\"sheet\":\"000000000000000f\",\"cell\":\"0\"}]}")
                 .ok,
            "clip string cell rejected");
-    // ok=false 输入 → ClipToJson 空串（门卫）
-    ClipData bad;
-    Expect(ClipToJson(bad).empty(), "clip tojson rejects !ok");
+    // ok=false 输入 → assets::ClipToJson 空串（门卫）
+    assets::ClipData bad;
+    Expect(assets::ClipToJson(bad).empty(), "clip tojson rejects !ok");
 
     // T3b-2：loopMode——legacy loop 派生 / pingpong 落盘加字段 / 越界防御 /
     // 旧档 no-edit 往返不含 loopMode（golden 已证；此处锁字段策略）
-    c = ParseClipJson(
+    c = assets::ParseClipJson(
         "{\"fps\":8,\"loop\":true,\"loopMode\":2,\"frames\":[{\"sheet\":\"000000000000000f\","
         "\"cell\":0}]}");
     Expect(c.ok && c.loopMode == 2, "clip loopMode field parsed");
-    const std::string pp = ClipToJson(c);
+    const std::string pp = assets::ClipToJson(c);
     Expect(pp.find("\"loop\": true") != std::string::npos &&
                pp.find("\"loopMode\": 2") != std::string::npos,
            "clip pingpong serializes loop+loopMode");
-    Expect(ParseClipJson(pp).loopMode == 2, "clip pingpong roundtrip");
-    c = ParseClipJson(
+    Expect(assets::ParseClipJson(pp).loopMode == 2, "clip pingpong roundtrip");
+    c = assets::ParseClipJson(
         "{\"fps\":8,\"loop\":false,\"frames\":[{\"sheet\":\"000000000000000f\",\"cell\":0}]}");
-    Expect(c.ok && c.loopMode == 0 && ClipToJson(c).find("loopMode") == std::string::npos,
+    Expect(c.ok && c.loopMode == 0 && assets::ClipToJson(c).find("loopMode") == std::string::npos,
            "clip legacy once stays field-free");
-    c = ParseClipJson(
+    c = assets::ParseClipJson(
         "{\"fps\":8,\"loopMode\":5,\"frames\":[{\"sheet\":\"000000000000000f\",\"cell\":0}]}");
     Expect(c.ok && c.loopMode == 1, "clip loopMode out of range falls back to Loop");
 
     // review 2026-10-02 #30：legacy loop 非布尔（手写档 "loop":1）预检拒绝——
     // 原裸 get<bool>() 抛 nlohmann type_error 穿透调用链（无 try/catch）=
     // std::terminate，违背"坏档不炸编辑器"契约
-    c = ParseClipJson(
+    c = assets::ParseClipJson(
         "{\"fps\":8,\"loop\":1,\"frames\":[{\"sheet\":\"000000000000000f\",\"cell\":0}]}");
     Expect(!c.ok, "clip non-bool loop rejected (no throw)");
 
     // review 2026-10-02 #5：名字含引号/反斜杠转义 roundtrip——原样样拼接写出
     // 非法 JSON，面板保存覆写原档 = 数据丢失；长名不再经定长缓冲
-    c = ParseClipJson(doc);
+    c = assets::ParseClipJson(doc);
     c.name = "atk\"idle\\v2";
     {
-        const std::string esc = ClipToJson(c);
-        const ClipData rt = ParseClipJson(esc);
+        const std::string esc = assets::ClipToJson(c);
+        const assets::ClipData rt = assets::ParseClipJson(esc);
         Expect(rt.ok && rt.name == c.name, "clip quoted/backslash name roundtrip");
     }
     c.name = std::string(200, 'n'); // 超一切定长缓冲
     {
-        const ClipData rt = ParseClipJson(ClipToJson(c));
+        const assets::ClipData rt = assets::ParseClipJson(assets::ClipToJson(c));
         Expect(rt.ok && rt.name == c.name, "clip 200-char name roundtrip");
     }
 }
 
-// ---- M7a 批① D7 残余：动画资产名校验硬化（ValidateAssetName 单源）----
-// 旧校验只拒空/`/`/`\`/`..`——引号/控制字符/超长放行（写侧 JsonEscape 兜底不毁
+// ---- M7a 批① D7 残余：动画资产名校验硬化（assets::ValidateAssetName 单源）----
+// 旧校验只拒空/`/`/`\`/`..`——引号/控制字符/超长放行（写侧 assets::JsonEscape 兜底不毁
 // 档，但名字 = 文件名母体 + 集内按名解析键，怪字符把问题推迟到运行时）。
 void TestValidateAssetName() {
-    using lemon::editor::ValidateAssetName;
+    using lemon::assets::ValidateAssetName;
     std::string why;
 
-    Expect(ValidateAssetName("idle", &why), "name: plain accepted");
-    Expect(ValidateAssetName("跑-02", &why), "name: CJK accepted");
-    Expect(ValidateAssetName(std::string(64, 'a'), &why), "name: 64B boundary accepted");
+    Expect(assets::ValidateAssetName("idle", &why), "name: plain accepted");
+    Expect(assets::ValidateAssetName("跑-02", &why), "name: CJK accepted");
+    Expect(assets::ValidateAssetName(std::string(64, 'a'), &why), "name: 64B boundary accepted");
 
-    Expect(!ValidateAssetName("", &why) && why.find("空") != std::string::npos,
+    Expect(!assets::ValidateAssetName("", &why) && why.find("空") != std::string::npos,
            "name: empty rejected with reason");
-    Expect(!ValidateAssetName("a/b", &why), "name: slash rejected");
-    Expect(!ValidateAssetName("a\\b", &why), "name: backslash rejected");
-    Expect(!ValidateAssetName("a..b", &why), "name: dotdot rejected");
-    Expect(!ValidateAssetName("we\"ird", &why) && why.find("引号") != std::string::npos,
+    Expect(!assets::ValidateAssetName("a/b", &why), "name: slash rejected");
+    Expect(!assets::ValidateAssetName("a\\b", &why), "name: backslash rejected");
+    Expect(!assets::ValidateAssetName("a..b", &why), "name: dotdot rejected");
+    Expect(!assets::ValidateAssetName("we\"ird", &why) && why.find("引号") != std::string::npos,
            "name: quote rejected（D7 报告原场景）");
-    Expect(!ValidateAssetName("a\nb", &why), "name: control char rejected");
-    Expect(!ValidateAssetName(std::string(65, 'a'), &why) &&
+    Expect(!assets::ValidateAssetName("a\nb", &why), "name: control char rejected");
+    Expect(!assets::ValidateAssetName(std::string(65, 'a'), &why) &&
                why.find("64") != std::string::npos,
            "name: over-64B rejected（D7 报告第二场景：截断/超长）");
-    Expect(ValidateAssetName("normal"), "name: null-why pointer tolerated");
+    Expect(assets::ValidateAssetName("normal"), "name: null-why pointer tolerated");
 }
 
-// ---- M7a 批① M22：删帧后帧事件越界清理（SanitizeClipEvents）----
-// 阴性内置：越界事件的 clip 序列化 → 解析必拒（ParseClipJson 硬拒 frame≥帧表）
+// ---- M7a 批① M22：删帧后帧事件越界清理（assets::SanitizeClipEvents）----
+// 阴性内置：越界事件的 clip 序列化 → 解析必拒（assets::ParseClipJson 硬拒 frame≥帧表）
 // ——即缺陷本体（保存链自锁）作为反例先行证明，再证 sanitize 后 roundtrip 过。
 void TestClipEventBounds() {
-    using lemon::editor::ClipData;
-    using lemon::editor::ClipEventEdit;
-    using lemon::editor::ClipToJson;
-    using lemon::editor::ParseClipJson;
-    using lemon::editor::SanitizeClipEvents;
+    using lemon::assets::ClipData;
+    using lemon::assets::ClipEventEdit;
+    using lemon::assets::ClipToJson;
+    using lemon::assets::ParseClipJson;
+    using lemon::assets::SanitizeClipEvents;
 
-    ClipData c;
+    assets::ClipData c;
     c.ok = true;
     c.name = "duel";
     c.fps = 12.0f;
@@ -4658,32 +4762,32 @@ void TestClipEventBounds() {
 
     // 带事件的合法档 roundtrip 过（正例基线）
     {
-        const ClipData rt = ParseClipJson(ClipToJson(c));
+        const assets::ClipData rt = assets::ParseClipJson(assets::ClipToJson(c));
         Expect(rt.ok && rt.events == c.events, "events: in-bounds roundtrip");
     }
 
     // 缺陷本体（阴性）：删掉帧 2..3 后事件 {3,7} 越界——不清则序列化产物解析必拒
     c.frames.resize(2);
     {
-        const ClipData rt = ParseClipJson(ClipToJson(c));
+        const assets::ClipData rt = assets::ParseClipJson(assets::ClipToJson(c));
         Expect(!rt.ok, "events: out-of-range serialize-parse rejected（M22 自锁本体）");
     }
 
-    // 修复：SanitizeClipEvents 清越界 → roundtrip 过、界内事件保真
-    const size_t dropped = SanitizeClipEvents(c);
+    // 修复：assets::SanitizeClipEvents 清越界 → roundtrip 过、界内事件保真
+    const size_t dropped = assets::SanitizeClipEvents(c);
     Expect(dropped == 1 && c.events.size() == 1 && c.events[0].frame == 1,
            "events: sanitize drops exactly the out-of-range event");
     {
-        const ClipData rt = ParseClipJson(ClipToJson(c));
+        const assets::ClipData rt = assets::ParseClipJson(assets::ClipToJson(c));
         Expect(rt.ok && rt.events == c.events, "events: post-sanitize roundtrip ok");
     }
 
     // 幂等/边界：空事件、全越界、帧表空
     c.events.clear();
-    Expect(SanitizeClipEvents(c) == 0, "events: sanitize no-op when empty");
+    Expect(assets::SanitizeClipEvents(c) == 0, "events: sanitize no-op when empty");
     c.events = {{0, 1}};
     c.frames.clear();
-    Expect(SanitizeClipEvents(c) == 1 && c.events.empty(),
+    Expect(assets::SanitizeClipEvents(c) == 1 && c.events.empty(),
            "events: empty frame table clears all events");
 }
 
@@ -4759,9 +4863,9 @@ void TestManifestBakRecovery() {
 // ---- M6a 批② T3c：.override 动画集解析/序列化 + ClipTable 集按名索引 ----
 void TestAnimSetAndClipIndex() {
     using lemon::ecs::ClipTable;
-    using lemon::editor::AnimSetData;
-    using lemon::editor::AnimSetToJson;
-    using lemon::editor::ParseAnimSetJson;
+    using lemon::assets::AnimSetData;
+    using lemon::assets::AnimSetToJson;
+    using lemon::assets::ParseAnimSetJson;
 
     // 规范档（ClipEdit 同款多行格式）+ 定版格式逐字符同型
     const char* doc =
@@ -4769,20 +4873,20 @@ void TestAnimSetAndClipIndex() {
         "    {\n      \"name\": \"idle\",\n      \"clip\": \"5bd31a7c30000004\"\n    },\n"
         "    {\n      \"name\": \"walk\",\n      \"clip\": \"5bd31a7c30000005\"\n    }\n"
         "  ]\n}";
-    AnimSetData s = ParseAnimSetJson(doc);
+    assets::AnimSetData s = assets::ParseAnimSetJson(doc);
     Expect(s.ok && s.name == "player" && s.segments.size() == 2 &&
                s.segments[0].name == "idle" &&
                s.segments[0].clipGuid == 0x5bd31a7c30000004ull &&
                s.segments[1].clipGuid == 0x5bd31a7c30000005ull,
            "animset parse canonical");
     s.ok = true;
-    Expect(AnimSetToJson(s) == doc, "animset golden format stable");
+    Expect(assets::AnimSetToJson(s) == doc, "animset golden format stable");
 
     // roundtrip：改名/增删段
     s.name = "enemy";
     s.segments.push_back({"hit", 0x5bd31a7c30000006ull});
     s.segments.erase(s.segments.begin());
-    const AnimSetData back = ParseAnimSetJson(AnimSetToJson(s));
+    const assets::AnimSetData back = assets::ParseAnimSetJson(assets::AnimSetToJson(s));
     Expect(back.ok && back.name == s.name && back.segments == s.segments,
            "animset roundtrip after edit");
 
@@ -4791,29 +4895,29 @@ void TestAnimSetAndClipIndex() {
     s.segments.push_back({"atk\"x\\y", 0x5bd31a7c30000007ull});
     s.segments.push_back({std::string(100, 's'), 0x5bd31a7c30000008ull});
     {
-        const AnimSetData rt = ParseAnimSetJson(AnimSetToJson(s));
+        const assets::AnimSetData rt = assets::ParseAnimSetJson(assets::AnimSetToJson(s));
         Expect(rt.ok && rt.segments == s.segments,
                "animset escaped/long segment names roundtrip");
     }
 
     // 空集合法（新建起步态）+ name 缺省空（面板补文件名）
-    s = ParseAnimSetJson("{\"schemaVersion\":1,\"segments\":[]}");
+    s = assets::ParseAnimSetJson("{\"schemaVersion\":1,\"segments\":[]}");
     Expect(s.ok && s.name.empty() && s.segments.empty(), "animset empty parses");
-    Expect(AnimSetToJson(s).find("\"segments\": []") != std::string::npos,
+    Expect(assets::AnimSetToJson(s).find("\"segments\": []") != std::string::npos,
            "animset empty serializes");
 
     // 坏档拒入：非 JSON / 缺 segments / 段缺字段 / 空段名 / clip 非 hex
-    Expect(!ParseAnimSetJson("{").ok, "animset bad json rejected");
-    Expect(!ParseAnimSetJson("{\"name\":\"x\"}").ok, "animset missing segments rejected");
-    Expect(!ParseAnimSetJson("{\"segments\":[{\"name\":\"a\"}]}").ok,
+    Expect(!assets::ParseAnimSetJson("{").ok, "animset bad json rejected");
+    Expect(!assets::ParseAnimSetJson("{\"name\":\"x\"}").ok, "animset missing segments rejected");
+    Expect(!assets::ParseAnimSetJson("{\"segments\":[{\"name\":\"a\"}]}").ok,
            "animset segment missing clip rejected");
-    Expect(!ParseAnimSetJson("{\"segments\":[{\"name\":\"\",\"clip\":\"000000000000000f\"}]}")
+    Expect(!assets::ParseAnimSetJson("{\"segments\":[{\"name\":\"\",\"clip\":\"000000000000000f\"}]}")
                 .ok,
            "animset empty segment name rejected");
-    Expect(!ParseAnimSetJson("{\"segments\":[{\"name\":\"a\",\"clip\":\"zz\"}]}").ok,
+    Expect(!assets::ParseAnimSetJson("{\"segments\":[{\"name\":\"a\",\"clip\":\"zz\"}]}").ok,
            "animset non-hex clip rejected");
-    AnimSetData bad;
-    Expect(AnimSetToJson(bad).empty(), "animset tojson rejects !ok");
+    assets::AnimSetData bad;
+    Expect(assets::AnimSetToJson(bad).empty(), "animset tojson rejects !ok");
 
     // 集索引：登记 / 集内按名 / 跨集同名互不扰 / 反查 / 重名先到先得 / 防御 / Clear
     ClipTable t;
@@ -4908,38 +5012,38 @@ void TestControllerAndGraph() {
         "  \"transitions\": [\n"
         "    { \"from\": \"Idle\", \"to\": \"Walk\", \"when\": [{ \"param\": \"speed\", \">\": 0.1 }] },\n"
         "    { \"from\": \"Attack\", \"to\": \"Idle\", \"on\": \"exitTime\" }\n  ]\n}";
-    editor::ControllerData c = editor::ParseControllerJson(golden);
+    assets::ControllerData c = assets::ParseControllerJson(golden);
     Expect(c.ok, "controller golden 解析");
     Expect(c.states.size() == 3 && c.params.size() == 2 && c.transitions.size() == 2,
            "controller 结构");
     Expect(c.params[1].kind == 2 && c.transitions[1].exitTime, "kind/exitTime");
     Expect(c.transitions[0].conds[0].op == 2 && c.transitions[0].conds[0].value > 0.09f,
            "条件算子/阈值");
-    Expect(editor::ControllerToJson(c) == golden, "controller roundtrip 逐字节");
-    Expect(!editor::ParseControllerJson("{ \"states\": [] }").ok, "空 states 拒绝");
-    Expect(!editor::ParseControllerJson(
+    Expect(assets::ControllerToJson(c) == golden, "controller roundtrip 逐字节");
+    Expect(!assets::ParseControllerJson("{ \"states\": [] }").ok, "空 states 拒绝");
+    Expect(!assets::ParseControllerJson(
                 R"({ "states": ["A"], "transitions": [{"from":"A","to":"B"}] })")
                 .ok,
            "to 引用未列状态拒绝");
-    Expect(!editor::ParseControllerJson(
+    Expect(!assets::ParseControllerJson(
                 R"({ "states": ["A","B"], "transitions": [{"from":"A","to":"B"}] })")
                 .ok,
            "空条件非 exitTime 拒绝");
     std::string nine;
     for (int i = 0; i < 9; ++i) nine += (i ? "," : "") + std::string("{\"name\":\"p") +
                                         std::to_string(i) + "\"}";
-    Expect(!editor::ParseControllerJson(
+    Expect(!assets::ParseControllerJson(
                 "{ \"states\": [\"A\"], \"params\": [" + nine + "] }")
                 .ok,
            "参数 >8 拒绝");
-    Expect(!editor::ParseControllerJson(
+    Expect(!assets::ParseControllerJson(
                 R"({ "states": ["A","A"] })")
                 .ok,
            "状态重名拒绝");
-    // 坏档 ok=false → ToJson 空串（ClipToJson 同款约定）；好档无 error
+    // 坏档 ok=false → ToJson 空串（assets::ClipToJson 同款约定）；好档无 error
     Expect(c.error.empty(), "好档无 error");
-    editor::ControllerData bad = editor::ParseControllerJson("{ \"states\": [] }");
-    Expect(!bad.ok && editor::ControllerToJson(bad).empty(), "坏档 ToJson 空串");
+    assets::ControllerData bad = assets::ParseControllerJson("{ \"states\": [] }");
+    Expect(!bad.ok && assets::ControllerToJson(bad).empty(), "坏档 ToJson 空串");
 }
 
 // ---- M6a 批② T1：.csv → .tab 转换导入生命周期（csv 不拷入 / 覆盖重导 / guid 稳定）----
@@ -4948,7 +5052,7 @@ void TestTableAssetImport() {
     using lemon::editor::AssetDatabase;
     using lemon::editor::AssetEntry;
     using lemon::editor::AssetType;
-    using lemon::editor::ParseTableJson;
+    using lemon::assets::ParseTableJson;
 
     const std::string tag = std::to_string(::getpid());
     const fs::path root = fs::temp_directory_path() / ("lemon-test-table-" + tag);
@@ -4973,7 +5077,7 @@ void TestTableAssetImport() {
     { // 落盘内容 = 全字符串格 JSON，roundtrip 与源一致
         std::ifstream f(root / "Assets" / "tables" / "weapons.tab", std::ios::binary);
         std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-        const auto t = ParseTableJson(text);
+        const auto t = assets::ParseTableJson(text);
         Expect(t.ok && t.rows.size() == 2 && t.rows[0][0] == "id" && t.rows[1][1] == "直射",
                "tab content roundtrip");
     }
@@ -4986,7 +5090,7 @@ void TestTableAssetImport() {
     {
         std::ifstream f(root / "Assets" / "tables" / "weapons.tab", std::ios::binary);
         std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-        const auto t = ParseTableJson(text);
+        const auto t = assets::ParseTableJson(text);
         Expect(t.ok && t.rows[1][0] == "pierce" && t.rows.size() == 2, "overwritten content");
     }
 
@@ -5672,6 +5776,109 @@ void TestAutosaveRecovery() {
                             "A.scene";
         Expect(fs::exists(as, ec), "autosave written at interval tick");
     }
+
+    fs::remove_all(root, ec);
+}
+
+// ---- M7a 批②：AssetIndex 只读索引——manifest 快路径 vs 回退扫描双路一致性 ----
+// 快路径 = 编辑器 AssetDatabase 建账落盘的 manifest 直读；回退 = 删 manifest
+//（git clean -xfd 模拟，.bak 同删——兜底恢复路径归 TestManifestBakRecovery 族）
+// 后 .meta 真源 + 路径序派生号。两路 guid→path 必须全等（.meta 随文件走）。
+void TestAssetIndexConsistency() {
+    namespace fs = std::filesystem;
+    using lemon::assets::AssetIndex;
+    using lemon::assets::AssetType;
+    using lemon::editor::AssetDatabase;
+
+    const fs::path root = fs::temp_directory_path() /
+                          ("lemon-test-assetindex-" + std::to_string(::getpid()));
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root / "Assets", ec);
+    fs::create_directories(root / "Prefabs", ec);
+    // 夹具：整图/切片表两个 sprite + clip + prefab（meta 全部预设 guid——外部迁入形态）
+    const uint64_t heroGuid = 0x1000000000000001ull, sheetGuid = 0x1000000000000002ull,
+                   walkGuid = 0x1000000000000003ull, mobGuid = 0x1000000000000004ull;
+    { std::ofstream f(root / "Assets" / "hero.png", std::ios::binary); f << "png"; }
+    { std::ofstream f(root / "Assets" / "hero.png.meta", std::ios::trunc);
+      f << "{\"guid\":\"" << lemon::assets::GuidToHex(heroGuid) << "\",\"type\":\"sprite\"}"; }
+    { std::ofstream f(root / "Assets" / "sheet.png", std::ios::binary); f << "png"; }
+    { std::ofstream f(root / "Assets" / "sheet.png.meta", std::ios::trunc);
+      f << "{\"guid\":\"" << lemon::assets::GuidToHex(sheetGuid)
+        << "\",\"type\":\"sprite\",\"importer\":{\"slice\":\"grid\",\"cell\":[8,8],"
+          "\"frames\":[2,2]}}"; }
+    { std::ofstream f(root / "Assets" / "walk.anim", std::ios::trunc); f << "{}"; }
+    { std::ofstream f(root / "Assets" / "walk.anim.meta", std::ios::trunc);
+      f << "{\"guid\":\"" << lemon::assets::GuidToHex(walkGuid) << "\",\"type\":\"clip\"}"; }
+    { std::ofstream f(root / "Prefabs" / "mob.prefab", std::ios::trunc); f << "{}"; }
+    { std::ofstream f(root / "Prefabs" / "mob.prefab.meta", std::ios::trunc);
+      f << "{\"guid\":\"" << lemon::assets::GuidToHex(mobGuid) << "\",\"type\":\"prefab\"}"; }
+
+    // 编辑器建账（发号 + manifest 落盘；base=100 与 TestSpriteGuidResolve 同款）
+    AssetDatabase db;
+    Expect(db.OpenProject(root.string(), 100), "editor db opens fixture project");
+    const lemon::editor::AssetEntry* dbHero = db.FindByPath("Assets/hero.png");
+    const lemon::editor::AssetEntry* dbSheet = db.FindByPath("Assets/sheet.png");
+    const lemon::editor::AssetEntry* dbWalk = db.FindByPath("Assets/walk.anim");
+    const lemon::editor::AssetEntry* dbMob = db.FindByPath("Prefabs/mob.prefab");
+    Expect(dbHero && dbSheet && dbWalk && dbMob, "db indexed all four assets");
+    Expect(dbSheet->Sliced() && dbSheet->sliceCount == 4, "db allocated slice block");
+    Expect(db.FindByGuid(walkGuid) == dbWalk, "db preset guids honored");
+
+    // ---- 快路径：两路 guid→path/type/spriteId/slice 全等 ----
+    AssetIndex idx;
+    Expect(idx.Open(root.string(), 100) && idx.FromManifest(), "index opens via manifest");
+    Expect(idx.Entries().size() == db.Entries().size(), "entry count equal both paths");
+    for (const lemon::editor::AssetEntry& dbe : db.Entries()) {
+        const lemon::assets::IndexedEntry* ie = idx.FindByPath(dbe.relPath);
+        Expect(ie && ie->guid == dbe.guid && ie->type == dbe.type,
+               "fast-path: guid/path/type equal");
+        if (dbe.type == AssetType::Sprite) {
+            Expect(ie->spriteId == dbe.spriteId && ie->sliceBase == dbe.sliceBase &&
+                       ie->sliceCount == dbe.sliceCount,
+                   "fast-path: spriteId/slice bookkeeping equal");
+        }
+    }
+    Expect(idx.FindByGuid(mobGuid) == idx.FindByPath("Prefabs/mob.prefab"),
+           "fast-path: guid lookup consistent");
+    Expect(idx.FindByLowId(AssetType::Prefab, (uint32_t)mobGuid) != nullptr,
+           "fast-path: low-32 prefab lookup");
+
+    // ---- 回退：删 manifest（+.bak）→ .meta 真源扫描，派生号确定性 ----
+    fs::remove(root / ".lemon" / "manifest.json", ec);
+    fs::remove(root / ".lemon" / "manifest.json.bak", ec);
+    AssetIndex idx2;
+    Expect(idx2.Open(root.string(), 100) && !idx2.FromManifest(), "fallback scan engaged");
+    // guid 全等（.meta 真源）+ 类型全等（扩展名判定单源）
+    for (const lemon::editor::AssetEntry& dbe : db.Entries()) {
+        const lemon::assets::IndexedEntry* ie = idx2.FindByPath(dbe.relPath);
+        Expect(ie && ie->guid == dbe.guid && ie->type == dbe.type,
+               "fallback: guid/path/type equal (meta is truth)");
+    }
+    // 路径序派生号：hero(路径序首 sprite)=100、sheet 本体=101 + 块 102..105
+    const lemon::assets::IndexedEntry* hero2 = idx2.FindByPath("Assets/hero.png");
+    const lemon::assets::IndexedEntry* sheet2 = idx2.FindByPath("Assets/sheet.png");
+    Expect(hero2 && hero2->spriteId == 100, "fallback: path-order id derivation (hero=100)");
+    Expect(sheet2 && sheet2->spriteId == 101 && sheet2->sliceBase == 102 &&
+               sheet2->sliceCount == 4 && sheet2->cellW == 8 && sheet2->gridCols == 2,
+           "fallback: slice block derived after body id");
+    // id 数值与编辑器可不同（此处恰好同序）——确定性：再开一次同号
+    AssetIndex idx3;
+    Expect(idx3.Open(root.string(), 100), "reopen for determinism check");
+    for (const lemon::assets::IndexedEntry& e : idx2.Entries()) {
+        const lemon::assets::IndexedEntry* again = idx3.FindByPath(e.relPath);
+        Expect(again && again->spriteId == e.spriteId && again->sliceBase == e.sliceBase,
+               "fallback derivation deterministic across opens");
+    }
+    // 本体号/切片号查询面
+    Expect(idx2.FindByWholeSpriteId(101) == sheet2, "whole-id lookup hits body only");
+    Expect(idx2.FindByWholeSpriteId(103) == nullptr, "cell id is not a whole id");
+    Expect(idx2.FindBySpriteId(103) == sheet2, "sprite-id lookup covers slice range");
+    // 无 .meta 散文件不认（只读侧不发号）
+    { std::ofstream f(root / "Assets" / "stray.png", std::ios::binary); f << "png"; }
+    AssetIndex idx4;
+    Expect(idx4.Open(root.string(), 100) && idx4.FindByPath("Assets/stray.png") == nullptr,
+           "stray file without .meta skipped (read-only: no id minting)");
 
     fs::remove_all(root, ec);
 }
@@ -6854,6 +7061,8 @@ int main() {
     TestOrphanMetaSweep();
     TestAssetPathContainment();
     TestCsvTable();       // M6a 批② T1：CSV/表格序列化（ADR-012）
+    TestProjectFile();   // M7a 批②：project.lemon 只读解析 + entryScene 回退链
+    TestSpriteRefsEngine(); // M7a 批②：guid 归一引擎本体四态（mock 源）
     TestGridSliceConfig(); // M6a 批② T3b-3：SetGridSlice 连号块
     TestClipEdit();       // M6a 批② T3：.anim 解析/序列化（AnimationPanel 数据面）
     TestValidateAssetName(); // M7a 批① D7：动画资产名校验硬化单源
@@ -6869,6 +7078,7 @@ int main() {
     TestEntityTreeArchive();
     TestScriptBoxArchive();
     TestSpriteGuidResolve();
+    TestAssetIndexConsistency(); // M7a 批②：manifest 快路径 vs 回退扫描双路一致性
     TestEditorContextPrefabOps();
     TestPlaySpawnPrefab();
     TestRecentScenesAliasSafety();

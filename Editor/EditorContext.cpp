@@ -12,9 +12,10 @@
 
 #include <nlohmann/json.hpp>
 
-#include "Assets/Csv.h" // ParseTableJson（BuildPlayTableCache；M6a 批② T2）
-#include "Assets/ClipEdit.h" // ParseAnimSetJson（BuildPlayClipCache 集登记；T3c）
-#include "Assets/ControllerEdit.h" // ParseControllerJson（BuildPlayControllerCache；T3d）
+#include "Assets/TableAsset.h" // assets::ParseTableJson（BuildPlayTableCache；M6a 批② T2）
+#include "Assets/AnimAsset.h" // assets::ParseAnimSetJson（BuildPlayClipCache 集登记；T3c）
+#include "Assets/SpriteRefs.h" // assets::ResolveSpriteRefs（guid 归一引擎本体；M7a 批②）
+#include "Assets/ControllerAsset.h" // assets::ParseControllerJson（BuildPlayControllerCache；T3d）
 #include "ECS/ControllerTable.h" // ControllerDef（编译目标形态；T3d）
 #include "Components/CoreComponents.h"
 #include "Components/RenderComponents.h"
@@ -681,7 +682,7 @@ void EditorContext::BuildPlayClipCache() {
         std::ifstream f(assets_.AbsolutePath(e), std::ios::binary);
         if (!f) continue;
         std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-        const editor::AnimSetData set = editor::ParseAnimSetJson(text);
+        const assets::AnimSetData set = assets::ParseAnimSetJson(text);
         if (!set.ok) {
             LEMON_WARN("animset 解析失败：%s——%s", e.relPath.c_str(), set.error.c_str());
             continue;
@@ -689,7 +690,7 @@ void EditorContext::BuildPlayClipCache() {
         const uint32_t setId = (uint32_t)e.guid; // 低 32 位（clipId/prefabId 同款映射）
         std::vector<std::pair<std::string, uint32_t>> segs;
         std::unordered_set<std::string> seenNames;
-        for (const editor::AnimSetSeg& sg : set.segments) {
+        for (const assets::AnimSetSeg& sg : set.segments) {
             if (!seenNames.insert(sg.name).second) {
                 LEMON_WARN("animset 重名段（按名解析取先者）：%s「%s」", e.relPath.c_str(),
                            sg.name.c_str());
@@ -724,7 +725,7 @@ void EditorContext::BuildPlayClipCache() {
 // ADR-013 D1 决策层。进 Play 时刻快照（同 BuildPlayClipCache 语义，Play 中改
 // .controller 不生效）。坏 controller 红字跳过不炸 Play——实体 AnimGraph 绑定
 // 未命中表 = AnimGraphSystem 旁路（不绑图的纯集绑定不受影响）。字符串形态
-//（ControllerData）编译为下标形态（ControllerDef：from/to/param 全部定序槽位，
+//（assets::ControllerData）编译为下标形态（ControllerDef：from/to/param 全部定序槽位，
 // 运行时零字符串查找）。
 void EditorContext::BuildPlayControllerCache() {
     playWorld_->Controllers().Clear();
@@ -734,7 +735,7 @@ void EditorContext::BuildPlayControllerCache() {
         std::ifstream f(assets_.AbsolutePath(e), std::ios::binary);
         if (!f) continue;
         std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-        const editor::ControllerData c = editor::ParseControllerJson(text);
+        const assets::ControllerData c = assets::ParseControllerJson(text);
         if (!c.ok) {
             LEMON_WARN("controller 解析失败：%s——%s", e.relPath.c_str(), c.error.c_str());
             continue;
@@ -743,14 +744,14 @@ void EditorContext::BuildPlayControllerCache() {
         def.states = c.states;
         def.entry = c.entry.empty() ? 0 : def.StateIndex(c.entry);
         if (def.entry < 0) def.entry = 0; // 解析已拦，防御手改档
-        for (const editor::ControllerParamEdit& p : c.params)
+        for (const assets::ControllerParamEdit& p : c.params)
             def.params.push_back({p.name, (ecs::AnimParamKind)p.kind, p.def});
-        for (const editor::ControllerTransitionEdit& t : c.transitions) {
+        for (const assets::ControllerTransitionEdit& t : c.transitions) {
             ecs::AnimTransitionDef td;
             td.from = (uint16_t)def.StateIndex(t.from);
             td.to = (uint16_t)def.StateIndex(t.to);
             td.exitTime = t.exitTime;
-            for (const editor::ControllerCondEdit& cd : t.conds)
+            for (const assets::ControllerCondEdit& cd : t.conds)
                 td.conds.push_back({(uint16_t)def.ParamIndex(cd.param),
                                     (ecs::AnimCondOp)cd.op, cd.value});
             def.transitions.push_back(std::move(td));
@@ -772,10 +773,10 @@ void EditorContext::BuildPlayControllerCache() {
 }
 
 // ---- M6a 批② T2：Play 世界配置表（.tab JSON → TableStore；ADR-012 D1）----
-// 格式（Assets/Csv.h）：{ schemaVersion:1, name, rows[[]...] 全字符串格，第 0 行 =
+// 格式（Assets/TableAsset.h）：{ schemaVersion:1, name, rows[[]...] 全字符串格，第 0 行 =
 // 列头 }。键 = 资产 GUID 低 32 位（clipId/prefabId 同款映射约定）。进 Play 时刻
 // 快照（BuildPlayClipCache 同语义）；坏表红字跳过不炸 Play（行×列×格字符上限归
-// ParseTableJson——超限即坏表）。Play 中改 .tab 不生效（表格区提示行已交代）。
+// assets::ParseTableJson——超限即坏表）。Play 中改 .tab 不生效（表格区提示行已交代）。
 void EditorContext::BuildPlayTableCache() {
     playWorld_->Tables().Clear();
     std::unordered_set<uint32_t> seenTableIds; // 低 32 位碰撞告警（复审 3b/3c）
@@ -784,7 +785,7 @@ void EditorContext::BuildPlayTableCache() {
         std::ifstream f(assets_.AbsolutePath(e), std::ios::binary);
         if (!f) continue;
         std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-        TableData t = ParseTableJson(text);
+        assets::TableData t = assets::ParseTableJson(text);
         if (!t.ok) {
             LEMON_WARN("表解析失败（%s）：%s——跳过", t.error.c_str(), e.relPath.c_str());
             continue;
@@ -1184,55 +1185,21 @@ void EditorContext::BackfillGuids() {
     });
 }
 
-// ---- M6a 批⓪ T2：sprite 引用 GUID 主键化 ----
+// ---- M6a 批⓪ T2：sprite 引用 GUID 主键化（M7a 批② 本体下沉引擎
+// assets::ResolveSpriteRefs——编辑器/运行时两薄壳共用，语义注记见
+// Engine/Assets/SpriteRefs.h；此处仅保留编辑器侧 dirty/日志位）----
 // .scene 双写 {spriteGuid（真源，.meta 随文件走）, spriteId（AtlasRegistry 进程内
-// 派生号）}。装载/恢复/Undo 重建/编辑态 Prefab 落地后调本函数归一：
-//   * guid≠0 命中 → 覆写 spriteId（改名/移位/manifest 重建 id 漂移后引用不断链）
-//   * guid≠0 查无/missing/非 sprite → 保留 spriteId + 计入 danglingGuid（渲染仍
-//     用旧号，Inspector sprite 槽 ⚠ 重指可修；不静默清零）
-//   * guid=0 且 spriteId 恰为资产本体号 → 回填 guid（FindBySpriteId 只匹配本体
-//     号：切片 cell 号/程序化页号查无 = 天然不回填，防 cell 号被升级成整图
-//     guid 后解析覆写掉切片）。回填标 dirty——存量档下次保存即升级 guid 主键。
-// Play 期 spawn 工厂（InstantiatePrefabJson 高频路径）不走此函数：同进程 id 即
-// 真值，热路径保持零扫表。
+// 派生号）}。装载/恢复/Undo 重建/编辑态 Prefab 落地后调本函数归一。回填标
+// dirty——存量档下次保存即升级 guid 主键。Play 期 spawn 工厂
+//（InstantiatePrefabJson 高频路径）不走此函数：同进程 id 即真值，热路径零扫表。
 SpriteRefStats EditorContext::ResolveSpriteRefs() {
-    SpriteRefStats st;
-    if (assets_.ProjectRoot().empty()) return st;
-    scene_->Each([&](ecs::Entity e) {
-        ecs::SpriteRenderer* sr = scene_->TryGet<ecs::SpriteRenderer>(e);
-        if (!sr) return;
-        if (sr->spriteGuid != 0) {
-            const AssetEntry* en = assets_.FindByGuid(sr->spriteGuid);
-            if (en && !en->missing && en->spriteId != 0) {
-                // id 落在合法域内 = 已是当前进程真值，保号不覆写（guid 只锚资产，
-                // cell 是层内偏移）：切片表 = cell 区间 [sliceBase, +count)，整图 =
-                // 本体号。切片表的本体号与 cell 号相邻——跨进程漂移后旧 cell-0 可
-                // 能恰好撞新本体号（smoke-guid BossMob 实证），无法甄别 → 切片表
-                // 一律按 cell 口径归一：区间外回 cell 0（本体引用降级 cell 0，
-                // 逐 cell guid 化超出本批范围）；整图区间外回本体号
-                const uint32_t cur = sr->spriteId;
-                const bool inRange =
-                    (en->sliceCount == 0 && cur == en->spriteId) ||
-                    (en->sliceCount > 0 && cur >= en->sliceBase &&
-                     cur < en->sliceBase + en->sliceCount);
-                if (!inRange)
-                    sr->spriteId = en->sliceCount > 0 ? en->sliceBase : en->spriteId;
-            } else {
-                ++st.danglingGuid;
-            }
-        } else if (sr->spriteId >= assets_.SpriteIdBase()) {
-            if (const AssetEntry* en = assets_.FindBySpriteId(sr->spriteId);
-                en && en->type == AssetType::Sprite) {
-                sr->spriteGuid = en->guid;
-                ++st.backfilled;
-            }
-        }
-    });
+    if (assets_.ProjectRoot().empty()) return {};
+    const assets::SpriteRefStats st = assets::ResolveSpriteRefs(*scene_, assets_);
     if (st.backfilled) {
         dirty = true;
         LEMON_LOG("sprite 引用：%u 个存量 spriteId 回填 guid（保存后生效）", st.backfilled);
     }
-    return st;
+    return {st.danglingGuid, st.backfilled};
 }
 
 } // namespace lemon::editor

@@ -1,12 +1,12 @@
-// Lemon 编辑器 — CSV 解析 + .tab 表格资产序列化实现（M6a 批② T1；ADR-012 D1）
+// Lemon 引擎 — TableAsset 实现（M6a 批② T1 / M7a 批② 下沉；见 TableAsset.h 契约注记）
 // nlohmann/json 只进本 .cpp（同 AssetDatabase.cpp 口径）。
-#include "Assets/Csv.h"
+#include "Assets/TableAsset.h"
 
 #include <algorithm>
 
 #include <nlohmann/json.hpp>
 
-namespace lemon::editor {
+namespace lemon::assets {
 namespace {
 
 using Json = nlohmann::json;
@@ -213,4 +213,4 @@ TableData ParseTableJson(std::string_view text) {
     return NormalizeTable(std::move(rows));
 }
 
-} // namespace lemon::editor
+} // namespace lemon::assets

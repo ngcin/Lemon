@@ -14,7 +14,15 @@
 #include <utility>
 #include <vector>
 
+#include "Assets/AssetTypes.h"    // M7a 批②：类型域单源（编辑器/运行时两侧共用）
+#include "Assets/SpriteRefs.h"    // M7a 批②：SpriteRefSource（guid 归一查询面）
+
 namespace lemon::editor {
+
+// 资产类型域 = 引擎单源（M7a 批② 自本文件下沉 Engine/Assets/AssetTypes.h——
+// 运行时 AssetIndex 与编辑器 DB 共需；编辑器既有 `AssetType::X` 用法零改动）
+using assets::AssetType;
+using assets::AssetTypeName;
 
 /// 原子落盘（共享工具，2026-09-24 审查 F-04/P-13）：同目录 .tmp 全量写入 + flush
 /// 显式校验 + rename 替换——磁盘满/进程中断只丢 .tmp，不把原文件截成半档。
@@ -28,22 +36,6 @@ inline bool WriteFileAtomic(const std::string& path, const std::string& s,
                             bool durable = false) {
     return WriteFileAtomic(path, s.data(), s.size(), durable);
 }
-
-// Table = .tab 配置表资产（M6a 批②，ADR-012；.meta/manifest 按 AssetTypeName 字符串
-// 序列化 → 枚举插位自由，历史档不受影响）
-// AnimSet = .override 动画集容器（M6a 批② T3c：段名 → .anim 引用清单；Unity
-// AnimatorController 壳——段身份仍是 .anim 文件 GUID，集只存引用）
-// Controller = .controller 动画状态机（M6a 批② T3d，ADR-013：状态词表 + 过渡
-// 条件 + 参数表；World 级 ControllerTable，AnimGraphSystem #16 消费）
-// Rml/Rcss = 游戏 UI 文档/样式表（M6b 批③b，ADR-014：一屏 = 一文档；.rcss 经
-// <link> 引用；双击 .rml 装载到游戏 UI，热重载走 Rescan ChangeSet 消费）
-// Audio = 音频源（M6c 竖切批，ADR-015：.wav/.ogg/.mp3/.flac → 烤制 .lemon/baked/
-// audio/ 的 LBA1；浏览器过滤/图标/试听随批① 正式落）
-enum class AssetType
-    : uint8_t { Sprite, Prefab, Script, Clip, Table, AnimSet, Controller, Rml, Rcss, Audio,
-                Generic };
-
-const char* AssetTypeName(AssetType t);
 struct AssetEntry {
     uint64_t guid = 0;
     std::string relPath;   // 相对项目根（'/' 分隔，含扩展名；06 §1：Assets/** 与根级 Prefabs/**）
@@ -77,7 +69,9 @@ struct AssetEntry {
     std::string Dir() const;      // relPath 去末段（"" = 根；无尾 '/'）
 };
 
-class AssetDatabase {
+class AssetDatabase : public assets::SpriteRefSource {
+    // M7a 批②：SpriteRefSource 实现（引擎 assets::ResolveSpriteRefs 的编辑器查询
+    // 面——AssetIndex 运行时侧同接口；查找经视图缓存行文见 .cpp 尾部）
 public:
     struct ChangeSet {
         std::vector<uint64_t> added, modified, removed;
@@ -134,11 +128,17 @@ public:
     std::string AssetsRoot() const;                     // root/Assets（导入落点）
     /// 程序化图集基号（OpenProject 入参留存）：id < 基号 = 程序化页，无需 DB 记账
     /// （场景悬空 spriteId 体检用——EditorContext::OpenScene，2026-09-22 测试报告观察 6）
-    uint32_t SpriteIdBase() const { return spriteIdBase_; }
+    uint32_t SpriteIdBase() const override { return spriteIdBase_; }
     std::string AbsolutePath(const AssetEntry& e) const { return root_ + "/" + e.relPath; }
-    /// 16 位 hex（Inspector 槽显示 / C# Assets.SpriteOf 参数形态）
-    static std::string GuidToHex(uint64_t guid);
-    static uint64_t HexToGuid(const char* hex);
+    /// 16 位 hex（Inspector 槽显示 / C# Assets.SpriteOf 参数形态）——引擎单源转发
+    ///（M7a 批②；`AssetDatabase::GuidToHex` 既有调用面零扰动）
+    static std::string GuidToHex(uint64_t guid) { return assets::GuidToHex(guid); }
+    static uint64_t HexToGuid(const char* hex) { return assets::HexToGuid(hex); }
+
+    // ---- SpriteRefSource（M7a 批②）：查询现算（entries_ 即事实——missing 同帧
+    // 态与 FindByGuid 同窗可见），单槽 scratch 返回（调用方即刻消费，不跨查询持有）
+    const assets::SpriteEntryView* SpriteByGuid(uint64_t guid) const override;
+    const assets::SpriteEntryView* SpriteByWholeId(uint32_t spriteId) const override;
 
     // ---- 编辑器操作（同步落盘；guid 稳定 → 场景引用不断）----
     /// 重命名/移动（相对 Assets/ 的新路径）。失败（目标存在/IO 错）false。
@@ -157,7 +157,6 @@ public:
     uint32_t HealthIssues() const { return healthIssues_; }
 
 private:
-    static AssetType TypeOf(const std::string& relPath);
     static uint64_t HashFile(const std::string& absPath);
     /// 读 sidecar .meta（无/坏 → 0）；wantWrite = 缺失时按 e 现值写一份
     void SyncMeta(AssetEntry& e) const;
@@ -193,7 +192,8 @@ private:
     std::unordered_map<std::string, HashStat> hashCache_;
 
     std::string root_;
-    std::vector<AssetEntry> entries_; // relPath 升序（含墓碑）
+    std::vector<AssetEntry> entries_; // relPath 升序（missing = 编辑器 Remove 同帧隐藏位）
+    mutable assets::SpriteEntryView refScratch_; // SpriteRefSource 查询单槽（即刻消费）
     // 启动期 manifest 携带（path → guid/spriteId/切片块；首轮 Rescan 后清空）
     struct CarryInfo {
         uint64_t guid = 0;

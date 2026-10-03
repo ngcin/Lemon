@@ -45,7 +45,7 @@ constexpr float kStripEdgeMin = 40.0f, kStripEdgeMax = 128.0f; // 胶片带缩�
 constexpr float kSegListWidth = 230.0f;   // 左列宽（v3：容纳搜索框）
 
 /// 帧引用可解析？（判据与 BuildPlayClipCache 同源——面板拦在保存前）
-bool FrameResolvable(const AssetDatabase& db, const ClipFrame& f, const AssetEntry*& out) {
+bool FrameResolvable(const AssetDatabase& db, const assets::ClipFrame& f, const AssetEntry*& out) {
     out = db.FindByGuid(f.sheetGuid);
     if (!out || out->missing || out->type != AssetType::Sprite) return false;
     if (out->Sliced()) return f.cell < out->sliceCount;
@@ -87,9 +87,9 @@ void AnimationPanel::LoadFrom(const AssetDatabase& db, const AssetEntry& e) {
     std::ifstream f(db.AbsolutePath(e), std::ios::binary);
     if (f) {
         std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-        edit_ = ParseClipJson(text);
+        edit_ = assets::ParseClipJson(text);
     } else {
-        edit_ = ClipData{};
+        edit_ = assets::ClipData{};
         edit_.error = "读档失败：" + e.relPath;
     }
     if (edit_.name.empty()) edit_.name = std::filesystem::path(e.relPath).stem().string();
@@ -195,8 +195,8 @@ bool AnimationPanel::TrySave(EditorApp& app, const AssetEntry& e) {
     edit_.fps = (float)fpsI_;
     // M7a 批① M22 防御位：外部路径（未来事件编辑面/批量操作）漏清越界事件时，
     // 保存前兜底清——不清则下方 roundtrip 预验必拒，保存链自锁且 UI 无修复入口
-    const size_t droppedEvents = SanitizeClipEvents(edit_);
-    const std::string json = ClipToJson(edit_);
+    const size_t droppedEvents = assets::SanitizeClipEvents(edit_);
+    const std::string json = assets::ClipToJson(edit_);
     const std::string abs = app.Ctx().Assets().AbsolutePath(e);
     if (json.empty()) {
         saveMsg_ = "× 写盘失败（序列化产物为空）：" + abs;
@@ -204,8 +204,8 @@ bool AnimationPanel::TrySave(EditorApp& app, const AssetEntry& e) {
         return false;
     }
     // 落盘前 roundtrip 预验（review 2026-10-02 #5）：坏 JSON 直接拒写——序列化器
-    // 缺陷不再能覆写原档（数据丢失防线；正常路径 Parse(ClipToJson(x)) 恒过）
-    if (ClipData back = ParseClipJson(json); !back.ok || back.name != edit_.name ||
+    // 缺陷不再能覆写原档（数据丢失防线；正常路径 Parse(assets::ClipToJson(x)) 恒过）
+    if (assets::ClipData back = assets::ParseClipJson(json); !back.ok || back.name != edit_.name ||
         back.frames != edit_.frames) {
         saveMsg_ = "× 保存中止：序列化 roundtrip 校验失败（名字含非法字符？）";
         saveOk_ = false;
@@ -227,7 +227,7 @@ bool AnimationPanel::TrySave(EditorApp& app, const AssetEntry& e) {
     return true;
 }
 
-bool AnimationPanel::TryCreateClip(EditorApp& app, const ClipData& c, const std::string& dir,
+bool AnimationPanel::TryCreateClip(EditorApp& app, const assets::ClipData& c, const std::string& dir,
                                    std::string& err) {
     // 新建落盘共用（向导三通道 + 集内建动画）：dir 相对项目根（"Assets" = 根）；
     // 名字校验 + 撞路径拒（DB + 磁盘双查——只查 DB 时磁盘孤儿文件会被 POSIX
@@ -235,7 +235,7 @@ bool AnimationPanel::TryCreateClip(EditorApp& app, const ClipData& c, const std:
     // Rescan 反查 guid → SetTarget（guid 由 .meta 补齐派发）
     AssetDatabase& db = app.Ctx().Assets();
     std::string why; // D7：校验硬化单源（拒引号/控制字符/超长）
-    if (!ValidateAssetName(c.name, &why)) {
+    if (!assets::ValidateAssetName(c.name, &why)) {
         err = "名字非法：" + why;
         return false;
     }
@@ -256,7 +256,7 @@ bool AnimationPanel::TryCreateClip(EditorApp& app, const ClipData& c, const std:
         return false;
     }
     std::filesystem::create_directories(std::filesystem::path(abs).parent_path(), ecd);
-    if (!WriteFileAtomic(abs, ClipToJson(c) + "\n")) {
+    if (!WriteFileAtomic(abs, assets::ClipToJson(c) + "\n")) {
         err = "写盘失败：" + abs;
         return false;
     }
@@ -267,7 +267,7 @@ bool AnimationPanel::TryCreateClip(EditorApp& app, const ClipData& c, const std:
 
 // ------------------------------------------------------------ 帧操作原语 ----
 
-void AnimationPanel::InsertFrameAfter(int idx, const ClipFrame& f) {
+void AnimationPanel::InsertFrameAfter(int idx, const assets::ClipFrame& f) {
     // v3 插入语义：idx ∈ [0, n-1] = 插到 idx 后；**idx = -1 = 插到最前**
     // （「在之前插入副本」首帧位依赖此）；其他越界（< -1 或 >= n）= 末尾追加
     // → 末尾追加请传 (int)edit_.frames.size()。2026-09-27 帧序事故根因：旧注释
@@ -321,7 +321,7 @@ void AnimationPanel::DeleteSelectedFrames() {
     // M7a 批① M22：删帧后清越界帧事件——事件无 UI 编辑入口（作者面 = 手写/表
     // 驱动），留着必被 TrySave 的 roundtrip 预验拒绝（解析侧硬拒）= 保存链自锁
     saveMsg_.clear(); // 旧消息不滞留（"√ 已保存"挂在 dirty 态上误导）
-    if (const size_t dropped = SanitizeClipEvents(edit_); dropped > 0)
+    if (const size_t dropped = assets::SanitizeClipEvents(edit_); dropped > 0)
         saveMsg_ = "已移除 " + std::to_string(dropped) + " 个越界帧事件（删帧所致）";
     selSet_.clear();
     selAnchor_ = -1;
@@ -474,7 +474,7 @@ void AnimationPanel::DrawFilmstrip(EditorApp& app, bool ro, int playFrame) {
             if (const ImGuiPayload* pay = ImGui::AcceptDragDropPayload("LemonAnimFrame")) {
                 const int src = *(const int*)pay->Data;
                 if (src != i) {
-                    const ClipFrame f = edit_.frames[(size_t)src];
+                    const assets::ClipFrame f = edit_.frames[(size_t)src];
                     edit_.frames.erase(edit_.frames.begin() + src);
                     // #36：统一"插到目标帧前"——原 src<i 分支 insert(i) 实为插到
                     // 目标之后（拖到相邻下一帧表现为两帧交换）且选中位按回退算，
@@ -888,7 +888,7 @@ void AnimationPanel::DrawSheetPicker(EditorApp& app) {
     // ---- 底行：取消/产出（计数本体在参数条「选择」处；底行动态按钮文案仍带
     // 计数——按钮即反馈，Godot Add N Frame(s) 同款）----
     const auto buildFrames = [&]() {
-        std::vector<ClipFrame> out;
+        std::vector<assets::ClipFrame> out;
         if (pickOrderMode_ == 0) {
             for (int r = ra; r <= rb; ++r)
                 for (int c = ca; c <= cb; ++c)
@@ -919,7 +919,7 @@ void AnimationPanel::DrawSheetPicker(EditorApp& app) {
     std::snprintf(b1, sizeof(b1), "添加 %d 帧", cnt);
     std::snprintf(b2, sizeof(b2), "替换为 %d 帧", cnt);
     if (ImGui::Button(b1, ImVec2(bw, 0))) {
-        std::vector<ClipFrame> add = buildFrames();
+        std::vector<assets::ClipFrame> add = buildFrames();
         // 网格与 meta 不一致（或未切片）且非 1×1 → 写 .meta + Rescan（连号块分
         // 配）→ guid 重查（Rescan 重建 entries_——sh 指针此后失效）
         const bool needMeta =
@@ -983,12 +983,12 @@ void AnimationPanel::AppendClipFrames(EditorApp& app, uint64_t clipGuid) {
         saveOk_ = false;
         return;
     }
-    ClipData cd;
+    assets::ClipData cd;
     {
         std::ifstream f(db.AbsolutePath(*ce), std::ios::binary);
         if (f) {
             std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-            cd = ParseClipJson(text);
+            cd = assets::ParseClipJson(text);
         }
         if (!cd.ok) {
             saveMsg_ = "× 源剪辑解析失败：" + cd.error;
@@ -996,7 +996,7 @@ void AnimationPanel::AppendClipFrames(EditorApp& app, uint64_t clipGuid) {
             return;
         }
     }
-    for (const ClipFrame& fr : cd.frames) edit_.frames.push_back(fr);
+    for (const assets::ClipFrame& fr : cd.frames) edit_.frames.push_back(fr);
     selFrame_ = (int)edit_.frames.size() - 1;
     selSet_.clear();
     selAnchor_ = selFrame_;
@@ -1096,9 +1096,9 @@ void AnimationPanel::LoadSetFrom(const AssetDatabase& db, const AssetEntry& e) {
     std::ifstream f(db.AbsolutePath(e), std::ios::binary);
     if (f) {
         std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-        setEdit_ = ParseAnimSetJson(text);
+        setEdit_ = assets::ParseAnimSetJson(text);
     } else {
-        setEdit_ = AnimSetData{};
+        setEdit_ = assets::AnimSetData{};
         setEdit_.error = "读档失败：" + e.relPath;
     }
     if (setEdit_.name.empty())
@@ -1108,7 +1108,7 @@ void AnimationPanel::LoadSetFrom(const AssetDatabase& db, const AssetEntry& e) {
     // 保持动画选中：外部改档后引用还在 → 保留；没了 → v3.2 自动选首个动画
     //（双击开集即见帧——旧版回落空提示行，配合窄窗被误读成"没编辑"）
     bool keep = false;
-    for (const AnimSetSeg& sg : setEdit_.segments)
+    for (const assets::AnimSetSeg& sg : setEdit_.segments)
         if (sg.clipGuid == segGuid_) keep = true;
     if (!keep) {
         if (!setEdit_.segments.empty()) {
@@ -1132,7 +1132,7 @@ bool AnimationPanel::TrySaveSet(EditorApp& app, const AssetEntry& setEntry) {
     }
     std::unordered_set<std::string> seen;
     for (size_t i = 0; i < setEdit_.segments.size(); ++i) {
-        const AnimSetSeg& sg = setEdit_.segments[i];
+        const assets::AnimSetSeg& sg = setEdit_.segments[i];
         if (sg.name.empty()) {
             setMsg_ = "× 动画 " + std::to_string(i) + " 名字为空";
             setOk_ = false;
@@ -1150,7 +1150,7 @@ bool AnimationPanel::TrySaveSet(EditorApp& app, const AssetEntry& setEntry) {
             return false;
         }
     }
-    const std::string json = AnimSetToJson(setEdit_);
+    const std::string json = assets::AnimSetToJson(setEdit_);
     const std::string abs = db.AbsolutePath(setEntry);
     if (json.empty()) {
         setMsg_ = "× 写盘失败（序列化产物为空）：" + abs;
@@ -1158,7 +1158,7 @@ bool AnimationPanel::TrySaveSet(EditorApp& app, const AssetEntry& setEntry) {
         return false;
     }
     // 落盘前 roundtrip 预验（review 2026-10-02 #5，TrySave 同款防线）
-    if (AnimSetData back = ParseAnimSetJson(json); !back.ok || back.segments != setEdit_.segments) {
+    if (assets::AnimSetData back = assets::ParseAnimSetJson(json); !back.ok || back.segments != setEdit_.segments) {
         setMsg_ = "× 保存中止：序列化 roundtrip 校验失败（段名含非法字符/过长？）";
         setOk_ = false;
         return false;
@@ -1176,13 +1176,13 @@ bool AnimationPanel::TrySaveSet(EditorApp& app, const AssetEntry& setEntry) {
 }
 
 bool AnimationPanel::TryCreateSet(EditorApp& app, const std::string& dir,
-                                  const std::string& name, std::vector<AnimSetSeg> segs,
+                                  const std::string& name, std::vector<assets::AnimSetSeg> segs,
                                   std::string& err) {
     // 新建集落盘（TryCreateClip 同款口径）：名字校验 + 撞路拒 + 墓碑复活 + 原子
     // 写 + Rescan → OpenSet。
     AssetDatabase& db = app.Ctx().Assets();
     std::string why; // D7：校验硬化单源
-    if (!ValidateAssetName(name, &why)) {
+    if (!assets::ValidateAssetName(name, &why)) {
         err = "集名非法：" + why;
         return false;
     }
@@ -1193,12 +1193,12 @@ bool AnimationPanel::TryCreateSet(EditorApp& app, const std::string& dir,
         err = "已存在：" + rel;
         return false;
     }
-    AnimSetData sd;
+    assets::AnimSetData sd;
     sd.ok = true;
     sd.name = name;
     sd.segments = std::move(segs);
     const std::string abs = db.ProjectRoot() + "/" + rel;
-    if (!WriteFileAtomic(abs, AnimSetToJson(sd) + "\n")) {
+    if (!WriteFileAtomic(abs, assets::AnimSetToJson(sd) + "\n")) {
         err = "写盘失败：" + abs;
         return false;
     }
@@ -1227,7 +1227,7 @@ const AnimationPanel::SegRowInfo& AnimationPanel::LoadSegRow(EditorApp& app,
     std::ifstream f(app.Ctx().Assets().AbsolutePath(clip), std::ios::binary);
     if (!f) return r;
     std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-    if (ClipData c = ParseClipJson(text); c.ok) {
+    if (assets::ClipData c = assets::ParseClipJson(text); c.ok) {
         r.ok = true;
         r.frames = (int)c.frames.size();
         r.fps = c.fps > 0.0f ? c.fps : 8.0f;
@@ -1355,7 +1355,7 @@ void AnimationPanel::DrawLeftColumn(EditorApp& app, float width, float height,
 
     // 段清单（inline 改名行 / Selectable + 右键菜单）
     for (size_t i = 0; i < setEdit_.segments.size(); ++i) {
-        const AnimSetSeg& sg = setEdit_.segments[i];
+        const assets::AnimSetSeg& sg = setEdit_.segments[i];
         if (!nameContains(sg.name, segFilter_)) continue;
         ImGui::PushID((int)i);
         const AssetEntry* c = db.FindByGuid(sg.clipGuid);
@@ -1488,11 +1488,11 @@ void AnimationPanel::QuickCreateSegment(EditorApp& app) {
         name.erase(name.begin());
     while (!name.empty() && (name.back() == ' ' || name.back() == '\t')) name.pop_back();
     std::string why; // D7：校验硬化单源（旧校验只拦空/路径段/..）
-    if (!ValidateAssetName(name, &why)) {
+    if (!assets::ValidateAssetName(name, &why)) {
         setErr_ = "名字非法：" + why;
         return;
     }
-    for (const AnimSetSeg& sg : setEdit_.segments)
+    for (const assets::AnimSetSeg& sg : setEdit_.segments)
         if (sg.name == name) {
             setErr_ = "集内已有同名动画「" + name + "」";
             return;
@@ -1502,7 +1502,7 @@ void AnimationPanel::QuickCreateSegment(EditorApp& app) {
         setErr_ = "集条目丢失（重扫后重试）";
         return;
     }
-    ClipData cd;
+    assets::ClipData cd;
     cd.ok = true;
     cd.name = name;
     cd.fps = 8.0f;
@@ -1551,7 +1551,7 @@ void AnimationPanel::RemoveSegmentAt(EditorApp& app, size_t i) {
     AssetDatabase& db = app.Ctx().Assets();
     if (i >= setEdit_.segments.size()) return;
     const uint64_t setGuid = setGuid_;
-    const AnimSetSeg removed = setEdit_.segments[i]; // 拷值——erase 后原引用失效
+    const assets::AnimSetSeg removed = setEdit_.segments[i]; // 拷值——erase 后原引用失效
     setEdit_.segments.erase(setEdit_.segments.begin() + (long)i);
     if (segEditIdx_ == (int)i) segEditIdx_ = -1;
     else if (segEditIdx_ > (int)i) --segEditIdx_;
@@ -1582,7 +1582,7 @@ void AnimationPanel::DeleteSegmentFile(EditorApp& app, size_t i) {
     AssetDatabase& db = app.Ctx().Assets();
     if (i >= setEdit_.segments.size()) return;
     const uint64_t setGuid = setGuid_;
-    const AnimSetSeg removed = setEdit_.segments[i]; // 拷值（旧代码 erase 后读 sg = UB）
+    const assets::AnimSetSeg removed = setEdit_.segments[i]; // 拷值（旧代码 erase 后读 sg = UB）
     setEdit_.segments.erase(setEdit_.segments.begin() + (long)i);
     if (segEditIdx_ == (int)i) segEditIdx_ = -1;
     else if (segEditIdx_ > (int)i) --segEditIdx_;
@@ -1618,7 +1618,7 @@ void AnimationPanel::CommitSegRename(EditorApp& app, int idx) {
     AssetDatabase& db = app.Ctx().Assets();
     const std::string& name = segEditBuf_;
     std::string why; // D7：校验硬化单源（拒引号/控制字符/超长——旧校验只拦路径段）
-    if (!ValidateAssetName(name, &why)) {
+    if (!assets::ValidateAssetName(name, &why)) {
         setErr_ = "名字非法：" + why;
         return;
     }
@@ -1681,18 +1681,18 @@ void AnimationPanel::DuplicateSegment(EditorApp& app, size_t idx) {
     }
     AssetDatabase& db = app.Ctx().Assets();
     if (idx >= setEdit_.segments.size()) return;
-    const AnimSetSeg& src = setEdit_.segments[idx];
+    const assets::AnimSetSeg& src = setEdit_.segments[idx];
     const AssetEntry* ce = db.FindByGuid(src.clipGuid);
     if (!ce || ce->missing || ce->type != AssetType::Clip) {
         setErr_ = "源段条目悬空，不可复制";
         return;
     }
-    ClipData cd;
+    assets::ClipData cd;
     {
         std::ifstream f(db.AbsolutePath(*ce), std::ios::binary);
         if (f) {
             std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-            cd = ParseClipJson(text);
+            cd = assets::ParseClipJson(text);
         }
         if (!cd.ok) {
             setErr_ = "源段解析失败：" + cd.error;
@@ -1714,7 +1714,7 @@ void AnimationPanel::DuplicateSegment(EditorApp& app, size_t idx) {
     std::string name = src.name + "-copy";
     for (int n = 2; n < 1000; ++n) {
         bool clash = false;
-        for (const AnimSetSeg& sg : setEdit_.segments)
+        for (const assets::AnimSetSeg& sg : setEdit_.segments)
             if (sg.name == name) clash = true;
         if (const AssetEntry* ex = db.FindByPath(relOf(clipDir, name)); ex && !ex->missing)
             clash = true;
@@ -1781,11 +1781,11 @@ void AnimationPanel::DrawSetModals(EditorApp& app) {
             }
             if (!setErr_.empty()) ImGui::TextColored(theme::kTextError, "%s", setErr_.c_str());
             if (ImGui::Button("创建", ImVec2(120, 0))) {
-                std::vector<AnimSetSeg> segs;
+                std::vector<assets::AnimSetSeg> segs;
                 bool go = true;
                 if (setCreateWithSeg_ && !setCreateSrc_.empty()) {
                     // 首段 = 源目录全部图片按文件名序（一帧一图）；段/文件名 = 目录叶名
-                    ClipData cd;
+                    assets::ClipData cd;
                     cd.ok = true;
                     const size_t slash = setCreateSrc_.find_last_of('/');
                     cd.name =
@@ -1893,7 +1893,7 @@ void AnimationPanel::DrawFolderCreate(EditorApp& app) {
 
     if (ImGui::Button("创建", ImVec2(140, 0)) ||
         ImGui::IsKeyPressed(ImGuiKey_Enter, false)) {
-        ClipData cd;
+        assets::ClipData cd;
         cd.ok = true;
         cd.name = wizName_;
         cd.fps = (float)wizFps_;
@@ -1959,7 +1959,7 @@ void AnimationPanel::DrawFrameToolbar(EditorApp& app, bool ro) {
     if (ImGui::Button("+ 添加帧")) ImGui::OpenPopup("##addframe");
     if (ImGui::BeginPopup("##addframe")) {
         if (ImGui::MenuItem("空帧（插到选中后）")) {
-            ClipFrame nf{};
+            assets::ClipFrame nf{};
             if (selFrame_ >= 0 && selFrame_ < (int)edit_.frames.size())
                 nf = edit_.frames[(size_t)selFrame_];
             else if (!edit_.frames.empty())

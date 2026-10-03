@@ -14,7 +14,7 @@
 #include "App/EditorApp.h"
 #include "Audio/BakedClip.h" // 批①：tooltip Peek .baked 头
 #include "Assets/AssetDatabase.h"
-#include "Assets/Csv.h"
+#include "Assets/TableAsset.h"
 #include "Core/Log.h"
 #include "EditorContext.h"
 #include "Interaction/ViewportRenderer.h"
@@ -491,7 +491,7 @@ void AssetBrowserPanel::RenderTableGrid(EditorApp& app, const AssetEntry& e) {
         editRow_ = editCol_ = -1;
         std::ifstream f(app.Ctx().Assets().AbsolutePath(e), std::ios::binary);
         std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-        table_ = ParseTableJson(text);
+        table_ = assets::ParseTableJson(text);
     }
     if (!table_.ok) {
         ImGui::TextColored(theme::kTextError, "表解析失败：%s", table_.error.c_str());
@@ -547,13 +547,13 @@ void AssetBrowserPanel::RenderTableGrid(EditorApp& app, const AssetEntry& e) {
     auto tryCommit = [&]() {
         const std::string prev = *editCell;
         *editCell = editBuf_;
-        TableData chk = NormalizeTable(table_.rows); // 单格长度上限在此裁决
+        assets::TableData chk = assets::NormalizeTable(table_.rows); // 单格长度上限在此裁决
         if (!chk.ok) {
             *editCell = prev;
             tableError_ = "提交被拒：" + chk.error;
         } else {
             const std::filesystem::path p(app.Ctx().Assets().AbsolutePath(e));
-            const std::string json = TableToJson(p.stem().string(), chk.rows);
+            const std::string json = assets::TableToJson(p.stem().string(), chk.rows);
             if (!json.empty() && WriteFileAtomic(p.string(), json + "\n")) {
                 tableError_.clear();
                 app.RescanAssets();
@@ -573,7 +573,7 @@ void AssetBrowserPanel::RenderTableGrid(EditorApp& app, const AssetEntry& e) {
         for (int c = 0; c < cols && !committed; ++c) {
             ImGui::TableSetColumnIndex(c + 1);
             std::string& cell = table_.rows[r][c];
-            ImGui::PushID(r * (int)kTableMaxCols + c);
+            ImGui::PushID(r * (int)assets::kTableMaxCols + c);
             if (editRow_ == r && editCol_ == c) {
                 if (editJustStarted_) { // 首帧抢焦点（IME 中文输入前提）
                     ImGui::SetKeyboardFocusHere();
