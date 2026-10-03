@@ -193,6 +193,9 @@ bool AnimationPanel::TrySave(EditorApp& app, const AssetEntry& e) {
         }
     }
     edit_.fps = (float)fpsI_;
+    // M7a 批① M22 防御位：外部路径（未来事件编辑面/批量操作）漏清越界事件时，
+    // 保存前兜底清——不清则下方 roundtrip 预验必拒，保存链自锁且 UI 无修复入口
+    const size_t droppedEvents = SanitizeClipEvents(edit_);
     const std::string json = ClipToJson(edit_);
     const std::string abs = app.Ctx().Assets().AbsolutePath(e);
     if (json.empty()) {
@@ -217,7 +220,10 @@ bool AnimationPanel::TrySave(EditorApp& app, const AssetEntry& e) {
     app.RescanAssets();
     dirty_ = false;
     saveOk_ = true;
-    saveMsg_ = "√ 已保存——Enter Play 后生效（进行中的局用旧快照）";
+    saveMsg_ = droppedEvents > 0
+                  ? "√ 已保存（顺带移除 " + std::to_string(droppedEvents) +
+                        " 个越界帧事件）——Enter Play 后生效（进行中的局用旧快照）"
+                  : "√ 已保存——Enter Play 后生效（进行中的局用旧快照）";
     return true;
 }
 
@@ -228,9 +234,9 @@ bool AnimationPanel::TryCreateClip(EditorApp& app, const ClipData& c, const std:
     // rename 静默覆盖 = 数据丢失）+ 建父目录（v3.3 集子文件夹落位）+ 原子写 +
     // Rescan 反查 guid → SetTarget（guid 由 .meta 补齐派发）
     AssetDatabase& db = app.Ctx().Assets();
-    if (c.name.empty() || c.name.find('/') != std::string::npos ||
-        c.name.find('\\') != std::string::npos || c.name.find("..") != std::string::npos) {
-        err = "名字非法（空/路径分隔/..）";
+    std::string why; // D7：校验硬化单源（拒引号/控制字符/超长）
+    if (!ValidateAssetName(c.name, &why)) {
+        err = "名字非法：" + why;
         return false;
     }
     std::string d = dir.empty() ? "Assets" : dir;
@@ -312,13 +318,17 @@ void AnimationPanel::DeleteSelectedFrames() {
     for (int idx : ord)
         if (idx >= 0 && idx < (int)edit_.frames.size())
             edit_.frames.erase(edit_.frames.begin() + idx);
+    // M7a 批① M22：删帧后清越界帧事件——事件无 UI 编辑入口（作者面 = 手写/表
+    // 驱动），留着必被 TrySave 的 roundtrip 预验拒绝（解析侧硬拒）= 保存链自锁
+    saveMsg_.clear(); // 旧消息不滞留（"√ 已保存"挂在 dirty 态上误导）
+    if (const size_t dropped = SanitizeClipEvents(edit_); dropped > 0)
+        saveMsg_ = "已移除 " + std::to_string(dropped) + " 个越界帧事件（删帧所致）";
     selSet_.clear();
     selAnchor_ = -1;
     selFrame_ = edit_.frames.empty() ? -1 : std::min(firstDel, (int)edit_.frames.size() - 1);
     previewFrame_ = std::max(selFrame_, 0);
     previewing_ = false;
     dirty_ = true;
-    saveMsg_.clear();
 }
 
 void AnimationPanel::HandleKeys(bool ro) {
@@ -1045,6 +1055,14 @@ void AnimationPanel::ResetEditingState() {
     segGuid_ = 0;
     targetGuid_ = 0;
     segRowCache_.clear(); // 行元信息随集走——残留只会指向已删/他集的段
+    // M7a 批① M23：inline 改名态随集清——此前 segEditIdx_/segEditBuf_/segFilter_
+    // 跨集残留，集 B 的第 N 行命中旧 idx 时预填集 A 的名字，回车即把 B 的 .anim
+    // 改名写盘（用户实测串写路径）。
+    segEditIdx_ = -1;
+    segEditBuf_.clear();
+    segFilter_.clear();
+    // M25：集面脏标随集清（新集 LoadSetFrom 会重置 setLoadedName_）
+    setDirty_ = false;
 }
 
 void AnimationPanel::StartImageFilePick(EditorApp& app) {
@@ -1085,6 +1103,7 @@ void AnimationPanel::LoadSetFrom(const AssetDatabase& db, const AssetEntry& e) {
     }
     if (setEdit_.name.empty())
         setEdit_.name = std::filesystem::path(e.relPath).stem().string();
+    setLoadedName_ = setEdit_.name; // M25：集名改动判基准（Enter/失焦即存的变值探测）
     setMsg_.clear();
     // 保持动画选中：外部改档后引用还在 → 保留；没了 → v3.2 自动选首个动画
     //（双击开集即见帧——旧版回落空提示行，配合窄窗被误读成"没编辑"）
@@ -1151,6 +1170,7 @@ bool AnimationPanel::TrySaveSet(EditorApp& app, const AssetEntry& setEntry) {
     }
     app.RescanAssets();
     setOk_ = true;
+    setDirty_ = false; // M25：集面脏标随保存清除（clip 面 dirty_ 由 TrySave 管）
     setMsg_ = "√ 集已保存——Enter Play 后生效（按名播放走 Play 时刻快照）";
     return true;
 }
@@ -1161,9 +1181,9 @@ bool AnimationPanel::TryCreateSet(EditorApp& app, const std::string& dir,
     // 新建集落盘（TryCreateClip 同款口径）：名字校验 + 撞路拒 + 墓碑复活 + 原子
     // 写 + Rescan → OpenSet。
     AssetDatabase& db = app.Ctx().Assets();
-    if (name.empty() || name.find('/') != std::string::npos ||
-        name.find('\\') != std::string::npos || name.find("..") != std::string::npos) {
-        err = "集名非法（空/路径分隔/..）";
+    std::string why; // D7：校验硬化单源
+    if (!ValidateAssetName(name, &why)) {
+        err = "集名非法：" + why;
         return false;
     }
     std::string d = dir.empty() ? "Assets" : dir;
@@ -1266,9 +1286,22 @@ void AnimationPanel::DrawLeftColumn(EditorApp& app, float width, float height,
     const bool ro = app.Ctx().Playing();
     ImGui::BeginChild("##setlist", ImVec2(width, height), ImGuiChildFlags_Borders);
 
-    // 集名（窄输入；动画 = 一段一 .anim，集存引用）
+    // 集名（窄输入；动画 = 一段一 .anim，集存引用）。M7a 批① D6：Play 中只读
+    //（BeginDisabled 包输入本体）；M25：Enter/失焦且值变 → 立即落盘——集名是
+    // 集面唯一"滞留内存"的改动（结构性操作都即时存），即存后无提示丢失窗口
+    // 只剩打字中的一瞬（外部重载竞争，登记可接受）。
     ImGui::SetNextItemWidth(-1.0f);
-    ImGui::InputTextWithHint("##setname", "集名", &setEdit_.name);
+    if (ro) ImGui::BeginDisabled();
+    const bool setNameEnter = ImGui::InputTextWithHint(
+        "##setname", "集名", &setEdit_.name, ImGuiInputTextFlags_EnterReturnsTrue);
+    if (ro) ImGui::EndDisabled();
+    if (setEdit_.name != setLoadedName_) setDirty_ = true; // 打字中即置脏
+    // 触发判据用「名字相对基准变了」而非 setDirty_——后者也被结构性操作置位，
+    // 失焦重触发会替别的失败路径意外重存；名字差值才是本输入的责任面
+    if ((setNameEnter || ImGui::IsItemDeactivated()) && setEdit_.name != setLoadedName_) {
+        if (AssetEntry* se = db.FindByGuid(setGuid); se && TrySaveSet(app, *se))
+            setLoadedName_ = setEdit_.name; // 成功才推进基准（失败保持差值 = 可重试）
+    }
 
     // 图标工具条（作用于当前选中动画；v3.1 文字按钮 → 图标，Godot 同款密度）
     int selIdx = -1;
@@ -1301,16 +1334,8 @@ void AnimationPanel::DrawLeftColumn(EditorApp& app, float width, float height,
     if (selIdx < 0) ImGui::EndDisabled();
     ImGui::SameLine();
     if (selIdx < 0) ImGui::BeginDisabled();
-    if (ui::IconButton(app, IconKind::Delete, "##segrem", false)) {
-        setEdit_.segments.erase(setEdit_.segments.begin() + selIdx);
-        if (segEditIdx_ == selIdx)
-            segEditIdx_ = -1;
-        else if (segEditIdx_ > selIdx)
-            --segEditIdx_;
-        segGuid_ = 0; // 选中动画已移除 → 右区回落提示行
-        targetGuid_ = 0;
-        if (AssetEntry* se = db.FindByGuid(setGuid)) TrySaveSet(app, *se);
-    }
+    if (ui::IconButton(app, IconKind::Delete, "##segrem", false))
+        RemoveSegmentAt(app, (size_t)selIdx); // M24：失败回滚收口在助手内
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("从集移除（保留动画文件）——删除文件走右键菜单");
     if (selIdx < 0) ImGui::EndDisabled();
@@ -1370,7 +1395,8 @@ void AnimationPanel::DrawLeftColumn(EditorApp& app, float width, float height,
                 segGuid_ = sg.clipGuid;
                 targetGuid_ = sg.clipGuid; // 右区复用 clip 编辑机制
             }
-            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+            if (!ro && ImGui::IsItemHovered() &&
+                ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) { // D6：双击入口守卫
                 segEditIdx_ = (int)i; // 双击 = inline 改名
                 segEditBuf_ = sg.name;
                 segEditFocus_ = true;
@@ -1404,31 +1430,10 @@ void AnimationPanel::DrawLeftColumn(EditorApp& app, float width, float height,
                     segEditFocus_ = true;
                     setErr_.clear();
                 }
-                if (ImGui::MenuItem("从集移除（保留动画文件）")) {
-                    setEdit_.segments.erase(setEdit_.segments.begin() + (long)i);
-                    if (segEditIdx_ == (int)i)
-                        segEditIdx_ = -1;
-                    else if (segEditIdx_ > (int)i)
-                        --segEditIdx_;
-                    if (segGuid_ == sg.clipGuid) {
-                        segGuid_ = 0;
-                        targetGuid_ = 0;
-                    }
-                    if (AssetEntry* se = db.FindByGuid(setGuid)) TrySaveSet(app, *se);
-                }
-                if (ImGui::MenuItem("删除动画文件（进墓碑）")) {
-                    if (AssetEntry* ce = db.FindByGuid(sg.clipGuid)) db.Remove(*ce);
-                    setEdit_.segments.erase(setEdit_.segments.begin() + (long)i);
-                    if (segEditIdx_ == (int)i)
-                        segEditIdx_ = -1;
-                    else if (segEditIdx_ > (int)i)
-                        --segEditIdx_;
-                    if (segGuid_ == sg.clipGuid) {
-                        segGuid_ = 0;
-                        targetGuid_ = 0;
-                    }
-                    if (AssetEntry* se = db.FindByGuid(setGuid)) TrySaveSet(app, *se);
-                }
+                if (ImGui::MenuItem("从集移除（保留动画文件）"))
+                    RemoveSegmentAt(app, i); // M24：失败回滚收口在助手内
+                if (ImGui::MenuItem("删除动画文件（进墓碑）"))
+                    DeleteSegmentFile(app, i); // M24 重排：先存集后删文件
                 if (ro) ImGui::EndDisabled();
                 ImGui::EndPopup();
             }
@@ -1472,14 +1477,19 @@ void AnimationPanel::QuickCreateSegment(EditorApp& app) {
     // v3 建段 = 只输入名字：空 .anim 落盘（TryCreateClip 不要求 ≥1 帧——保存侧
     // 才校验）+ 入集 + 选中；输入保持开、名清空 = 连续建段。fps/循环用默认，
     // 在右区工具条随手改（旧版大表单把参数+选图前置 = 割离操作的主痛点）。
+    if (app.Ctx().Playing()) { // D6 commit 双判（＋按钮已随工具条禁用）
+        setErr_ = "Play 中不可新建动画（沙盒只读）——退出 Play 后再试";
+        segNewActive_ = false;
+        return;
+    }
     AssetDatabase& db = app.Ctx().Assets();
     std::string name = segNewName_;
     while (!name.empty() && (name.front() == ' ' || name.front() == '\t'))
         name.erase(name.begin());
     while (!name.empty() && (name.back() == ' ' || name.back() == '\t')) name.pop_back();
-    if (name.empty() || name.find('/') != std::string::npos ||
-        name.find('\\') != std::string::npos || name.find("..") != std::string::npos) {
-        setErr_ = "名字非法（空/路径分隔/..）";
+    std::string why; // D7：校验硬化单源（旧校验只拦空/路径段/..）
+    if (!ValidateAssetName(name, &why)) {
+        setErr_ = "名字非法：" + why;
         return;
     }
     for (const AnimSetSeg& sg : setEdit_.segments)
@@ -1506,6 +1516,7 @@ void AnimationPanel::QuickCreateSegment(EditorApp& app) {
     const uint64_t newSeg = targetGuid_;
     if (AssetEntry* se2 = db.FindByGuid(setGuid_)) {
         setEdit_.segments.push_back({name, newSeg});
+        setDirty_ = true;
         if (TrySaveSet(app, *se2)) {
             segGuid_ = newSeg;
             selFrame_ = -1; // 新段空帧——清旧段选中态
@@ -1517,21 +1528,98 @@ void AnimationPanel::QuickCreateSegment(EditorApp& app) {
             segNewFocus_ = true;
             segFilter_.clear(); // 新段要立刻可见
             setErr_.clear();
+        } else {
+            // M24：集保存失败回滚已 push 的段行（.anim 文件保留——它是合法独立
+            // 资产，浏览器可删；集档不收 = 下次重载不见，状态一致）
+            setEdit_.segments.pop_back();
+            setErr_ = "× 已建动画文件但入集保存失败（" +
+                      (setMsg_.size() > 1 ? setMsg_.substr(setMsg_.find(' ') + 1)
+                                          : "写盘失败") +
+                      "）——修因后重试（文件在资产浏览器可见）";
         }
     } else {
         setErr_ = "集条目丢失（重扫后重试）";
     }
 }
 
+// ---- M7a 批① M24：集面结构性操作收口------------------------------------------
+// 此前六处 TrySaveSet 返回值被吞：行已抹/文件已删而 .override 落盘失败 = 盘上
+// 集与编辑态分叉（报告 M24 的"最重路径"= 先删文件后存集，失败即悬空引用）。
+// 统一语义：内存先改 → TrySaveSet → 失败回滚内存态 + 红字；不可逆步（删文件）
+// 排最后且仅在集保存成功后做。
+void AnimationPanel::RemoveSegmentAt(EditorApp& app, size_t i) {
+    AssetDatabase& db = app.Ctx().Assets();
+    if (i >= setEdit_.segments.size()) return;
+    const uint64_t setGuid = setGuid_;
+    const AnimSetSeg removed = setEdit_.segments[i]; // 拷值——erase 后原引用失效
+    setEdit_.segments.erase(setEdit_.segments.begin() + (long)i);
+    if (segEditIdx_ == (int)i) segEditIdx_ = -1;
+    else if (segEditIdx_ > (int)i) --segEditIdx_;
+    if (segGuid_ == removed.clipGuid) { // 选中动画已移除 → 右区回落提示行
+        segGuid_ = 0;
+        targetGuid_ = 0;
+    }
+    setDirty_ = true; // M25：集面改动置脏（成功保存在 TrySaveSet 内清除）
+    AssetEntry* se = db.FindByGuid(setGuid);
+    if (se && TrySaveSet(app, *se)) {
+        setErr_.clear();
+        return;
+    }
+    // 回滚：文件未动 = 行可无损插回原位。取因只在 TrySaveSet 真跑过时读 setMsg_
+    //（se 缺席时它是上一操作的陈旧消息）
+    const std::string reason =
+        se ? (setMsg_.size() > 1 ? setMsg_.substr(setMsg_.find(' ') + 1) : "写盘失败")
+           : std::string("集条目丢失（重扫后重试）");
+    setEdit_.segments.insert(setEdit_.segments.begin() + (long)i, removed);
+    segEditIdx_ = -1; // 索引修回易错，直接收起 inline 改名（保守复位）
+    setErr_ = "× 集保存失败，已还原本次移除（" + reason + "）——修因后重试";
+}
+
+void AnimationPanel::DeleteSegmentFile(EditorApp& app, size_t i) {
+    // M24 重排：先从集面移除并存盘（引用面先断），成功后才删文件。旧序 =
+    // db.Remove 先删盘上 .anim → TrySaveSet 失败被吞 → .override 仍列已删 clip
+    //（下次重载才以"（悬空）"暴露，且无回滚）。
+    AssetDatabase& db = app.Ctx().Assets();
+    if (i >= setEdit_.segments.size()) return;
+    const uint64_t setGuid = setGuid_;
+    const AnimSetSeg removed = setEdit_.segments[i]; // 拷值（旧代码 erase 后读 sg = UB）
+    setEdit_.segments.erase(setEdit_.segments.begin() + (long)i);
+    if (segEditIdx_ == (int)i) segEditIdx_ = -1;
+    else if (segEditIdx_ > (int)i) --segEditIdx_;
+    if (segGuid_ == removed.clipGuid) {
+        segGuid_ = 0;
+        targetGuid_ = 0;
+    }
+    setDirty_ = true;
+    AssetEntry* se = db.FindByGuid(setGuid);
+    if (se && TrySaveSet(app, *se)) {
+        // TrySaveSet 内已 Rescan——条目重查后才动不可逆步
+        if (AssetEntry* ce = db.FindByGuid(removed.clipGuid)) db.Remove(*ce);
+        setErr_.clear();
+        return;
+    }
+    const std::string reason =
+        se ? (setMsg_.size() > 1 ? setMsg_.substr(setMsg_.find(' ') + 1) : "写盘失败")
+           : std::string("集条目丢失（重扫后重试）");
+    setEdit_.segments.insert(setEdit_.segments.begin() + (long)i, removed);
+    segEditIdx_ = -1;
+    setErr_ = "× 集保存失败，动画文件未删（" + reason + "）——修因后重试";
+}
+
 void AnimationPanel::CommitSegRename(EditorApp& app, int idx) {
     // inline 改名提交：校验（合法/集内唯一）→ db.Rename 段文件 → 集段名同步 →
     // TrySaveSet。失败保持输入开（setErr_ 提示，改完再 Enter）。Rename 原位改 +
     // 排序——此后只用 guid。
+    if (app.Ctx().Playing()) { // D6 commit 双判（入口三处已禁，此处防注入/竞态）
+        setErr_ = "Play 中不可改名（沙盒只读）——退出 Play 后再试";
+        segEditIdx_ = -1;
+        return;
+    }
     AssetDatabase& db = app.Ctx().Assets();
     const std::string& name = segEditBuf_;
-    if (name.empty() || name.find('/') != std::string::npos ||
-        name.find('\\') != std::string::npos || name.find("..") != std::string::npos) {
-        setErr_ = "名字非法（空/路径分隔/..）";
+    std::string why; // D7：校验硬化单源（拒引号/控制字符/超长——旧校验只拦路径段）
+    if (!ValidateAssetName(name, &why)) {
+        setErr_ = "名字非法：" + why;
         return;
     }
     if (idx < 0 || idx >= (int)setEdit_.segments.size()) {
@@ -1546,6 +1634,7 @@ void AnimationPanel::CommitSegRename(EditorApp& app, int idx) {
     const uint64_t clipGuid = setEdit_.segments[(size_t)idx].clipGuid;
     if (const AssetEntry* ce = db.FindByGuid(clipGuid)) {
         // v3.3：改名目标 = 集子文件夹（跨集同名隔离；源在旧位置也一并归位）
+        const std::string oldRel = ce->relPath; // Rename 会改条目——先存回滚路径
         std::string newRel;
         if (const AssetEntry* se = db.FindByGuid(setGuid_))
             newRel = SetClipDir(*se) + "/" + name + ".anim";
@@ -1554,10 +1643,27 @@ void AnimationPanel::CommitSegRename(EditorApp& app, int idx) {
             newRel = (dir.empty() ? "Assets" : dir) + "/" + name + ".anim";
         }
         if (AssetEntry* ceMut = db.FindByGuid(clipGuid); db.Rename(*ceMut, newRel)) {
-            setEdit_.segments[(size_t)idx].name = name;
-            segEditIdx_ = -1;
-            setErr_.clear();
-            if (AssetEntry* se = db.FindByGuid(setGuid_)) TrySaveSet(app, *se);
+            setDirty_ = true;
+            AssetEntry* se = db.FindByGuid(setGuid_);
+            if (se && TrySaveSet(app, *se)) {
+                setEdit_.segments[(size_t)idx].name = name; // M24：集保存成功才同步段名
+                segEditIdx_ = -1;
+                setErr_.clear();
+                return;
+            }
+            // 取因只在 TrySaveSet 真跑过时读 setMsg_（se 缺席时它是陈旧消息）
+            const std::string reason =
+                se ? (setMsg_.size() > 1 ? setMsg_.substr(setMsg_.find(' ') + 1)
+                                         : "写盘失败")
+                   : std::string("集条目丢失（重扫后重试）");
+            // M24：集保存失败回滚——文件名改回 + 段名未动 + 输入保持开
+            if (AssetEntry* ce2 = db.FindByGuid(clipGuid);
+                ce2 && db.Rename(*ce2, oldRel)) {
+                setErr_ = "× 集保存失败，文件名已还原（" + reason + "）——修因后再提交";
+            } else {
+                setErr_ = "× 集保存失败且文件名回滚也失败（" + newRel +
+                          "）——盘上文件名与集段名已分叉，请手动对齐后重试";
+            }
         } else {
             setErr_ = "重命名失败（目标已存在/IO）";
         }
@@ -1569,6 +1675,10 @@ void AnimationPanel::CommitSegRename(EditorApp& app, int idx) {
 void AnimationPanel::DuplicateSegment(EditorApp& app, size_t idx) {
     // 复制段：读源 .anim → 撞名后缀 -copy/-2.. 落盘 → 入集 + 选中（相似动作
     // atk/atk2 的量产通道——Godot duplicate 同款）
+    if (app.Ctx().Playing()) { // D6 commit 双判（工具条按钮已随 ro 禁用）
+        setErr_ = "Play 中不可复制动画（沙盒只读）——退出 Play 后再试";
+        return;
+    }
     AssetDatabase& db = app.Ctx().Assets();
     if (idx >= setEdit_.segments.size()) return;
     const AnimSetSeg& src = setEdit_.segments[idx];
@@ -1623,10 +1733,18 @@ void AnimationPanel::DuplicateSegment(EditorApp& app, size_t idx) {
     const uint64_t newSeg = targetGuid_;
     if (AssetEntry* se2 = db.FindByGuid(setGuid_)) {
         setEdit_.segments.push_back({name, newSeg});
+        setDirty_ = true;
         if (TrySaveSet(app, *se2)) {
             segGuid_ = newSeg;
             segFilter_.clear();
             setErr_.clear();
+        } else {
+            // M24：集保存失败回滚段行（副本文件保留——合法独立资产，同 QuickCreate）
+            setEdit_.segments.pop_back();
+            setErr_ = "× 已写副本文件但入集保存失败（" +
+                      (setMsg_.size() > 1 ? setMsg_.substr(setMsg_.find(' ') + 1)
+                                          : "写盘失败") +
+                      "）——修因后重试";
         }
     }
 }

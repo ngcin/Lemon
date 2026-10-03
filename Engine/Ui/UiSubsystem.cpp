@@ -696,6 +696,13 @@ bool UiSubsystem::LoadDocumentFromMemory(const char* name, const char* rmlText,
                                                               Rml::String(name));
     if (!doc) {
         LEMON_ERROR("ui-subsystem: LoadDocumentFromMemory('%s') 解析失败", name);
+        // M7a 批① D8：装载失败回滚可见态——旧实例已卸（doc=nullptr）但 shown/
+        // modal 残留真值时 AnyModalShown() 恒真 = 游戏输入永久让出（只能重启）。
+        // 条目保留（底稿/路径还在，修好后可重载），让出面即刻释放。
+        if (it != i.docs.end()) {
+            it->second.shown = false;
+            it->second.modal = false;
+        }
         return false;
     }
     auto& entry = i.docs[name];
@@ -723,6 +730,12 @@ bool UiSubsystem::LoadDocumentFromFile(const char* name, const char* absPath,
     Rml::ElementDocument* doc = i.ctx->LoadDocument(Rml::String(absPath));
     if (!doc) {
         LEMON_ERROR("ui-subsystem: LoadDocument('%s') 解析/读盘失败", absPath);
+        // M7a 批① D8：同 LoadDocumentFromMemory——失败强制清 shown/modal，防
+        // modal 残留卡死输入；条目保留待重载
+        if (it != i.docs.end()) {
+            it->second.shown = false;
+            it->second.modal = false;
+        }
         return false;
     }
     auto& entry = i.docs[name];
@@ -746,14 +759,27 @@ bool UiSubsystem::ReloadDocument(const char* name) {
     // <link> 样式表按路径缓存（Factory）——重载前先清，否则新文档仍配旧样式
     Rml::Factory::ClearStyleSheetCache();
     const bool shown = it->second.shown;
+    const bool wasModal = it->second.modal;
     Rml::ElementDocument* doc = impl_->ReloadDoc(it->second, name);
-    if (doc && shown) doc->Show();
+    if (!doc) {
+        // M7a 批① D8：重载失败不回写 shown（旧代码无条件恢复 = modal 残留卡死
+        // 输入），强制清让出面 + 红字（此前失败路径零日志）；条目保留待修复重载
+        it->second.shown = false;
+        it->second.modal = false;
+        impl_->RestoreDocumentOrder();
+        LEMON_ERROR("ui-subsystem: 文档热重载失败（%s，shown=%d modal=%d 已让出）——"
+                    "修复文件后再次改动或重开会重载",
+                    it->second.sourcePath.empty() ? name : it->second.sourcePath.c_str(),
+                    (int)shown, (int)wasModal);
+        return false;
+    }
+    if (shown) doc->Show();
     it->second.shown = shown;
     impl_->RestoreDocumentOrder(); // D1：重挂隐式提层 → 按"最近 Show 序"复排
-    if (doc) impl_->PushReloadedEvent(name); // M2：C# 重灌信号
+    impl_->PushReloadedEvent(name); // M2：C# 重灌信号
     LEMON_LOG("ui-subsystem: 文档热重载 %s（%s）", name,
               it->second.sourcePath.empty() ? "内存底稿" : it->second.sourcePath.c_str());
-    return doc != nullptr;
+    return true;
 }
 
 void UiSubsystem::ReloadStyleSheets() {
@@ -773,11 +799,17 @@ void UiSubsystem::ReloadAllDocuments() {
     for (auto& [name, d] : impl_->docs) {
         const bool shown = d.shown;
         Rml::ElementDocument* doc = impl_->ReloadDoc(d, name);
-        if (doc && shown) doc->Show();
+        if (!doc) { // M7a 批① D8：失败清让出面（单文档同款语义）
+            d.shown = false;
+            d.modal = false;
+            LEMON_ERROR("ui-subsystem: 全量重载失败（%s）——shown/modal 已让出", name.c_str());
+            continue;
+        }
+        if (shown) doc->Show();
         d.shown = shown;
-        if (doc) impl_->PushReloadedEvent(name);
+        impl_->PushReloadedEvent(name);
     }
-    impl_->RestoreDocumentOrder(); // D1：重挂隐式提层 → 按"最近 Show 序"复排
+    impl_->RestoreDocumentOrder();
 }
 
 bool UiSubsystem::UnloadDocument(const char* name) {

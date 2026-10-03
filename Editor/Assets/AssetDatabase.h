@@ -19,9 +19,14 @@ namespace lemon::editor {
 /// 原子落盘（共享工具，2026-09-24 审查 F-04/P-13）：同目录 .tmp 全量写入 + flush
 /// 显式校验 + rename 替换——磁盘满/进程中断只丢 .tmp，不把原文件截成半档。
 /// 场景/Prefab/存档/manifest 四条保存链统一走此口。
-bool WriteFileAtomic(const std::string& path, const void* data, size_t n);
-inline bool WriteFileAtomic(const std::string& path, const std::string& s) {
-    return WriteFileAtomic(path, s.data(), s.size());
+/// durable（M7a 批① M21）= rename 前对 .tmp fsync：掉电后名字交换至多回到旧档，
+/// 不会出现长度 0 的新档；高频写（.meta/场景）不必开，manifest/存档等"重建代价
+/// 高"的落盘点开。
+bool WriteFileAtomic(const std::string& path, const void* data, size_t n,
+                     bool durable = false);
+inline bool WriteFileAtomic(const std::string& path, const std::string& s,
+                            bool durable = false) {
+    return WriteFileAtomic(path, s.data(), s.size(), durable);
 }
 
 // Table = .tab 配置表资产（M6a 批②，ADR-012；.meta/manifest 按 AssetTypeName 字符串

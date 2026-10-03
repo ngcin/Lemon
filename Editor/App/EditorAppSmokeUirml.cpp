@@ -58,6 +58,9 @@ struct UirmlSmokeState {
     // 帧锚定单发装载（302/394）在快机上竞速落空 → 405 清场断言连锁红。两装载
     // 改重试窗（成功即停；FindByPath 须过 !missing——墓碑命中会假成功静默跳载）
     bool smokeUiFormBSeeded = false, smokeUiFinalSeeded = false;
+    // M7a 批① D8：装载失败回滚位（毒化 → 同名重载失败 → shown/modal 强制清 =
+    // 输入让出面释放；复原 → 重载成功 = 条目保留可重试）。三段全真才绿。
+    bool smokeUiD8RollbackOk = false;
 };
 UirmlSmokeState g_uirmlSmoke;
 
@@ -440,6 +443,45 @@ void EditorApp::SmokeUirmlFrame(uint64_t frame) {
             if (TryEnterPlay()) tabFocusPending_ = 1;
             else LEMON_ERROR("uirml-smoke: 真终局 EnterPlay 失败");
         }
+        if (frame == 195 && gameUi_) {
+            // M7a 批① D8 回归锁：装载失败必须释放输入让出面。流程：武装 modal →
+            // 删源文件（读盘失败——RmlUi 对坏 XML 反而宽容，未闭合标签实测解析
+            // "成功"；删档是确定失败路径，与解析失败同走 return false 位）→ 同名
+            // LoadDocumentFromFile 应失败且 shown 清零 → 复原内容重载应成功（条目
+            // 保留可重试）→ 恢复原 shown 态。时点/origin 选择：195 = 层序两拍
+            //（171/191）之后、200 Stop 之前；origin 取 Scene（主文档是通道 A 声明
+            // 装载——翻 Edit 会让它豁免 Stop 清场，p2/stale 断言面被污染）。
+            namespace fs = std::filesystem;
+            const fs::path rml = uiDir / "uirml.rml";
+            std::string good;
+            {
+                std::ifstream f(rml, std::ios::binary);
+                good.assign((std::istreambuf_iterator<char>(f)), {});
+            }
+            const char* docName = "Assets/UI/uirml.rml";
+            const bool wasShown = gameUi_->IsDocumentShown(docName);
+            gameUi_->ShowDocument(docName, /*show=*/true, /*modal=*/true); // 武装 modal 位
+            std::error_code remc;
+            fs::remove(rml, remc);
+            const AssetEntry* en = ctx_.Assets().FindByPath(docName);
+            const bool loadFailed =
+                en && !gameUi_->LoadDocumentFromFile(
+                          docName, ctx_.Assets().AbsolutePath(*en).c_str(),
+                          ui::UiDocOrigin::Scene);
+            const bool released = !gameUi_->IsDocumentShown(docName); // modal 残留 = 输入卡死本体
+            { std::ofstream f(rml, std::ios::binary | std::ios::trunc); f << good; }
+            bool restored = false;
+            if (en)
+                restored = gameUi_->LoadDocumentFromFile(
+                    docName, ctx_.Assets().AbsolutePath(*en).c_str(),
+                    ui::UiDocOrigin::Scene);
+            gameUi_->ShowDocument(docName, wasShown, /*modal=*/false); // 现场复原
+            g_uirmlSmoke.smokeUiD8RollbackOk = loadFailed && released && restored;
+            if (!g_uirmlSmoke.smokeUiD8RollbackOk)
+                LEMON_ERROR("uirml-smoke: D8 装载失败回滚位（loadFailed=%d released=%d "
+                            "restored=%d）",
+                            (int)loadFailed, (int)released, (int)restored);
+        }
         if (frame == 100) {
             if (rewriteFile(uiDir / "uirml.rml", "#ffd060", "#40ff90"))
                 LEMON_LOG("uirml-smoke: .rml 热重载播种（标题金→绿）");
@@ -569,7 +611,8 @@ bool EditorApp::SmokeUirmlVerdict() {
                 "uidoc(a=%d/b=%d/c=%d loads=%u/%u) layer(bTop=%d aTop=%d) "
                 "p2(stale=%d keepC=%d+%dpx dyn=%s del=%d) "
                 "evict2(seed=%d live=%d edit=%d pix=%d) "
-                "evict3(stopHide=%d delEnt=%d reset=%d/%d pix=%d) => %s\n",
+                "evict3(stopHide=%d delEnt=%d reset=%d/%d pix=%d) "
+                "d8(rollback=%d) => %s\n",
                 hasDoc ? 1 : 0, gameUi_ ? gameUi_->LoadedFontFamily() : "-",
                 panelN, titleGN, bodyBN, texN, oldGoldN, oldGrayN, titleTopN, titleGN,
                 dpRatio, dpW, dpH, (dpRatioOk && dpBoxOk) ? "OK" : "BAD",
@@ -582,7 +625,9 @@ bool EditorApp::SmokeUirmlVerdict() {
                 g_uirmlSmoke.smokeUiEvictPixN, g_uirmlSmoke.smokeUiExitHideOk ? 1 : 0, g_uirmlSmoke.smokeUiDelEntOk ? 1 : 0,
                 g_uirmlSmoke.smokeUiResetSeedOk ? 1 : 0, g_uirmlSmoke.smokeUiResetOnlyOk ? 1 : 0,
                 g_uirmlSmoke.smokeUiDelEntPixN,
-                (uiOk && uiOk3c && uidocOk && dpRatioOk && dpBoxOk) ? "OK" : "FAIL");
+                g_uirmlSmoke.smokeUiD8RollbackOk ? 1 : 0,
+                (uiOk && uiOk3c && uidocOk && dpRatioOk && dpBoxOk &&
+                 g_uirmlSmoke.smokeUiD8RollbackOk) ? "OK" : "FAIL");
     return uiOk && uiOk3c && uidocOk && dpRatioOk && dpBoxOk;
 }
 

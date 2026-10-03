@@ -4613,6 +4613,149 @@ void TestClipEdit() {
     }
 }
 
+// ---- M7a 批① D7 残余：动画资产名校验硬化（ValidateAssetName 单源）----
+// 旧校验只拒空/`/`/`\`/`..`——引号/控制字符/超长放行（写侧 JsonEscape 兜底不毁
+// 档，但名字 = 文件名母体 + 集内按名解析键，怪字符把问题推迟到运行时）。
+void TestValidateAssetName() {
+    using lemon::editor::ValidateAssetName;
+    std::string why;
+
+    Expect(ValidateAssetName("idle", &why), "name: plain accepted");
+    Expect(ValidateAssetName("跑-02", &why), "name: CJK accepted");
+    Expect(ValidateAssetName(std::string(64, 'a'), &why), "name: 64B boundary accepted");
+
+    Expect(!ValidateAssetName("", &why) && why.find("空") != std::string::npos,
+           "name: empty rejected with reason");
+    Expect(!ValidateAssetName("a/b", &why), "name: slash rejected");
+    Expect(!ValidateAssetName("a\\b", &why), "name: backslash rejected");
+    Expect(!ValidateAssetName("a..b", &why), "name: dotdot rejected");
+    Expect(!ValidateAssetName("we\"ird", &why) && why.find("引号") != std::string::npos,
+           "name: quote rejected（D7 报告原场景）");
+    Expect(!ValidateAssetName("a\nb", &why), "name: control char rejected");
+    Expect(!ValidateAssetName(std::string(65, 'a'), &why) &&
+               why.find("64") != std::string::npos,
+           "name: over-64B rejected（D7 报告第二场景：截断/超长）");
+    Expect(ValidateAssetName("normal"), "name: null-why pointer tolerated");
+}
+
+// ---- M7a 批① M22：删帧后帧事件越界清理（SanitizeClipEvents）----
+// 阴性内置：越界事件的 clip 序列化 → 解析必拒（ParseClipJson 硬拒 frame≥帧表）
+// ——即缺陷本体（保存链自锁）作为反例先行证明，再证 sanitize 后 roundtrip 过。
+void TestClipEventBounds() {
+    using lemon::editor::ClipData;
+    using lemon::editor::ClipEventEdit;
+    using lemon::editor::ClipToJson;
+    using lemon::editor::ParseClipJson;
+    using lemon::editor::SanitizeClipEvents;
+
+    ClipData c;
+    c.ok = true;
+    c.name = "duel";
+    c.fps = 12.0f;
+    c.frames = {{0x5bd31a7c10000001ull, 0}, {0x5bd31a7c10000001ull, 1},
+                {0x5bd31a7c10000001ull, 2}, {0x5bd31a7c10000001ull, 3}};
+    c.events = {{1, 0}, {3, 7}};
+
+    // 带事件的合法档 roundtrip 过（正例基线）
+    {
+        const ClipData rt = ParseClipJson(ClipToJson(c));
+        Expect(rt.ok && rt.events == c.events, "events: in-bounds roundtrip");
+    }
+
+    // 缺陷本体（阴性）：删掉帧 2..3 后事件 {3,7} 越界——不清则序列化产物解析必拒
+    c.frames.resize(2);
+    {
+        const ClipData rt = ParseClipJson(ClipToJson(c));
+        Expect(!rt.ok, "events: out-of-range serialize-parse rejected（M22 自锁本体）");
+    }
+
+    // 修复：SanitizeClipEvents 清越界 → roundtrip 过、界内事件保真
+    const size_t dropped = SanitizeClipEvents(c);
+    Expect(dropped == 1 && c.events.size() == 1 && c.events[0].frame == 1,
+           "events: sanitize drops exactly the out-of-range event");
+    {
+        const ClipData rt = ParseClipJson(ClipToJson(c));
+        Expect(rt.ok && rt.events == c.events, "events: post-sanitize roundtrip ok");
+    }
+
+    // 幂等/边界：空事件、全越界、帧表空
+    c.events.clear();
+    Expect(SanitizeClipEvents(c) == 0, "events: sanitize no-op when empty");
+    c.events = {{0, 1}};
+    c.frames.clear();
+    Expect(SanitizeClipEvents(c) == 1 && c.events.empty(),
+           "events: empty frame table clears all events");
+}
+
+// ---- M7a 批① M21：manifest .bak 备份与坏主档恢复 ----
+// 判别设计（阴性可分）：hero 与 aaa/bbb 同代发号（hero 非首号）→ 删 aaa/bbb 后
+// 保存（gen2）→ 毒化主档（半截 JSON 模拟掉电）→ 重开。恢复成功 = hero 保住
+// gen1 号；恢复失败/无机制 = 弃档重建按现存资产重排（hero 独活 = 拿首号 ≠ gen1）
+// → id 不等即红。精灵资产（.png）才有真 spriteId（clip 型恒 0 不可判别）。
+void TestManifestBakRecovery() {
+    namespace fs = std::filesystem;
+    using lemon::editor::AssetDatabase;
+    using lemon::editor::AssetEntry;
+
+    const fs::path root = fs::temp_directory_path() /
+                          ("lemon-test-manifestbak-" + std::to_string(::getpid()));
+    std::error_code ec;
+    fs::remove_all(root, ec);
+
+    auto put = [&](const std::string& rel, const char* guidHex) {
+        const fs::path p = root / rel;
+        fs::create_directories(p.parent_path(), ec);
+        { std::ofstream f(p, std::ios::binary); f << "x"; }
+        std::ofstream f(p.string() + ".meta", std::ios::trunc);
+        f << "{\"guid\":\"" << guidHex << "\"}";
+    };
+    put("Assets/aaa.png", "bbbb000000000001");
+    put("Assets/bbb.png", "bbbb000000000002");
+    put("Assets/hero.png", "bbbb000000000003");
+
+    const std::string manifestPath = (root / ".lemon" / "manifest.json").string();
+    uint32_t idGen1 = 0;
+    {
+        AssetDatabase db;
+        Expect(db.OpenProject(root.string(), /*spriteIdBase=*/100), "manifest-bak: open gen1");
+        const AssetEntry* h = db.FindByPath("Assets/hero.png");
+        Expect(h && h->spriteId > 100, "manifest-bak: hero got non-first id in gen1");
+        idGen1 = h ? h->spriteId : 0;
+    }
+    // 删两件 → gen2（记账保 hero 原号；此时 .bak = gen1 好档）
+    fs::remove(root / "Assets" / "aaa.png", ec);
+    fs::remove(root / "Assets" / "aaa.png.meta", ec);
+    fs::remove(root / "Assets" / "bbb.png", ec);
+    fs::remove(root / "Assets" / "bbb.png.meta", ec);
+    {
+        AssetDatabase db;
+        Expect(db.OpenProject(root.string(), /*spriteIdBase=*/100), "manifest-bak: open gen2");
+        const AssetEntry* h = db.FindByPath("Assets/hero.png");
+        Expect(h && h->spriteId == idGen1, "manifest-bak: carry keeps hero id in gen2");
+        Expect(fs::exists(manifestPath + ".bak", ec), "manifest-bak: .bak exists after gen2");
+    }
+    // 毒化主档：合法前缀 + 截断（掉电半写形态）
+    {
+        std::ofstream w(manifestPath, std::ios::binary | std::ios::trunc);
+        w << "{\n  \"version\": 1,\n  \"nextSpriteId\": 999,\n  \"assets\": [\n    "
+             "{\"guid\": 1, \"path\": \"Assets/he";
+        w.close();
+    }
+    uint32_t idRecovered = 0;
+    {
+        AssetDatabase db2;
+        Expect(db2.OpenProject(root.string(), /*spriteIdBase=*/100),
+               "manifest-bak: reopen after corruption");
+        if (const AssetEntry* h = db2.FindByPath("Assets/hero.png")) idRecovered = h->spriteId;
+    }
+    Expect(idRecovered == idGen1,
+           "manifest-bak: corrupted main recovered to gen-1 sprite ids（M21；"
+           "若走了重排 hero 独活拿首号必不等）");
+    Expect(!fs::exists(manifestPath + ".tmp", ec), "manifest-bak: no tmp residue");
+
+    fs::remove_all(root, ec);
+}
+
 // ---- M6a 批② T3c：.override 动画集解析/序列化 + ClipTable 集按名索引 ----
 void TestAnimSetAndClipIndex() {
     using lemon::ecs::ClipTable;
@@ -6713,6 +6856,9 @@ int main() {
     TestCsvTable();       // M6a 批② T1：CSV/表格序列化（ADR-012）
     TestGridSliceConfig(); // M6a 批② T3b-3：SetGridSlice 连号块
     TestClipEdit();       // M6a 批② T3：.anim 解析/序列化（AnimationPanel 数据面）
+    TestValidateAssetName(); // M7a 批① D7：动画资产名校验硬化单源
+    TestClipEventBounds();   // M7a 批① M22：删帧后越界帧事件清理（阴性内置）
+    TestManifestBakRecovery(); // M7a 批① M21：manifest .bak + 坏主档恢复
     TestAnimSetAndClipIndex(); // M6a 批② T3c：.override 集 + ClipTable 按名索引
     TestControllerAndGraph();  // T3d：.controller + ControllerTable + 事件/反查
     TestTableAssetImport(); // M6a 批② T1：.csv → .tab 转换导入生命周期

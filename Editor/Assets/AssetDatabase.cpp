@@ -8,6 +8,14 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+// FsyncFile（M7a 批① M21 durable 写）
+#if defined(_WIN32)
+#include <fcntl.h>
+#include <io.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 
 #include <nlohmann/json.hpp>
 
@@ -35,7 +43,29 @@ const char* AssetTypeName(AssetType t) {
     }
 }
 
-bool WriteFileAtomic(const std::string& path, const void* data, size_t n) {
+namespace {
+// M7a 批① M21：把已写文件内容钉进磁盘（rename 前调用——内容先于名字交换落盘，
+// 掉电后至多回到旧名旧档）。失败返回 true 语义由调用方定；此处 false = 调用方
+// 红字但继续（durable 是加固不是正确性前提）。
+bool FsyncFile(const std::string& path) {
+#if defined(_WIN32)
+    const int fd = _open(path.c_str(), _O_RDONLY | _O_BINARY);
+    if (fd < 0) return false;
+    const bool ok = _commit(fd) == 0;
+    _close(fd);
+    return ok;
+#else
+    const int fd = ::open(path.c_str(), O_RDONLY);
+    if (fd < 0) return false;
+    const bool ok = ::fsync(fd) == 0;
+    ::close(fd);
+    return ok;
+#endif
+}
+} // namespace
+
+bool WriteFileAtomic(const std::string& path, const void* data, size_t n,
+                     bool durable) {
     const std::string tmp = path + ".tmp";
     {
         std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
@@ -49,6 +79,8 @@ bool WriteFileAtomic(const std::string& path, const void* data, size_t n) {
             return false;
         }
     } // 析构 close
+    if (durable && !FsyncFile(tmp))
+        LEMON_WARN("fsync 失败（%s）——继续原子换名，掉电耐久性降级", tmp.c_str());
     // RenameReplace：覆盖语义钉在助手内（Windows 阻断项⑤，07 §3.6），不再依赖各
     // STL 对 fs::rename 覆盖目标的实现定义行为
     if (!RenameReplace(tmp, path)) {
@@ -384,69 +416,89 @@ bool AssetDatabase::OpenProject(const std::string& projectRoot, uint32_t spriteI
         return false;
     }
 
-    // manifest 先载（spriteId 记账 + guid/path 对齐）；损坏 = 弃档重建（红字）。
-    // 只在启动这一次携带：后续 Rescan 的稳定性由 entries_ 自身维持。
+    // manifest 先载（spriteId 记账 + guid/path 对齐）；损坏 = 先试 .bak（M7a 批①
+    // M21：上一代拷贝）再弃档重建（红字）。只在启动这一次携带：后续 Rescan 的
+    // 稳定性由 entries_ 自身维持。
     // 类型安全读取（2026-09-24 审查 P-13）：语法合法但字段类型不符（"guid": "abc"）
     // 会抛 json::type_error 且调用链无兜底 = std::terminate——逐字段验型，坏条目
     // 跳过（该资产按新号重排，红字可见）而非整进程崩溃。
     const std::string manifestPath = root_ + "/.lemon/manifest.json";
-    if (std::ifstream mf(manifestPath, std::ios::binary); mf) {
-        std::string text((std::istreambuf_iterator<char>(mf)), std::istreambuf_iterator<char>());
+    const auto readAll = [](const std::string& p) {
+        std::string t;
+        if (std::ifstream f(p, std::ios::binary); f)
+            t.assign((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        return t;
+    };
+    const auto loadManifestText = [this](const std::string& text) {
         Json doc = Json::parse(text, nullptr, false);
-        if (!doc.is_discarded() && doc.contains("assets") && doc.at("assets").is_array()) {
-            uint32_t badEntries = 0;
-            uint64_t v = 0;
-            // 读无符号整数字段；键缺失 = 0 通过，类型不符 = false（条目跳过）
-            auto readU64 = [&v](const Json& a, const char* key) {
-                if (!a.contains(key)) {
-                    v = 0;
-                    return true;
-                }
-                const Json& jv = a.at(key);
-                if (!jv.is_number_unsigned()) return false;
-                v = jv.get<uint64_t>();
-                return true;
-            };
-            for (const Json& a : doc.at("assets")) {
-                if (!a.is_object() || !a.contains("path") || !a.at("path").is_string()) {
-                    ++badEntries;
-                    continue;
-                }
-                CarryInfo info;
-                const Json emptySlice = Json::object();
-                const Json& sl = a.contains("slice") && a.at("slice").is_object()
-                                     ? a.at("slice")
-                                     : emptySlice;
-                bool ok = readU64(a, "guid");
-                info.guid = v;
-                ok = ok && readU64(a, "spriteId");
-                info.spriteId = (uint32_t)v;
-                v = 0; // 守卫读取（键可缺）前清零：短路跳过 readU64 时不得残留上次的值
-                ok = ok && (!sl.contains("base") || readU64(sl, "base"));
-                info.sliceBase = (uint32_t)v;
+        if (doc.is_discarded() || !doc.contains("assets") || !doc.at("assets").is_array())
+            return false;
+        uint32_t badEntries = 0;
+        uint64_t v = 0;
+        // 读无符号整数字段；键缺失 = 0 通过，类型不符 = false（条目跳过）
+        auto readU64 = [&v](const Json& a, const char* key) {
+            if (!a.contains(key)) {
                 v = 0;
-                ok = ok && (!sl.contains("count") || readU64(sl, "count"));
-                info.sliceCount = (uint32_t)v;
-                if (!ok) {
-                    ++badEntries;
-                    continue;
-                }
-                manifestCarry_[a.at("path").get<std::string>()] = info;
+                return true;
             }
-            if (badEntries)
-                LEMON_ERROR("manifest.json 有 %u 条字段类型异常（跳过，相关资产号将重排）",
-                            badEntries);
-            if (doc.contains("nextSpriteId") && doc.at("nextSpriteId").is_number_unsigned()) {
-                uint32_t n = doc.at("nextSpriteId").get<uint32_t>();
-                if (n > nextSpriteId_) nextSpriteId_ = n;
-            } else if (doc.contains("nextSpriteId")) {
-                LEMON_ERROR("manifest.json nextSpriteId 类型异常（按新号继续）");
+            const Json& jv = a.at(key);
+            if (!jv.is_number_unsigned()) return false;
+            v = jv.get<uint64_t>();
+            return true;
+        };
+        for (const Json& a : doc.at("assets")) {
+            if (!a.is_object() || !a.contains("path") || !a.at("path").is_string()) {
+                ++badEntries;
+                continue;
             }
-        } else if (!text.empty()) {
-            LEMON_ERROR("manifest.json 损坏——资产记账重建（spriteId 将重排，已存场景引用可能失效）");
-        } else {
-            LEMON_ERROR("manifest.json 为空文件——资产记账重建（spriteId 将重排；"
-                        "原子写后不应出现，请检查磁盘/外部改动）");
+            CarryInfo info;
+            const Json emptySlice = Json::object();
+            const Json& sl = a.contains("slice") && a.at("slice").is_object()
+                                 ? a.at("slice")
+                                 : emptySlice;
+            bool ok = readU64(a, "guid");
+            info.guid = v;
+            ok = ok && readU64(a, "spriteId");
+            info.spriteId = (uint32_t)v;
+            v = 0; // 守卫读取（键可缺）前清零：短路跳过 readU64 时不得残留上次的值
+            ok = ok && (!sl.contains("base") || readU64(sl, "base"));
+            info.sliceBase = (uint32_t)v;
+            v = 0;
+            ok = ok && (!sl.contains("count") || readU64(sl, "count"));
+            info.sliceCount = (uint32_t)v;
+            if (!ok) {
+                ++badEntries;
+                continue;
+            }
+            manifestCarry_[a.at("path").get<std::string>()] = info;
+        }
+        if (badEntries)
+            LEMON_ERROR("manifest.json 有 %u 条字段类型异常（跳过，相关资产号将重排）",
+                        badEntries);
+        if (doc.contains("nextSpriteId") && doc.at("nextSpriteId").is_number_unsigned()) {
+            uint32_t n = doc.at("nextSpriteId").get<uint32_t>();
+            if (n > nextSpriteId_) nextSpriteId_ = n;
+        } else if (doc.contains("nextSpriteId")) {
+            LEMON_ERROR("manifest.json nextSpriteId 类型异常（按新号继续）");
+        }
+        return true;
+    };
+    const std::string manifestText = readAll(manifestPath);
+    std::error_code mec;
+    if (!manifestText.empty() || fs::exists(manifestPath, mec)) {
+        if (!loadManifestText(manifestText)) {
+            // 主档坏/空 → .bak 兜底（重建 = spriteId 重排 + 场景引用悬空，代价最高）
+            const std::string bakText = readAll(manifestPath + ".bak");
+            if (!bakText.empty() && loadManifestText(bakText)) {
+                LEMON_WARN("manifest.json 损坏/空——已从 .bak 恢复上一代记账"
+                           "（spriteId 不重排）；本次保存会刷新主档，无需手动处置");
+            } else if (manifestText.empty()) {
+                LEMON_ERROR("manifest.json 为空文件——资产记账重建（spriteId 将重排；"
+                            "原子写后不应出现，请检查磁盘/外部改动）");
+            } else {
+                LEMON_ERROR("manifest.json 损坏（.bak 缺席或同样损坏）——资产记账重建"
+                            "（spriteId 将重排，已存场景引用可能失效）");
+            }
         }
     }
 
@@ -984,8 +1036,30 @@ void AssetDatabase::SaveManifest() const {
     doc["assets"] = std::move(arr);
     // 原子写（2026-09-24 审查 P-13）：manifest 是高频落盘点（每次 Rescan 后必写），
     // 旧实现 trunc 直写——写中崩溃/磁盘满 = 半截 JSON，下次启动走"弃档重建"
-    // （spriteId 重排、已存场景引用悬空），空文件还会静默跳过损坏告警
-    if (!WriteFileAtomic(root_ + "/.lemon/manifest.json", doc.dump(2) + "\n"))
+    // （spriteId 重排、已存场景引用悬空），空文件还会静默跳过损坏告警。
+    // M7a 批① M21：①写前备份上一代 → 主档坏时启动从 .bak 恢复（不重排）；
+    // ②durable 写（fsync 在 rename 前落内容）——掉电后 rename 半途也至多回到
+    // 旧档/.bak，不会出现长度 0 的新档
+    const std::string manifestPath = root_ + "/.lemon/manifest.json";
+    {
+        std::error_code bec;
+        if (fs::exists(manifestPath, bec)) {
+            // .bak 只收"可解析的上一代"——坏主档（恢复现场：主档刚被判定损坏，
+            // 即将重写）转存 .bak 会把唯一好备份毒化成同款坏档
+            std::string prev;
+            if (std::ifstream pf(manifestPath, std::ios::binary); pf)
+                prev.assign((std::istreambuf_iterator<char>(pf)),
+                            std::istreambuf_iterator<char>());
+            if (Json::parse(prev, nullptr, false).is_discarded()) {
+                LEMON_WARN("manifest.json 当前为坏档——跳过 .bak 转存（保住既有好备份）");
+            } else {
+                fs::copy_file(manifestPath, manifestPath + ".bak",
+                              fs::copy_options::overwrite_existing, bec);
+            }
+            // 备份失败不阻断主写（.bak 是降级路径，主档照走原子写）
+        }
+    }
+    if (!WriteFileAtomic(manifestPath, doc.dump(2) + "\n", /*durable=*/true))
         LEMON_ERROR("manifest.json 写入失败（磁盘满/权限？）——记账未落盘，"
                     "下次启动 spriteId 可能重排");
 }

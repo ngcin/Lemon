@@ -1,6 +1,7 @@
 // Lemon 编辑器 — ClipEdit 实现（M6a 批② T3；见 ClipEdit.h 契约注记）
 #include "Assets/ClipEdit.h"
 
+#include <algorithm>
 #include <cstdio>
 
 #include "Assets/AssetDatabase.h"
@@ -202,6 +203,39 @@ std::string JsonEscape(std::string_view s) {
     // 转义规则单源：nlohmann dump（RFC 8259；ensure_ascii=false——中文原样可读）。
     // 输出含首尾引号，直接作为 JSON 字符串字面量嵌入
     return nlohmann::json(s).dump();
+}
+
+bool ValidateAssetName(std::string_view n, std::string* why) {
+    // M7a 批① D7 残余：改名/建段四处入口的校验硬化单源。此前各处只拒
+    // 空/`/`/`\`/`..`——`"` 与控制字符靠 JsonEscape 兜底（写侧已不毁档），但
+    // 名字同时是文件名母体与集内按名解析键，放行怪字符只会把问题推迟到
+    // 运行时；>64B 先拦（文件系统 255B 上限太晚、集内名字过长无收益）。
+    const auto reject = [&](const char* reason) {
+        if (why) *why = reason;
+        return false;
+    };
+    if (n.empty()) return reject("名字为空");
+    if (n.find('/') != std::string_view::npos) return reject("名字含 /");
+    if (n.find('\\') != std::string_view::npos) return reject("名字含 \\");
+    if (n.find("..") != std::string_view::npos) return reject("名字含 ..");
+    if (n.find('"') != std::string_view::npos) return reject("名字含引号 \"");
+    for (char c : n)
+        if ((unsigned char)c < 0x20) return reject("名字含控制字符");
+    if (n.size() > 64) return reject("名字超过 64 字节（中文约 21 字）");
+    return true;
+}
+
+size_t SanitizeClipEvents(ClipData& c) {
+    // M7a 批① M22：删帧后帧事件越界清理。事件面板不提供编辑入口（作者面 =
+    // T3d 手写/表驱动），越界事件若不清，TrySave 的 roundtrip 预验必拒（Parse
+    // 对 frame≥frames.size() 硬拒）→ 保存链自锁且 UI 无修复路径。
+    const size_t before = c.events.size();
+    c.events.erase(std::remove_if(c.events.begin(), c.events.end(),
+                                  [&](const ClipEventEdit& e) {
+                                      return e.frame >= c.frames.size();
+                                  }),
+                   c.events.end());
+    return before - c.events.size();
 }
 
 } // namespace lemon::editor

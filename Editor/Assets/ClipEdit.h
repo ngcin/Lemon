@@ -89,4 +89,15 @@ std::string AnimSetToJson(const AnimSetData& s);
 ///（review 2026-10-02 #5）
 std::string JsonEscape(std::string_view s);
 
+/// 动画资产名（段名/集名）共用校验——改名/建段入口单源（M7a 批① D7 残余：
+/// 校验硬化）。拒：空 / `/` / `\` / `..` / `"` / 控制字符 / >64 字节（名字 =
+/// 文件名母体 + 集内按名解析键，怪字符推迟问题到运行时、超长撞文件系统上限）。
+/// 返回 false 时 why 可带可直接上屏的原因（可空）。
+bool ValidateAssetName(std::string_view n, std::string* why = nullptr);
+
+/// 帧事件越界清理（M7a 批① M22）：删 `frame ≥ frames.size()` 的事件，返回删除
+/// 数。事件无 UI 编辑入口（作者面 = 手写/表驱动），删帧后不清 → TrySave 的
+/// roundtrip 预验必拒（解析侧对越界事件硬拒）→ 保存链自锁。
+size_t SanitizeClipEvents(ClipData& c);
+
 } // namespace lemon::editor

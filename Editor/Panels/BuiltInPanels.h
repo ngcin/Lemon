@@ -344,10 +344,15 @@ private:
     /// inline 新建落点：空 .anim 落盘 + 入集 + 选中（输入框保持开 = 连续建段）
     void QuickCreateSegment(EditorApp& app);
     /// inline 改名提交：校验 → db.Rename 段文件 → 集段名同步 → TrySaveSet
-    /// （失败保持输入开，setErr_ 提示）
+    /// （失败保持输入开，setErr_ 提示；M7a 批① M24：集保存失败连文件名一起回滚）
     void CommitSegRename(EditorApp& app, int idx);
     /// 复制段：读源 .anim → 撞名后缀 -2.. 落盘 + 入集 + 选中
     void DuplicateSegment(EditorApp& app, size_t idx);
+    /// M7a 批① M24：集面结构性操作收口——内存先改 → TrySaveSet → 失败回滚 +
+    /// 红字；工具条与右键菜单共用（此前六处返回值被吞 = 盘上集与编辑态分叉）
+    void RemoveSegmentAt(EditorApp& app, size_t i);
+    /// M24 重排：先存集（断引用面）后删文件——不可逆步仅在集保存成功后做
+    void DeleteSegmentFile(EditorApp& app, size_t i);
     void DrawSetModals(EditorApp& app);      // 新建集弹窗（边沿触发）
 
     uint64_t targetGuid_ = 0;               // 编辑目标（0 = 未选）
@@ -397,6 +402,10 @@ private:
     uint64_t setGuid_ = 0;                    // 当前集（0 = 裸 clip 传统模式）
     uint64_t setLoadedGuid_ = 0, setLoadedHash_ = 0; // 集档缓存键
     AnimSetData setEdit_;                     // 集编辑态副本（ok=false = 坏档红字）
+    // M7a 批① M25：集面独立脏标（dirty_ 只由 clip 帧编辑置位，集名/加段/删段
+    // 此前不置 = 无提示丢失）；setLoadedName_ = 集名改动判基准（Enter/失焦即存）
+    bool setDirty_ = false;
+    std::string setLoadedName_;
     uint64_t segGuid_ = 0;                    // 集模式当前选中段（0 = 未选）
     // 左列 v3：inline 新建（Enter 建段后输入保持开 = 连续建段）/ inline 改名 / 搜索
     bool segNewActive_ = false;
