@@ -1,6 +1,6 @@
 # M7a 实施计划 —— 独立运行时 + 最简出包（2026-10-01 规划：mac 先行 → Windows 真机收口）
 
-Status: planned（批⓪–批⑧ 拆解完毕待开工；决策点 D1–D8 待开工日拍板 → ADR-016）
+Status: in-progress（**批⓪ done 2026-10-03**：ADR-016 定稿采纳（D2–D8 拍板均按建议——D2 独立 packager 经 Unity/Godot/Unreal 对照质证）+ 开工基线刷新（回归 17/17 / ctest 3/3 / 单测 34073 / script 1776 / fps=84 / vtable 47——对表见[批文件](./2026-10-03-b0-kickoff-adr.md) §2）+ entryScene 字段落地（解析回显/向导双写点携带/双项目回填/smoke 双位锁+阴性验证），[批文件](./2026-10-03-b0-kickoff-adr.md)、[DevLog 前半](../DevLog/2026-10-03-m7a-b0-kickoff-adr-baseline.md)、[DevLog 后半](../DevLog/2026-10-03-m7a-b0-decisions-and-entryscene.md)；批①–批⑧ 待开工）
 
 > 总览页惯例（M6b/M6c 同款）：每批一个文件（落 `Plans/M7a/`），开工前分解到文件/行级，完工后批文件内勾销；事件流水与实测数字记 [DevLog](../../DevLog/)。设计定形物在 ADR-016（开工日随 D1–D8 拍板定稿），本页只做拆解与验收映射。
 >
@@ -45,7 +45,7 @@ Status: planned（批⓪–批⑧ 拆解完毕待开工；决策点 D1–D8 待�
 
 | 批 | 文件（开工日落名） | 主题 | 预估 | 出口判据 |
 |---|---|---|---|---|
-| ⓪ | 2026-10-XX-b0-kickoff-adr.md | 设计定形：ADR-016（D1–D8 拍板 + 容器家族全类型口径 + 出包布局图）+ `entryScene` 字段落地（解析/写入/双项目回填）+ 开工核对（svr-test WIP 基线对齐） | 0.5–1 天 | ADR-016 采纳；entryScene 回显；回归 17 步绿 |
+| ⓪ | [2026-10-03-b0-kickoff-adr.md](./2026-10-03-b0-kickoff-adr.md) | 设计定形：ADR-016（D1–D8 拍板 + 容器家族全类型口径 + 出包布局图）+ `entryScene` 字段落地（解析/写入/双项目回填）+ 开工核对（svr-test WIP 基线对齐，已于 2026-10-01 收口） | 0.5–1 天 | ADR-016 采纳；entryScene 回显；回归 17 步绿 |
 | ① | 2026-10-XX-b1-defect-batch2.md | 缺陷第二批（评审 §8）：D6/D7/D8/M21/M22–M25（M13/M14 已证伪划掉）；D8 修在搬运前随批③ 迁移 | 1–1.5 天 | 每修带阴性验证；回归 full 17/17 + 单测增长 |
 | ② | 2026-10-XX-b2-engine-assets-core.md | `Engine/Assets` 资产读取核心：stb TU 入引擎 + AssetIndex（meta 扫描 + manifest 只读快路径 + 确定性 spriteId 派生）+ TextureStore（解码→AtlasRegistry）+ 解析器三件下沉 + `ResolveSpriteRefs` 下沉 + project.lemon 引擎侧只读解析 | 2–2.5 天 | ctest 3/3 + 单测增长；编辑器改调后回归 17/17 + **金回放零重录**（纯搬家强验证） |
 | ③ | 2026-10-XX-b3-play-assembly-sink.md | Play 装配下沉：PrefabCache/`SetSpawnFn`（**D5 护栏随此**：批量帧指针失效防护）+ SaveStore 三通道 + UiMount + AudioMount + CameraFollow 共享助手；编辑器改薄壳委托（搬家非复制，diff 净删佐证） | 2–2.5 天 | 同批② 口径 + smoke-template/uirml/audio 全绿 |

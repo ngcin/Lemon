@@ -120,6 +120,10 @@ public:
     ViewportRenderer& Viewport() { return *viewport_; }
     AssetGpuCache& AssetGpu() { return gpuAssets_; }
     bool Playing() const { return playing_; } // Play 沙盒 M4.3 接入
+    // project.lemon 入口场景声明（M7a 批⓪，ADR-016 M8/D6）：空 = 未声明（消费方走
+    // 唯一 .scene 回退链）。编辑器侧只解析回显；正式消费 = 批② ProjectFile / 批④
+    // lemon-game / 批⑤ packager。
+    const std::string& EntryScene() const { return entryScene_; }
     EditTool Tool() const { return tool_; }
     bool GridVisible() const { return gridVisible_; } // 网格显示（纯视觉）
     bool SnapEnabled() const { return snapEnabled_; } // 拖拽吸附（默认关；Ctrl 临时取反）
@@ -408,6 +412,7 @@ private:
     char wizName_[64] = {};
     char wizParent_[512] = ".";
     bool wizOpen_ = false;
+    std::string entryScene_;        // 当前项目 project.lemon 的 entryScene（相对路径；开项目时解析）
     std::string recoveryPath_;       // 非空 = 检测到可恢复快照（DrawRecoveryModal 消费）
     bool recoveryAnswered_ = false;  // 冒烟终验：已自动答复
     uint64_t wizardSpawnGuid_ = 0;   // 终验：种子资产 guid（判据场景装配用）

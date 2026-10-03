@@ -1846,7 +1846,8 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
     {
         std::ofstream f(root / "project.lemon", std::ios::trunc);
         f << "{\n  \"schemaVersion\": 1,\n  \"name\": \"vs-survivor\",\n"
-             "  \"engineVersion\": \"0.5.0-m5\",\n  \"guid\": \"tpl-placeholder\"\n}\n";
+             "  \"engineVersion\": \"0.5.0-m5\",\n  \"guid\": \"tpl-placeholder\",\n"
+             "  \"entryScene\": \"Scenes/Main.scene\"\n}\n";
     }
     {
         std::ofstream f(root / "README.md", std::ios::trunc);

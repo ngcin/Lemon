@@ -25,6 +25,7 @@
 #include "Components/RenderComponents.h"
 #include "Core/Process.h" // CurrentProcessId（tempdir 唯一名；Windows 阻断项①，07 §3.6）
 #include "Core/Log.h"
+#include <nlohmann/json.hpp>
 #include "EditorContext.h"
 #include "Renderer/RHI.h"
 #include "Ui/UiSubsystem.h" // 批③a（ADR-014）：游戏 UI 层（RmlUi）
@@ -73,6 +74,10 @@ struct TplSmokeState {
     // M6c 批④：音频链机器断言——装载恰 7（CC0 七件）+ BGM 声部暂停期挂起非
     // 终止（>=1）+ 恢复后仍活（挂起续响；一次性 SFX 不在断言面——自然放完）
     int audMount = -1, audPauseVoices = -1, audResumeVoices = -1;
+    // M7a 批⓪（ADR-016 D6）：entryScene 双位——wiz = 向导模板复制把模板的
+    // entryScene 带进新 project.lemon；parse = OpenProjectPipeline 解析回显
+    // （EntryScene() 读到同值）。两位都绿 = 写入→重开回显闭环。
+    bool entryWiz = false;
     // 批③d-2：流程链（菜单→开局→常规链→二死→结算→重开清场→暂停/设置→回菜单）。
     // 元素点击 = 引擎直灌三帧同卡片条目路径（clickElDoc/Id 非空 = 下一发目标）
     bool menuOk = false, runStarted = false;
@@ -152,6 +157,24 @@ bool EditorApp::SmokeTplSeedProject() {
     if (root.empty()) {
         LEMON_ERROR("smoke-template：向导复制失败（模板缺失/不可写）");
         return false;
+    }
+    // M7a 批⓪ D6 回归锁：模板 entryScene 必须随复制进新项目（ProjectWizard 重写
+    // project.lemon 只换 name/engineVersion/guid——携带断裂 = 运行时入口裸奔）
+    {
+        std::ifstream pf(fs::path(root) / "project.lemon", std::ios::binary);
+        std::string text((std::istreambuf_iterator<char>(pf)),
+                         std::istreambuf_iterator<char>());
+        try {
+            const nlohmann::json j = nlohmann::json::parse(text);
+            g_tplSmoke.entryWiz = j.contains("entryScene") &&
+                                  j.at("entryScene") == "Scenes/Main.scene";
+        } catch (const std::exception&) {
+        }
+        if (!g_tplSmoke.entryWiz) {
+            LEMON_ERROR("smoke-template：向导复制丢 entryScene（新 project.lemon 无"
+                        " entryScene=\"Scenes/Main.scene\"）");
+            return false;
+        }
     }
     launchCopy_.projectDir = root;
     launch_ = &launchCopy_;
@@ -636,6 +659,9 @@ bool EditorApp::SmokeTplVerdict() {
                             g_tplSmoke.pauseOk && g_tplSmoke.settingsOk &&
                             g_tplSmoke.settingsToggled && g_tplSmoke.resumedOk &&
                             g_tplSmoke.tomenuOk;
+        // M7a 批⓪ D6：entryScene 解析回显位（开项目经 OpenProjectPipeline 后
+        // EntryScene() 应读到模板声明的入口——与播种期 wiz 位构成写入→回显闭环）
+        const bool entryParseOk = EntryScene() == "Scenes/Main.scene";
         const bool tplOk = g_tplSmoke.hudDocOk && g_tplSmoke.hudBarBox && g_tplSmoke.bestLoaded &&
                            g_tplSmoke.waveRow &&
                            g_tplSmoke.deaths > 0 && g_tplSmoke.levelUps > 0 && g_tplSmoke.cardsSeen &&
@@ -645,12 +671,14 @@ bool EditorApp::SmokeTplVerdict() {
                            g_tplSmoke.tablesOk && // 批② T4：数值表载入
                            g_tplSmoke.uiLoads == 6 && layerOk && flowOk && // 批③d-1/③d-2：装载恰 6 + 层序三拍 + 流程链
                            g_tplSmoke.audMount == 7 && g_tplSmoke.audPauseVoices >= 1 &&
-                           g_tplSmoke.audResumeVoices >= 1; // 批④：七件装载 + 暂停挂起续响
+                           g_tplSmoke.audResumeVoices >= 1 && // 批④：七件装载 + 暂停挂起续响
+                           g_tplSmoke.entryWiz && entryParseOk; // 批⓪：entryScene 写入+回显
         std::printf("[lemon] smoke-template: hud(doc=%s bar=%s) saveLoad=%s wave(row=%s n=%d) "
                     "kills=%d levelUps=%d cards(doc seen=%s pick=%s hidden=%s) "
                     "layer(%d/%d/%d=%s) "
                     "death(seen=%s revive=%s scriptOk=%s) "
                     "hitClip=%s fx(text=%s bar=%s) tables=%s uidoc=%d "
+                    "entry(wiz=%s parse=%s) "
                     "aud(mount=%d pause=%d resume=%d=%s) "
                     "flow(menu=%s start=%s results=%s restart=%s pause=%s "
                     "set=%s/%s resume=%s tomenu=%s) => %s\n",
@@ -665,6 +693,7 @@ bool EditorApp::SmokeTplVerdict() {
                     g_tplSmoke.scriptOk ? "YES" : "NO", g_tplSmoke.mobHitClip ? "YES" : "NO",
                     g_tplSmoke.fxText ? "YES" : "NO", g_tplSmoke.fxBar ? "YES" : "NO",
                     g_tplSmoke.tablesOk ? "YES" : "NO", g_tplSmoke.uiLoads,
+                    g_tplSmoke.entryWiz ? "YES" : "NO", entryParseOk ? "YES" : "NO",
                     g_tplSmoke.audMount, g_tplSmoke.audPauseVoices, g_tplSmoke.audResumeVoices,
                     (g_tplSmoke.audMount == 7 && g_tplSmoke.audPauseVoices >= 1 &&
                      g_tplSmoke.audResumeVoices >= 1) ? "OK" : "FAIL",

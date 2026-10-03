@@ -20,6 +20,7 @@
 #include "Core/Log.h"
 #include "ECS/Scene.h"
 #include "Serialization/SceneArchive.h"
+#include <nlohmann/json.hpp>
 
 namespace lemon::editor {
 namespace fs = std::filesystem;
@@ -114,13 +115,31 @@ std::string ProjectWizard::Create(const ProjectDesc& d, uint64_t* outSpawnGuid) 
             fs::remove_all(root, ec);
             return {};
         }
-        // project.lemon 重写：名字/引擎版本/新项目 GUID（模板占位档替换）
+        // project.lemon 重写：名字/引擎版本/新项目 GUID（模板占位档替换）。
+        // entryScene 随行（M7a 批⓪，ADR-016 M8/D6）：重写只换 name/engineVersion/
+        // guid 三项，模板声明的入口场景必须带到新项目——丢了 = 运行时入口回退链
+        // 裸奔（多场景模板直接踩多场景缺字段红字）。
+        std::string tplEntryScene;
+        {
+            std::ifstream tf(src / "project.lemon", std::ios::binary);
+            std::string ttext((std::istreambuf_iterator<char>(tf)),
+                              std::istreambuf_iterator<char>());
+            try {
+                const nlohmann::json tj = nlohmann::json::parse(ttext);
+                if (tj.contains("entryScene") && tj.at("entryScene").is_string())
+                    tplEntryScene = tj.at("entryScene").get<std::string>();
+            } catch (const std::exception&) {
+            }
+        }
         const uint64_t projectGuid = GenerateGuid();
         {
             std::ofstream f(root / "project.lemon", std::ios::trunc);
             f << "{\n  \"schemaVersion\": 1,\n  \"name\": \"" << d.name << "\",\n"
               << "  \"engineVersion\": \"" << d.engineVersion << "\",\n"
-              << "  \"guid\": \"" << AssetDatabase::GuidToHex(projectGuid) << "\"\n}\n";
+              << "  \"guid\": \"" << AssetDatabase::GuidToHex(projectGuid) << "\"";
+            if (!tplEntryScene.empty())
+                f << ",\n  \"entryScene\": \"" << tplEntryScene << "\"";
+            f << "\n}\n";
         }
         // Game/*.csproj HintPath 重锚（找到 Reference Include="Lemon.SDK" 段替换）
         if (!d.sdkDir.empty()) ReanchorSdkHintPath(root / "Game", d.sdkDir);
@@ -136,13 +155,16 @@ std::string ProjectWizard::Create(const ProjectDesc& d, uint64_t* outSpawnGuid) 
                             "Game", "Data", ".lemon/editor", "Builds"})
         fs::create_directories(root / dir, ec);
 
-    // project.lemon：引擎版本锚点（06 §1：启动校验/迁移提示的依据）
+    // project.lemon：引擎版本锚点（06 §1：启动校验/迁移提示的依据）。
+    // entryScene（M7a 批⓪ D6）：blank 项目唯一场景就是下方创建的 Scenes/Main.scene
+    // ——显式声明（而非靠"唯一 .scene"回退链），新项目从第一天就带上入口字段。
     const uint64_t projectGuid = GenerateGuid();
     {
         std::ofstream f(root / "project.lemon", std::ios::trunc);
         f << "{\n  \"schemaVersion\": 1,\n  \"name\": \"" << d.name << "\",\n"
           << "  \"engineVersion\": \"" << d.engineVersion << "\",\n"
-          << "  \"guid\": \"" << AssetDatabase::GuidToHex(projectGuid) << "\"\n}\n";
+          << "  \"guid\": \"" << AssetDatabase::GuidToHex(projectGuid) << "\",\n"
+          << "  \"entryScene\": \"Scenes/Main.scene\"\n}\n";
     }
     // 项目 .gitignore（bin/obj = dotnet 噪声；.lemon/Builds = 状态与出包）
     {

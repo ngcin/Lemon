@@ -2,5 +2,6 @@
   "schemaVersion": 1,
   "name": "svr-test",
   "engineVersion": "0.4.0-m4",
-  "guid": "9e9b2af4ee867201"
+  "guid": "9e9b2af4ee867201",
+  "entryScene": "Scenes/MainMenu.scene"
 }

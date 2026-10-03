@@ -53,19 +53,35 @@ bool EditorApp::OpenProjectPipeline(const std::string& projectRoot) {
     // project.lemon 内容最小校验（测试报告 BUG-2）：内容当前无消费者（存在性 =
     // 项目标记），坏档静默无视会让用户误以为项目完好——json 可解析 + name 字段。
     // 坏 = 红字但不阻断（Assets/ 场景可能完好，重建工程文件由用户决定）。
+    // M7a 批⓪（ADR-016 M8/D6）：顺手解析可选字段 entryScene（入口场景声明，
+    // 相对路径）——编辑器侧只回显 + 在场性守卫；入口解析的回退链（entryScene →
+    // 唯一 .scene → 多场景缺字段红字）归批② ProjectFile / 批④ lemon-game。
     {
         std::ifstream pf(projectRoot + "/project.lemon", std::ios::binary);
         std::string text((std::istreambuf_iterator<char>(pf)),
                          std::istreambuf_iterator<char>());
         bool plOk = false;
+        entryScene_.clear();
         try {
             const nlohmann::json j = nlohmann::json::parse(text);
             plOk = j.contains("name") && j.at("name").is_string();
+            if (j.contains("entryScene") && j.at("entryScene").is_string())
+                entryScene_ = j.at("entryScene").get<std::string>();
         } catch (const std::exception&) {
         }
         if (!plOk)
             LEMON_ERROR("project.lemon 损坏或缺少 name 字段：%s——项目按目录继续打开，"
                         "建议重建工程文件", projectRoot.c_str());
+        if (!entryScene_.empty()) {
+            std::error_code fec;
+            if (std::filesystem::is_regular_file(
+                    std::filesystem::path(projectRoot) / entryScene_, fec)) {
+                LEMON_LOG("入口场景声明（entryScene）：%s", entryScene_.c_str());
+            } else {
+                LEMON_WARN("entryScene 声明的场景不存在：%s/%s——运行时入口将走回退链",
+                           projectRoot.c_str(), entryScene_.c_str());
+            }
+        }
     }
     // 会话内切换支持（M4.6）：Start 对已运行 watcher 是 no-op，必须先停旧根
     watcher_.Stop();
