@@ -177,6 +177,19 @@ void EditorApp::WirePlayAudioBackend() {
     ctx_.ActiveWorld().SetAudioBackend(&audio_, ResolveAudioClipThunk, this);
 }
 
+bool EditorApp::EnterPlayProgrammatic() {
+    // #82（review 2026-10-02）：程序化进 Play 装配单源——原 TryEnterPlay 封装与
+    // --play/--smoke-uirml/--bench-* 手动拼装并存且步骤面漂移（各漏不同步骤；
+    // 封装侧新增任何前置，手动路径静默漏）。守卫由调用方决定（见头注）
+    if (!ctx_.EnterPlay()) return false;
+    paused_ = false;         // review 2026-10-02 #28：会话边界复位——sim 冻结态不跨
+                             // Play 残留（音频侧 MountPlayAudio 复位后两侧不错位）
+    MountSceneUiDocuments(); // 批③d 前置（通道 A）：场景声明装载 + EnterPlay 归位
+    MountPlayAudio();        // M6c 竖切批：烤制/装载音频资产（guid→clip；无资产 no-op）
+    WirePlayAudioBackend();  // M6c 批②：命令表提交引擎 + guid 解析
+    return true;
+}
+
 bool EditorApp::TryEnterPlay() {
     if (PlayBlockedByScripts()) {
         playBlockedOpen_ = true;
@@ -184,14 +197,7 @@ bool EditorApp::TryEnterPlay() {
                    "错误见 Console 红字；修复保存后自动重编译装配");
         return false;
     }
-    if (!ctx_.EnterPlay()) return false;
-    paused_ = false; // review 2026-10-02 #28：会话边界复位——sim 冻结态不跨 Play
-                     // 残留（音频侧 MountPlayAudio 复位后两侧不再错位成
-                     //「画面冻结、BGM 照响」；工具栏暂停钮态随新会话归零）
-    MountSceneUiDocuments(); // 批③d 前置（通道 A）：场景声明装载 + EnterPlay 归位
-    MountPlayAudio();        // M6c 竖切批：烤制/装载音频资产（guid→clip）
-    WirePlayAudioBackend();  // M6c 批②：命令表提交引擎 + guid 解析（AudioSystem #20 消费）
-    return true;
+    return EnterPlayProgrammatic();
 }
 
 bool EditorApp::StopPlay() {

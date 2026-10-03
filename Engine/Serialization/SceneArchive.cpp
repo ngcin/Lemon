@@ -187,14 +187,18 @@ Json WriteEntity(Scene& scene, Entity e,
     return ent;
 }
 
-/// JSON → 单实体组件集（清掉该实体已有可重建组件后按档重建；remap = 档内编号 → 实体）。
+/// JSON → 单实体组件集（remap = 档内编号 → 实体）。仅对全新实体调用：对已持有
+/// 同组件的实体 emplace 是 entt 断言路径——现行调用点 Load/LoadEntityTree 均传
+/// 新建实体（review 2026-10-02 #49：原注释宣称"清掉已有可重建组件后重建"，实现
+/// 从未做清理，契约按实现收敛）。返回 false = 条目非 object/缺 components
+///（Save 恒写 components 键，缺失即坏档——Load 侧回收预建实体并红字）。
 /// 用户可编辑文本档：类型错/结构坏不得抛穿（json 异常就地降级）。
-void ReadEntity(Scene& scene, const Json& ent, Entity e, const Entity* remap,
+bool ReadEntity(Scene& scene, const Json& ent, Entity e, const Entity* remap,
                 size_t remapCount) {
     auto& reg = ComponentRegistry::Instance();
-    if (!ent.is_object() || !ent.contains("components")) return;
+    if (!ent.is_object() || !ent.contains("components")) return false;
     const Json& comps = ent.at("components");
-    if (!comps.is_object()) return;
+    if (!comps.is_object()) return false;
     for (auto it = comps.begin(); it != comps.end(); ++it) {
         const ComponentMeta* m = reg.Find(it.key().c_str());
         if (!m) {
@@ -205,13 +209,21 @@ void ReadEntity(Scene& scene, const Json& ent, Entity e, const Entity* remap,
         // 写出），emplace 出无队列项的空标记 = 读档即永生僵尸（CommitDestroys 只
         // 消费当帧队列，永不回收）
         if (std::strcmp(m->name, "DestroyQueueTag") == 0) continue;
-        if (!it.value().is_object()) continue;
+        if (!it.value().is_object()) { // 坏档可见（review 2026-10-02 #48）：原静默跳过
+            LEMON_WARN("component '%s' value not an object — skipped", it.key().c_str());
+            continue;
+        }
         char* comp = (char*)m->emplaceFn(scene, e);
         const Json& obj = it.value();
         for (uint16_t f = 0; f < m->fieldCount; ++f) {
             if (!obj.contains(m->fields[f].name)) continue;
             try {
-                ReadField(obj.at(m->fields[f].name), m->fields[f], comp, remap, remapCount);
+                // 返回 false = EntityRef 格式非法/编号越界（review 2026-10-02 #48：
+                // 原静默吞掉——引用保持默认 null，与类型错同款红字可见）
+                if (!ReadField(obj.at(m->fields[f].name), m->fields[f], comp, remap,
+                               remapCount))
+                    LEMON_WARN("field '%s.%s' invalid (ref format/index?) — kept default",
+                               m->name, m->fields[f].name);
             } catch (const Json::exception& ex) {
                 LEMON_WARN("field '%s.%s' type mismatch skipped: %s", m->name,
                            m->fields[f].name, ex.what());
@@ -272,6 +284,7 @@ void ReadEntity(Scene& scene, const Json& ent, Entity e, const Entity* remap,
         }
         if (sb.count == 0) scene.Remove<scripting::ScriptBox>(e);
     }
+    return true;
 }
 
 /// root 子树收集（父先于子；Hierarchy 链序；深度上限防脏档环）
@@ -350,16 +363,35 @@ ecs::Entity SceneArchive::LoadEntityTree(Scene& scene, const std::string& jsonTe
     const Json& entities = doc.at("entities");
     if (entities.empty()) return Entity::Null();
 
-    // 两遍：先建全部实体（EntityRef 目标可能在本实体之后）
+    // 两遍：先建全部实体（EntityRef 目标可能在本实体之后）。坏档条目回收预建槽
+    //（review 2026-10-02 #48，Load 同款不留空壳）；根条目坏 = 资产整体损坏，
+    // 整树回收返回 Null（调用方走失败分支——半棵树无根不可用）
     std::vector<Entity> remap;
     remap.reserve(entities.size());
     for (size_t i = 0; i < entities.size(); ++i) remap.push_back(scene.Create());
-    for (size_t i = 0; i < entities.size(); ++i)
-        ReadEntity(scene, entities[i], remap[i], remap.data(), remap.size());
+    bool rootOk = true, dropped = false;
+    for (size_t i = 0; i < entities.size(); ++i) {
+        if (!ReadEntity(scene, entities[i], remap[i], remap.data(), remap.size())) {
+            LEMON_WARN("prefab: entities[%zu] not an object/missing components — dropped",
+                       i);
+            scene.Destroy(remap[i]);
+            remap[i] = Entity::Null();
+            dropped = true;
+            if (i == 0) rootOk = false;
+        }
+    }
+    if (!rootOk) {
+        for (Entity e : remap)
+            if (!e.IsNull()) scene.Destroy(e);
+        scene.CommitDestroys();
+        return Entity::Null();
+    }
+    if (dropped) scene.CommitDestroys();
 
     // 实例化语义：guid 全部换新（Prefab 源 guid 留在资产文件里）
     for (Entity e : remap)
-        if (Meta* m = scene.TryGet<Meta>(e); m) m->guid = GenerateGuid();
+        if (!e.IsNull())
+            if (Meta* m = scene.TryGet<Meta>(e); m) m->guid = GenerateGuid();
     return remap[0];
 }
 
@@ -412,8 +444,20 @@ bool SceneArchive::Load(Scene& scene, const std::string& jsonText) {
     for (size_t i = 0; i < entities.size(); ++i) remap.push_back(scene.Create());
 
     size_t i = 0;
-    for (const Json& ent : entities)
-        ReadEntity(scene, ent, remap[i++], remap.data(), remap.size());
+    bool dropped = false;
+    for (const Json& ent : entities) {
+        const size_t idx = i++;
+        if (!ReadEntity(scene, ent, remap[idx], remap.data(), remap.size())) {
+            // 坏档条目（review 2026-10-02 #48）：不留无组件空壳——回收预建槽并红字；
+            // 档内引用该编号的 EntityRef 读到 null（引用目标确实不存在）
+            LEMON_WARN("scene: entities[%zu] not an object/missing components — dropped",
+                       idx);
+            scene.Destroy(remap[idx]);
+            remap[idx] = Entity::Null();
+            dropped = true;
+        }
+    }
+    if (dropped) scene.CommitDestroys(); // 当帧回收，不给系统管线看见空壳实体
     return true;
 }
 

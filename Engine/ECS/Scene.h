@@ -76,13 +76,17 @@ public:
         registry_.remove<T>(ToEntt(e));
     }
 
-    /// 多组件视图（引擎系统内部使用；返回类型属 EnTT，不越过封装层泄漏）
+    /// 多组件视图（返回类型属 EnTT，经 auto 推导会进入调用方编译单元——引擎系统
+    /// 与编辑器视口提取/冒烟夹具在用，review 2026-10-02 #50：原注释"引擎系统内部
+    /// 使用；不越过封装层泄漏"与实况不符，按实况收敛。01 §5 EnTT 头 pimpl 化
+    ///（评审 #43）前为已知越界；新代码优先 Each/TryGet/Get 实体句柄面）
     template <typename... Ts, typename... Exclude>
     auto View(entt::exclude_t<Exclude...> ex = entt::exclude_t<Exclude...>{}) {
         return registry_.view<Ts...>(ex);
     }
 
-    /// 单组件池直接访问（批量写热路径，如 MovementSystem 写 Transform2D）
+    /// 单组件池直接访问（批量写热路径，如 MovementSystem 写 Transform2D；编辑器
+    /// 提取层同用——同 View 的 #50 口径）
     template <typename T>
     auto& Pool() {
         return registry_.storage<T>();
@@ -109,7 +113,8 @@ public:
     uint64_t CreatedTotal() const { return createdTotal_; }
     uint64_t DestroyedTotal() const { return destroyedTotal_; }
 
-    /// 封装层内部转换（系统实现可用；业务代码不经由 entt::entity 操作实体）
+    /// 封装层转换（引擎系统与编辑器夹具在用——#50 同款实况口径；业务代码不经由
+    /// entt::entity 操作实体）
     static entt::entity ToEntt(Entity e) { return static_cast<entt::entity>((uint32_t)e.id - 1u); }
     static Entity FromEntt(entt::entity e) { return Entity{(uint64_t)(uint32_t)e + 1u}; }
 

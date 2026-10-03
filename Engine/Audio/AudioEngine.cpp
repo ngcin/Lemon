@@ -71,7 +71,6 @@ struct AudioEngine::Impl {
         bool loop = false;                   // 生效语义（退化区间已视同不循环）
         std::atomic<bool> dead{false};   // 声部弃养（回收/复用/停）→ 生产者撤 job
         std::atomic<bool> failed{false}; // 载荷 IO 错 → 消费者环空即终结
-        std::atomic<uint64_t> consumed{0}; // 消费帧累计（观测；一次性曲终判据走 cursor）
         std::atomic<uint32_t> underruns{0};
         uint64_t nextFrame = 0; // 生产者私有（回卷换位后的文件帧位）
         ~StreamFeed() {
@@ -819,6 +818,11 @@ void AudioEngine::SetPaused(bool paused) {
         // ADR-015 M4：循环声部与 BGM 组挂起；一次性 SFX 自然放完；UI 组永不挂起（含其循环）
         v.paused = paused && v.group != Group::Ui && (v.loop || v.group == Group::Bgm);
     }
+}
+
+bool AudioEngine::IsPaused() const {
+    std::lock_guard<std::mutex> lk(impl_->mtx);
+    return impl_->pausedAll;
 }
 
 void AudioEngine::Tick(float dtSeconds) {

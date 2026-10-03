@@ -355,10 +355,9 @@ int EditorApp::Run(const EditorLaunch& launch) {
                         "修复编译错误后重跑（本次 exit 1）");
             return 1;
         }
-        if (!ctx_.EnterPlay()) return 1;
-        MountSceneUiDocuments(); // 批③d 前置（通道 A）：--play/--final 程序化路径
-        MountPlayAudio();        // M6c 竖切批：烤制/装载音频资产（guid→clip）
-        WirePlayAudioBackend();  // M6c 批②：程序化路径同款后端注入（漏 = 无头 --play 全哑）
+        // #82（review 2026-10-02）：程序化装配单源（EnterPlay + paused_ 复位 +
+        // UI 文档挂载 + 音频装载/后端注入）——原手动拼装与 TryEnterPlay 步骤面漂移
+        if (!EnterPlayProgrammatic()) return 1;
     }
     // 批③a（ADR-014）：--smoke-uirml 独立进 Play——playTest 的"进/出往返"语义与
     // smoke 门绑定（上方块），本模式只需"Play 中持续渲染 UI"一态（Stop 由循环后
@@ -375,12 +374,16 @@ int EditorApp::Run(const EditorLaunch& launch) {
     // --bench-survivor（M5 清障③）：播种压测场景（tempdir 项目 + 1 万怪 Spawner）并进
     // Play。无 Game/（tempdir）——无脚本属合法形态，不走 PlayBlockedByScripts 守卫。
     if (launch.benchSurvivor) {
-        if (!SeedBenchSurvivorScene(ctx_)) {
+        // #84（review 2026-10-02）：基号与 OpenProjectPipeline 同式推导（程序化图集
+        // 登记后首个可用号）——原硬编码 100 与图集页数隐性耦合
+        if (!SeedBenchSurvivorScene(
+                ctx_, viewport_->Assets().Registry().SpriteCount() + 1)) {
             LEMON_ERROR("bench-survivor 播种失败（临时项目/prefab 导出）");
             return 1;
         }
-        if (!ctx_.EnterPlay()) return 1;
-        MountSceneUiDocuments(); // 批③d 前置：基准护栏活证——无 UIDocument 装载恒 0
+        // #82：单源装配（含 UI 文档挂载——基准护栏活证：无 UIDocument 装载恒 0；
+        // tempdir 无音频资产，MountPlayAudio 天然 no-op）
+        if (!EnterPlayProgrammatic()) return 1;
     }
     // --bench-scene（2026-09-25 工具化）：--project/--scene 已开，进 Play 跑同款测量
     //（Immediate + 帧八段 + 逐系统分解）。不播种、无场景特定判据——RESULT 只报数，
@@ -390,8 +393,8 @@ int EditorApp::Run(const EditorLaunch& launch) {
             LEMON_ERROR("--bench-scene 需要 --scene（绝对路径）+ --project");
             return 2;
         }
-        if (!ctx_.EnterPlay()) return 1;
-        MountSceneUiDocuments(); // 批③d 前置：基准护栏活证（用户压测场景零装载）
+        // #82：单源装配（含 UI 文档挂载——基准护栏活证：用户压测场景零装载）
+        if (!EnterPlayProgrammatic()) return 1;
     }
     // M5 批④ --smoke-template：EnterPlay 已由上方 playTest 块完成（模板含 Game/、
     // 编译成功才走到这——PlayBlockedByScripts 守卫先行）。此处挂事件计数 sink。

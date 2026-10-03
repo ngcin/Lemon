@@ -36,7 +36,11 @@ public:
     /// list 序 = view 迭代序逐位不变（chunk 按 view 序切分、按序归并）；
     /// 桶内池序 = 排序键 (cellKey, 池索引) 唯一 → 并行建桶结果与串行逐位同构。
     void Rebuild(Scene& scene, bool collectAll, JobSystem* jobs = nullptr);
-    Entity Nearest(uint32_t team, Vec2 from, float range, Entity exclude) const;
+    /// outPos 非空 = 回填命中条目的位置快照（review 2026-10-02 #64）：并行段
+    ///（如 Chase）跨实体读走帧内快照，不回源 registry（03 §4 条款 2）——快照
+    /// 与同帧 registry 值逐位相同（Rebuild 后至本调用间无人改 Transform）
+    Entity Nearest(uint32_t team, Vec2 from, float range, Entity exclude,
+                   Vec2* outPos = nullptr) const;
     Entity NearestAny(Vec2 from, float range, Entity exclude) const; // Flee 威胁
     /// 声明队的收集表（view 序；串行/并行同构对拍等测试用）
     const std::vector<TargetEntry>& TeamEntries(uint32_t team) const;
@@ -76,7 +80,7 @@ private:
             std::vector<std::pair<uint64_t, uint32_t>> scratch_; // Build 暂存（复用免逐帧分配）
             void Build(const std::vector<TargetEntry>& list);
             Entity Nearest(const std::vector<TargetEntry>& list, Vec2 from, float range,
-                           Entity exclude) const;
+                           Entity exclude, Vec2* outPos = nullptr) const;
         };
         Grid grid;
     };

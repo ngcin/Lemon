@@ -205,6 +205,12 @@ private:
     /// 而宿主未装配（启动期编译失败）。交互侧 TryEnterPlay 弹模态；--play/--final
     /// 程序化侧红字退出——静默无脚本运行是难排查的隐性 bug（对齐 Unity/Godot）。
     bool PlayBlockedByScripts();
+    /// 程序化进 Play 装配单源（review 2026-10-02 #82）：EnterPlay + paused_ 复位 +
+    /// MountSceneUiDocuments + MountPlayAudio + WirePlayAudioBackend。原 TryEnterPlay
+    /// 封装与 --play/--smoke-uirml/--bench-* 手动拼装并存且步骤面漂移（手动路径各漏
+    /// 不同步骤）。守卫（PlayBlockedByScripts）由调用方决定——--play 显式红字退出、
+    /// bench 系列无 Game/ 合法形态不设守卫
+    bool EnterPlayProgrammatic();
     /// Play 入口守卫（2026-09-22）：项目带 Game/ 而宿主未装配（启动期编译失败）
     /// → 阻止进 Play 弹模态（对齐 Unity/Godot——静默降级 = "游戏在跑脚本没生效"
     /// 的隐性 bug）；修错保存经 watcher 自动首装解除。无 Game/ 会话直通。

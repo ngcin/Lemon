@@ -180,7 +180,7 @@ void TargetBoard::TeamList::Grid::Build(const std::vector<TargetEntry>& list) {
 
 Entity TargetBoard::TeamList::Grid::Nearest(const std::vector<TargetEntry>& list,
                                             Vec2 from, float range,
-                                            Entity exclude) const {
+                                            Entity exclude, Vec2* outPos) const {
     Entity best = Entity::Null();
     float bestD2 = range * range;
     // 坏查询防御（review 2026-10-02 #19）：NaN 查询点的 float→int 网格换算是 UB
@@ -194,6 +194,7 @@ Entity TargetBoard::TeamList::Grid::Nearest(const std::vector<TargetEntry>& list
             if (d2 < bestD2) {
                 bestD2 = d2;
                 best = te.e;
+                if (outPos) *outPos = te.pos;
             }
         }
         return best;
@@ -215,6 +216,7 @@ Entity TargetBoard::TeamList::Grid::Nearest(const std::vector<TargetEntry>& list
             if (d2 < bestD2) { // 严格小于（等距语义见 Systems.h 注释）
                 bestD2 = d2;
                 best = te.e;
+                if (outPos) *outPos = te.pos;
             }
         }
     };
@@ -236,8 +238,8 @@ Entity TargetBoard::TeamList::Grid::Nearest(const std::vector<TargetEntry>& list
     return best;
 }
 
-Entity TargetBoard::Nearest(uint32_t team, Vec2 from, float range,
-                            Entity exclude) const {
+Entity TargetBoard::Nearest(uint32_t team, Vec2 from, float range, Entity exclude,
+                            Vec2* outPos) const {
     const TeamList* t = nullptr;
     for (const auto& cand : teams_)
         if (cand.id == team) {
@@ -255,11 +257,12 @@ Entity TargetBoard::Nearest(uint32_t team, Vec2 from, float range,
             if (d2 < bestD2) {
                 bestD2 = d2;
                 best = te.e;
+                if (outPos) *outPos = te.pos;
             }
         }
         return best;
     }
-    return t->grid.Nearest(t->list, from, range, exclude);
+    return t->grid.Nearest(t->list, from, range, exclude, outPos);
 }
 
 Entity TargetBoard::NearestAny(Vec2 from, float range, Entity exclude) const {
@@ -338,6 +341,11 @@ void DirectorSystem::Tick(World& world, Scene& scene, float dt) {
         const uint8_t waveCount = wd.waveCount > 16 ? 16 : wd.waveCount;
 
         wd.time += dt;
+        // timeScale=0 冻结（review 2026-10-02 #61）：波推进/到期冷却全部停摆——
+        // "冻结波次、RNG 不消耗"（批① D5）自述不变量落地。常规条目重置后冷却恒
+        // >0 本就不触发；此闸防 time 恰卡 startTime 的边沿启动与 capAlive 持币
+        //（冷却 0）+ 普查陈旧的组合边角
+        if (dt <= 0.0f) continue;
         // 波推进：表序=生效序；后波接管（前波未完成条目废止——顺序相位语义）
         while (wd.waveIndex < waveCount &&
                wd.time >= wd.waves[wd.waveIndex].startTime) {
@@ -447,6 +455,9 @@ void SpawnSystem::Tick(World& world, Scene& scene, float dt) {
     };
     std::vector<DeferredSpawn> deferred;
     deferred.reserve(16);
+    if (dt <= 0.0f) return; // timeScale=0 冻结（review 2026-10-02 #61）：连发型
+    //（interval≤dt）Spawner 出生后冷却钳 0 → 冻结期每 tick 到期，原实现照走出生
+    // 分支 = burst 全额泄漏 + RNG 逐 tick 消耗，违背"冻结不消耗"自述
     int group = 0;
 
     for (auto [ent, sp, tf] : scene.View<Spawner, Transform2D>().each()) {
@@ -521,13 +532,17 @@ void AISystem::Tick(World& world, Scene& scene, float dt) {
                 Transform2D& tf = *scene.Registry().try_get<Transform2D>(ent);
                 Velocity& vel = *scene.Registry().try_get<Velocity>(ent);
 
+                // #64（review 2026-10-02）：并行段跨实体读走目标板帧内快照
+                //（outPos），不回源 registry 直读（03 §4 条款 2；快照与同帧
+                // registry 值逐位相同——Rebuild 后无人改 Transform，行为零变化）
+                Vec2 targetPos{};
                 ch.target = board_.Nearest(ch.targetTeam, tf.pos, ch.aggroRange,
-                                           Scene::FromEntt(ent));
+                                           Scene::FromEntt(ent), &targetPos);
                 if (ch.target.IsNull()) {
                     vel.v = Vec2::Zero();
                     continue;
                 }
-                Vec2 toT = scene.Get<Transform2D>(ch.target).pos - tf.pos;
+                Vec2 toT = targetPos - tf.pos;
                 float d = Length(toT);
                 if (d <= ch.keepRange) {
                     vel.v = Vec2::Zero();

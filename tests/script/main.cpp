@@ -603,7 +603,8 @@ void TestAudioSdk() {
     Expect(eng.ActiveVoiceCount() == 2,
            "paused Bgm loop occupies slot alongside playat oneshot");
 
-    w.Step(0.25f); // 帧4：Paused 复位 + StopAll 清场 + 自毁
+    w.Step(0.25f); // 帧4：Paused getter 读回（#71 桥首覆盖）+ 复位 + StopAll 清场 + 自毁
+    Expect(mark3 == 13, "probe f4: Paused getter reads engine state true (bridge #71)");
     Expect(!w.Audio().pausedStaged(), "pause released via C# command");
     Expect(eng.ActiveVoiceCount() == 0, "stopall cleared engine voices");
     w.Step(0.25f); // 销毁提交 + 派发

@@ -215,6 +215,11 @@ float NativeAudioMasterVolGet() {
 void NativeAudioSetPaused(int32_t on) {
     if (g_world) g_world->Audio().StageSetPaused(on != 0);
 }
+uint8_t NativeAudioPausedGet() {
+    // 引擎态直读（review 2026-10-02 #71，MasterVolGet 同款：set 走 staging、
+    // get 读引擎现值——同帧写读 = 旧值，跨帧往返为准）
+    return g_world && g_world->AudioSink() && g_world->AudioSink()->IsPaused() ? 1 : 0;
+}
 
 void NativeRtUiClear(const char* key) {
     if (g_world) g_world->RtUi().Clear(key);
@@ -413,7 +418,8 @@ const NativeApiVtable kNativeApi{NativeIsAlive,
                                  NativeAudioStopAll,
                                  NativeAudioMasterVol,
                                  NativeAudioMasterVolGet,
-                                 NativeAudioSetPaused};
+                                 NativeAudioSetPaused,
+                                 NativeAudioPausedGet};
 } // namespace
 
 void SetScriptIoHooks(const ScriptIoHooks& hooks) { g_scriptIo = hooks; }

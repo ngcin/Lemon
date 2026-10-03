@@ -707,6 +707,9 @@ public sealed class AudioProbeBehaviour : Lemon.LemonBehaviour
             Mark((ushort)(1540 + (stoppedAgain ? 0 : 1) + (mget ? 2 : 0)
                           + (pausedLoop_ != 0 ? 4 : 0)));
         } else if (fc == 4) {
+            var pget = Lemon.Audio.Paused; // #71：getter 首覆盖——上帧提交已落地
+                                           //（引擎 pausedAll = true；staging 语义同帧写读旧值）
+            Mark((ushort)(1552 + (pget ? 1 : 0)));
             Lemon.Audio.Paused = false; // 复位（引擎侧对拍旗清 + 挂起声部可解）
             Lemon.Audio.StopAll();
             gameObject.Destroy();

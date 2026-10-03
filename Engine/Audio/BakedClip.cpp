@@ -149,14 +149,18 @@ bool BakeAudioFile(const char* srcPath, const char* dstPath, float loopStartSec,
     PutLE16(head + 10, uint16_t(channels));
     PutLE32(head + 12, uint32_t(kMixSampleRate));
     // 循环点（批①：.meta importer 秒值 → 帧取整钳界；0/0 端点 = 全曲）
+    // #68（review 2026-10-02）：float→uint32 越界转换是 UB（手改 .meta 超大 loop
+    // 值可达）——float 域先钳后转；正常值与原式逐位同（同乘同转型）
+    const auto secToFrameClamped = [](float sec, uint32_t totalFrames) -> uint32_t {
+        const float f = sec * (float)kMixSampleRate;
+        if (!(f > 0.0f)) return 0; // ≤0/NaN
+        return f >= (float)totalFrames ? totalFrames : (uint32_t)f;
+    };
     const uint32_t loopStart =
-        loopStartSec > 0.0f
-            ? std::min(uint32_t(loopStartSec * kMixSampleRate), uint32_t(gotTotal))
-            : 0;
+        loopStartSec > 0.0f ? secToFrameClamped(loopStartSec, (uint32_t)gotTotal) : 0;
     const uint32_t loopEnd =
-        loopEndSec > 0.0f
-            ? std::min(uint32_t(loopEndSec * kMixSampleRate), uint32_t(gotTotal))
-            : uint32_t(gotTotal);
+        loopEndSec > 0.0f ? secToFrameClamped(loopEndSec, (uint32_t)gotTotal)
+                          : uint32_t(gotTotal);
     PutLE32(head + 16, uint32_t(gotTotal));      // frameCount
     PutLE32(head + 20, loopStart);
     PutLE32(head + 24, std::max(loopEnd, loopStart));

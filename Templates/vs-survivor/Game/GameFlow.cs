@@ -11,7 +11,7 @@ using Lemon.Interop;
 /// 脚本/表载/Start 与 WaveDirector 运行态随重挂自然归零，无手工复位清单。</summary>
 public sealed class GameFlow : LemonBehaviour
 {
-    // 模板资产 GUID（生成期固定——引用锚点，勿改）
+    // 模板资产 GUID（{GUID:…} 占位符——生成期自 VsTemplateGen.h 常量回填，勿手写 hex）
     private const string kPlayerPrefab = "7e57100000000007";
     private const string kDirectorPrefab = "7e57100000000008";
     // M6c 批④：BGM（Assets/Audio/bgm.ogg——开局起播，单槽交叉淡出 = 重开不叠曲）

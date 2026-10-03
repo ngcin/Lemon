@@ -63,7 +63,7 @@ void WriteAnimSheetAssets(const std::filesystem::path& assetsDir) {
     std::filesystem::path sheetMeta = sheet.string() + ".meta";
     if (!fs::exists(sheetMeta, ec)) {
         std::ofstream f(sheetMeta, std::ios::trunc);
-        f << "{\n  \"guid\": \"5bd31a7c30000001\",\n  \"type\": \"sprite\",\n"
+        f << "{\n  \"guid\": \"" << AssetDatabase::GuidToHex(kAnimSheetGuid) << "\",\n  \"type\": \"sprite\",\n"
              "  \"importer\": { \"slice\": \"grid\", \"cell\": [32, 32], \"frames\": [4, 1] },\n"
              "  \"hash\": 0,\n  \"importedAt\": 0\n}\n";
     }
@@ -72,15 +72,15 @@ void WriteAnimSheetAssets(const std::filesystem::path& assetsDir) {
         std::ofstream f(clip, std::ios::trunc);
         f << "{\n  \"schemaVersion\": 1,\n  \"name\": \"smoke-anim\",\n  \"fps\": 10,\n"
              "  \"loop\": true,\n  \"frames\": [\n"
-             "    { \"sheet\": \"5bd31a7c30000001\", \"cell\": 0 },\n"
-             "    { \"sheet\": \"5bd31a7c30000001\", \"cell\": 1 },\n"
-             "    { \"sheet\": \"5bd31a7c30000001\", \"cell\": 2 },\n"
-             "    { \"sheet\": \"5bd31a7c30000001\", \"cell\": 3 }\n  ]\n}\n";
+             "    { \"sheet\": \"" << AssetDatabase::GuidToHex(kAnimSheetGuid) << "\", \"cell\": 0 },\n"
+             "    { \"sheet\": \"" << AssetDatabase::GuidToHex(kAnimSheetGuid) << "\", \"cell\": 1 },\n"
+             "    { \"sheet\": \"" << AssetDatabase::GuidToHex(kAnimSheetGuid) << "\", \"cell\": 2 },\n"
+             "    { \"sheet\": \"" << AssetDatabase::GuidToHex(kAnimSheetGuid) << "\", \"cell\": 3 }\n  ]\n}\n";
     }
     std::filesystem::path clipMeta = clip.string() + ".meta";
     if (!fs::exists(clipMeta, ec)) {
         std::ofstream f(clipMeta, std::ios::trunc);
-        f << "{\n  \"guid\": \"5bd31a7c30000002\",\n  \"type\": \"clip\",\n  \"hash\": 0,\n"
+        f << "{\n  \"guid\": \"" << AssetDatabase::GuidToHex(kAnimClipGuid) << "\",\n  \"type\": \"clip\",\n  \"hash\": 0,\n"
              "  \"importedAt\": 0\n}\n";
     }
     // M6a 批①：受击段（fps12 × 尾两帧 loop=0——Play(hit)+Queue(walk) 切段断言用）
@@ -89,13 +89,13 @@ void WriteAnimSheetAssets(const std::filesystem::path& assetsDir) {
         std::ofstream f(hitClip, std::ios::trunc);
         f << "{\n  \"schemaVersion\": 1,\n  \"name\": \"smoke-anim-hit\",\n  \"fps\": 12,\n"
              "  \"loop\": false,\n  \"frames\": [\n"
-             "    { \"sheet\": \"5bd31a7c30000001\", \"cell\": 3 },\n"
-             "    { \"sheet\": \"5bd31a7c30000001\", \"cell\": 2 }\n  ]\n}\n";
+             "    { \"sheet\": \"" << AssetDatabase::GuidToHex(kAnimSheetGuid) << "\", \"cell\": 3 },\n"
+             "    { \"sheet\": \"" << AssetDatabase::GuidToHex(kAnimSheetGuid) << "\", \"cell\": 2 }\n  ]\n}\n";
     }
     std::filesystem::path hitClipMeta = hitClip.string() + ".meta";
     if (!fs::exists(hitClipMeta, ec)) {
         std::ofstream f(hitClipMeta, std::ios::trunc);
-        f << "{\n  \"guid\": \"5bd31a7c30000003\",\n  \"type\": \"clip\",\n  \"hash\": 0,\n"
+        f << "{\n  \"guid\": \"" << AssetDatabase::GuidToHex(kAnimHitClipGuid) << "\",\n  \"type\": \"clip\",\n  \"hash\": 0,\n"
              "  \"importedAt\": 0\n}\n";
     }
 }
@@ -103,7 +103,7 @@ void WriteAnimSheetAssets(const std::filesystem::path& assetsDir) {
 // ---- M5 清障③：bench-survivor 压测场景播种（08 §3：编辑器内 1 万怪 ≥45fps）----
 // 临时项目 + 程序化播种（怪 prefab 走清障② SpawnFn 桥；Spawner capAlive 顶格 =
 // "导演拉满"）。恒用 tempdir：MakePrefabFrom 会往项目写 Prefabs/——不污染用户工程。
-bool SeedBenchSurvivorScene(EditorContext& ctx) {
+bool SeedBenchSurvivorScene(EditorContext& ctx, uint32_t spriteIdBase) {
     namespace fs = std::filesystem;
     std::error_code ec;
     const fs::path root = fs::temp_directory_path() /
@@ -112,7 +112,7 @@ bool SeedBenchSurvivorScene(EditorContext& ctx) {
     // M5 批③动画化：程序化 4 帧表 + clip 先落盘（OpenProject 扫描即切片记账/导入）
     // ——万怪 Animator2D 帧映射进压测口径（Animator 系统成本进 09 §6.10 台账）
     WriteAnimSheetAssets(root / "Assets");
-    if (!ctx.Assets().OpenProject(root.string(), 100)) return false;
+    if (!ctx.Assets().OpenProject(root.string(), spriteIdBase)) return false;
 
     ecs::Scene& s = ctx.EditScene();
     // 怪模板 → prefab（源保留在场景：多 1 只白送的怪，无碍计量）
@@ -340,7 +340,6 @@ void EditorApp::SeedSmokeScene() {
     // 冒烟播种：父子层级 + 常用组件 → Hierarchy/Inspector 有内容可验收
     using namespace lemon::ecs;
     Scene& s = ctx_.ActiveScene();
-    (void)0;
     ecs::Entity root = ctx_.CreateEntity("Player");
     s.Get<Transform2D>(root).pos = Vec2{640, 360}; // 相机中心
     {
@@ -371,7 +370,7 @@ void EditorApp::SeedSmokeScene() {
     // M4.4 资产链：导入 PNG → 场景实体（CreateSpriteEntityFromAsset 与拖拽/双击同通路）
     if (!launch_->projectDir.empty()) {
         ecs::Entity fromAsset =
-            ctx_.CreateSpriteEntityFromAsset("FromAsset", 0x5bd31a7c10e9f2c8ull, Vec2{420, 200});
+            ctx_.CreateSpriteEntityFromAsset("FromAsset", kSmokeSpriteGuid, Vec2{420, 200});
         if (!fromAsset.IsNull()) s.Get<Transform2D>(fromAsset).scale = Vec2{0.5f, 0.5f};
     }
     // M5 批③动画链：程序化 4 帧表 + anim.anim → Animator2D 帧映射断言实体；
@@ -446,7 +445,7 @@ void EditorApp::SeedSmokeProject() {
     std::filesystem::path meta = png.string() + ".meta";
     if (!std::filesystem::exists(meta, ec)) {
         std::ofstream f(meta, std::ios::trunc);
-        f << "{\n  \"guid\": \"5bd31a7c10e9f2c8\",\n  \"type\": \"sprite\",\n  \"hash\": 0,\n"
+        f << "{\n  \"guid\": \"" << AssetDatabase::GuidToHex(kSmokeSpriteGuid) << "\",\n  \"type\": \"sprite\",\n  \"hash\": 0,\n"
              "  \"importedAt\": 0\n}\n";
     }
 
@@ -790,15 +789,25 @@ UiSmokeState g_uiSmoke;
 } // namespace
 
 // smoke-ui C8：Ctrl+D 已子树化——计数断言的增量 = 选中根的子树大小
-// （种子 Player 带 3 个 Mob 子节点，子树 = 4）
-uint32_t SubtreeSizeOf(ecs::Scene& s, ecs::Entity root) {
+// （种子 Player 带 3 个 Mob 子节点，子树 = 4）。本 TU 专用（#80：原具外部链接
+// 且无头文件声明）
+static uint32_t SubtreeSizeOf(ecs::Scene& s, ecs::Entity root) {
+    // #80（review 2026-10-02）：固定 64 深度栈静默截断（计数偏小无告警）→ 动态
+    // 栈；环保护 = 计数超场景存活数即脏档环（合法子树 ⊆ 存活集）——停并红字，
+    // C8 断言面宁可响亮失败
     uint32_t n = 0;
-    ecs::Entity stack[64];
-    int top = 0;
-    if (!root.IsNull() && s.Alive(root)) stack[top++] = root;
-    while (top > 0) {
-        ecs::Entity e = stack[--top];
+    const uint32_t alive = s.AliveCount();
+    std::vector<ecs::Entity> stack;
+    stack.reserve(64);
+    if (!root.IsNull() && s.Alive(root)) stack.push_back(root);
+    while (!stack.empty()) {
+        ecs::Entity e = stack.back();
+        stack.pop_back();
         ++n;
+        if (n > alive) {
+            LEMON_WARN("smoke: SubtreeSizeOf 计数超存活数（Hierarchy 脏档环？）——停计");
+            return n;
+        }
         const ecs::Hierarchy* h = s.TryGet<ecs::Hierarchy>(e);
         for (ecs::Entity c = h && !h->firstChild.IsNull() && s.Alive(h->firstChild)
                                  ? h->firstChild
@@ -807,7 +816,7 @@ uint32_t SubtreeSizeOf(ecs::Scene& s, ecs::Entity root) {
             const ecs::Hierarchy* ch = s.TryGet<ecs::Hierarchy>(c);
             const ecs::Entity nx =
                 ch && !ch->next.IsNull() && s.Alive(ch->next) ? ch->next : ecs::Entity::Null();
-            if (top < 64) stack[top++] = c;
+            stack.push_back(c);
             c = nx;
         }
     }
@@ -1266,10 +1275,10 @@ void EditorApp::SmokeAnimSeed() {
             std::ofstream f(clipPath, std::ios::trunc);
             f << "{\n  \"schemaVersion\": 1,\n  \"name\": \"smoke-anim-edit\",\n  \"fps\": 10,\n"
                  "  \"loop\": true,\n  \"frames\": [\n"
-                 "    {\n      \"sheet\": \"5bd31a7c30000001\",\n      \"cell\": 0\n    }\n"
+                 "    {\n      \"sheet\": \"" << AssetDatabase::GuidToHex(kAnimSheetGuid) << "\",\n      \"cell\": 0\n    }\n"
                  "  ]\n}\n";
             std::ofstream m(clipPath.string() + ".meta", std::ios::trunc);
-            m << "{\n  \"guid\": \"5bd31a7c30000004\",\n  \"type\": \"clip\",\n  \"hash\": 0,\n"
+            m << "{\n  \"guid\": \"" << AssetDatabase::GuidToHex(kAnimEditClipGuid) << "\",\n  \"type\": \"clip\",\n  \"hash\": 0,\n"
                  "  \"importedAt\": 0\n}\n";
             // T3b-1 整图引用：未切片 smoke.png（cell 0）单帧——BuildPlayClipCache
             // 应解析为本体号（文件夹多单图动画的运行时前提）
@@ -1279,23 +1288,23 @@ void EditorApp::SmokeAnimSeed() {
             std::ofstream wf(wholePath, std::ios::trunc);
             wf << "{\n  \"schemaVersion\": 1,\n  \"name\": \"smoke-anim-whole\",\n  \"fps\": 2,\n"
                   "  \"loop\": true,\n  \"frames\": [\n"
-                  "    {\n      \"sheet\": \"5bd31a7c10e9f2c8\",\n      \"cell\": 0\n    }\n"
+                  "    {\n      \"sheet\": \"" << AssetDatabase::GuidToHex(kSmokeSpriteGuid) << "\",\n      \"cell\": 0\n    }\n"
                   "  ]\n}\n";
             std::ofstream wm(wholePath.string() + ".meta", std::ios::trunc);
-            wm << "{\n  \"guid\": \"5bd31a7c30000005\",\n  \"type\": \"clip\",\n  \"hash\": 0,\n"
+            wm << "{\n  \"guid\": \"" << AssetDatabase::GuidToHex(kAnimWholeClipGuid) << "\",\n  \"type\": \"clip\",\n  \"hash\": 0,\n"
                   "  \"importedAt\": 0\n}\n";
             // T3c 动画集：段引用上述三段 clip（walk/hit/edit/whole）——集工作台 +
             // BuildPlayClipCache 集登记 + FindByName 反查的数据面
             std::ofstream sf(setPath, std::ios::trunc);
             sf << "{\n  \"schemaVersion\": 1,\n  \"name\": \"smoke-anim-set\",\n"
                   "  \"segments\": [\n"
-                  "    {\n      \"name\": \"walk\",\n      \"clip\": \"5bd31a7c30000002\"\n    },\n"
-                  "    {\n      \"name\": \"hit\",\n      \"clip\": \"5bd31a7c30000003\"\n    },\n"
-                  "    {\n      \"name\": \"edit\",\n      \"clip\": \"5bd31a7c30000004\"\n    },\n"
-                  "    {\n      \"name\": \"whole\",\n      \"clip\": \"5bd31a7c30000005\"\n    }\n"
+                  "    {\n      \"name\": \"walk\",\n      \"clip\": \"" << AssetDatabase::GuidToHex(kAnimClipGuid) << "\"\n    },\n"
+                  "    {\n      \"name\": \"hit\",\n      \"clip\": \"" << AssetDatabase::GuidToHex(kAnimHitClipGuid) << "\"\n    },\n"
+                  "    {\n      \"name\": \"edit\",\n      \"clip\": \"" << AssetDatabase::GuidToHex(kAnimEditClipGuid) << "\"\n    },\n"
+                  "    {\n      \"name\": \"whole\",\n      \"clip\": \"" << AssetDatabase::GuidToHex(kAnimWholeClipGuid) << "\"\n    }\n"
                   "  ]\n}\n";
             std::ofstream sm(setPath.string() + ".meta", std::ios::trunc);
-            sm << "{\n  \"guid\": \"5bd31a7c30000006\",\n  \"type\": \"animset\",\n  \"hash\": 0,\n"
+            sm << "{\n  \"guid\": \"" << AssetDatabase::GuidToHex(kAnimSetGuid) << "\",\n  \"type\": \"animset\",\n  \"hash\": 0,\n"
                   "  \"importedAt\": 0\n}\n";
             // T3d：状态机档——状态名对齐集段名（whole/walk/hit）；whole 稳态绕开
             // 队列钩子（其按 clipId==anim.anim 认实体，graph 链实体全程不落 walk 稳态）
@@ -1313,7 +1322,7 @@ void EditorApp::SmokeAnimSeed() {
                   "    { \"from\": \"walk\", \"to\": \"hit\", \"when\": [{ \"trigger\": \"atk\" }] },\n"
                   "    { \"from\": \"hit\", \"to\": \"whole\", \"on\": \"exitTime\" }\n  ]\n}\n";
             std::ofstream gm(graphPath.string() + ".meta", std::ios::trunc);
-            gm << "{\n  \"guid\": \"5bd31a7c30000007\",\n  \"type\": \"controller\",\n  \"hash\": 0,\n"
+            gm << "{\n  \"guid\": \"" << AssetDatabase::GuidToHex(kAnimGraphGuid) << "\",\n  \"type\": \"controller\",\n  \"hash\": 0,\n"
                   "  \"importedAt\": 0\n}\n";
             // T3-UX4：选择器多选断言原料——9 张 2×2 PNG（pick0..pick8，文件名序 =
             // tile 序；加 smoke.png 共 10 张图 → 注入点击 1 / Shift 范围 8 / Ctrl+A 10）
@@ -1790,7 +1799,7 @@ void EditorApp::SmokeAnimSample(uint64_t frame) {
         // M6a 批①切段链（frame 60 一次）：受击组合拳字段等价写（= Anim.Play(hit,
         // loop:false) + Anim.Queue(walk)；冒烟侧无脚本——编辑器域直写 play 场景）
         if (frame == 60) {
-            ps.View<ecs::Animator2D>().each([&](auto ent, ecs::Animator2D& a) {
+            ps.View<ecs::Animator2D>().each([&](auto, ecs::Animator2D& a) {
                 if (a.clipId != (uint32_t)kAnimClipGuid) return;
                 a.clipId = (uint32_t)kAnimHitClipGuid;
                 a.loop = 0;

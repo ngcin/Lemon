@@ -666,7 +666,10 @@ struct RmlUiBackend::Impl final : public Rml::RenderInterface {
 RmlUiBackend::RmlUiBackend() = default;
 RmlUiBackend::~RmlUiBackend() { LEMON_ASSERT(!impl_, "RmlUiBackend 未 Shutdown 即析构"); }
 
-void RmlUiBackend::Init(rhi::Device& device, rhi::Format colorFormat) {
+bool RmlUiBackend::Init(rhi::Device& device, rhi::Format colorFormat) {
+    // 幂等（review 2026-10-02 #46）：重复 Init 先完整拆旧（反注册回调/WaitIdle/
+    // 销毁资源）——直接 make_unique 覆盖会泄漏旧 Impl 的 GPU 资源且旧回调残留
+    if (impl_) Shutdown();
     impl_ = std::make_unique<Impl>();
     Impl& i = *impl_;
     i.device = &device;
@@ -674,12 +677,13 @@ void RmlUiBackend::Init(rhi::Device& device, rhi::Format colorFormat) {
     if (i.colorFormat == VK_FORMAT_UNDEFINED) {
         LEMON_ERROR("rmlui-backend: 不支持的 RT 格式（%d）", (int)colorFormat);
         impl_.reset();
-        return;
+        return false;
     }
     i.CreateAll();
     i.recreateCb = device.AddRecreateCallback("rmlui-backend", [this](rhi::Device&) {
         impl_->RecreateAfterLoss();
     });
+    return true;
 }
 
 void RmlUiBackend::Shutdown() {

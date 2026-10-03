@@ -5,7 +5,6 @@
 // SeedSmokeUiRmlProject/SeedSmokeUiDocument（批③a）仍在 EditorAppSmoke.cpp。
 
 #include "App/EditorApp.h"
-#include "App/EditorApp.h"
 #include "App/EditorAppSmoke.h"
 #include <cstdio>
 #include <cstdlib>
@@ -90,8 +89,9 @@ bool EditorApp::SmokeUirmlEnterPlay() {
         else
             LEMON_ERROR("uirml 夹具缺 Assets/UI/uirml.rml——UIDocument 播种失败");
     }
-    if (!ctx_.EnterPlay()) return false;
-    MountSceneUiDocuments(); // 批③d 前置（通道 A）：夹具主文档声明装载
+    // #82（review 2026-10-02）：单源装配（EnterPlay + paused_ 复位 + UI 文档挂载 +
+    // 音频装载/后端注入）——原只挂 UI 文档，paused_ 复位与音频挂载漏装
+    if (!EnterPlayProgrammatic()) return false;
     // 批③b 补：Play 按钮/菜单路径都设的翻页标志——③a 独立进 Play 分支漏了它，
     // 中央区标签页停在 Scene，--screenshot（交换链）只见 Scene 不见 UI（用户
     // 走查 2026-09-28 报；gameRT 本身有 UI，像素断言不受影响）

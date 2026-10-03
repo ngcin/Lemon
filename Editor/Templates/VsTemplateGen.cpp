@@ -35,6 +35,44 @@ namespace lemon::editor {
 
 namespace vs_template {
 
+
+/// 生文本 GUID 占位符回填（review 2026-10-02 #100）：文本内 {GUID:常量名} →
+/// GuidToHex(VsTemplateGen.h 常量)。单源 = 头文件常量块——改常量重新生成即
+/// C# 侧全量同步（原 C# 生文本硬编码 hex 与常量平行维护，改常量后 C# 仍指
+/// 旧值 = 模板静默断引用）
+std::string FillGuidPlaceholders(std::string text) {
+    static const std::pair<const char*, uint64_t> kMap[] = {
+        {"kGemPng", kGemPng},           {"kBulletPng", kBulletPng},
+        {"kPiercePng", kPiercePng},     {"kBladePng", kBladePng},
+        {"kMobPf", kMobPf},             {"kBossPf", kBossPf},
+        {"kBulletPf", kBulletPf},       {"kPiercePf", kPiercePf},
+        {"kGemPf", kGemPf},             {"kBladePf", kBladePf},
+        {"kPlayerPf", kPlayerPf},       {"kDirectorPf", kDirectorPf},
+        {"kHeroSheet", kHeroSheet},     {"kMonsterSheet", kMonsterSheet},
+        {"kBossSheet", kBossSheet},     {"kHeroClip", kHeroClip},
+        {"kMonsterClip", kMonsterClip}, {"kHeroHitClip", kHeroHitClip},
+        {"kMonsterHitClip", kMonsterHitClip},
+        {"kWeaponsTab", kWeaponsTab},   {"kUpgradesTab", kUpgradesTab},
+        {"kBalanceTab", kBalanceTab},
+        {"kHudRml", kHudRml},           {"kCardsRml", kCardsRml},
+        {"kThemeRcss", kThemeRcss},     {"kMainRml", kMainRml},
+        {"kPauseRml", kPauseRml},       {"kSettingsRml", kSettingsRml},
+        {"kResultsRml", kResultsRml},
+        {"kBgmOgg", kBgmOgg},           {"kHitOgg", kHitOgg},
+        {"kKillOgg", kKillOgg},         {"kPickupOgg", kPickupOgg},
+        {"kLevelUpOgg", kLevelUpOgg},   {"kWaveOgg", kWaveOgg},
+        {"kUiClickOgg", kUiClickOgg},
+    };
+    for (const auto& [name, guid] : kMap) {
+        const std::string token = std::string("{GUID:") + name + "}";
+        const std::string hex = AssetDatabase::GuidToHex(guid);
+        for (size_t at = text.find(token); at != std::string::npos;
+             at = text.find(token, at + hex.size()))
+            text.replace(at, token.size(), hex);
+    }
+    return text;
+}
+
 /// 批①受击段两件套（clip + meta 落 assetsDir；引用 hero/monster 切片表尾帧）
 void WriteHitClips(const std::filesystem::path& assetsDir) {
     struct Spec {
@@ -114,9 +152,12 @@ void WriteTableAssets(const std::filesystem::path& assetsDir) {
         {"weapons.tab", kWeaponsTab, "weapons",
          {{"id", "label", "prefabGuid", "interval", "speed", "pierce", "count",
            "radius", "angle"},
-          {"shoot", "直射", "7e57100000000003", "0.12", "", "", "", "", ""},
-          {"pierce", "穿透", "7e57100000000004", "0.12", "", "", "", "", ""},
-          {"blade", "环绕之刃", "7e57100000000006", "", "2.2", "", "2", "90", ""}}},
+          {"shoot", "直射", AssetDatabase::GuidToHex(kBulletPf), "0.12", "", "",
+           "", "", ""},
+          {"pierce", "穿透", AssetDatabase::GuidToHex(kPiercePf), "0.12", "", "",
+           "", "", ""},
+          {"blade", "环绕之刃", AssetDatabase::GuidToHex(kBladePf), "", "2.2", "",
+           "2", "90", ""}}},
         {"upgrades.tab", kUpgradesTab, "upgrades",
          {{"id", "label", "kind", "value"},
           {"u0", "移速 +10%", "0", "1.10"},
@@ -604,7 +645,7 @@ void WriteGameSources(const std::filesystem::path& game, const std::string& sdkD
     }
     {
         std::ofstream f(game / "GameMain.cs", std::ios::trunc);
-        f << R"CS(using System.Collections.Generic;
+        f << FillGuidPlaceholders(R"CS(using System.Collections.Generic;
 using Lemon;
 
 public static class GameMain
@@ -646,7 +687,7 @@ public static class GameMain
 
     // M6c 批④：UI 组按钮音（Assets/Audio/ui-click.ogg——全体 Click 统一打点，
     // 暂停中仍可响 = Ui 组不挂起语义的消费实证）
-    private const string kSfxUi = "7e57400000000007";
+    private const string kSfxUi = "{GUID:kUiClickOgg}";
 
     // ---- 卡片屏文档态（静态：Configure 订阅不持实例；PlayerCombat 写/消费）----
     internal static string? CardPickPending; // 待选条目 key（"cards/<id>"；读后即清 = 消费式）
@@ -719,11 +760,11 @@ public static class GameMain
         UI.Apply();
     }
 }
-)CS";
+)CS");
     }
     {
         std::ofstream f(game / "GameFlow.cs", std::ios::trunc);
-        f << R"CS(using System;
+        f << FillGuidPlaceholders(R"CS(using System;
 using Lemon;
 using Lemon.Interop;
 
@@ -736,11 +777,11 @@ using Lemon.Interop;
 /// 脚本/表载/Start 与 WaveDirector 运行态随重挂自然归零，无手工复位清单。</summary>
 public sealed class GameFlow : LemonBehaviour
 {
-    // 模板资产 GUID（生成期固定——引用锚点，勿改）
-    private const string kPlayerPrefab = "7e57100000000007";
-    private const string kDirectorPrefab = "7e57100000000008";
+    // 模板资产 GUID（{GUID:…} 占位符——生成期自 VsTemplateGen.h 常量回填，勿手写 hex）
+    private const string kPlayerPrefab = "{GUID:kPlayerPf}";
+    private const string kDirectorPrefab = "{GUID:kDirectorPf}";
     // M6c 批④：BGM（Assets/Audio/bgm.ogg——开局起播，单槽交叉淡出 = 重开不叠曲）
-    private const string kBgm = "7e57400000000001";
+    private const string kBgm = "{GUID:kBgmOgg}";
 
     internal enum State { Menu, Spawning, Run, Paused, Results, Settings }
 
@@ -835,6 +876,9 @@ public sealed class GameFlow : LemonBehaviour
     /// <summary>回主菜单：清场（在途动态屏一并收）+ 实底菜单。</summary>
     internal static void ReturnToMenu()
     {
+        // review 2026-10-02 #1：暂停中回菜单必须解挂——Audio.Paused 残留会使下局
+        // PlayBgm 新声部生而挂起（整局静音）；StopBgm 只停曲不清全局暂停态
+        Audio.Paused = false;
         Audio.StopBgm(0.5f); // M6c 批④：回菜单静场（0.5s 淡出）
         SweepArmed = true;
         SweepObserved = false;
@@ -918,6 +962,7 @@ public sealed class GameFlow : LemonBehaviour
 
     private static void CloseSettings()
     {
+        FlushVolIfDirty(); // review 2026-10-02 #31：音量落盘收口到关屏（拖动去抖）
         UI.Hide(GameMain.SettingsDoc);
         UI.Apply();
         St = settingsFrom; // 底层屏（菜单实底/暂停 scrim）未动——回即见
@@ -965,14 +1010,29 @@ public sealed class GameFlow : LemonBehaviour
         else if (key == "vol-ui") { if (Math.Abs(v - GameMain.Settings.UiVol) < 0.001f) return; GameMain.Settings.UiVol = v; }
         else return;
         ApplyVolumes();
-        SaveSettings(); // 落盘 + 滑条/百分数回显
+        // review 2026-10-02 #31：拖动每步只应用 + 回显，落盘去抖到关屏——此前每个
+        // 步进 Change 都 Save.Flush 全档（主线程同步 IO 一次满拖放大 ~20×）
+        RefreshSettingsUi();
+        volDirty = true;
     }
 
     private static string Pct(float v) => ((int)Math.Round(v * 100f)).ToString(IC);
     private static readonly System.Globalization.CultureInfo IC =
         System.Globalization.CultureInfo.InvariantCulture;
 
-    private static void SaveSettings()
+    // #31 去抖记账：音量拖动中置位，关屏（CloseSettings/ReturnToMenu）统一落盘
+    private static bool volDirty = false;
+
+    private static void FlushVolIfDirty()
+    {
+        if (!volDirty) return;
+        volDirty = false;
+        PersistSettings();
+    }
+
+    /// 落盘（含首开建档 version=1）。开关翻转/首开建档即时走全量；滑条拖动走
+    /// RefreshSettingsUi 回显 + volDirty，停拖关屏才 Flush（#31）。
+    private static void PersistSettings()
     {
         Save.SetString("version", "1", Save.Chan.Settings);
         Save.SetString("fx.text", GameMain.Settings.FxText ? "1" : "0", Save.Chan.Settings);
@@ -982,6 +1042,11 @@ public sealed class GameFlow : LemonBehaviour
         Save.SetString("vol.sfx", Pct(GameMain.Settings.SfxVol), Save.Chan.Settings);
         Save.SetString("vol.ui", Pct(GameMain.Settings.UiVol), Save.Chan.Settings);
         Save.Flush();
+    }
+
+    /// 滑条 value 属性 + 开关/百分数回显（拖动路径即时调用，零磁盘 IO）。
+    private static void RefreshSettingsUi()
+    {
         UI.SetText(GameMain.SettingsDoc, "btn-fxtext", GameMain.Settings.FxText ? "开" : "关");
         UI.SetText(GameMain.SettingsDoc, "btn-fxbar", GameMain.Settings.FxBar ? "开" : "关");
         // 滑条 value 属性 + 右侧百分数（隐藏态可写——装载文档 DOM 常在，③d-2 先例）
@@ -994,6 +1059,12 @@ public sealed class GameFlow : LemonBehaviour
         UI.SetText(GameMain.SettingsDoc, "vol-sfx-val", Pct(GameMain.Settings.SfxVol));
         UI.SetText(GameMain.SettingsDoc, "vol-ui-val", Pct(GameMain.Settings.UiVol));
         UI.Apply();
+    }
+
+    private static void SaveSettings()
+    {
+        PersistSettings();
+        RefreshSettingsUi();
     }
 
     // 热重载状态迁移（流程态 + 设置——静态随域重建必须经包走）
@@ -1060,7 +1131,7 @@ public sealed class RunSweeper : IForEachSystem
         return false;
     }
 }
-)CS";
+)CS");
     }
     {
         std::ofstream f(game / "PlayerMovement.cs", std::ios::trunc);
@@ -1090,7 +1161,7 @@ public sealed class PlayerMovement : LemonBehaviour
     }
     {
         std::ofstream f(game / "PlayerCombat.cs", std::ios::trunc);
-        f << R"CS(using System;
+        f << FillGuidPlaceholders(R"CS(using System;
 using System.Collections.Generic;
 using Lemon;
 using Lemon.Interop;
@@ -1108,20 +1179,20 @@ using Lemon.Interop;
 public sealed class PlayerCombat : LemonBehaviour
 {
     // 模板资产 GUID（Templates/vs-survivor 生成期固定——引用锚点，勿改）
-    private const string kGemPrefab = "7e57100000000005";
+    private const string kGemPrefab = "{GUID:kGemPf}";
     // M6c 批④：事件音四件（Assets/Audio/；命中高频小音量——引擎重触发节流兜底）
-    private const string kSfxHit = "7e57400000000002";     // 怪受击
-    private const string kSfxKill = "7e57400000000003";    // 击杀
-    private const string kSfxPickup = "7e57400000000004";  // 宝石拾取
-    private const string kSfxLevelUp = "7e57400000000005"; // 升级
+    private const string kSfxHit = "{GUID:kHitOgg}";     // 怪受击
+    private const string kSfxKill = "{GUID:kKillOgg}";    // 击杀
+    private const string kSfxPickup = "{GUID:kPickupOgg}";  // 宝石拾取
+    private const string kSfxLevelUp = "{GUID:kLevelUpOgg}"; // 升级
     // 数值表 GUID（Assets/tables/；生成期固定，PlayerCombat 读）
-    private const string kWeaponsTable = "7e57200000100001";
-    private const string kUpgradesTable = "7e57200000100002";
-    private const string kBalanceTable = "7e57200000100003";
+    private const string kWeaponsTable = "{GUID:kWeaponsTab}";
+    private const string kUpgradesTable = "{GUID:kUpgradesTab}";
+    private const string kBalanceTable = "{GUID:kBalanceTab}";
 
     // 批①受击段 clip（Anim.ClipId = GUID 低 32 位自算；Assets/monster-hit.anim）
-    private static readonly uint kMobWalk = Anim.ClipId("5bd31a7c20000002");
-    private static readonly uint kMobHit = Anim.ClipId("5bd31a7c20000004");
+    private static readonly uint kMobWalk = Anim.ClipId("{GUID:kMonsterClip}");
+    private static readonly uint kMobHit = Anim.ClipId("{GUID:kMonsterHitClip}");
 
     // ---- 批② T4 表载缓存（Start 一次载入；Play 中改表下一局生效——快照语义）----
     private sealed class WeaponRow
@@ -1136,7 +1207,7 @@ public sealed class PlayerCombat : LemonBehaviour
     }
     private readonly List<WeaponRow> _weapons = new();   // weapons.tab 行缓存
     private readonly List<UpgradeRow> _upgrades = new(); // 升级池（空 = 三选一不弹）
-    private string _bladePrefab = "7e57100000000006"; // Blade.prefab（blade.prefabGuid）
+    private string _bladePrefab = "{GUID:kBladePf}"; // Blade.prefab（blade.prefabGuid）
     private float _bladeSpeed = 2.2f; // 环绕角速 rad/s（blade.speed；缺表 = 原硬编码值）
     private float _bladeRadius = 90f; // 环绕轨道半径 px（blade.radius）
 
@@ -1495,11 +1566,11 @@ public sealed class PlayerCombat : LemonBehaviour
         if (bag.TryGet("blades", out int n)) _bladeCount = n;
     }
 }
-)CS";
+)CS");
     }
     {
         std::ofstream f(game / "PlayerHud.cs", std::ios::trunc);
-        f << R"CS(using Lemon;
+        f << FillGuidPlaceholders(R"CS(using Lemon;
 using Lemon.Interop;
 
 /// <summary>HUD（M6b 批③d-1 文档化；T8 后修② 条改原生 progress）：Assets/UI/
@@ -1513,7 +1584,7 @@ public sealed class PlayerHud : LemonBehaviour
 {
     private const string kDoc = "Assets/UI/hud.rml";
     // M6c 批④：波次横幅音（Assets/Audio/wave.ogg）
-    private const string kSfxWave = "7e57400000000006";
+    private const string kSfxWave = "{GUID:kWaveOgg}";
 
     public PlayerHud()
     {
@@ -1549,7 +1620,7 @@ public sealed class PlayerHud : LemonBehaviour
     private static readonly System.Globalization.CultureInfo IC =
         System.Globalization.CultureInfo.InvariantCulture;
 }
-)CS";
+)CS");
     }
 }
 

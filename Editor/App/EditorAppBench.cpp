@@ -51,6 +51,61 @@ struct BenchState {
 };
 BenchState g_bench;
 
+// ---- #29（review 2026-10-02）：survivor/scene 两裁决的共享打印块单源——原各持
+// 一份仅前缀不同的逐字副本（bench 数字是 09 §6.10 台账与性能回退判定的数据源，
+// 两份漂移会让口径分叉）。tag = "[bench-survivor]"/"[bench-scene]"，输出逐字节同旧 ----
+void BenchPrintSegAvg(const char* tag, double segN) {
+    std::printf("%s 分段avg ms: pump=%.2f sim=%.2f glue=%.2f ui=%.2f "
+                "acquire=%.2f scene=%.2f uidraw=%.2f present=%.2f | segSum=%.2f\n",
+                tag,
+                g_bench.benchPumpSum / segN, g_bench.benchSimSum / segN, g_bench.benchGlueSum / segN,
+                g_bench.benchUiSum / segN, g_bench.benchAcqSum / segN, g_bench.benchSceneSum / segN,
+                g_bench.benchUiDrawSum / segN, g_bench.benchPresentSum / segN,
+                (g_bench.benchPumpSum + g_bench.benchSimSum + g_bench.benchGlueSum + g_bench.benchUiSum + g_bench.benchAcqSum +
+                 g_bench.benchSceneSum + g_bench.benchUiDrawSum + g_bench.benchPresentSum) /
+                    segN);
+}
+// sim 系统级分解（测量窗口 = 预热后 ZeroProfiles 起；avg=totalMs/runs）
+void BenchPrintSimBreakdown(const char* tag, double segN) {
+    std::vector<ecs::SystemProfile> rows;
+    for (const ecs::SystemProfile& p : g_bench.benchPlayProfiles)
+        if (p.runs > 0) rows.push_back(p);
+    std::sort(rows.begin(), rows.end(), [](const ecs::SystemProfile& a,
+                                           const ecs::SystemProfile& b) {
+        return a.totalMs > b.totalMs;
+    });
+    double sysSum = 0.0;
+    for (const ecs::SystemProfile& p : rows) sysSum += p.totalMs / (double)p.runs;
+    std::printf("%s sim系统分解 (Σ=%.2fms vs seg sim=%.2fms):\n",
+                tag, sysSum, g_bench.benchSimSum / segN);
+    for (const ecs::SystemProfile& p : rows)
+        std::printf("    %-24s avg=%7.3fms max=%7.3fms runs=%llu\n", p.name,
+                    p.totalMs / (double)p.runs, (double)p.maxMs,
+                    (unsigned long long)p.runs);
+}
+// 尖刺归因——最坏帧八段快照 + 尖刺帧（>25ms）分段均值 + 每段 max
+void BenchPrintSpikeAttribution(const char* tag) {
+    const char* segNames[kSegN] = {"pump", "sim", "glue", "ui",
+                                   "acquire", "scene", "uidraw", "present"};
+    std::printf("%s frameMax=%.2fms 帧八段:", tag, g_bench.benchFrameMax);
+    for (int i = 0; i < kSegN; ++i) std::printf(" %s=%.2f", segNames[i], g_bench.benchMaxSeg[i]);
+    std::printf("\n");
+    std::printf("%s 每段max:", tag);
+    for (int i = 0; i < kSegN; ++i)
+        std::printf(" %s=%.2f@%llu", segNames[i], g_bench.benchSegMax[i],
+                    (unsigned long long)g_bench.benchSegMaxF[i]);
+    std::printf("\n");
+    if (g_bench.benchSpikeN > 0) {
+        std::printf("%s 尖刺帧>25ms: %llu 个，其分段均值:",
+                    tag, (unsigned long long)g_bench.benchSpikeN);
+        for (int i = 0; i < kSegN; ++i)
+            std::printf(" %s=%.2f", segNames[i], g_bench.benchSpikeSeg[i] / (double)g_bench.benchSpikeN);
+        std::printf("\n");
+    } else {
+        std::printf("%s 尖刺帧>25ms: 0 个\n", tag);
+    }
+}
+
 } // namespace
 
 // ---- --bench 帧段累计（M5 清障③/M6a 批①：fx 饱和灌入 + 八段累计 + 尖刺归因；
@@ -188,14 +243,7 @@ bool EditorApp::BenchVerdict(uint64_t frame, uint32_t playAliveAtStop) {
     const bool pass = aliveOk && avg > 0.0 && avg <= 1000.0 / 45.0 && directorOk &&
                       animOk && hazardOk && fxOk;
     const double segN = g_bench.benchFrameN ? (double)g_bench.benchFrameN : 1.0;
-    std::printf("[bench-survivor] 分段avg ms: pump=%.2f sim=%.2f glue=%.2f ui=%.2f "
-                "acquire=%.2f scene=%.2f uidraw=%.2f present=%.2f | segSum=%.2f\n",
-                g_bench.benchPumpSum / segN, g_bench.benchSimSum / segN, g_bench.benchGlueSum / segN,
-                g_bench.benchUiSum / segN, g_bench.benchAcqSum / segN, g_bench.benchSceneSum / segN,
-                g_bench.benchUiDrawSum / segN, g_bench.benchPresentSum / segN,
-                (g_bench.benchPumpSum + g_bench.benchSimSum + g_bench.benchGlueSum + g_bench.benchUiSum + g_bench.benchAcqSum +
-                 g_bench.benchSceneSum + g_bench.benchUiDrawSum + g_bench.benchPresentSum) /
-                    segN);
+    BenchPrintSegAvg("[bench-survivor]", segN);
     std::printf("[bench-survivor] frames=%u warmup=%u alive=%u stepAvg=%.2fms "
                 "frameAvg=%.2fms frameMax=%.2fms fps=%.0f present=IMMEDIATE(请求)"
                 " director(waves=%u teamAlive=%u/闸8000) anim(%u/%u 切片命中)"
@@ -208,46 +256,9 @@ bool EditorApp::BenchVerdict(uint64_t frame, uint32_t playAliveAtStop) {
                 g_bench.benchAnimHit, g_bench.benchAnimTotal, g_bench.benchPlayerHp,
                 g_bench.benchFxTexts, g_bench.benchFxBars,
                 pass ? "PASS" : "FAIL");
-    // 性能批②①：sim 系统级分解（测量窗口 = 预热后 ZeroProfiles 起；avg=totalMs/runs）
-    {
-        std::vector<ecs::SystemProfile> rows;
-        for (const ecs::SystemProfile& p : g_bench.benchPlayProfiles)
-            if (p.runs > 0) rows.push_back(p);
-        std::sort(rows.begin(), rows.end(), [](const ecs::SystemProfile& a,
-                                               const ecs::SystemProfile& b) {
-            return a.totalMs > b.totalMs;
-        });
-        double sysSum = 0.0;
-        for (const ecs::SystemProfile& p : rows) sysSum += p.totalMs / (double)p.runs;
-        std::printf("[bench-survivor] sim系统分解 (Σ=%.2fms vs seg sim=%.2fms):\n",
-                    sysSum, g_bench.benchSimSum / segN);
-        for (const ecs::SystemProfile& p : rows)
-            std::printf("    %-24s avg=%7.3fms max=%7.3fms runs=%llu\n", p.name,
-                        p.totalMs / (double)p.runs, (double)p.maxMs,
-                        (unsigned long long)p.runs);
-    }
-    // 性能批②②：尖刺归因——最坏帧八段快照 + 尖刺帧（>25ms）分段均值 + 每段 max
-    {
-        const char* segNames[kSegN] = {"pump", "sim", "glue", "ui",
-                                       "acquire", "scene", "uidraw", "present"};
-        std::printf("[bench-survivor] frameMax=%.2fms 帧八段:", g_bench.benchFrameMax);
-        for (int i = 0; i < kSegN; ++i) std::printf(" %s=%.2f", segNames[i], g_bench.benchMaxSeg[i]);
-        std::printf("\n");
-        std::printf("[bench-survivor] 每段max:");
-        for (int i = 0; i < kSegN; ++i)
-            std::printf(" %s=%.2f@%llu", segNames[i], g_bench.benchSegMax[i],
-                        (unsigned long long)g_bench.benchSegMaxF[i]);
-        std::printf("\n");
-        if (g_bench.benchSpikeN > 0) {
-            std::printf("[bench-survivor] 尖刺帧>25ms: %llu 个，其分段均值:",
-                        (unsigned long long)g_bench.benchSpikeN);
-            for (int i = 0; i < kSegN; ++i)
-                std::printf(" %s=%.2f", segNames[i], g_bench.benchSpikeSeg[i] / (double)g_bench.benchSpikeN);
-            std::printf("\n");
-        } else {
-            std::printf("[bench-survivor] 尖刺帧>25ms: 0 个\n");
-        }
-    }
+    // 性能批②①：sim 系统级分解 / 批②② 尖刺归因（#29 单源共享块）
+    BenchPrintSimBreakdown("[bench-survivor]", segN);
+    BenchPrintSpikeAttribution("[bench-survivor]");
     // 性能批②③：ui 段内部归因（探针在 HierarchyPanel，LEMON_BENCH_UI_PROBE 开）
     if (const UiPanelProbe hp = HierarchyPanelProbe(); hp.frames > 0)
         std::printf("[bench-survivor] ui段探针: hierarchy=%.2fms（占 ui %.0f%%，"
@@ -264,54 +275,12 @@ bool EditorApp::BenchVerdict(uint64_t frame, uint32_t playAliveAtStop) {
     const double bAvg = g_bench.benchFrameN ? g_bench.benchFrameSum / (double)g_bench.benchFrameN : 0.0;
     const double bFps = bAvg > 0.0 ? 1000.0 / bAvg : 0.0;
     const double bSegN = g_bench.benchFrameN ? (double)g_bench.benchFrameN : 1.0;
-    std::printf("[bench-scene] 分段avg ms: pump=%.2f sim=%.2f glue=%.2f ui=%.2f "
-                "acquire=%.2f scene=%.2f uidraw=%.2f present=%.2f | segSum=%.2f\n",
-                g_bench.benchPumpSum / bSegN, g_bench.benchSimSum / bSegN, g_bench.benchGlueSum / bSegN,
-                g_bench.benchUiSum / bSegN, g_bench.benchAcqSum / bSegN, g_bench.benchSceneSum / bSegN,
-                g_bench.benchUiDrawSum / bSegN, g_bench.benchPresentSum / bSegN,
-                (g_bench.benchPumpSum + g_bench.benchSimSum + g_bench.benchGlueSum + g_bench.benchUiSum + g_bench.benchAcqSum +
-                 g_bench.benchSceneSum + g_bench.benchUiDrawSum + g_bench.benchPresentSum) / bSegN);
+    BenchPrintSegAvg("[bench-scene]", bSegN);
     std::printf("[bench-scene] RESULT frames=%u warmup=%u alive=%u frameAvg=%.2fms "
                 "fps=%.0f => REPORT\n",
                 (unsigned)frame, (unsigned)kBenchWarmup, playAliveAtStop, bAvg, bFps);
-    {
-        std::vector<ecs::SystemProfile> rows;
-        for (const ecs::SystemProfile& p : g_bench.benchPlayProfiles)
-            if (p.runs > 0) rows.push_back(p);
-        std::sort(rows.begin(), rows.end(), [](const ecs::SystemProfile& a,
-                                               const ecs::SystemProfile& b) {
-            return a.totalMs > b.totalMs;
-        });
-        double sysSum = 0.0;
-        for (const ecs::SystemProfile& p : rows) sysSum += p.totalMs / (double)p.runs;
-        std::printf("[bench-scene] sim系统分解 (Σ=%.2fms vs seg sim=%.2fms):\n",
-                    sysSum, g_bench.benchSimSum / bSegN);
-        for (const ecs::SystemProfile& p : rows)
-            std::printf("    %-24s avg=%7.3fms max=%7.3fms runs=%llu\n", p.name,
-                        p.totalMs / (double)p.runs, (double)p.maxMs,
-                        (unsigned long long)p.runs);
-    }
-    {
-        const char* segNames[kSegN] = {"pump", "sim", "glue", "ui",
-                                       "acquire", "scene", "uidraw", "present"};
-        std::printf("[bench-scene] frameMax=%.2fms 帧八段:", g_bench.benchFrameMax);
-        for (int i = 0; i < kSegN; ++i) std::printf(" %s=%.2f", segNames[i], g_bench.benchMaxSeg[i]);
-        std::printf("\n");
-        std::printf("[bench-scene] 每段max:");
-        for (int i = 0; i < kSegN; ++i)
-            std::printf(" %s=%.2f@%llu", segNames[i], g_bench.benchSegMax[i],
-                        (unsigned long long)g_bench.benchSegMaxF[i]);
-        std::printf("\n");
-        if (g_bench.benchSpikeN > 0) {
-            std::printf("[bench-scene] 尖刺帧>25ms: %llu 个，其分段均值:",
-                        (unsigned long long)g_bench.benchSpikeN);
-            for (int i = 0; i < kSegN; ++i)
-                std::printf(" %s=%.2f", segNames[i], g_bench.benchSpikeSeg[i] / (double)g_bench.benchSpikeN);
-            std::printf("\n");
-        } else {
-            std::printf("[bench-scene] 尖刺帧>25ms: 0 个\n");
-        }
-    }
+    BenchPrintSimBreakdown("[bench-scene]", bSegN); // 分解块与 survivor 同构（#29 单源）
+    BenchPrintSpikeAttribution("[bench-scene]");
     }
     return ok;
 }

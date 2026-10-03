@@ -105,9 +105,11 @@ public static class Audio
 
     /// <summary>显式暂停（D5）：true = 循环声源/BGM 声部级挂起（一次性放完、Ui 组
     /// 免疫——ADR-015 M4）。游戏暂停态自调；引擎不自动映射 Time.Scale（流程冻结
-    /// 误停防线）。</summary>
+    /// 误停防线）。get/set 对称（review 2026-10-02 #71）：get 直读引擎现值——
+    /// 同帧写读 = 旧值（staging 语义，MasterVolume 同款）。</summary>
     public static unsafe bool Paused
     {
+        get => Native.Api.AudioPausedGet != null && Native.Api.AudioPausedGet() != 0;
         set
         {
             if (Native.Api.AudioSetPaused != null) Native.Api.AudioSetPaused(value ? 1 : 0);

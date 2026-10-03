@@ -196,6 +196,10 @@ private:
         uint32_t w = 0, h = 0;
         rhi::Texture tex{};
         void* imguiTexId = nullptr; // VkDescriptorSet（ImGui_Image 用）
+        // 尺寸稳定节流（review 2026-10-02 #98）：拖 dock 分隔条时上报尺寸逐帧变，
+        // 逐帧 WaitIdle+重建 = 交互全程每帧全 GPU 停等。待稳尺寸连续命中
+        // kRtStableFrames 帧才重建，漂移期旧 RT 继续服役（Image 全幅拉伸采样）
+        uint32_t pendW = 0, pendH = 0, pendFrames = 0;
     };
     RT rts_[2];
     uint32_t lastSceneVisible_ = 0;

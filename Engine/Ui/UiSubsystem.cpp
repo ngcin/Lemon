@@ -611,7 +611,9 @@ bool UiSubsystem::Init(rhi::Device& device, rhi::Format rtFormat, void* sdlWindo
     Impl& i = *impl_;
     i.device = &device;
     i.sys.sdlWindow = sdlWindow;
-    i.backend->Init(device, rtFormat);
+    if (!i.backend->Init(device, rtFormat)) { // #46：失败红字已落——空 RenderInterface
+        return false;                          // 不得塞进 Rml（原静默 nullptr 直传）
+    }
     Rml::SetSystemInterface(&i.sys);
     Rml::SetRenderInterface((Rml::RenderInterface*)i.backend->RenderInterfacePtr());
     if (!Rml::Initialise()) {

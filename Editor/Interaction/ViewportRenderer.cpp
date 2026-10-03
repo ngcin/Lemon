@@ -397,9 +397,25 @@ void* ViewportRenderer::EnsureRenderTarget(uint32_t idx, uint32_t wantW, uint32_
                                            const char* debugName) {
     RT& rt = rts_[idx];
     if (wantW < 8 || wantH < 8) return rt.imguiTexId; // 面板过小（折叠中）
-    if (rt.tex.IsValid() && rt.w == wantW && rt.h == wantH) return rt.imguiTexId;
+    if (rt.tex.IsValid() && rt.w == wantW && rt.h == wantH) {
+        rt.pendFrames = 0; // 尺寸匹配：撤销待稳计数
+        return rt.imguiTexId;
+    }
+    // 尺寸稳定节流（review 2026-10-02 #98）：活体尚在且尺寸漂移（拖 dock 分隔条
+    // 逐帧变）→ 连续 kRtStableFrames 帧同尺寸才重建；漂移期旧 RT 继续服役
+    //（Image 全幅拉伸采样，拖拽中轻微模糊可接受）。首建/设备重建后无活体 = 立即建
+    if (rt.tex.IsValid()) {
+        constexpr uint32_t kRtStableFrames = 3;
+        if (rt.pendW != wantW || rt.pendH != wantH) {
+            rt.pendW = wantW;
+            rt.pendH = wantH;
+            rt.pendFrames = 0;
+        }
+        if (++rt.pendFrames < kRtStableFrames) return rt.imguiTexId;
+    }
+    rt.pendFrames = 0;
     if (rt.tex.IsValid() || rt.imguiTexId) {
-        device_->WaitIdle(); // 尺寸变化低频；在途帧可能引用旧视图/描述符集（验证层实抓）
+        device_->WaitIdle(); // 停稳重建低频；在途帧可能引用旧视图/描述符集（验证层实抓）
         if (rt.tex.IsValid()) device_->DestroyTexture(rt.tex);
         if (rt.imguiTexId) {
             ui_->UnregisterViewportTexture(rt.imguiTexId);

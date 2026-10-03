@@ -59,6 +59,7 @@ public unsafe struct NativeApi
     public delegate* unmanaged<float, void> AudioMasterVol;                    // M6c 批②：主音量
     public delegate* unmanaged<float> AudioMasterVolGet;                       // M6c 批②（D6）：主音量读（引擎态直读）
     public delegate* unmanaged<int, void> AudioSetPaused;                      // M6c 批②（D5）：显式暂停（引擎不自动映射 TimeScale）
+    public delegate* unmanaged<byte> AudioPausedGet;                          // review 2026-10-02 #71：暂停态读（引擎态直读；表尾追加，旧宿主 = null 判空降级）
 }
 
 internal static unsafe class Native

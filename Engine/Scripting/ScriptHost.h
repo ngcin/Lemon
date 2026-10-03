@@ -127,6 +127,9 @@ struct NativeApiVtable {
     void (*audioMasterVol)(float volume);
     float (*audioMasterVolGet)(void);              // D6：get/set 对称（引擎态直读）
     void (*audioSetPaused)(int32_t on);            // D5：显式暂停（引擎不自动映射 TimeScale）
+    uint8_t (*audioPausedGet)(void);               // review 2026-10-02 #71：Paused get/set 对称
+                                                   //（引擎态直读，MasterVolGet 同款口径；表尾追加
+                                                   // 零重录——基准场零调用零漂移）
 };
 
 /// 编辑器资产钩子（M4.4：编辑器宿主装配期经 SetEditorAssetHooks 注入；

@@ -101,6 +101,7 @@ public:
     // 暂停语义（ADR-015 M4）：循环声部与 BGM 组声部级挂起；一次性 SFX 自然放完；
     // UI 组永不挂起（暂停菜单按钮音仍可响）。设备级 pause 不用（会连 UI 音一起哑）。
     void SetPaused(bool paused);
+    bool IsPaused() const; // review 2026-10-02 #71：get/set 对称（C# Audio.Paused 桥）
 
     // 每帧一次（主线程）：声部回收记账；静音模式下按 dt 推进逻辑游标。
     void Tick(float dtSeconds = 0.0f);

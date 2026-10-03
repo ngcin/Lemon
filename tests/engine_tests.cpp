@@ -2361,6 +2361,38 @@ void TestWaveDirectorTimeScaleFreeze() {
     Expect(waveStarts == 1 && ctr.spawns >= 1, "resume: wave fires on schedule");
 }
 
+// #61（review 2026-10-02）：连发型 Spawner（interval≤dt → 出生后冷却钳 0）在
+// timeScale=0 冻结期不得逐 tick 泄漏 burst/RNG——原实现到期冷却照走出生分支，
+// 与"冻结波次、RNG 不消耗"注释自述相悖。导演段常规路径冻结安全（重置后冷却
+// 恒 >0），本测试专钉 Spawner 缺口 + 阴性验证修复。
+void TestSpawnFreezeNoLeak() {
+    World world;
+    Scene& s = world.CreateScene("frz-sp");
+    world.SetActiveScene(&s);
+    WaveSpawnCounter ctr;
+    world.SetSpawnFn([&ctr](Scene& sc, uint32_t id, Vec2 pos, uint32_t team) {
+        return ctr(sc, id, pos, team);
+    });
+    Entity sp = s.Create();
+    s.Emplace<Transform2D>(sp, Transform2D{{0, 0}});
+    Spawner& spn = s.Emplace<Spawner>(sp);
+    spn.prefabId = 1;         // WaveSpawnCounter 只认 prefab 1
+    spn.interval = 0.001f; // < dt：每 tick 到期，出生后冷却钳 0（泄漏触发形态）
+    spn.burst = 2;
+    world.Pipeline().AddSystem(std::make_unique<SpawnSystem>());
+    world.Pipeline().AddSystem(std::make_unique<DestroyCommitSystem>());
+    world.Pipeline().ResolveOrder();
+    const float dt = 1.0f / 60.0f;
+
+    world.Step(dt); // 常速 1 tick：burst 出生、冷却钳位 0
+    Expect(ctr.spawns >= 1, "#61: fast spawner produced first burst");
+    const int base = ctr.spawns;
+
+    world.SetTimeScale(0.0f);
+    for (int i = 0; i < 60; ++i) world.Step(dt);
+    Expect(ctr.spawns == base, "#61: frozen spawner leaks no burst (RNG idle)");
+}
+
 // 波表 roundtrip；运行时（time/waveIndex/cd/spawned）不入档（T1 登记表护栏）
 void TestWaveDirectorArchive() {
     World world;
@@ -6663,6 +6695,7 @@ int main() {
     TestWaveDirectorRampAndOverlap();
     TestWaveDirectorCapAlive();
     TestWaveDirectorTimeScaleFreeze();
+    TestSpawnFreezeNoLeak(); // review 2026-10-02 #61：连发型 Spawner 冻结零泄漏
     TestWaveDirectorArchive();
     TestWaveDirectorDeterminism();
     TestVerifyTimeScale();

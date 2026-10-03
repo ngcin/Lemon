@@ -90,6 +90,43 @@ struct TplSmokeState {
     bool wantPause = false;   // Esc 注入请求（SmokeTplSteer 写 bit6 一帧）
 };
 TplSmokeState g_tplSmoke; // 批④：单 TU 化（EditorAppSmoke.h 的 extern 共享面退役）
+
+// ---- #29（review 2026-10-02）：死亡催命两板斧单源——一死（kDeathArm 段）与
+// 二死（flowStage 2 段）原各持一份逐字重复体，改口径需多点同步 ----
+// 压血停火：站桩下自动炮火清怪快于刷怪（磨不死）——压血 0.1 + 掐射击让怪群
+// 近身，Hazard 真路径击杀
+void ArmDeathPressure(EditorContext& ctx) {
+    ctx.ActiveScene().View<scripting::ScriptBox>().each(
+        [&](auto ent, scripting::ScriptBox&) {
+            ecs::Entity e = ecs::Scene::FromEntt(ent);
+            if (ecs::Health* hp = ctx.ActiveScene().TryGet<ecs::Health>(e))
+                hp->cur = 0.1f;
+            if (ecs::Shooter* sh = ctx.ActiveScene().TryGet<ecs::Shooter>(e))
+                sh->interval = 3600.0f;
+        });
+}
+// 催命贴脸：武装后仍未死 = 追击怪贴脸（保 Hazard 接触真实路径，只省走路）。
+// 批③d-2 注：Flow 实体也挂 ScriptBox（无 Health）——传送点按 Health 过滤锁
+// 玩家（否则 ppos 漂到 Flow 的原点，催命失效）
+void TeleportChasersToPlayer(EditorContext& ctx) {
+    Vec2 ppos{0, 0};
+    bool got = false;
+    ctx.ActiveScene().View<scripting::ScriptBox>().each(
+        [&](auto ent, scripting::ScriptBox&) {
+            const ecs::Entity e = ecs::Scene::FromEntt(ent);
+            if (!ctx.ActiveScene().TryGet<ecs::Health>(e)) return;
+            if (const ecs::Transform2D* tf =
+                    ctx.ActiveScene().TryGet<ecs::Transform2D>(e)) {
+                ppos = tf->pos;
+                got = true;
+            }
+        });
+    if (got)
+        ctx.ActiveScene().View<ecs::Transform2D, ecs::Chase>().each(
+            [&](auto, ecs::Transform2D& tf, ecs::Chase&) {
+                tf.pos = Vec2{ppos.x + 18.0f, ppos.y + 6.0f};
+            });
+}
 } // namespace
 
 // ---- --smoke-template 向导复制播种（M5 批④；批③c-4 自 Run 外迁，挂点原位）----
@@ -391,41 +428,15 @@ void EditorApp::SmokeTplSample(uint64_t frame) {
         // 批③d-1 催命：文档化卡片的选择有几帧事件往返（原 RtUi 直写同帧），
         // 局内时序整体后移 → 波 2 刷新走近的余量变薄（实测一轮贴边一轮超时）。
         // 武装后 50 帧仍未死 = 把追击怪贴脸（保 Hazard 接触真实路径，只省走路）
-        if (frame >= 2150 && !g_tplSmoke.deathSeen) {
-            Vec2 ppos{0, 0};
-            bool got = false;
-            // 批③d-2 注：Flow 实体也挂 ScriptBox（无 Health）——传送点按 Health
-            // 过滤锁玩家（否则 ppos 漂到 Flow 的原点，催命失效）
-            ctx_.ActiveScene().View<scripting::ScriptBox>().each(
-                [&](auto ent, scripting::ScriptBox&) {
-                    const ecs::Entity e = ecs::Scene::FromEntt(ent);
-                    if (!ctx_.ActiveScene().TryGet<ecs::Health>(e)) return;
-                    if (const ecs::Transform2D* t =
-                            ctx_.ActiveScene().TryGet<ecs::Transform2D>(e)) {
-                        ppos = t->pos;
-                        got = true;
-                    }
-                });
-            if (got)
-                ctx_.ActiveScene().View<ecs::Transform2D, ecs::Chase>().each(
-                    [&](auto, ecs::Transform2D& tf, ecs::Chase&) {
-                        tf.pos = Vec2{ppos.x + 18.0f, ppos.y + 6.0f};
-                    });
-        }
+        if (frame >= 2150 && !g_tplSmoke.deathSeen)
+            TeleportChasersToPlayer(ctx_);
         // 批④后修④死亡链回归：kDeathArm 帧起压血到 0.1 + 掐射击（站桩下
         // 自动炮火半路清怪、玩家碰不到怪——停火让怪群近身，Hazard 真路径击杀）
         // → 玩家脚本实体仍在场（View 命中 = 未被销毁）、flags bit0 未置（未被
         // 异常禁用）→ 点击复活 → 血回满 + 解冻 + 卡片文档隐藏 = 复活成功
         if (frame >= 2100 && !g_tplSmoke.deathArmed) {
             g_tplSmoke.deathArmed = true;
-            ctx_.ActiveScene().View<scripting::ScriptBox>().each(
-                [&](auto ent, scripting::ScriptBox&) {
-                    ecs::Entity e = ecs::Scene::FromEntt(ent);
-                    if (ecs::Health* hp = ctx_.ActiveScene().TryGet<ecs::Health>(e))
-                        hp->cur = 0.1f;
-                    if (ecs::Shooter* sh = ctx_.ActiveScene().TryGet<ecs::Shooter>(e))
-                        sh->interval = 3600.0f;
-                });
+            ArmDeathPressure(ctx_);
         }
         if (frame >= 2100 && !g_tplSmoke.revived) {
             bool anyScript = false;
@@ -493,14 +504,7 @@ void EditorApp::SmokeTplSample(uint64_t frame) {
             if (g_tplSmoke.revivedAt >= 0 && !g_tplSmoke.death2Armed &&
                 frame >= (uint64_t)(g_tplSmoke.revivedAt + 140)) {
                 g_tplSmoke.death2Armed = true; // 同 2100 段语义（站桩清怪快——停火近身）
-                ctx_.ActiveScene().View<scripting::ScriptBox>().each(
-                    [&](auto ent, scripting::ScriptBox&) {
-                        ecs::Entity e = ecs::Scene::FromEntt(ent);
-                        if (ecs::Health* hp = ctx_.ActiveScene().TryGet<ecs::Health>(e))
-                            hp->cur = 0.1f;
-                        if (ecs::Shooter* sh = ctx_.ActiveScene().TryGet<ecs::Shooter>(e))
-                            sh->interval = 3600.0f;
-                    });
+                ArmDeathPressure(ctx_);
                 g_tplSmoke.flowStage = 3;
             }
             break;
@@ -597,23 +601,7 @@ void EditorApp::SmokeTplSample(uint64_t frame) {
         if (g_tplSmoke.death2Armed && !g_tplSmoke.resultsOk &&
             g_tplSmoke.revivedAt >= 0 &&
             frame >= (uint64_t)(g_tplSmoke.revivedAt + 200)) {
-            Vec2 ppos{0, 0};
-            bool got = false;
-            ctx_.ActiveScene().View<scripting::ScriptBox>().each(
-                [&](auto ent, scripting::ScriptBox&) {
-                    const ecs::Entity e = ecs::Scene::FromEntt(ent);
-                    if (!ctx_.ActiveScene().TryGet<ecs::Health>(e)) return;
-                    if (const ecs::Transform2D* tf =
-                            ctx_.ActiveScene().TryGet<ecs::Transform2D>(e)) {
-                        ppos = tf->pos;
-                        got = true;
-                    }
-                });
-            if (got)
-                ctx_.ActiveScene().View<ecs::Transform2D, ecs::Chase>().each(
-                    [&](auto, ecs::Transform2D& tf, ecs::Chase&) {
-                        tf.pos = Vec2{ppos.x + 18.0f, ppos.y + 6.0f};
-                    });
+            TeleportChasersToPlayer(ctx_);
         }
         if (frame % 60 == 0) { // 诊断快照（低频）：文档 HUD 位 + 场内分布
             std::snprintf(g_tplSmoke.hudRows, sizeof g_tplSmoke.hudRows,

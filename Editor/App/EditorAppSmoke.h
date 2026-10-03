@@ -16,6 +16,8 @@ namespace lemon::editor {
 class EditorContext;
 
 // ---- M5 批③：--smoke-anim 固定 guid（程序化 4 帧表 + clip；yami 包同段命名）----
+// 注意：夹具 JSON 文本经 GuidToHex(常量) 插值单源化（review 2026-10-02 #81——原
+// 21 处 hex 字面量与常量平行维护，漂移即断言面错位）；新增夹具引用一律走常量
 constexpr uint64_t kAnimSheetGuid = 0x5bd31a7c30000001ull; // anim-sheet.png（128×32，4×32×32 格）
 constexpr uint64_t kAnimClipGuid = 0x5bd31a7c30000002ull;  // anim.anim（fps10 × cells 0..3）
 constexpr uint64_t kAnimHitClipGuid = 0x5bd31a7c30000003ull; // anim-hit.anim（M6a 批①：
@@ -28,6 +30,8 @@ constexpr uint64_t kAnimSetGuid = 0x5bd31a7c30000006ull; // anim-set.override（
 // 按名解析断言——段引用上述三段 clip，集内按名/GUID hex 回退的反查锚点）
 constexpr uint64_t kAnimGraphGuid = 0x5bd31a7c30000007ull; // anim-graph.controller（T3d：
 // whole→walk 条件边 / walk→hit trigger 边 / hit→whole exitTime 边——graph 链断言锚点）
+constexpr uint64_t kSmokeSpriteGuid = 0x5bd31a7c10e9f2c8ull; // smoke.png（M4.4 资产链：
+// TestScript.SpawnerBehaviour.kSpriteGuid 引用同值——C# 侧镜像，改任一侧须同步）
 constexpr uint64_t kYamiHeroSheetGuid = 0x5bd31a7c10000001ull; // Samples yami-dungeon hero_1（在场即验）
 constexpr uint64_t kYamiHeroClipGuid = 0x5bd31a7c20000001ull;  // hero-walk.anim（9 帧 @8fps）
 
@@ -36,8 +40,11 @@ constexpr uint64_t kYamiHeroClipGuid = 0x5bd31a7c20000001ull;  // hero-walk.anim
 /// OpenProject/Rescan 前落盘（切片记账/导入随扫描走）。
 void WriteAnimSheetAssets(const std::filesystem::path& assetsDir);
 
-/// bench-survivor 压测场景播种（tempdir 项目 + 1 万怪导演拉满；--bench-survivor）
-bool SeedBenchSurvivorScene(EditorContext& ctx);
+/// bench-survivor 压测场景播种（tempdir 项目 + 1 万怪导演拉满；--bench-survivor）。
+/// spriteIdBase 由调用方按 OpenProjectPipeline 同式推导（Registry().SpriteCount()+1）
+/// 传入（review 2026-10-02 #84：原硬编码 100 与程序化图集页数隐性耦合，页数一变
+/// 即静默错位）
+bool SeedBenchSurvivorScene(EditorContext& ctx, uint32_t spriteIdBase);
 
 /// 冒烟像素断言辅助：overlay 渲染可见性（数像素不数包）。定义在 EditorApp.cpp
 ///（smoke 主链 overlay 断言留驻），批③c-5 起供 EditorAppSmokeUirml.cpp 共用。

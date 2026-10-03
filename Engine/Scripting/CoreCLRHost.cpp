@@ -124,7 +124,11 @@ struct CoreCLRHost::Fxr {
 bool CoreCLRHost::Load(const char* dotnetRoot, const char* runtimeConfigPath,
                        const char* entryAssemblyPath) {
     if (IsLoaded()) return true;
-    fxr_ = new Fxr{};
+    // 失败路径清理（review 2026-10-02 #53）：原实现每次进来无条件 new Fxr——
+    // 失败后重试泄漏旧 Fxr（含已 dlopen 的 hostfxr 句柄）；Fxr 复用，重试只重走
+    // 解析。注意 hostfxr_set_error_writer 是线程局部注册（LoadHostfxr 内，vendored
+    // 头注记）——只覆盖装载线程的错误，其他线程的 hostfxr 错误走默认 stderr
+    if (!fxr_) fxr_ = new Fxr{};
     if (!LoadHostfxr(fxr_->api, dotnetRoot)) return false;
 
     hostfxr_handle ctx = nullptr;
@@ -136,6 +140,7 @@ bool CoreCLRHost::Load(const char* dotnetRoot, const char* runtimeConfigPath,
     rc = fxr_->api.getDelegate(ctx, hdt_load_assembly_and_get_function_pointer, &loadAssembly_);
     if (rc != 0 || loadAssembly_ == nullptr) {
         LEMON_WARN("get_runtime_delegate(load_assembly) failed rc=%d", rc);
+        if (fxr_->api.close) fxr_->api.close(ctx); // #53：失败同关（原仅成功路径关）
         return false;
     }
     if (fxr_->api.close) fxr_->api.close(ctx); // 句柄进程级存活；缺 close 不影响

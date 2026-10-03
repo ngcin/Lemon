@@ -27,8 +27,11 @@ public:
     RmlUiBackend(const RmlUiBackend&) = delete;
     RmlUiBackend& operator=(const RmlUiBackend&) = delete;
 
-    /// 建管线/几何池/描述符池 + 设备丢失回调（RGBA8Unorm = gameRT 格式）
-    void Init(rhi::Device& device, rhi::Format colorFormat);
+    /// 建管线/几何池/描述符池 + 设备丢失回调（RGBA8Unorm = gameRT 格式）。
+    /// 返回 false = RT 格式不支持（红字已落，调用方不得把空 RenderInterface 塞进
+    /// Rml）。幂等：重复 Init 先完整拆旧（反注册回调/销毁资源）——否则旧 GPU 资源
+    /// 泄漏 + 旧回调残留（review 2026-10-02 #46，SpriteBatcher::Init D3 同款）
+    bool Init(rhi::Device& device, rhi::Format colorFormat);
     /// 反注册回调 + WaitIdle 后销毁全部 Vulkan 态（必须在 Device 存活期调用）
     void Shutdown();
 

@@ -22,10 +22,10 @@ class SdlImeHandler final : public Rml::TextInputHandler {
 public:
     void OnActivate(Rml::TextInputContext* input_context) override { ctx_ = input_context; }
     void OnDeactivate(Rml::TextInputContext* input_context) override {
-        if (ctx_ == input_context) ctx_ = nullptr;
+        if (ctx_ == input_context) Reset();
     }
     void OnDestroy(Rml::TextInputContext* input_context) override {
-        if (ctx_ == input_context) ctx_ = nullptr;
+        if (ctx_ == input_context) Reset();
     }
 
     void HandleEdit(const char* utf8, int evStart, int evLength) {
@@ -52,6 +52,12 @@ public:
     }
 
 private:
+    // 组合态跨焦点切换复位（review 2026-10-02 #75）：只清 ctx_ 不清 start_/end_
+    // 时，换控件后首个编辑事件按旧区间 SetText——改写新控件文本
+    void Reset() {
+        ctx_ = nullptr;
+        start_ = end_ = 0;
+    }
     Rml::TextInputContext* ctx_ = nullptr;
     int start_ = 0, end_ = 0;
 };
