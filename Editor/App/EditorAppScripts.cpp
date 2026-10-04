@@ -180,17 +180,36 @@ bool EditorApp::PlayBlockedByScripts() {
     return FindGameProject(csproj, dll); // 带 Game/ 工程而无宿主 = 启动期编译/装配失败
 }
 
-// M6c 批②：World::SetAudioBackend 的 guid→clipId 解析壳（ctx = EditorApp*）
+// M6c 批②：World::SetAudioBackend 的 guid→clipId 解析壳已随 AudioMount 下沉引擎
+//（M7a 批③；AudioMount::WireBackend 单点）。本文件只剩装载源适配器 + 薄壳。
 namespace {
-uint32_t ResolveAudioClipThunk(uint64_t guid, void* ctx) {
-    return static_cast<const EditorApp*>(ctx)->AudioClipOfGuid(guid);
-}
+// AssetDatabase → AudioSource 适配器（SpriteRefSource 双实现同款纪律）
+class DbAudioSource final : public audio::AudioSource {
+public:
+    explicit DbAudioSource(const AssetDatabase& db) : db_(db) {}
+    std::string ProjectRoot() const override { return db_.ProjectRoot(); }
+    void EachAudio(const std::function<void(const audio::AudioItem&)>& fn) const override {
+        for (const AssetEntry& e : db_.Entries()) {
+            if (e.type != AssetType::Audio || e.missing) continue;
+            audio::AudioItem item;
+            item.guid = e.guid;
+            item.srcAbs = db_.AbsolutePath(e);
+            item.loopStart = e.audioLoopStart;
+            item.loopEnd = e.audioLoopEnd;
+            item.preload = e.audioPreload;
+            fn(item);
+        }
+    }
+
+private:
+    const AssetDatabase& db_;
+};
 } // namespace
 
 // Play World 音频后端装配（交互侧 TryEnterPlay 与程序化 --play 双挂点——竖切批
-// MountPlayAudio 同款双点纪律；ctx = this，成员地址稳定）
+// MountPlayAudio 同款双点纪律；ctx = &audioMount_，成员地址稳定）
 void EditorApp::WirePlayAudioBackend() {
-    ctx_.ActiveWorld().SetAudioBackend(&audio_, ResolveAudioClipThunk, this);
+    audioMount_.WireBackend(ctx_.ActiveWorld());
 }
 
 bool EditorApp::EnterPlayProgrammatic() {
@@ -237,102 +256,29 @@ bool EditorApp::StopPlay() {
 }
 
 // ---- M6c 竖切批（ADR-015）：进 Play 音频装载 ----
-// 扫全部 Audio 资产：缺烤/源新于产物 → 现烤（.lemon/baked/audio/<guidHex>.baked，
-// LBA1 = 48k PCM16）→ 装载注册 → guid→clipId。失败红字跳过（无声不炸 Play）；
-// 重进 Play 全量重装（ResetClips 防注册表跨局累积——id 只增不减）。
-namespace {
-namespace fs = std::filesystem;
-// 烤制产物路径（.lemon/baked/audio/<guidHex>.baked；bakeDir 由调用方保证存在）
-std::string BakedPathFor(const std::string& root, uint64_t guid) {
-    char hex[17];
-    std::snprintf(hex, sizeof(hex), "%016llx", (unsigned long long)guid);
-    return root + "/.lemon/baked/audio/" + hex + ".baked";
-}
-// 缺烤/源新于产物（mtime；后台线程与 EnterPlay 兜底共用同一判定）。
-// review 2026-10-02 #8：.meta（importer 段：loop/preload）新于产物同样算 stale
-//——loop 冻结在 .baked 头里，不重烤则热改永不生效于已烤 clip
-bool BakeStale(const std::string& src, const std::string& dst) {
-    std::error_code ec;
-    if (!fs::exists(dst, ec)) return true;
-    const auto dstT = fs::last_write_time(dst, ec);
-    if (ec) return true;
-    const auto srcT = fs::last_write_time(src, ec);
-    if (!ec && srcT > dstT) return true;
-    const auto metaT = fs::last_write_time(src + ".meta", ec);
-    return !ec && metaT > dstT;
-}
-} // namespace
-
+// 本体已下沉 Engine/Audio/AudioMount（M7a 批③ 搬家非复制——烤制/装载/流式分流/
+// 会话起点归位全在引擎侧；BakedPath/BakeStale 亦公开供下方后台烤制线程复用）。
+// 编辑器侧保留：试听声部清场（编辑器态）+ 源适配。
 uint32_t EditorApp::MountPlayAudio() {
     audio_.StopAll();
     if (previewVoice_ != 0) { // 试听声部随 Play 重开终止（clip 表将重建）
         previewVoice_ = 0;
         previewGuid_ = 0;
     }
-    audio_.ResetClips();
-    // 会话起点归位（2026-10-01 真人验收发现）：引擎 pausedAll 跨会话残留——上局
-    // 游戏暂停中 StopPlay 再 Play，新 BGM 起播即挂起变哑。新 World 的 AudioChannel
-    // 意图恒 false（游戏要起始暂停会显式再 SetPaused），此处对齐引擎侧。
-    audio_.SetPaused(false);
-    audioClips_.clear();
-    const std::string root = ctx_.Assets().ProjectRoot();
-    if (root.empty()) return 0; // 无项目 = 零资产零装载
-    std::error_code ec;
-    fs::create_directories(fs::path(root) / ".lemon" / "baked" / "audio", ec);
-    uint32_t ok = 0, failed = 0, streamed = 0;
-    for (const AssetEntry& e : ctx_.Assets().Entries()) {
-        if (e.type != AssetType::Audio || e.missing) continue;
-        bool isStream = false;
-        if (EnsureClipLoaded(e, &isStream)) {
-            ++ok;
-            if (isStream) ++streamed; // 批①b：>1MiB 未 preload = 流式（RAM 常驻证据）
-        } else {
-            ++failed;
-        }
-    }
-    if (ok)
-        LEMON_LOG("进 Play 音频装载：%u 成功（流式 %u）%s", ok, streamed,
-                  failed ? "" : "，全部就绪");
-    else if (failed)
-        LEMON_WARN("进 Play 音频装载：0 成功 / %u 失败（详见上方红字）", failed);
-    return ok;
+    const DbAudioSource src(ctx_.Assets());
+    return audioMount_.MountAll(src);
 }
 
-// 按需装载单 clip：缺烤/陈旧现烤（同步；通常已被后台烤制预热）→ 装载注册 →
-// guid→clipId。Edit 态试听与 EnterPlay 兜底共用此口。批①b：payload > 1MiB 且
-// 未显式 preload → 流式注册（RAM 常驻 < 阈值；句柄/环随声部开闭）。
+// 按需装载单 clip（AssetEntry 入参形态的编辑器薄壳——试听/冒烟消费；引擎侧
+// AudioMount::EnsureLoaded 逐行同源）
 bool EditorApp::EnsureClipLoaded(const AssetEntry& e, bool* outStreamed) {
-    if (outStreamed) *outStreamed = false;
-    if (const auto it = audioClips_.find(e.guid); it != audioClips_.end()) return true;
-    const std::string root = ctx_.Assets().ProjectRoot();
-    const std::string src = ctx_.Assets().AbsolutePath(e);
-    const std::string dst = BakedPathFor(root, e.guid);
-    if (BakeStale(src, dst)) {
-        const auto t0 = std::chrono::steady_clock::now();
-        if (!audio::BakeAudioFile(src.c_str(), dst.c_str(), e.audioLoopStart, e.audioLoopEnd))
-            return false;
-        // 批①b：同步烤超 100ms 红字（后台预热未命中——首播顿挫面，量级证据）
-        const double ms = std::chrono::duration<double, std::milli>(
-                              std::chrono::steady_clock::now() - t0).count();
-        if (ms > 100.0)
-            LEMON_WARN("audio: 同步烤制耗时 %.0fms（后台预热未命中）：%s", ms, src.c_str());
-    }
-    audio::BakedClipInfo info;
-    if (!audio::PeekBakedClip(dst.c_str(), info)) return false;
-    if (info.payloadBytes > audio::kStreamThresholdBytes && !e.audioPreload) {
-        const uint32_t streamId = audio_.RegisterStreamClip(dst.c_str());
-        if (streamId == 0) return false;
-        audioClips_[e.guid] = streamId;
-        if (outStreamed) *outStreamed = true;
-        return true;
-    }
-    std::vector<int16_t> pcm;
-    if (!audio::LoadBakedClip(dst.c_str(), pcm, info)) return false;
-    const uint32_t clipId = audio_.RegisterClip(std::move(pcm), info.channels,
-                                                info.frameCount, info.loopStart, info.loopEnd);
-    if (clipId == 0) return false;
-    audioClips_[e.guid] = clipId;
-    return true;
+    audio::AudioItem item;
+    item.guid = e.guid;
+    item.srcAbs = ctx_.Assets().AbsolutePath(e);
+    item.loopStart = e.audioLoopStart;
+    item.loopEnd = e.audioLoopEnd;
+    item.preload = e.audioPreload;
+    return audioMount_.EnsureLoaded(item, ctx_.Assets().ProjectRoot(), outStreamed);
 }
 
 void EditorApp::TogglePreviewAudio(uint64_t guid) {
@@ -368,8 +314,8 @@ void EditorApp::EnqueueAudioBake(const AssetEntry& e) {
     {
         std::lock_guard<std::mutex> lk(audioBakeMtx_);
         audioBakeQueue_.emplace_back(e.guid, ctx_.Assets().AbsolutePath(e),
-                                     BakedPathFor(root, e.guid), e.audioLoopStart,
-                                     e.audioLoopEnd);
+                                     audio::AudioMount::BakedPath(root, e.guid),
+                                     e.audioLoopStart, e.audioLoopEnd);
     }
     ++audioBakePending_;
     if (!audioBakeThread_.joinable()) // 惰性起（早退路径不落空线程）
@@ -387,7 +333,7 @@ void EditorApp::EnqueueAudioBake(const AssetEntry& e) {
                 // 工作线程未捕获异常 = std::terminate 崩整个编辑器（review
                 // 2026-10-02 #21）——烤制失败按件隔离，红字后继续吃队列
                 try {
-                    if (BakeStale(src, dst)) // 入队到执行间可能已被兜底烤过
+                    if (audio::AudioMount::BakeStale(src, dst)) // 入队到执行间可能已被兜底烤过
                         audio::BakeAudioFile(src.c_str(), dst.c_str(), loopS, loopE);
                 } catch (const std::exception& ex) {
                     LEMON_ERROR("audio: 后台烤制异常中止（%s）：%s", ex.what(),
@@ -416,8 +362,7 @@ void EditorApp::StopAudioBaker() {
 }
 
 uint32_t EditorApp::AudioClipOfGuid(uint64_t guid) const {
-    const auto it = audioClips_.find(guid);
-    return it != audioClips_.end() ? it->second : 0;
+    return audioMount_.ClipIdOfGuid(guid);
 }
 
 uint32_t EditorApp::AudioPlayByGuid(uint64_t guid, int32_t group, float volume, float pan,

@@ -20,6 +20,7 @@
 #include "EditorContext.h"
 #include "Renderer/RHI.h"
 #include "Ui/UiSubsystem.h" // 批③a（ADR-014）：游戏 UI 层（RmlUi）
+#include "Ui/UiMount.h"     // 引擎装载本体（M7a 批③ 下沉件）
 #include "imgui.h"
 
 namespace lemon::editor {
@@ -173,66 +174,42 @@ void EditorApp::LoadProjectFonts() {
     if (n) LEMON_LOG("项目字体：%u 个已注册为 fallback（RCSS 按 font-family 命中）", n);
 }
 
-// 批③d 前置（通道 A）：见 EditorApp.h 注记。无 UIDocument 的场景（bench/replay/
-// 基准场）装载调用恒 0——装载点只在此扫描处，不进任何通用路径（基准护栏 §5）。
+// 批③d 前置（通道 A）：见 EditorApp.h 注记。M7a 批③ 起本体 = 引擎
+// ui::MountSceneDocuments/ReconcileDocuments（搬家非复制；编辑器/lemon-game 共用），
+// 本文件只剩源适配器 + 薄壳。无 UIDocument 的场景（bench/replay/基准场）装载
+// 调用恒 0——装载点只在此扫描处，不进任何通用路径（基准护栏 §5）。
+namespace {
+// AssetDatabase → UiDocSource 适配器（SpriteRefSource 双实现同款纪律）
+class DbUiDocSource final : public ui::UiDocSource {
+public:
+    explicit DbUiDocSource(const AssetDatabase& db) : db_(db) {}
+    bool ResolveRml(uint64_t guid, std::string& relPath, std::string& absPath) const override {
+        const AssetEntry* e = db_.FindByGuid(guid);
+        if (!e || e->missing || e->type != AssetType::Rml) return false;
+        relPath = e->relPath;
+        absPath = db_.AbsolutePath(*e);
+        return true;
+    }
+    bool IsHealthyRml(const std::string& relPath) const override {
+        const AssetEntry* e = db_.FindByPath(relPath);
+        return e && !e->missing && e->type == AssetType::Rml;
+    }
+
+private:
+    const AssetDatabase& db_;
+};
+} // namespace
+
 uint32_t EditorApp::MountSceneUiDocuments() {
     if (!gameUi_) return 0;
-    // 进 Play 对账（形态 C 治愈位）：文件装载文档的 relPath 非健康 .rml 资产 → 逐出。
-    // "本屏不装载"是画面层不变量——事件被裸 Rescan 吞掉的残留在此清场
-    ReconcileUiDocuments();
-    AssetDatabase& db = ctx_.Assets();
-    uint32_t loaded = 0, missing = 0;
-    std::vector<std::string> declared;
-    std::vector<uint64_t> seen; // 同 GUID 去重（一屏两实体无意义；文档量小线性足够）
-    ctx_.ActiveScene().View<ecs::UIDocument>().each([&](auto raw, ecs::UIDocument& ud) {
-        const ecs::Entity e = ecs::Scene::FromEntt(raw);
-        if (ud.sourceAssetGuid == 0) return; // 未挂（合法；Inspector 提示）
-        if (std::find(seen.begin(), seen.end(), ud.sourceAssetGuid) != seen.end()) {
-            LEMON_WARN("UIDocument：实体 %llu 重复挂同一 .rml（guid %016llx）——"
-                       "一屏两实体无意义，已去重装载",
-                       (unsigned long long)e.id,
-                       (unsigned long long)ud.sourceAssetGuid);
-            return;
-        }
-        seen.push_back(ud.sourceAssetGuid);
-        const AssetEntry* en = db.FindByGuid(ud.sourceAssetGuid);
-        if (!en || en->missing || en->type != AssetType::Rml) {
-            ++missing; // 响亮失败：绝不静默空屏（guid-chain 同款 per-entity resolve）
-            LEMON_ERROR("UIDocument：资产缺失或非 .rml（guid %016llx，实体 %llu）——"
-                        "本屏不装载；修复资产或重挂后重进 Play",
-                        (unsigned long long)ud.sourceAssetGuid,
-                        (unsigned long long)e.id);
-            return;
-        }
-        if (gameUi_->LoadDocumentFromFile(en->relPath.c_str(),
-                                          db.AbsolutePath(*en).c_str(),
-                                          lemon::ui::UiDocOrigin::Scene)) {
-            ++loaded;
-            // 声明态归位：showOnStart=0 = 装载但隐藏（动态屏）；modal 初值入 Doc
-            gameUi_->ShowDocument(en->relPath.c_str(), ud.showOnStart != 0,
-                                  ud.modal != 0);
-            declared.push_back(en->relPath);
-        }
-    });
-    gameUi_->ResetDynamicDocuments(declared); // §3：未声明且 stale → Hide + 清 stale
-    if (loaded || missing)
-        LEMON_LOG("UIDocument 装载：%u 成功 / %u 缺失（声明态归位 + stale 清场）",
-                  loaded, missing);
-    return loaded;
+    const DbUiDocSource src(ctx_.Assets());
+    return ui::MountSceneDocuments(*gameUi_, ctx_.ActiveScene(), src);
 }
 
-// 状态对账（2026-09-29 根因收口）：见 EditorApp.h 注记。事件驱动路径保留（首拍即逐
-// 出 + 「已卸载」观测日志），对账是兜住"事件被谁吃了"的不变量层——两者幂等共存
 void EditorApp::ReconcileUiDocuments() {
     if (!gameUi_) return;
-    const AssetDatabase& db = ctx_.Assets();
-    for (const std::string& name : gameUi_->FileBackedDocumentNames()) {
-        const AssetEntry* e = db.FindByPath(name);
-        if (e && !e->missing && e->type == AssetType::Rml) continue;
-        if (gameUi_->UnloadDocument(name.c_str()))
-            LEMON_LOG("UI 文档对账逐出（资产不健康——事件可能被裸重扫吞噬）：%s",
-                      name.c_str());
-    }
+    const DbUiDocSource src(ctx_.Assets());
+    ui::ReconcileDocuments(*gameUi_, src);
 }
 
 } // namespace lemon::editor

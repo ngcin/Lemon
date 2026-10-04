@@ -27,6 +27,8 @@ public unsafe struct BatchSystemFrame
     public ulong RngSeed;                // 世界种子（脚本 RNG 子流见 Lemon.Scripting.Rng）
     public float Dt;
     public int Disabled;                 // 回写：异常禁用后 C++ 侧跳过构造（省死块）
+    public int Stale;                    // D5 护栏（M7a 批③）：native 置位 = 池重分配使
+                                         // 已收集指针悬垂——本帧剩余块跳过（native 已红字）
 }
 
 internal static unsafe class Batch
@@ -75,6 +77,10 @@ internal static unsafe class Batch
 
             badThisFrame = false;
             for (int b = 0; b < fr->BlockCount; b++) {
+                // D5 护栏（M7a 批③）：本 tick 窗口内结构操作触发池重分配 → 剩余块
+                // 的组件指针已悬垂，跳过本帧该系统余量（native 侧已红字指路；不计
+                // 入异常禁用计数——非系统自身过错）
+                if (fr->Stale != 0) break;
                 BatchBlock* blk = fr->Blocks + b;
                 try {
                     var chunk = new Lemon.Chunk(blk->Length, blk->Entities, blk->Comps,

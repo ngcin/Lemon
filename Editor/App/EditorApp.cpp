@@ -24,6 +24,7 @@ static ::lemon::ui::UiSubsystem* s_gameUiForHooks = nullptr;
 
 #include "App/ImGuiBackend.h"
 #include "Assets/AssetDatabase.h"
+#include "Assets/SaveStore.h" // HookSaveFlush → 引擎 SaveStore（M7a 批③）
 #include "Interaction/ViewportRenderer.h"
 #include "Templates/VsTemplateGen.h"
 #include "App/RecentProjects.h"
@@ -62,11 +63,13 @@ uint64_t HookInstantiate(const char* hex, float x, float y) {
     return e.IsNull() ? 0 : e.id;
 }
 // M5 批④：C# Save.Flush → 编辑器域落盘（项目 .lemon/saves/；无项目 = no-op）；
-// M6a 批② T5：三档全落（空档跳过语义保留——Count 0 不写文件）
+// M6a 批② T5：三档全落（空档跳过语义保留——Count 0 不写文件）；M7a 批③ 起走
+// 引擎 SaveStore（ScriptHost 钩子宿主实现与 lemon-game 共用）
 void HookSaveFlush(ecs::World& w) {
     if (!g_app) return;
+    const std::string& root = g_app->Ctx().Assets().ProjectRoot();
     for (uint8_t ch = 0; ch < ecs::kSaveChannelCount; ++ch)
-        g_app->Ctx().WriteSaveFile(ch, w.Saves(ch));
+        assets::SaveStore::Write(root, ch, w.Saves(ch));
 }
 // M6c 批②：音频播放路径退役四桥（HookAudio*）——C# 命令走 g_world->Audio()
 // staging + AudioSystem #20 提交（ADR-015 M3）；guid→clipId 解析壳在
@@ -1057,96 +1060,20 @@ int EditorApp::Run(const EditorLaunch& launch) {
     return exitCode;
 }
 
-namespace {
-// 标签大小写不敏感比较（Meta.tag 固定 24B，无终止符风险由调用方保证）
-bool TagEquals(const char* tag, const char* want) {
-    if (!tag) return false;
-    while (*tag && *want) {
-        if (std::tolower((unsigned char)*tag) != std::tolower((unsigned char)*want)) return false;
-        ++tag;
-        ++want;
-    }
-    return *tag == *want;
-}
-} // namespace
-
 void EditorApp::UpdateGameCameraFollow() {
-    // M4.7 手测修复：Play 中游戏相机钉死 (640,360)，玩家 WASD 走出视野后"消失"。
-    // 目标优先级（M4.md §2.2 GameView"场景中 Camera 实体"的标签化落地）：
-    //   ① tag "Camera"——显式相机位实体（进阶：也可作空场景的固定取景）；
-    //   ② tag "Player"——默认跟随玩家；
-    //   ③ 首个挂脚本实体——blank 模板默认名"Sprite"+InputMover 的兜底。
-    // 首帧吸附（不从旧位滑过去），之后 Camera2D::Follow 指数阻尼（02 §3.5）。
-    // M4.3 后若 C# 相机门面落地，脚本驱动可覆盖（编辑器跟随仅兜底语义）。
+    // M7a 批③：本体 = 引擎 renderer::UpdateCameraFollow/ResetCameraFollow（搬家
+    // 非复制；目标优先级/轻校验缓存/首帧吸附/刚性跟随语义注记见彼处）。
+    // 编辑器薄壳只保留：GameCam 路由 + Play 分支 + LEMON_PLAY_DIAG 回传。
     Camera2D& cam = viewport_->GameCam();
     if (!ctx_.Playing()) {
-        if (gameFollowActive_) { // 退出 Play → 编辑态默认位（ViewportRenderer 口径）
-            cam.center = {640, 360};
-            gameFollowActive_ = false;
-        }
+        renderer::ResetCameraFollow(cam, gameCamFollow_); // 退出 Play → 编辑态默认位
         return;
     }
-    ecs::Scene& s = ctx_.ActiveScene();
-    // #27：目标缓存 + 逐帧轻校验——原每帧全池线性扫（Scene::Each 无早退机制），
-    // bench-survivor 万实体场景 = 每帧上万迭代；校验（活着 + 有 Transform + 判据
-    // 仍成立）失败才重扫。校验语义与每帧重扫一致：换 Play 世界/目标死亡/换 tag
-    // 即失校验；同 id 重生同 tag（director 重挂 prefab）= 同一逻辑目标，继续跟。
-    auto stillValid = [&](ecs::Entity& cached, bool wantScriptBox, const char* tag) {
-        if (cached.IsNull() || !s.Alive(cached) || !s.Has<ecs::Transform2D>(cached)) {
-            cached = ecs::Entity::Null();
-            return false;
-        }
-        if (wantScriptBox && !s.Has<scripting::ScriptBox>(cached)) {
-            cached = ecs::Entity::Null();
-            return false;
-        }
-        if (!wantScriptBox &&
-            !TagEquals(s.TryGet<ecs::Meta>(cached) ? s.TryGet<ecs::Meta>(cached)->tag
-                                                   : nullptr, tag)) {
-            cached = ecs::Entity::Null();
-            return false;
-        }
-        return true;
-    };
-    const bool allValid = stillValid(camFollowEnt_, false, "Camera") &&
-                          stillValid(playerFollowEnt_, false, "Player") &&
-                          stillValid(scriptedFollowEnt_, true, nullptr);
-    if (!allValid) {
-        camFollowEnt_ = playerFollowEnt_ = scriptedFollowEnt_ = ecs::Entity::Null();
-        s.Each([&](ecs::Entity e) {
-            const bool hasTf = s.Has<ecs::Transform2D>(e);
-            if (!hasTf) return;
-            const ecs::Meta* m = s.TryGet<ecs::Meta>(e);
-            const char* tag = m ? m->tag : nullptr;
-            if (camFollowEnt_.IsNull() && TagEquals(tag, "Camera")) camFollowEnt_ = e;
-            if (playerFollowEnt_.IsNull() && TagEquals(tag, "Player")) playerFollowEnt_ = e;
-            if (scriptedFollowEnt_.IsNull() && s.Has<scripting::ScriptBox>(e))
-                scriptedFollowEnt_ = e;
-        });
+    Vec2 pos{};
+    if (renderer::UpdateCameraFollow(ctx_.ActiveScene(), cam, gameCamFollow_, &pos)) {
+        playDiagTarget_ = pos; // LEMON_PLAY_DIAG 回传（帧循环节奏诊断）
+        playDiagHasTarget_ = true;
     }
-    const ecs::Entity camEnt = camFollowEnt_, playerEnt = playerFollowEnt_,
-                      scriptedEnt = scriptedFollowEnt_;
-    const ecs::Entity target = !camEnt.IsNull()     ? camEnt
-                               : !playerEnt.IsNull() ? playerEnt
-                                                     : scriptedEnt;
-    if (target.IsNull()) return; // 无目标：保持现位
-    ecs::WorldTransform2D wt{};
-    Vec2 pos = s.Get<ecs::Transform2D>(target).pos; // 父链异常兜底本地位
-    if (ecs::ComputeWorldTransform(s, target, wt)) pos = wt.pos;
-    playDiagTarget_ = pos;      // LEMON_PLAY_DIAG 回传（帧循环节奏诊断）
-    playDiagHasTarget_ = true;
-    if (!gameFollowActive_) {
-        gameFollowActive_ = true;
-        const char* tag = "脚本实体";
-        if (!camEnt.IsNull()) tag = "Camera";
-        else if (!playerEnt.IsNull()) tag = "Player";
-        LEMON_LOG("游戏相机跟随：%s", tag);
-    }
-    // 手测第十轮：刚性跟随（center = 目标，零滞后）。阻尼版（rate 5/9 两轮实测）
-    // 的稳态滞后在走/停切换时反演成 ~28px 往返滑移 + 亚像素爬行 = 「抖动」观感；
-    // LEMON_PLAY_DIAG 数据证明帧节奏/RT/收敛曲线本身全平顺，锅在滞后动态。
-    // 电影感阻尼留给 C# 相机门面（M4.3 规划）按需启用 Camera2D::Follow。
-    cam.center = pos;
 }
 
 } // namespace lemon::editor

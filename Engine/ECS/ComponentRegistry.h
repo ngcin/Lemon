@@ -115,6 +115,15 @@ struct ComponentMeta {
     // 默认构造到调用方缓冲（placement-new；Inspector 字段级重置读默认值；
     // nullptr = 不支持。构造口径与 emplaceFn 一致）
     void (*constructFn)(void* mem) = nullptr;
+    // 池 dense 实体数组基址（D5 批量帧护栏，M7a 批③；评审 §D5）：ScriptHost gather
+    // 期记录、托管 tick 窗口内结构操作后比对——池越容量重分配时基址搬移 = 收集
+    // 指针悬垂的精确判据（容量余量内 emplace 不动基址 = 零误伤）。nullptr = 不支持
+    //（该组件不参与护栏）。基址仅作比较用，不 deref。
+    const void* (*poolDataFn)(class Scene&) = nullptr;
+    // 池容量预留（D5 护栏第一层）：ScriptHost gather 前对被查询池 reserve
+    // count+余量——窗口内合法 spawn/挂组件在余量内零重分配（收集指针免疫；
+    // entBuf_/ptrBuf_ 同款"构造期零扩容"技术下沉到组件池）。nullptr = 不支持
+    void (*reserveFn)(class Scene&, uint32_t) = nullptr;
 };
 
 class ComponentRegistry {

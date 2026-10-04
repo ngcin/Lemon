@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "Assets/AssetDatabase.h"
+#include "Assets/PrefabCache.h" // playPrefabs_（M7a 批③ 下沉引擎件）
 #include "ECS/Entity.h"
 #include "ECS/Scene.h"
 #include "ECS/World.h"
@@ -103,11 +104,9 @@ public:
     // ---- Prefab 最小集（M4.md §3.9；.prefab = 实体子树 JSON，06 §4）----
     /// 选中实体导出为 Assets/Prefabs/<tag>.prefab + 挂 prefabId 回链；返回资产 GUID（0=败）
     uint64_t MakePrefabFrom(ecs::Entity e);
-    /// .prefab 实例化（新 guid 集合 + prefabId 回链；pos 覆盖 root 本地位置）
+    /// .prefab 实例化（新 guid 集合 + prefabId 回链；pos 覆盖 root 本地位置）。
+    /// Play 态（钩子/交互路径）含 scripts[] 树解析（引擎 PrefabCache::ResolveTreeScripts）
     ecs::Entity InstantiatePrefabAsset(uint64_t prefabGuid, Vec2 pos);
-    /// 实例化核心（json 已在手；无 IO/日志/dirty——高频 spawn 工厂复用，M5 清障②）
-    ecs::Entity InstantiatePrefabJson(ecs::Scene& s, const std::string& json,
-                                      uint64_t prefabGuid, Vec2 pos);
     /// 实例改动写回源资产
     bool ApplyPrefabInstance(ecs::Entity e);
     /// 回到源资产态（整体：destroy + 重建于原父之下）
@@ -143,17 +142,8 @@ public:
     double LastExitPlayMs() const { return lastExitMs_; }
     /// Play 中编辑落 Play World（决议 #5）—— dirty 不置位（Stop 即丢，不动编辑侧）
 
-    // ---- 游戏存档 IO（M5 批④ D1；M6a 批② T5 分档参数化。编辑器域实现，
-    // ScriptHost 钩子消费。档常量/键约定见 SaveChannel.h）----
-    /// 存档路径 = 项目根/.lemon/saves/{slot_0,settings,meta}.sav（无项目/未打开 =
-    /// 空串 = 全部 no-op；ch 越界钳 slot）
-    std::string SaveFilePath(uint8_t ch) const;
-    /// 通道 → 文件（旧档转 .bak → tmp 写 → 原子改名；空通道/无项目 = false）
-    bool WriteSaveFile(uint8_t ch, const ecs::SaveChannel& chn);
-    /// 文件 → 通道（EnterPlay 载入；坏档红字后试 .bak，再坏 = 空通道开局）。
-    /// slot 档含旧 game.sav 惰性迁移：新档（含 .bak）不存在且旧名在 → 读旧路径
-    /// （写恒写新名，免 rename 竞态；旧文件保留不删）
-    void LoadSaveFile(uint8_t ch, ecs::SaveChannel& dst);
+    // ---- 游戏存档 IO：实现已下沉 Engine/Assets/SaveStore（M7a 批③，编辑器与
+    // lemon-game 共用）；EnterPlay/ExitPlay/ScriptHost saveFlush 钩子直调 ----
 
     // ---- Undo 双轨（§3.5；Play 中禁用）----
     UndoStack& Undo() { return undo_; }
@@ -181,13 +171,6 @@ private:
     SpriteRefStats ResolveSpriteRefs();
     void ResolvePlayScripts(); // EnterPlay：ScriptBox.className → typeId → AttachBehaviour
     std::string AutosavePathFor(const std::string& sceneStem) const; // .lemon/autosave/<stem>.scene
-    // M5 清障②：Play 世界 Spawner/Shooter 工厂桥
-    struct PlayPrefabCache {
-        uint64_t guid = 0; // 完整资产 GUID（回链用）
-        std::string json;  // .prefab 文本（进 Play 时刻快照）
-    };
-    void BuildPlayPrefabCache(); // EnterPlay：Prefab 资产 → {低 32 位 → 缓存}
-    ecs::Entity SpawnPlayPrefab(ecs::Scene& s, uint32_t prefabId, Vec2 pos, uint32_t team);
     // M5 批③：EnterPlay 建 clip 表（.anim JSON → (sheet guid, cell) 解析为 spriteId
     // 入 playWorld_->Clips()；进 Play 时刻快照——Play 中改 .anim 不生效）
     void BuildPlayClipCache();
@@ -214,8 +197,7 @@ private:
     ecs::Scene* playScene_ = nullptr;
     std::string editSnapshot_;              // 进 Play 前全量快照（§3.4-1）
     std::vector<uint64_t> savedSelectionGuids_;
-    std::unordered_map<uint32_t, PlayPrefabCache> playPrefabCache_; // M5 清障②
-    std::unordered_set<uint32_t> playSpawnWarned_; // prefabId 错绑去重告警
+    assets::PrefabCache playPrefabs_; // M5 清障②（M7a 批③ 下沉引擎件；EnterPlay 建）
     bool lastExitVerified_ = false;
     double lastEnterMs_ = 0.0, lastExitMs_ = 0.0;
     UndoStack undo_;

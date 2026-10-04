@@ -38,6 +38,46 @@ struct NativeApiWindow {
     ecs::Scene* prevS;
 };
 
+// ---- D5 批量帧护栏（M7a 批③；评审 §D5）——两层设计 ----
+// 全部块组件指针在 lemon_scripts_tick 之前收集（GatherEntity → ptrBuf_），生命周期
+// 跨整个托管 tick（Start/Update → Batch → LateUpdate）。窗口内就地建实体 /
+// get-or-create 的调用可能让 EnTT packed 池越容量重分配 → 已收集指针悬垂（潜伏
+// AV/静默损坏）。Update 内逐帧 Spawn 是既有正当用法（模板/svr-test 大量依赖），
+// 故第一层 = **gather 前对被查询池 reserve(count+1024 结构余量)**：合法负载零
+// 重分配零触发（零行为漂移；script-chain 冒烟实证——无预留版曾三触发）。第二层
+// = 病态兜底：基址比对真实搬移才置位全部 BatchSystemFrame.stale，C# 块循环头查
+// stale → 本帧剩余块跳过（fail-stop：超余量爆量 = 响亮截断而非悬垂读）。基址仅
+// 比对不 deref；SceneOps/ApplyStructural 在 Essential 帧首应用 = 窗口外，不经此护栏。
+constexpr uint32_t kMaxPoolWatch = 64; // 去重后被查询组件数上限（现 31 组件，余量足）
+struct PoolWatch {
+    uint16_t compId = 0;
+    const void* base = nullptr;
+};
+PoolWatch g_poolWatch[kMaxPoolWatch];
+uint32_t g_poolWatchCount = 0;
+std::vector<BatchSystemFrame>* g_batchFrames = nullptr; // 消费中的帧数组（置位目标）
+bool g_batchStaleWarned = false;                        // 红字去重（每 tick 一次）
+uint64_t g_batchStaleMarks = 0;                         // 累计置位次数（测试探针）
+
+void MarkBatchStaleIfPoolsMoved() {
+    if (!g_batchFrames || g_poolWatchCount == 0) return;
+    auto& reg = ecs::ComponentRegistry::Instance();
+    for (uint32_t i = 0; i < g_poolWatchCount; i++) {
+        const auto fn = reg.At(g_poolWatch[i].compId).poolDataFn;
+        if (fn && fn(*g_scene) != g_poolWatch[i].base) {
+            for (BatchSystemFrame& fr : *g_batchFrames) fr.stale = 1;
+            if (!g_batchStaleWarned) {
+                g_batchStaleWarned = true;
+                ++g_batchStaleMarks;
+                LEMON_ERROR("批量帧指针失效防护（D5）：单 tick 窗口内结构操作超出"
+                            "结构余量（1024）触发池重分配，已收集组件指针悬垂——本帧"
+                            "剩余批量块已跳过。请分帧生成或挪出批量遍历（SceneOps）");
+            }
+            return;
+        }
+    }
+}
+
 int NativeIsAlive(uint64_t e) { return g_scene && g_scene->Alive(ecs::Entity{e}) ? 1 : 0; }
 int NativeHas(uint64_t e, uint8_t id) {
     if (!g_scene || id >= ecs::ComponentRegistry::Instance().Count()) return 0;
@@ -60,8 +100,10 @@ int NativeWrite(uint64_t e, uint8_t id, const void* src, uint32_t size) {
     // 在 entt Release 下 = 池损坏 → AV。M3-7 实测 10 万弹崩、5k 侥幸的根因）
     ecs::Entity ent{e};
     void* p = (void*)m.readFn(*g_scene, ent);
+    const bool emplaced = p == nullptr;
     if (!p) p = m.emplaceFn(*g_scene, ent);
     std::memcpy(p, src, m.sizeOf);
+    if (emplaced) MarkBatchStaleIfPoolsMoved(); // D5：emplace 可能触池增长（比对定真伪）
     return (int)m.sizeOf;
 }
 
@@ -107,11 +149,18 @@ uint64_t NativeSpawnSprite(uint32_t spriteId, float x, float y) {
     }
     auto& m = g_scene->Emplace<ecs::Meta>(e);
     std::snprintf(m.tag, sizeof(m.tag), "spawned");
+    MarkBatchStaleIfPoolsMoved(); // D5：三 emplace 可能触池增长（比对定真伪）
     return e.id;
 }
 
 uint64_t NativeInstantiatePrefab(const char* guidHex, float x, float y) {
-    return g_editorAssets.instantiatePrefab ? g_editorAssets.instantiatePrefab(guidHex, x, y) : 0;
+    const uint64_t e = g_editorAssets.instantiatePrefab
+                           ? g_editorAssets.instantiatePrefab(guidHex, x, y)
+                           : 0;
+    // D5：钩子内 LoadEntityTree 任意 emplace（树深度/组件面不可静态知）——返回后
+    // 统一比对（比对定真伪，无需枚举树内组件）
+    if (e != 0) MarkBatchStaleIfPoolsMoved();
+    return e;
 }
 
 // ---- M5 批①（timeScale：Time.Scale ↔ World；域线程 tick 窗口约定同上）----
@@ -424,6 +473,9 @@ const NativeApiVtable kNativeApi{NativeIsAlive,
 
 void SetScriptIoHooks(const ScriptIoHooks& hooks) { g_scriptIo = hooks; }
 
+uint64_t BatchStaleMarkCount() { return g_batchStaleMarks; }
+void ResetBatchStaleMarkCount() { g_batchStaleMarks = 0; }
+
 // 批③c：UI 桥钩子（进程级单份，装配期一次；同 g_editorAssets 形态）
 static UiHooks g_uiHooks;
 void SetUiHooks(const UiHooks& hooks) { g_uiHooks = hooks; }
@@ -615,6 +667,39 @@ void ScriptHost::TickBatch(ecs::World& world, ecs::Scene& scene, float dt) {
     ptrBuf_.reserve(ptrBuf_.size() + capPtrs);
     blockBuf_.reserve(blockBuf_.size() + capBlocks);
 
+    // D5 布防（第一层 = 容量预留，第二层 = 基址比对 fail-stop；评审 §D5）：
+    // 对本帧全部被查询池 reserve(count + 结构余量)——托管 tick 窗口内的合法
+    // spawn/get-or-create 在余量内零重分配（收集指针免疫，entBuf_ 同款"构造期
+    // 零扩容"技术下沉组件池；ScriptHost 自己的三个 buffer 上方 reserve 同理）。
+    // 预留**先于** gather（reserve 本身可能重分配）与基址记录（记录的是预留后
+    // 的稳定基址）。超余量爆量（单 tick 千级以上）仍可能重分配 → 第二层基址
+    // 比对置 stale + 剩余块跳过（病态用例响亮截断，正常负载零触发）。
+    {
+        auto& reg2 = ecs::ComponentRegistry::Instance();
+        bool seen[kMaxPoolWatch] = {}; // compId < kMaxPoolWatch（31 组件，余量足）
+        g_poolWatchCount = 0;
+        g_batchStaleWarned = false;
+        constexpr uint32_t kBatchStructHeadroom = 1024; // 单 tick 窗口内结构操作余量
+        for (const BatchSys& bs : batch_) {
+            if (bs.disabled || bs.compCount == 0) continue;
+            for (uint32_t c = 0; c < bs.compCount; c++) {
+                const uint16_t id = bs.comps[c];
+                if (id < kMaxPoolWatch) {
+                    if (seen[id]) continue;
+                    seen[id] = true;
+                }
+                if (g_poolWatchCount >= kMaxPoolWatch) break;
+                const ecs::ComponentMeta& m = reg2.At(id);
+                if (!m.poolDataFn) continue;
+                if (m.reserveFn) {
+                    const uint32_t n = m.countFn ? m.countFn(scene) : 0;
+                    m.reserveFn(scene, n + kBatchStructHeadroom);
+                }
+                g_poolWatch[g_poolWatchCount++] = {id, m.poolDataFn(scene)};
+            }
+        }
+    }
+
     for (uint32_t s = 0; s < batch_.size(); s++) {
         const BatchSys& bs = batch_[s];
         if (bs.disabled || bs.compCount == 0)
@@ -659,11 +744,17 @@ void ScriptHost::TickBatch(ecs::World& world, ecs::Scene& scene, float dt) {
     // 档①+档② 一帧固定序：Start/Update → 批量 → LateUpdate（域线程；ADR-010 D1）
     // 无条件调（批量帧空时档① behaviours 仍需 tick）
     {
+        // D5 第二层挂闸：g_batchFrames 指向本帧帧数组——窗口内结构操作触发池重分配
+        // 时 MarkBatchStaleIfPoolsMoved 就地置位各帧 stale（C# 块循环头响应）。池
+        // 基址已在 gather 前的布防块（reserve + 记录）就位
+        g_batchFrames = &frameBuf_;
         NativeApiWindow win(&world, &scene);
         scriptsTickFn_(frameBuf_.data(), (int)frameBuf_.size(), dt);
         // 回读禁用位（域线程已同步返回，栅栏保证可见）
         for (auto& fr : frameBuf_)
             if (fr.disabled) batch_[fr.systemIndex].disabled = true;
+        g_batchFrames = nullptr; // D5 收防：窗口关闭（后续 native 调用不再比对）
+        g_poolWatchCount = 0;
     }
 
     // ---- 批③c（ADR-014 M2）：UI ops 拉取——脚本当帧 UI.* + UI.Apply() 的 ready

@@ -15,6 +15,7 @@
 #include "Assets/TableAsset.h" // assets::ParseTableJson（BuildPlayTableCache；M6a 批② T2）
 #include "Assets/AnimAsset.h" // assets::ParseAnimSetJson（BuildPlayClipCache 集登记；T3c）
 #include "Assets/SpriteRefs.h" // assets::ResolveSpriteRefs（guid 归一引擎本体；M7a 批②）
+#include "Assets/SaveStore.h"  // assets::SaveStore（Play 存档三通道；M7a 批③ 下沉件）
 #include "Assets/ControllerAsset.h" // assets::ParseControllerJson（BuildPlayControllerCache；T3d）
 #include "ECS/ControllerTable.h" // ControllerDef（编译目标形态；T3d）
 #include "Components/CoreComponents.h"
@@ -499,36 +500,15 @@ ecs::Entity EditorContext::InstantiatePrefabAsset(uint64_t prefabGuid, Vec2 pos)
     std::string json((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     ecs::Scene& s = ActiveScene(); // Play 中脚本 Instantiate.Prefab 落 Play World
     const uint32_t aliveBefore = s.AliveCount(); // #79：日志记本次 spawn 数（非全场景）
-    ecs::Entity root = InstantiatePrefabJson(s, json, prefabGuid, pos);
+    ecs::Entity root = assets::PrefabCache::InstantiateJson(s, json, prefabGuid, pos);
     if (root.IsNull()) return root;
     // 批③d-2：Play 态 spawn 的 prefab 若带 scripts[]，槽实例在此挂载——与
     // EnterPlay 装配同款解析（LoadEntityTree 只落槽不建实例；Unity Instantiate
     // 重放 behaviour 的等价路径。首例消费者 = vs 模板 Player.prefab 重开重挂；
-    // 此前运行时 spawn 的 prefab 均无脚本，该路径从未被走过）
-    if (Playing() && scripts_) {
-        ecs::World& w = ActiveWorld();
-        std::function<void(ecs::Entity)> resolveTree = [&](ecs::Entity e) {
-            if (scripting::ScriptBox* sb = s.TryGet<scripting::ScriptBox>(e))
-                for (uint32_t i = 0; i < sb->count; ++i) {
-                    scripting::ScriptSlot& sl = sb->slots[i];
-                    if (sl.typeId >= 0) continue;
-                    int id = ResolveScriptTypeId(sl.className);
-                    if (id < 0) {
-                        LEMON_WARN("Prefab spawn：脚本类型未注册（跳过）'%s'",
-                                   sl.className);
-                        continue;
-                    }
-                    scripts_->ResolveSlotBehaviour(w, s, e, i, id);
-                }
-            if (const ecs::Hierarchy* h = s.TryGet<ecs::Hierarchy>(e))
-                for (ecs::Entity c = h->firstChild; !c.IsNull(); ) {
-                    const ecs::Entity next = s.Get<ecs::Hierarchy>(c).next;
-                    resolveTree(c);
-                    c = next;
-                }
-        };
-        resolveTree(root);
-    }
+    // 此前运行时 spawn 的 prefab 均无脚本，该路径从未被走过）。M7a 批③ 起
+    // 引擎 PrefabCache::ResolveTreeScripts（编辑器/lemon-game 共用）
+    if (Playing() && scripts_)
+        assets::PrefabCache::ResolveTreeScripts(ActiveWorld(), s, root, *scripts_);
     // M6a 批⓪ T2：编辑态落地才解析（prefab 档可能带跨进程/改名后漂移 id；
     // Play 态 = 同进程 spawn，id 即真值，热路径零扫表）
     if (!Playing()) ResolveSpriteRefs();
@@ -538,58 +518,31 @@ ecs::Entity EditorContext::InstantiatePrefabAsset(uint64_t prefabGuid, Vec2 pos)
     return root;
 }
 
-ecs::Entity EditorContext::InstantiatePrefabJson(ecs::Scene& s, const std::string& json,
-                                                 uint64_t prefabGuid, Vec2 pos) {
-    // 无日志/无 IO/无 dirty——高频 spawn 工厂与交互路径共用（M5 清障②）
-    ecs::Entity root = SceneArchive::LoadEntityTree(s, json);
-    if (root.IsNull()) return root;
-    if (s.Has<ecs::Transform2D>(root)) s.Get<ecs::Transform2D>(root).pos = pos;
-    if (ecs::Meta* m = s.TryGet<ecs::Meta>(root)) m->prefabId = prefabGuid;
-    return root;
-}
-
 // ---- M5 清障②：Play 世界 SpawnFn 桥（Spawner/Shooter 的 prefabId → 资产实例化）----
 // 约定：Spawner.prefabId / Shooter.projectileId 的 uint32 = prefab 资产 GUID 低 32 位
 // （03 §69 组件 schema 恒 uint32；M7 烘焙引入 dense id 表时同语义替换）。进 Play 时
 // 一次性建映射 + 文本缓存（Play 世界 = 进 Play 时刻快照，资产变更不追——与
 // editSnapshot_ 同语义）。性能边界：每次 spawn 仍 parse JSON（小树几十 µs 级），
 // 怪海爆发期可用；物化模板 + 池拷贝是 03 §10 对象池的正式工作，bench-survivor
-// 实测不及格再升级。
-void EditorContext::BuildPlayPrefabCache() {
-    playPrefabCache_.clear();
-    playSpawnWarned_.clear();
-    for (const AssetEntry& e : assets_.Entries()) {
-        if (e.type != AssetType::Prefab || e.missing) continue;
-        std::ifstream f(assets_.AbsolutePath(e), std::ios::binary);
-        if (!f) continue;
-        PlayPrefabCache c;
-        c.guid = e.guid;
-        c.json.assign((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-        const uint32_t id = (uint32_t)e.guid; // 低 32 位（映射约定）
-        if (!playPrefabCache_.emplace(id, std::move(c)).second)
-            LEMON_WARN("Play prefab 映射碰撞：guid %016llx 与另一 prefab 低 32 位同值"
-                       "（id %08x 取先登记者）",
-                       (unsigned long long)e.guid, id);
+// 实测不及格再升级。M7a 批③ 起缓存本体 = 引擎 assets::PrefabCache（编辑器/
+// lemon-game 共用；编辑态源适配器在下方 EnterPlay 现场）。
+namespace {
+// AssetDatabase → PrefabCache 的源适配器（SpriteRefSource 双实现同款纪律）
+class DbPrefabSource final : public assets::PrefabSource {
+public:
+    explicit DbPrefabSource(const AssetDatabase& db) : db_(db) {}
+    void EachPrefab(const std::function<bool(uint64_t guid, const std::string& absPath)>& fn)
+        const override {
+        for (const AssetEntry& e : db_.Entries()) {
+            if (e.type != AssetType::Prefab || e.missing) continue;
+            if (!fn(e.guid, db_.AbsolutePath(e))) return;
+        }
     }
-}
 
-ecs::Entity EditorContext::SpawnPlayPrefab(ecs::Scene& s, uint32_t prefabId, Vec2 pos,
-                                           uint32_t team) {
-    if (prefabId == 0) return ecs::Entity::Null();
-    auto it = playPrefabCache_.find(prefabId);
-    if (it == playPrefabCache_.end()) {
-        // 去重告警（prefabId 错绑的 Spawner 每帧触发——不刷屏）
-        if (playSpawnWarned_.insert(prefabId).second)
-            LEMON_WARN("Play 刷怪失败：prefabId %08x 无对应 prefab 资产（应填资产 GUID "
-                       "低 32 位）",
-                       prefabId);
-        return ecs::Entity::Null();
-    }
-    ecs::Entity root = InstantiatePrefabJson(s, it->second.json, it->second.guid, pos);
-    // 队伍覆盖：spawnTeam/弹队语义优先于 prefab 源值（bench 工厂同款）
-    if (ecs::Meta* m = root.IsNull() ? nullptr : s.TryGet<ecs::Meta>(root)) m->team = team;
-    return root;
-}
+private:
+    const AssetDatabase& db_;
+};
+} // namespace
 
 // ---- M5 批③：Play 世界 clip 表（.anim JSON → ClipTable；06 §2.2 / 03 §5）----
 // 格式（M5.md §16.2 D2）：
@@ -948,72 +901,8 @@ void EditorContext::PruneSelection() {
 }
 
 // ------------------------------------------------------------- Play 沙盒 ----
-// ---- 游戏存档 IO（M5 批④ D1；M6a 批② T5 分档参数化。06 §10 防损坏三件套：
-// 版本头 + 原子改名 + .bak；三档三文件，坏档兜底按档隔离）----
-static const char* SaveFileName(uint8_t ch) {
-    switch (ecs::ClampSaveChannel(ch)) {
-    case ecs::kSaveSettings: return "settings.sav";
-    case ecs::kSaveMeta: return "meta.sav";
-    default: return "slot_0.sav";
-    }
-}
-
-std::string EditorContext::SaveFilePath(uint8_t ch) const {
-    const std::string& root = assets_.ProjectRoot();
-    return root.empty() ? std::string() : root + "/.lemon/saves/" + SaveFileName(ch);
-}
-
-bool EditorContext::WriteSaveFile(uint8_t ch, const ecs::SaveChannel& chn) {
-    namespace fs = std::filesystem;
-    const std::string path = SaveFilePath(ch);
-    if (path.empty() || chn.Count() == 0) return false;
-    std::error_code ec;
-    const fs::path p(path);
-    fs::create_directories(p.parent_path(), ec);
-    // 上一代转备份（首次落盘无 .bak 属正常）
-    if (fs::exists(p, ec))
-        fs::copy_file(p, fs::path(path + ".bak"), fs::copy_options::overwrite_existing, ec);
-    const std::vector<uint8_t> bytes = chn.Encode();
-    if (!WriteFileAtomic(path, bytes.data(), bytes.size())) { // F-04：统一原子写（含 flush 检查）
-        LEMON_WARN("存档写入失败（临时写入/改名）：%s", path.c_str());
-        return false;
-    }
-    return true;
-}
-
-void EditorContext::LoadSaveFile(uint8_t ch, ecs::SaveChannel& dst) {
-    namespace fs = std::filesystem;
-    // 坏档防线（2026-09-24 审查 F-03）：整档上限 16 MiB，超限不 slurp——
-    // 现用途 KB 级；超大文件多为损坏/误指，Decode 侧另有条目/单值上限。
-    constexpr uint64_t kMaxSaveFileBytes = 16ull << 20;
-    const std::string path = SaveFilePath(ch);
-    if (path.empty()) return; // 无项目（bench/smoke tempdir 外的裸会话）= 空通道开局
-    auto tryDecode = [&](const std::string& p) {
-        std::error_code ec;
-        if (!fs::exists(p, ec)) return false;
-        if (const uint64_t sz = fs::file_size(p, ec); ec || sz > kMaxSaveFileBytes) {
-            LEMON_WARN("存档异常（大小超 16 MiB 上限），已跳过：%s", p.c_str());
-            return false;
-        }
-        std::ifstream f(p, std::ios::binary);
-        if (!f) return false;
-        std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(f)),
-                                   std::istreambuf_iterator<char>());
-        if (!dst.Decode(bytes.data(), bytes.size())) {
-            LEMON_WARN("存档损坏，已跳过：%s", p.c_str());
-            return false;
-        }
-        return true;
-    };
-    if (tryDecode(path) || tryDecode(path + ".bak")) return; // 主档坏 → 备份兜底
-    // 旧 game.sav 惰性迁移（M6a 批② T5，仅 slot 档）：新档不存在 → 读旧名，写恒
-    // 写新名（免 rename 竞态；旧文件保留，游戏侧无感）
-    if (ch == ecs::kSaveSlot) {
-        const std::string& root = assets_.ProjectRoot();
-        const std::string legacy = root + "/.lemon/saves/game.sav";
-        if (!tryDecode(legacy)) tryDecode(legacy + ".bak");
-    }
-}
+// 游戏存档 IO 已下沉 Engine/Assets/SaveStore（M7a 批③ 搬家批）——本文件只保留
+// 装配调用（EnterPlay 载入 / ExitPlay 兜底落盘）。
 
 bool EditorContext::EnterPlay() {
     if (Playing()) return false;
@@ -1032,10 +921,14 @@ bool EditorContext::EnterPlay() {
         return false;
     }
     // M5 清障②：Play 世界刷怪工厂（Spawner/Shooter 的 prefabId 低 32 位 → prefab
-    // 资产实例化；进 Play 时刻缓存——纯运行时 World 无此桥，SpawnSystem 原告警路径保留）
-    BuildPlayPrefabCache();
+    // 资产实例化；进 Play 时刻缓存——纯运行时 World 无此桥，SpawnSystem 原告警路径
+    // 保留）。M7a 批③ 起走引擎 PrefabCache（DbPrefabSource 适配 AssetDatabase）
+    {
+        const DbPrefabSource src(assets_);
+        playPrefabs_.Build(src);
+    }
     playWorld_->SetSpawnFn([this](ecs::Scene& s, uint32_t prefabId, Vec2 pos, uint32_t team) {
-        return SpawnPlayPrefab(s, prefabId, pos, team);
+        return playPrefabs_.Spawn(s, prefabId, pos, team);
     });
     // M5 批③：clip 表（.anim 资产 → 帧映射；AnimatorSystem #13 消费）
     BuildPlayClipCache();
@@ -1044,9 +937,10 @@ bool EditorContext::EnterPlay() {
     // M6a 批② T2：配置表（.tab 资产 → 全字符串格网格；C# Lemon.Table 读）
     BuildPlayTableCache();
     // M5 批④：存档载入（进 Play 快照语义：上一局数据进通道，C# Save.Get 即读）；
-    // M6a 批② T5：三档全载（slot 含旧 game.sav 惰性迁移）
+    // M6a 批② T5：三档全载（slot 含旧 game.sav 惰性迁移）；M7a 批③ 起走引擎
+    // SaveStore（搬家非复制）
     for (uint8_t ch = 0; ch < ecs::kSaveChannelCount; ++ch)
-        LoadSaveFile(ch, playWorld_->Saves(ch));
+        assets::SaveStore::Load(assets_.ProjectRoot(), ch, playWorld_->Saves(ch));
     // M4.4 装配通路（#7）：脚本后端接入 + 场景 ScriptBox 按 className 解析挂载
     if (scripts_) {
         playWorld_->SetScriptBackend(scripts_);
@@ -1074,9 +968,10 @@ bool EditorContext::ExitPlay() {
     if (!Playing()) return false;
     const auto t0 = std::chrono::steady_clock::now();
     // M5 批④：存档兜底落盘（脚本显式 Flush 之外的保险——中断退 Play 不丢局）；
-    // M6a 批② T5：三档逐档独立落盘（空档跳过；一档失败不断链）
+    // M6a 批② T5：三档逐档独立落盘（空档跳过；一档失败不断链）；M7a 批③ 起走
+    // 引擎 SaveStore
     for (uint8_t ch = 0; ch < ecs::kSaveChannelCount; ++ch)
-        WriteSaveFile(ch, playWorld_->Saves(ch));
+        assets::SaveStore::Write(assets_.ProjectRoot(), ch, playWorld_->Saves(ch));
     // §3.4-1：弃 playWorld（两阶段销毁随 World 析构；renderable 由视口提取差集释放）
     playWorld_.reset();
     playScene_ = nullptr;

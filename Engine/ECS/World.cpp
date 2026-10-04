@@ -95,6 +95,10 @@ void World::Step(float fixedDt) {
     const float dt = fixedDt * timeScale_;
     pipeline_.RunStage(*this, *active_, SystemStage::Essential, dt);
     pipeline_.RunStage(*this, *active_, SystemStage::FixedTick, dt);
+    // M7a 批③：Extract（渲染提取）阶段补跑——零注册系统时为 no-op（编辑器视口维持
+    // 每渲染帧直调；管线驱动消费方 = 批④ lemon-game 装配 RenderExtractSystem）。
+    // 提取不写 ECS 模拟态 → StateHash/金回放零影响
+    pipeline_.RunStage(*this, *active_, SystemStage::Extract, dt);
     ++tick_;
 }
 

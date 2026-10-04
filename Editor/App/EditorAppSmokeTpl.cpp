@@ -260,7 +260,7 @@ void EditorApp::SmokeTplSample(uint64_t frame) {
         // M6c 批④：音频链采样——装载恰 7（一次）+ 暂停屏在场期声部数（逐帧
         // 覆写 = 恢复前末值）+ 暂停解除后首帧声部数（挂起续响：BGM 不死）
         if (g_tplSmoke.audMount < 0)
-            g_tplSmoke.audMount = (int)audioClips_.size();
+            g_tplSmoke.audMount = (int)audioMount_.LoadedCount();
         static const char* const kPauseDocTpl = "Assets/UI/pause.rml";
         if (gameUi_ && gameUi_->IsDocumentShown(kPauseDocTpl)) {
             g_tplSmoke.audPauseVoices = audio_.ActiveVoiceCount();

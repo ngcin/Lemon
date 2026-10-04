@@ -15,7 +15,9 @@
 #include <vector>
 
 #include "Audio/AudioEngine.h"
+#include "Audio/AudioMount.h" // audioMount_（M7a 批③ 下沉引擎件）
 #include "Assets/AssetGpuCache.h"
+#include "Renderer/CameraFollow.h" // gameCamFollow_（M7a 批③ 下沉引擎件）
 #include "Assets/FileWatcher.h"
 #include "EditorContext.h"
 #include "Panels/Panel.h"
@@ -371,7 +373,9 @@ private:
     std::unique_ptr<class ViewportRenderer> viewport_;
     std::unique_ptr<::lemon::ui::UiSubsystem> gameUi_; // 游戏 UI 层（批③a ADR-014；null = 初始化失败降级）
     audio::AudioEngine audio_; // M6c 竖切批：设备/混音（静音降级一等公民，ADR-015 M4）
-    std::unordered_map<uint64_t, uint32_t> audioClips_; // 资产 GUID → clipId（装载产物）
+    // M7a 批③：装载/烤制/guid 表本体 = 引擎 audio::AudioMount（编辑器/lemon-game
+    // 共用；音频成员序 = audio_ 先于 audioMount_（构造引用依赖））
+    audio::AudioMount audioMount_{audio_};
     // M6c 批①：试听声部（Edit 态可响——EnsureClipLoaded 按需现烤现载）+ 后台烤制
     //（Rescan/开项目增量 → 工作线程；EnterPlay 只兜缺漏——消除竖切批 230ms 同步顿）
     uint64_t previewGuid_ = 0;
@@ -443,11 +447,8 @@ private:
     bool gvKeyWasDown_[64] = {}; // UiKey 差分（边沿转发 RmlUi；枚举值 < 64）
     char smokeUiEvText_[48] = {}; // 批③c：uiev 回读快照（Play 中的 RtUi 槽——退 Play
                                   // 后 play world 即毁，终帧前捕获）
-    bool gameFollowActive_ = false; // 游戏相机跟随已吸附（UpdateGameCameraFollow）
-    // #27：跟随目标缓存（逐帧轻校验，失效才全池重扫——原每帧线性全扫）
-    ecs::Entity camFollowEnt_ = ecs::Entity::Null();
-    ecs::Entity playerFollowEnt_ = ecs::Entity::Null();
-    ecs::Entity scriptedFollowEnt_ = ecs::Entity::Null();
+    // #27 目标缓存 + 吸附位已随 renderer::CameraFollowState 下沉引擎（M7a 批③）
+    renderer::CameraFollowState gameCamFollow_;
     EditTool tool_ = EditTool::Move;
     // 网格显示与吸附解耦（手测第五轮）：旧 gridSnap_ 一flag两用——想看网格就被迫
     // 吃 8px/15°/0.25 全套吸附台阶（= "8 向拖动不丝滑"主因）。Godot/Unity 语义：

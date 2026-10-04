@@ -353,7 +353,8 @@ void TestBatchSystem() {
         std::printf("script-tests: [diag] scripting: %s", info);
     }
     std::printf("script-tests: [diag] batch systems = %u\n", g_sh.BatchSystemCount());
-    Expect(g_sh.BatchSystemCount() == 2, "two batch systems registered");
+    Expect(g_sh.BatchSystemCount() == 3,
+           "three batch systems registered (+D5 BurstSpawn, M7a b3)");
 
     auto runSim = [&](uint64_t seed) {
         WorldDesc d;
@@ -395,6 +396,39 @@ void TestBatchSystem() {
     Expect(h1 == h2, "script batch deterministic (same seed, same hash)");
     uint64_t h3 = runSim(9999);
     (void)h3; // 不同种子路径仅执行（哈希值本身与种子无强绑定，不做不等断言）
+
+    // ---- M7a 批③ D5 护栏（评审 §D5）：批量帧窗口内爆量 Spawn → 池重分配 →
+    // stale fail-stop。三断言：置位计数 >0 / 生成照常落地（fail-stop 跳的是剩余
+    // 块不是生成本身）/ 后续帧零误报 + 世界稳定。
+    {
+        using namespace lemon::ecs;
+        lemon::scripting::ResetBatchStaleMarkCount();
+        WorldDesc d;
+        d.threadCount = 1;
+        d.seed = 4242;
+        World w(d);
+        Scene& s = w.CreateScene("D5Burst");
+        w.SetActiveScene(&s);
+        w.SetScriptBackend(&g_sh);
+        w.Pipeline().AddSystem(std::make_unique<CSharpBatchSystem>());
+        w.Pipeline().ResolveOrder();
+        // 70 个标记实体（Transform2D+StatusEffects）= 2 个满步长块——BurstSpawn
+        // 首块首实体爆 1000 只，Transform2D 池必越容量重分配（首块之后的块 =
+        // 悬垂跳过对象）
+        for (int i = 0; i < 70; i++) {
+            Entity e = s.Create();
+            s.Emplace<Transform2D>(e, Transform2D{{(float)i, 0}});
+            s.Emplace<StatusEffects>(e);
+        }
+        w.Step(0.25f);
+        Expect(lemon::scripting::BatchStaleMarkCount() >= 1,
+               "D5: in-window burst spawn marks batch stale");
+        Expect(s.AliveCount() == 70 + 3000, "D5: spawns land, remaining blocks skipped not spawned");
+        w.Step(0.25f);
+        w.Step(0.25f);
+        Expect(lemon::scripting::BatchStaleMarkCount() == 1, "D5: subsequent frames clean");
+        Expect(s.AliveCount() == 70 + 3000, "D5: world stable after stale frame");
+    }
 }
 
 

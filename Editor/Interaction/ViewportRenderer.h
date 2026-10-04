@@ -20,6 +20,7 @@
 #include "Renderer/Camera2D.h"
 #include "Renderer/Renderable.h"
 #include "Renderer/RHI.h"
+#include "Renderer/SceneExtractor.h" // extractor_（M7a 批③ 下沉引擎件）
 #include "Renderer/SpriteBatcher.h"
 
 namespace lemon::editor {
@@ -175,18 +176,8 @@ private:
 
     Camera2D sceneCam_{}; // 编辑相机（02 §3.5：与游戏相机同类型双实例，输入来源分离 #13）
     Camera2D gameCam_{};  // 游戏相机（M4.3 Play 中可被脚本驱动；编辑态固定默认位）
-    uint64_t lastSceneStamp_ = 0;
-    uint64_t extractEpoch_ = 0; // ExtractScene 调用计数（差集判定：lastSeen != 当前纪元 → 释放）
-
-    // Entity → renderable 映射（2026-09-26 渲染提取批：unordered_map → 位索引
-    // 数组。原 map find 是五万场 ExtractScene 的单项大头；数组 = Scene::EnttIndex
-    // 直下标 + EnttVersion 防回收串槽。容量随实体池只增；稳态零分配）
-    struct SlotMap {
-        uint32_t rid = 0;      // 0 = 空
-        uint32_t version = 0;  // 写入时实体 version（校验防串）
-        uint64_t lastSeen = 0;
-    };
-    std::vector<SlotMap> ridBySlot_;
+    // 提取态（槽位映射/场景戳/纪元）随本体下沉 renderer::SceneExtractor（M7a 批③）
+    renderer::SceneExtractor extractor_;
     std::vector<SpritePacket> overlay_;                         // SceneView 专属（面板注入）
     std::vector<SpritePacket> textBuf_, fxBarBuf_; // 视口包复用缓冲（提取段零分配；
                                                    // Bake 消费完即弃，串行双视口单缓冲）

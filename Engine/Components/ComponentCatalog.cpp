@@ -392,6 +392,18 @@ void ForEachComponent(Scene& s, void (*cb)(Entity, const void*, void*), void* ct
             cb(Scene::FromEntt(ent), (const void*)&comp, ctx);
     }
 }
+// D5 批量帧护栏（M7a 批③；评审 §D5）：池 dense 实体数组基址——越容量重分配时
+// 搬移 = gather 指针悬垂的精确判据（容量余量内 emplace 不动基址）。空池可能为
+// nullptr（nullptr → 非 null 同样是搬移，判定成立）
+template <typename C>
+const void* PoolDataBase(Scene& s) {
+    return s.Pool<C>().data();
+}
+// D5 护栏第一层：gather 前容量预留——窗口内结构操作在余量内零重分配（指针免疫）
+template <typename C>
+void ReservePool(Scene& s, uint32_t n) {
+    s.Pool<C>().reserve(n);
+}
 
 #define REGISTER(Name, fields)                                                       \
     reg.Register({#Name, 0, (uint16_t)(sizeof(fields) / sizeof(FieldMeta)),           \
@@ -399,21 +411,24 @@ void ForEachComponent(Scene& s, void (*cb)(Entity, const void*, void*), void* ct
                   HasComponent<Name>, EmplaceComponent<Name>, ReadComponent<Name>,    \
                   GetComponent<Name>,                                                \
                   ForEachComponent<Name>, RemoveComponent<Name>,                      \
-                  CountComponent<Name>, ForEachComponentRange<Name>, ConstructDefault<Name>});
+                  CountComponent<Name>, ForEachComponentRange<Name>,                  \
+                  ConstructDefault<Name>, PoolDataBase<Name>, ReservePool<Name>});
 #define REGISTER_ED(Name, fields, ed)                                                \
     reg.Register({#Name, 0, (uint16_t)(sizeof(fields) / sizeof(FieldMeta)),           \
                   (uint32_t)sizeof(Name), fields, ed, nullptr,                        \
                   HasComponent<Name>, EmplaceComponent<Name>, ReadComponent<Name>,    \
                   GetComponent<Name>,                                                \
                   ForEachComponent<Name>, RemoveComponent<Name>,                      \
-                  CountComponent<Name>, ForEachComponentRange<Name>, ConstructDefault<Name>});
+                  CountComponent<Name>, ForEachComponentRange<Name>,                  \
+                  ConstructDefault<Name>, PoolDataBase<Name>, ReservePool<Name>});
 #define REGISTER_SEG(Name, fields, seg)                                              \
     reg.Register({#Name, 0, (uint16_t)(sizeof(fields) / sizeof(FieldMeta)),           \
                   (uint32_t)sizeof(Name), fields, nullptr, &seg,                      \
                   HasComponent<Name>, EmplaceComponent<Name>, ReadComponent<Name>,    \
                   GetComponent<Name>,                                                \
                   ForEachComponent<Name>, RemoveComponent<Name>,                      \
-                  CountComponent<Name>, ForEachComponentRange<Name>, ConstructDefault<Name>});
+                  CountComponent<Name>, ForEachComponentRange<Name>,                  \
+                  ConstructDefault<Name>, PoolDataBase<Name>, ReservePool<Name>});
 // M5 批②：编辑器元数据 + 数组段并持（WaveDirector 首例）
 #define REGISTER_ED_SEG(Name, fields, ed, seg)                                       \
     reg.Register({#Name, 0, (uint16_t)(sizeof(fields) / sizeof(FieldMeta)),           \
@@ -421,7 +436,8 @@ void ForEachComponent(Scene& s, void (*cb)(Entity, const void*, void*), void* ct
                   HasComponent<Name>, EmplaceComponent<Name>, ReadComponent<Name>,    \
                   GetComponent<Name>,                                                \
                   ForEachComponent<Name>, RemoveComponent<Name>,                      \
-                  CountComponent<Name>, ForEachComponentRange<Name>, ConstructDefault<Name>});
+                  CountComponent<Name>, ForEachComponentRange<Name>,                  \
+                  ConstructDefault<Name>, PoolDataBase<Name>, ReservePool<Name>});
 
 } // namespace
 

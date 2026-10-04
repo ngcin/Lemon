@@ -20,6 +20,9 @@
 #include "Assets/AssetIndex.h"   // M7a 批②：运行时只读索引
 #include "Assets/ProjectFile.h"  // M7a 批②：project.lemon 只读解析
 #include "Assets/SpriteRefs.h"   // M7a 批②：guid 归一引擎本体
+#include "Assets/PrefabCache.h" // M7a 批③：Play 世界 Prefab 工厂缓存
+#include "Renderer/CameraFollow.h"    // M7a 批③：相机跟随纯函数
+#include "Renderer/SceneExtractor.h"  // M7a 批③：ECS→渲染提取下沉件
 #include "Core/Guid.h"
 #include "Core/Math.h"
 #include "Components/AudioComponents.h" // M6c 批②：AudioSource
@@ -4077,6 +4080,7 @@ void TestSpriteRefsEngine() {
 // ---- M4.4 测试面：资产数据库 / 实体子树档案 / ScriptBox 档案段 / Atlas 页热更新 ----
 
 #include "Assets/AssetDatabase.h"
+#include "Assets/SaveStore.h" // M7a 批③：SaveStore 直测（原 EditorContext 三方法已下沉）
 #include "Assets/AnimAsset.h"
 #include "Assets/ControllerAsset.h"
 #include "Assets/TableAsset.h"
@@ -4416,24 +4420,24 @@ void TestAssetPathContainment() {
 // 旧 game.sav 惰性迁移（写恒写新名）+ 坏档兜底按档隔离 + 16 MiB 上限按档 ----
 void TestSaveChannelSplits() {
     namespace fs = std::filesystem;
-    using lemon::editor::EditorContext;
     using ecs::SaveChannel;
     using namespace lemon::ecs;
+    using lemon::assets::SaveStore;
 
     const std::string tag = std::to_string(::getpid());
     const fs::path root = fs::temp_directory_path() / ("lemon-test-savesplit-" + tag);
     std::error_code ec;
     fs::remove_all(root, ec);
+    const std::string rootStr = root.string();
 
-    EditorContext ctx;
-    Expect(ctx.Assets().OpenProject(root.string(), 100), "open project");
-
-    // ① 三档路径独立；越界 ch 钳 slot_0（防御面——编辑器循环只传常量不触发）
-    Expect(ctx.SaveFilePath(kSaveSlot).ends_with("slot_0.sav") &&
-               ctx.SaveFilePath(kSaveSettings).ends_with("settings.sav") &&
-               ctx.SaveFilePath(kSaveMeta).ends_with("meta.sav"),
+    // ① 三档路径独立；越界 ch 钳 slot_0（防御面——装载循环只传常量不触发）；
+    //    空 root = 空串（无项目裸会话全链 no-op 口径）
+    Expect(SaveStore::FilePath(rootStr, kSaveSlot).ends_with("slot_0.sav") &&
+               SaveStore::FilePath(rootStr, kSaveSettings).ends_with("settings.sav") &&
+               SaveStore::FilePath(rootStr, kSaveMeta).ends_with("meta.sav"),
            "three channel file paths");
-    Expect(ctx.SaveFilePath(77).ends_with("slot_0.sav"), "oob ch clamps to slot_0");
+    Expect(SaveStore::FilePath(rootStr, 77).ends_with("slot_0.sav"), "oob ch clamps to slot_0");
+    Expect(SaveStore::FilePath("", kSaveSlot).empty(), "empty root -> empty path");
 
     // ② 三档落盘互不覆盖 + 空通道跳过 + 回读独立
     {
@@ -4441,14 +4445,15 @@ void TestSaveChannelSplits() {
         slot.Set("run.kills", "5", 1);
         SaveChannel meta;
         meta.Set("vs.best", "77", 2);
-        Expect(ctx.WriteSaveFile(kSaveSlot, slot), "slot written");
-        Expect(ctx.WriteSaveFile(kSaveMeta, meta), "meta written");
-        Expect(!ctx.WriteSaveFile(kSaveSettings, SaveChannel{}), "empty channel skipped");
+        Expect(SaveStore::Write(rootStr, kSaveSlot, slot), "slot written");
+        Expect(SaveStore::Write(rootStr, kSaveMeta, meta), "meta written");
+        Expect(!SaveStore::Write(rootStr, kSaveSettings, SaveChannel{}), "empty channel skipped");
+        Expect(!SaveStore::Write("", kSaveSlot, slot), "no project -> write no-op");
         Expect(fs::exists(root / ".lemon/saves/slot_0.sav", ec), "slot file exists");
         Expect(fs::exists(root / ".lemon/saves/meta.sav", ec), "meta file exists");
         Expect(!fs::exists(root / ".lemon/saves/settings.sav", ec), "settings not written");
         SaveChannel back;
-        ctx.LoadSaveFile(kSaveMeta, back);
+        SaveStore::Load(rootStr, kSaveMeta, back);
         Expect(back.Count() == 1 && back.GetLen("vs.best") == 2, "meta roundtrip");
     }
 
@@ -4462,16 +4467,14 @@ void TestSaveChannelSplits() {
             const std::vector<uint8_t> b = legacy.Encode();
             f.write((const char*)b.data(), (std::streamsize)b.size());
         }
-        EditorContext ctx2;
-        Expect(ctx2.Assets().OpenProject(root.string(), 100), "reopen project");
         SaveChannel back;
-        ctx2.LoadSaveFile(kSaveSlot, back);
+        SaveStore::Load(rootStr, kSaveSlot, back);
         Expect(back.Count() == 1 && back.GetLen("old.key") == 2, "legacy game.sav lazy-migrated");
-        Expect(ctx2.WriteSaveFile(kSaveSlot, back), "migrated slot written to new name");
+        Expect(SaveStore::Write(rootStr, kSaveSlot, back), "migrated slot written to new name");
         Expect(fs::exists(root / ".lemon/saves/slot_0.sav", ec), "new name file back");
         Expect(fs::exists(root / ".lemon/saves/game.sav", ec), "legacy file untouched");
         SaveChannel st; // settings 无旧名对应 → 不受迁移影响
-        ctx2.LoadSaveFile(kSaveSettings, st);
+        SaveStore::Load(rootStr, kSaveSettings, st);
         Expect(st.Count() == 0, "settings independent of legacy");
     }
 
@@ -4494,12 +4497,10 @@ void TestSaveChannelSplits() {
             std::ofstream f(root / ".lemon/saves/meta.sav", std::ios::binary | std::ios::trunc);
             f << "garbage-too";
         }
-        EditorContext ctx3;
-        Expect(ctx3.Assets().OpenProject(root.string(), 100), "reopen project 3");
         SaveChannel st, mt, sl;
-        ctx3.LoadSaveFile(kSaveSettings, st);
-        ctx3.LoadSaveFile(kSaveMeta, mt);
-        ctx3.LoadSaveFile(kSaveSlot, sl);
+        SaveStore::Load(rootStr, kSaveSettings, st);
+        SaveStore::Load(rootStr, kSaveMeta, mt);
+        SaveStore::Load(rootStr, kSaveSlot, sl);
         Expect(st.Count() == 1 && st.GetLen("bak.key") == 1, "settings bad main -> bak fallback");
         Expect(mt.Count() == 0, "meta corrupt no bak -> empty start");
         Expect(sl.GetLen("old.key") == 2, "slot unaffected by other channels' corruption");
@@ -4514,14 +4515,243 @@ void TestSaveChannelSplits() {
             const std::vector<char> big((16u << 20) + 1, 'x');
             f.write(big.data(), (std::streamsize)big.size());
         }
-        EditorContext ctx4;
-        Expect(ctx4.Assets().OpenProject(root.string(), 100), "reopen project 4");
         SaveChannel sl;
-        ctx4.LoadSaveFile(kSaveSlot, sl);
+        SaveStore::Load(rootStr, kSaveSlot, sl);
         Expect(sl.GetLen("old.key") == 2, "oversize slot skipped, legacy migration takes over");
     }
 
     fs::remove_all(root, ec);
+}
+// ---- M7a 批③：Play 装配下沉件单测 ----
+
+// PrefabCache：低 32 索引建账 + Spawn 语义（树装载/pos 覆盖/team 覆盖/prefabId
+// 回链/未命中 Null）+ scripts 缺席零挂载（槽保持 typeId=-1 不炸）
+class TestPrefabSource final : public lemon::assets::PrefabSource {
+public:
+    std::vector<std::pair<uint64_t, std::string>> items;
+    void EachPrefab(const std::function<bool(uint64_t guid, const std::string& absPath)>& fn)
+        const override {
+        for (const auto& [g, p] : items)
+            if (!fn(g, p)) return;
+    }
+};
+
+void TestPrefabCachePlaySpawn() {
+    using namespace lemon::ecs;
+    namespace fs = std::filesystem;
+    const std::string tag = std::to_string(::getpid());
+    const fs::path root = fs::temp_directory_path() / ("lemon-test-prefabc-" + tag);
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root, ec);
+
+    // 源 prefab：父子两实体（带 tag/Meta），SceneArchive 真源序列化
+    std::string jsonA, jsonB;
+    {
+        World w;
+        Scene& s = w.CreateScene("src");
+        Entity p = s.Create();
+        s.Emplace<Transform2D>(p, Transform2D{{1, 2}});
+        Meta& mp = s.Emplace<Meta>(p);
+        std::snprintf(mp.tag, sizeof(mp.tag), "Parent");
+        Entity c = s.Create();
+        s.Emplace<Transform2D>(c, Transform2D{{5, 6}});
+        Expect(SceneSetParent(s, c, p), "source parent-child linked");
+        jsonA = SceneArchive::SaveEntityTree(s, p);
+        Entity solo = s.Create();
+        s.Emplace<Transform2D>(solo, Transform2D{{9, 9}});
+        Meta& ms = s.Emplace<Meta>(solo);
+        std::snprintf(ms.tag, sizeof(ms.tag), "Solo");
+        jsonB = SceneArchive::SaveEntityTree(s, solo);
+        Expect(!jsonA.empty() && !jsonB.empty(), "prefab source serialized");
+    }
+    const uint64_t guidA = 0x1111222233334444ull, guidB = 0xaaaabbbbccccddddull;
+    {
+        fs::path fa = root / "a.prefab", fb = root / "b.prefab";
+        { std::ofstream f(fa, std::ios::binary); f << jsonA; }
+        { std::ofstream f(fb, std::ios::binary); f << jsonB; }
+    }
+    TestPrefabSource src;
+    src.items.push_back({guidA, (root / "a.prefab").string()});
+    src.items.push_back({guidB, (root / "b.prefab").string()});
+
+    lemon::assets::PrefabCache cache;
+    Expect(cache.Empty(), "cache starts empty");
+    cache.Build(src);
+    Expect(cache.Size() == 2, "two prefabs cached");
+
+    World w;
+    Scene& s = w.CreateScene("play");
+    const uint32_t idA = (uint32_t)guidA, idB = (uint32_t)guidB;
+    // Spawn：树装载 + root pos 覆盖 + prefabId 回链 + team 覆盖
+    Entity rootE = cache.Spawn(s, idA, Vec2{100, 200}, 7);
+    Expect(!rootE.IsNull() && s.Alive(rootE), "spawn lands entity tree");
+    Expect(s.Get<Transform2D>(rootE).pos == Vec2(100, 200), "root pos overridden");
+    Expect(s.Get<Meta>(rootE).prefabId == guidA, "prefabId backlink full guid");
+    Expect(s.Get<Meta>(rootE).team == 7, "team overridden");
+    const Hierarchy* h = s.TryGet<Hierarchy>(rootE);
+    Expect(h && !h->firstChild.IsNull() && s.Alive(h->firstChild), "child in tree");
+    Expect(s.Get<Transform2D>(h->firstChild).pos == Vec2(5, 6), "child keeps local pos");
+    // 未命中：Null + 重复未命中不炸（告警去重内部态）
+    Expect(cache.Spawn(s, 0xdeadbeef, Vec2{}, 0).IsNull(), "unknown id -> null");
+    Expect(cache.Spawn(s, 0xdeadbeef, Vec2{}, 0).IsNull(), "repeat unknown still null");
+    // 裸 InstantiateJson：无缓存直用（交互路径）
+    Entity solo = lemon::assets::PrefabCache::InstantiateJson(s, jsonB, guidB, Vec2{-1, -2});
+    Expect(!solo.IsNull() && s.Get<Transform2D>(solo).pos == Vec2(-1, -2) &&
+               s.Get<Meta>(solo).prefabId == guidB,
+           "InstantiateJson direct");
+    // 空场景快照语义：Clear 后未命中
+    cache.Clear();
+    Expect(cache.Spawn(s, idB, Vec2{}, 0).IsNull(), "cleared cache -> null");
+    // scripts 缺席（nullptr）路径 = Spawn 本就不解析；ResolveTreeScripts 无宿主
+    // 不可测（ScriptHost 构造需 CLR）——编辑器/冒烟链覆盖
+    (void)idB;
+    fs::remove_all(root, ec);
+}
+
+// 相机跟随：优先级 Camera > Player > 脚本实体；首帧吸附 + 刚性跟随 + 目标死亡
+// 重扫 + Reset 复位（无 GPU 纯逻辑）
+void TestCameraFollowCore() {
+    using namespace lemon::ecs;
+    World w;
+    Scene& s = w.CreateScene("cf");
+    w.SetActiveScene(&s);
+    renderer::Camera2D cam{};
+    cam.center = {7, 7};
+    renderer::CameraFollowState st{};
+    Vec2 out{9, 9};
+    Expect(!renderer::UpdateCameraFollow(s, cam, st, &out) && cam.center == Vec2(7, 7),
+           "no target keeps position");
+    auto mk = [&](const char* tag, Vec2 pos) {
+        Entity e = s.Create();
+        s.Emplace<Transform2D>(e, Transform2D{pos});
+        Meta& m = s.Emplace<Meta>(e);
+        std::snprintf(m.tag, sizeof(m.tag), "%s", tag);
+        return e;
+    };
+    Entity player = mk("Player", {100, 50});
+    Expect(renderer::UpdateCameraFollow(s, cam, st, &out) && out == Vec2(100, 50) &&
+               cam.center == Vec2(100, 50) && st.active,
+           "player followed, first-frame snap");
+    s.Get<Transform2D>(player).pos = {200, 60};
+    Expect(renderer::UpdateCameraFollow(s, cam, st, &out) && cam.center == Vec2(200, 60),
+           "rigid follow tracks target");
+    Entity camEnt = mk("Camera", {1, 1});
+    Expect(renderer::UpdateCameraFollow(s, cam, st, &out) && cam.center == Vec2(1, 1),
+           "camera tag wins over player");
+    // 目标死亡（轻校验失效 → 重扫回 Player）
+    s.Destroy(camEnt);
+    s.CommitDestroys();
+    Expect(renderer::UpdateCameraFollow(s, cam, st, &out) && cam.center == Vec2(200, 60),
+           "dead target rescans to next priority");
+    // 脚本实体兜底：无 tag 实体挂 ScriptBox（player 已在 → 不触发；另建世界验证）
+    {
+        World w2;
+        Scene& s2 = w2.CreateScene("cf2");
+        w2.SetActiveScene(&s2);
+        Entity sc = s2.Create();
+        s2.Emplace<Transform2D>(sc, Transform2D{{30, 40}});
+        s2.Emplace<scripting::ScriptBox>(sc);
+        renderer::Camera2D cam2{};
+        renderer::CameraFollowState st2{};
+        Expect(renderer::UpdateCameraFollow(s2, cam2, st2, nullptr) &&
+                   cam2.center == Vec2(30, 40),
+               "scripted entity fallback target");
+    }
+    // Reset：回默认位 + 态清零 + 幂等
+    Expect(renderer::ResetCameraFollow(cam, st) && cam.center == Vec2(640, 360) && !st.active,
+           "reset restores default center");
+    Expect(!renderer::ResetCameraFollow(cam, st), "second reset is no-op");
+}
+
+// 提取下沉件：建槽/世界变换/禁用差集释放/悬空 spriteId 跳过/场景换代全清
+void TestSceneExtractorCore() {
+    using namespace lemon::ecs;
+    renderer::AtlasRegistry atlas;
+    atlas.RegisterAtlas(0, rhi::Texture{}, 64, 64);
+    const uint32_t sid = atlas.AddSprite(0, 0, 0, 8, 8);
+    Expect(atlas.IsValidSprite(sid), "sprite registered");
+    renderer::RenderableManager rm;
+    renderer::SceneExtractor ex;
+    World w;
+    Scene& s = w.CreateScene("ex");
+    w.SetActiveScene(&s);
+    Entity e = s.Create();
+    s.Emplace<Transform2D>(e, Transform2D{{10, 20}});
+    SpriteRenderer& sr = s.Emplace<SpriteRenderer>(e);
+    sr.spriteId = sid; // flags 默认 kSrEnabled
+    ex.Extract(s, atlas, rm);
+    Expect(rm.AliveCount() == 1, "extract creates renderable");
+    // 悬空 spriteId：跳过不建
+    Entity d = s.Create();
+    s.Emplace<Transform2D>(d, Transform2D{{0, 0}});
+    SpriteRenderer& sr2 = s.Emplace<SpriteRenderer>(d);
+    sr2.spriteId = 99999;
+    ex.Extract(s, atlas, rm);
+    Expect(rm.AliveCount() == 1, "dangling sprite skipped");
+    // 禁用：差集释放（含悬空那个——本就未建）
+    sr.flags &= (uint8_t)~kSrEnabled;
+    ex.Extract(s, atlas, rm);
+    Expect(rm.AliveCount() == 0, "disabled released by epoch diff");
+    sr.flags |= kSrEnabled;
+    ex.Extract(s, atlas, rm);
+    Expect(rm.AliveCount() == 1, "re-enabled re-created");
+    // 场景换代（Scene 指针变化）→ 映射全失效：新空场景提取 = 0 存活
+    Scene& s2 = w.CreateScene("ex2");
+    ex.Extract(s2, atlas, rm);
+    Expect(rm.AliveCount() == 0, "scene switch releases all");
+    // 层级世界变换：父动子随（ComputeWorldTransform 消费端）
+    Entity parent = s.Create();
+    s.Emplace<Transform2D>(parent, Transform2D{{100, 0}});
+    Entity child = s.Create();
+    s.Emplace<Transform2D>(child, Transform2D{{10, 0}});
+    Expect(SceneSetParent(s, child, parent), "hierarchy link");
+    SpriteRenderer& csr = s.Emplace<SpriteRenderer>(child);
+    csr.spriteId = sid;
+    ex.Extract(s, atlas, rm);
+    Expect(rm.AliveCount() >= 1, "hierarchy extracted");
+    // 位置正确性经 rm.Extract(atlas, 1.0f) 包回读（alpha=1 无插值）
+    rm.SetViewport(Vec2{0, 0}, 400, 400, 16);
+    // 包内字段为渲染侧内部布局——以“父子两实体均可见”为断言面（位置数值归
+    // ViewportRenderer 既有像素防线，此处锁提取语义）
+    auto pk = rm.Extract(atlas, 1.0f);
+    Expect(pk.size() >= 1, "hierarchy sprites visible in packet");
+}
+
+// poolDataFn（D5 基础）：全组件可判 + 容量内基址不动 + 越容量搬移
+void TestPoolDataStable() {
+    using namespace lemon::ecs;
+    auto& reg = ComponentRegistry::Instance();
+    for (uint16_t id = 0; id < reg.Count(); ++id) {
+        Expect(reg.At(id).poolDataFn != nullptr, "poolDataFn registered for all");
+    }
+    const ComponentMeta* tfm = reg.Find("Transform2D");
+    Expect(tfm && tfm->poolDataFn, "transform poolDataFn");
+    World w;
+    Scene& s = w.CreateScene("pd");
+    w.SetActiveScene(&s);
+    Entity e0 = s.Create();
+    s.Emplace<Transform2D>(e0, Transform2D{{0, 0}});
+    Expect(tfm->poolDataFn(s) != nullptr, "pool base valid after first emplace");
+    // 双观察式（与 entt 扩容策略无关）：连续 emplace 中应存在"基址稳定段"
+    //（容量余量内，D5 零误伤的机制保证）与随后的"搬移拍"（越容量重分配）
+    const void* prev = tfm->poolDataFn(s);
+    int stableRun = 0;
+    bool sawStable = false, movedAfterStable = false;
+    for (int i = 0; i < 100000 && !movedAfterStable; i++) {
+        Entity e = s.Create();
+        s.Emplace<Transform2D>(e, Transform2D{{0, 0}});
+        const void* cur = tfm->poolDataFn(s);
+        if (cur == prev) {
+            if (++stableRun >= 3) sawStable = true; // 连续 3 次不动 = 稳定段实证
+        } else {
+            if (sawStable) movedAfterStable = true; // 稳定段后的搬移拍
+            stableRun = 0;
+        }
+        prev = cur;
+    }
+    Expect(sawStable, "within-capacity stable run observed");
+    Expect(movedAfterStable, "over-capacity emplace moves pool base");
 }
 
 // ---- M6a 批② T1：CSV 解析 + .tab 表格资产序列化（ADR-012 D1）----
@@ -7008,6 +7238,10 @@ int main() {
     TestDestroyQueueTagLifecycle();
     TestSaveChannelHardening();
     TestSaveChannelSplits(); // M6a 批② T5：三档三文件 + 惰性迁移 + 坏档按档隔离
+    TestPrefabCachePlaySpawn(); // M7a 批③：Play 世界 Prefab 工厂缓存下沉件
+    TestCameraFollowCore();    // M7a 批③：相机跟随纯函数下沉件
+    TestSceneExtractorCore();  // M7a 批③：ECS→渲染提取下沉件
+    TestPoolDataStable();      // M7a 批③ D5：池基址护栏基础
     TestDestroyNotifyWiring();
     TestWorldStepWithoutScene();
     TestVerifyEntityRecycleAndVersion();

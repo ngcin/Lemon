@@ -231,7 +231,8 @@ public:
     /// 安装 03 §4 的 16 系统默认管线（注册序 = 表序 = RNG 子流 id）
     void InstallDefaultSystems();
 
-    /// 固定步长模拟步：Essential → FixedTick → tick++（Extract 阶段 M4 渲染侧驱动）
+    /// 固定步长模拟步：Essential → FixedTick → Extract → tick++（M7a 批③ 起补跑
+    /// Extract 阶段——零注册系统 = no-op；首个真实现见 renderer::RenderExtractSystem）
     void Step(float fixedDt);
 
     uint64_t TickIndex() const { return tick_; }

@@ -10,6 +10,9 @@ public static class GameMain
     {
         Lemon.Scripting.Register(new AddVelocitySystem());
         Lemon.Scripting.Register(new AgingSystem());
+        // D5 护栏负例（M7a 批③）：批量遍历内爆量 Spawn → stale fail-stop（表尾
+        // 注册——既有系统序/RNG 子流零扰动）
+        Lemon.Scripting.Register(new BurstSpawnSystem());
         // M3-4：事件订阅 → 收到 Hit 时回推 Custom（验收事件双向）
         Lemon.Events.Subscribe(Lemon.Interop.GameEvent.Hit, m =>
             Lemon.Events.Push(Lemon.Interop.GameEvent.Custom, 42, m.Src, m.Dst));
@@ -181,6 +184,28 @@ public sealed class AgingSystem : IForEachSystem
     {
         var p = chunk.Span<Projectile>();
         for (int i = 0; i < chunk.Length; i++) p[i].Age += 0.25f;
+    }
+}
+
+/// <summary>D5 护栏负例（M7a 批③；评审 §D5）：批量遍历内爆量 Spawn——首次
+/// ForEach 触发 1000 只，必然越过 Transform2D 池容量（重分配 → 已收集组件指针
+/// 悬垂）。native 侧应置 BatchSystemFrame.stale、跳过本帧剩余块并红字指路；
+/// 进程不崩、后续帧照常。查询带 StatusEffects 标记 = 既有 script-tests/编辑器
+/// --script 冒烟场景（无此组件）零波及。</summary>
+public sealed class BurstSpawnSystem : IForEachSystem
+{
+    private static bool _fired; // 进程（域）一次：后续帧照常 tick 的阴性对照
+
+    public string Name => "BurstSpawn";
+    public Query Query => Query.With<Transform2D, StatusEffects>();
+
+    public unsafe void ForEach(in Chunk chunk)
+    {
+        if (_fired) return;
+        _fired = true;
+        // 3000 > 结构余量 1024：第二层兜底必触发（第一层预留内 = 合法零触发）
+        for (int i = 0; i < 3000; i++)
+            Lemon.Instantiate.Spawn(0, new Lemon.Vec2(i * 4f, 0f));
     }
 }
 

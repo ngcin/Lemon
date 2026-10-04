@@ -14,8 +14,11 @@ add_library(lemon-engine STATIC
   Assets/AnimAsset.cpp
   Assets/ControllerAsset.cpp
   Assets/TableAsset.cpp
+  Assets/PrefabCache.cpp
+  Assets/SaveStore.cpp
   Audio/AudioChannel.cpp
   Audio/AudioEngine.cpp
+  Audio/AudioMount.cpp
   Audio/BakedClip.cpp
   Audio/MiniAudioImpl.c
   ECS/Hierarchy.cpp
@@ -43,7 +46,10 @@ add_library(lemon-engine STATIC
   Renderer/SpriteBatcher.cpp
   Renderer/Particles.cpp
   Renderer/BitmapFont.cpp
+  Renderer/CameraFollow.cpp
+  Renderer/SceneExtractor.cpp
   Ui/SdlTextInputHandler.cpp
+  Ui/UiMount.cpp
   Ui/UiSubsystem.cpp
 )
 

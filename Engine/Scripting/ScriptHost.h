@@ -29,9 +29,14 @@ struct BatchSystemFrame {
     uint64_t rngSeed;      // 世界种子（C# 侧 Lemon.Scripting.Rng 派生子流）
     float dt;
     int32_t disabled;      // C# 回写：异常禁用后 C++ 侧跳过后续帧构造
+    // D5 护栏（M7a 批③；评审 §D5）：native 置位 = 托管 tick 窗口内结构操作触发池
+    // 重分配，已收集组件指针悬垂——C# 块循环头查此位，本帧剩余块跳过（fail-stop，
+    // 异常隔离同款语义；native 置位时红字指路 SceneOps/晚生成）。**尾加字段**，
+    // 帧瞬态结构不入 StateHash/回放档（容量余量内 spawn 指针不动 = 零置位零漂移）
+    int32_t stale;
 };
 static_assert(sizeof(BatchBlock) == 24);
-static_assert(sizeof(BatchSystemFrame) == 40); // disabled 落在原尾垫（C# 同规则）
+static_assert(sizeof(BatchSystemFrame) == 48); // stale 尾加后按 8 对齐（C# 逐字节镜像同规则）
 
 /// native 函数表（低频语法糖通道；与 Lemon.SDK/NativeApi.cs 逐字节一致。注册走
 /// lemon_api_register2 尺寸握手——宿主传 sizeof(NativeApiVtable)，SDK 侧 min 拷贝 +
@@ -147,6 +152,11 @@ struct ScriptIoHooks {
     void (*saveFlush)(ecs::World& world); // 全量落盘（幂等）
 };
 void SetScriptIoHooks(const ScriptIoHooks& hooks);
+
+/// D5 批量帧护栏探针（M7a 批③）：累计 stale 置位次数（每 tick 去重计一）——
+/// script-tests 阴性验证读（窗口内爆量 Spawn → >0；容量余量内 → 恒 0）
+uint64_t BatchStaleMarkCount();
+void ResetBatchStaleMarkCount();
 
 /// UI 桥钩子（M6b 批③c，ADR-014 D2 M2/M3）：ops 应用方与事件抽干方。编辑器装配期
 /// 经 SetUiHooks 注入（applyOps → UiSubsystem::ApplyOps / drainEvents → DrainEvents）；

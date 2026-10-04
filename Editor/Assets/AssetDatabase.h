@@ -16,6 +16,7 @@
 
 #include "Assets/AssetTypes.h"    // M7a 批②：类型域单源（编辑器/运行时两侧共用）
 #include "Assets/SpriteRefs.h"    // M7a 批②：SpriteRefSource（guid 归一查询面）
+#include "Core/FileOps.h"         // M7a 批③：WriteFileAtomic 实现单源（下方同名转发）
 
 namespace lemon::editor {
 
@@ -24,17 +25,16 @@ namespace lemon::editor {
 using assets::AssetType;
 using assets::AssetTypeName;
 
-/// 原子落盘（共享工具，2026-09-24 审查 F-04/P-13）：同目录 .tmp 全量写入 + flush
-/// 显式校验 + rename 替换——磁盘满/进程中断只丢 .tmp，不把原文件截成半档。
-/// 场景/Prefab/存档/manifest 四条保存链统一走此口。
-/// durable（M7a 批① M21）= rename 前对 .tmp fsync：掉电后名字交换至多回到旧档，
-/// 不会出现长度 0 的新档；高频写（.meta/场景）不必开，manifest/存档等"重建代价
-/// 高"的落盘点开。
-bool WriteFileAtomic(const std::string& path, const void* data, size_t n,
-                     bool durable = false);
+/// 原子落盘：实现已下沉 Engine/Core/FileOps（M7a 批③——运行时 SaveStore 与编辑器
+/// 写侧共用，语义注记见彼处）。此处同名转发 = 编辑器 14 调用点零扰动（批②
+/// AssetTypes using 同款纪律）。
+inline bool WriteFileAtomic(const std::string& path, const void* data, size_t n,
+                            bool durable = false) {
+    return lemon::WriteFileAtomic(path, data, n, durable);
+}
 inline bool WriteFileAtomic(const std::string& path, const std::string& s,
                             bool durable = false) {
-    return WriteFileAtomic(path, s.data(), s.size(), durable);
+    return lemon::WriteFileAtomic(path, s, durable);
 }
 struct AssetEntry {
     uint64_t guid = 0;
