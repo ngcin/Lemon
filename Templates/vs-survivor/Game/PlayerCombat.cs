@@ -50,6 +50,7 @@ public sealed class PlayerCombat : LemonBehaviour
 
     private int _pendingLevels; // LevelUp 事件累计的待选次数
     private bool _cardsShown;
+    private bool _prevKillKey; // 测试自杀键 R 边沿（验收反馈 2026-10-04）
     private int _pickRotation;  // 三选一轮换序（确定性）
     private int _bladeCount = 2;
     private readonly List<ulong> _blades = new();
@@ -228,6 +229,13 @@ public sealed class PlayerCombat : LemonBehaviour
             if (pending == "cards/ok") Revive();
             return;
         }
+        // 测试自杀键 R（bit5；GameEntry/编辑器 Play 同接线，无模态让出问题——
+        // 死亡对话框期 Update 早退天然屏蔽）：一死 → 复活卡；复活后再按 → 二死
+        // 结算。真人无冒烟侧压血钩子（ArmDeathPressure 是引擎调试通道），站桩磨
+        // 不死 → 死亡链不可测——批⑤ 真人验收反馈落地
+        bool killKey = Input.GetButton(5);
+        if (killKey && !_prevKillKey && GameFlow.St == GameFlow.State.Run) Die();
+        _prevKillKey = killKey;
         GameMain.Run.Time += Time.DeltaTime;
 
         UpdateBlades(gameObject.GetComponent<Transform2D>());
