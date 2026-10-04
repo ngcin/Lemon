@@ -18,6 +18,8 @@
 #include "Audio/BakedClip.h"
 #include "Audio/SpscRing.h" // M6c 批①b：SPSC 环序锁
 #include "Assets/AssetIndex.h"   // M7a 批②：运行时只读索引
+#include "Assets/AtlasBake.h"    // M7a 批⑥：LAT1 容器/装箱/烤制
+#include "Assets/AtlasStore.h"   // M7a 批⑥：LAT1 装载登记核
 #include "Assets/ProjectFile.h"  // M7a 批②：project.lemon 只读解析
 #include "Assets/SpriteRefs.h"   // M7a 批②：guid 归一引擎本体
 #include "Assets/PrefabCache.h" // M7a 批③：Play 世界 Prefab 工厂缓存
@@ -25,6 +27,7 @@
 #include "Renderer/SceneExtractor.h"  // M7a 批③：ECS→渲染提取下沉件
 #include "Core/Guid.h"
 #include "Core/Math.h"
+#include "stb_image_write.h" // M7a 批⑥：LAT1 夹具播种 PNG（实现符号在引擎 StbImage.cpp 单 TU）
 #include "Components/AudioComponents.h" // M6c 批②：AudioSource
 #include "Components/CoreComponents.h"
 #include "ECS/Hierarchy.h"
@@ -6219,6 +6222,491 @@ void TestAssetIndexPkgManifest() {
     fs::remove_all(root, ec);
 }
 
+// ---- M7a 批⑥：LAT1 图集容器 v1（ADR-016 M5；writer/reader/装载登记核）----
+
+void TestAssetIndexSliceRebase() {
+    namespace fs = std::filesystem;
+    using lemon::assets::AssetIndex;
+    using lemon::assets::AssetType;
+
+    // 验收热修 2026-10-05 的号域平移语义：packager 低基线记账（无编辑器账项目
+    // fallback 自 base=2 发号）对运行时大基线（程序化页后）Open 时——本体重派、
+    // 低域切片块**随本体连号重派**（几何真源 .meta 在场即登记链活）；健康块保号；
+    // 越上界坏账块清零（原防御保留）
+    const fs::path root = fs::temp_directory_path() /
+                          ("lemon-test-slicerebase-" + std::to_string(::getpid()));
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root / "Assets", ec);
+    fs::create_directories(root / ".lemon", ec);
+    const uint64_t sheetGuid = 0x6000000000000001ull, wholeGuid = 0x6000000000000002ull;
+    { std::ofstream f(root / "Assets" / "sheet.png", std::ios::binary); f << "png"; }
+    { std::ofstream f(root / "Assets" / "sheet.png.meta", std::ios::trunc);
+      f << "{\"guid\":\"" << lemon::assets::GuidToHex(sheetGuid)
+        << "\",\"type\":\"sprite\",\"importer\":{\"slice\":\"grid\",\"cell\":[8,4],"
+          "\"frames\":[2,2]}}"; }
+    { std::ofstream f(root / "Assets" / "whole.png", std::ios::binary); f << "png"; }
+    { std::ofstream f(root / "Assets" / "whole.png.meta", std::ios::trunc);
+      f << "{\"guid\":\"" << lemon::assets::GuidToHex(wholeGuid) << "\",\"type\":\"sprite\"}"; }
+    const auto WriteManifest = [&](const char* extra) {
+        std::ofstream f(root / ".lemon" / "manifest.json", std::ios::trunc);
+        f << "{\"assets\":["
+          << "{\"path\":\"Assets/sheet.png\",\"guid\":" << sheetGuid
+          << ",\"type\":\"sprite\",\"spriteId\":3,\"slice\":{\"base\":4,\"count\":4}},"
+          << "{\"path\":\"Assets/whole.png\",\"guid\":" << wholeGuid
+          << ",\"type\":\"sprite\",\"spriteId\":8}"
+          << "],\"nextSpriteId\":9" << extra << "}";
+    };
+
+    { // 低域块随本体连号重派（Open base=100 → 全部记账低于基线）
+        WriteManifest("");
+        AssetIndex idx;
+        Expect(idx.Open(root.string(), 100) && idx.FromManifest(), "rebase: manifest fast path");
+        const lemon::assets::IndexedEntry* sh = idx.FindByGuid(sheetGuid);
+        const lemon::assets::IndexedEntry* wh = idx.FindByGuid(wholeGuid);
+        Expect(sh && wh, "rebase: entries present");
+        if (sh && wh) {
+            Expect(sh->spriteId >= 100 && wh->spriteId >= 100, "rebase: bodies reassigned >= base");
+            Expect(sh->sliceCount == 4 && sh->sliceBase == sh->spriteId + 1,
+                   "rebase: slice block follows body contiguously");
+            Expect(sh->SliceSpriteId(3) == sh->sliceBase + 3, "rebase: cell ids contiguous");
+            Expect(wh->spriteId >= sh->sliceBase + sh->sliceCount,
+                   "rebase: no id collision between block and later body");
+        }
+    }
+    { // 健康块保号：记账全在基线上域 → 不重排（原号原样）
+        std::ofstream f(root / ".lemon" / "manifest.json", std::ios::trunc);
+        f << "{\"assets\":["
+          << "{\"path\":\"Assets/sheet.png\",\"guid\":" << sheetGuid
+          << ",\"type\":\"sprite\",\"spriteId\":100,\"slice\":{\"base\":101,\"count\":4}},"
+          << "{\"path\":\"Assets/whole.png\",\"guid\":" << wholeGuid
+          << ",\"type\":\"sprite\",\"spriteId\":105}"
+          << "],\"nextSpriteId\":106}";
+        f.close(); // flush 落盘后再 Open（ofstream 存活期内缓冲未刷 = 读到空档）
+        AssetIndex idx;
+        Expect(idx.Open(root.string(), 100) && idx.FromManifest(), "healthy: manifest fast path");
+        const lemon::assets::IndexedEntry* sh = idx.FindByGuid(sheetGuid);
+        Expect(sh && sh->spriteId == 100 && sh->sliceBase == 101 && sh->sliceCount == 4,
+               "healthy: slice block preserved as-is");
+    }
+    { // 越上界坏账块清零（manifest 不自洽防御保留）
+        std::ofstream f(root / ".lemon" / "manifest.json", std::ios::trunc);
+        f << "{\"assets\":["
+          << "{\"path\":\"Assets/sheet.png\",\"guid\":" << sheetGuid
+          << ",\"type\":\"sprite\",\"spriteId\":100,\"slice\":{\"base\":101,\"count\":10}},"
+          << "{\"path\":\"Assets/whole.png\",\"guid\":" << wholeGuid
+          << ",\"type\":\"sprite\",\"spriteId\":105}"
+          << "],\"nextSpriteId\":106}";
+        f.close();
+        AssetIndex idx;
+        Expect(idx.Open(root.string(), 100) && idx.FromManifest(), "badblock: manifest fast path");
+        const lemon::assets::IndexedEntry* sh = idx.FindByGuid(sheetGuid);
+        Expect(sh && sh->spriteId == 100 && sh->sliceCount == 0 && !sh->Sliced(),
+               "badblock: over-ceiling block cleared to whole-sprite");
+    }
+    { // review 2026-10-05 回绕防线：sliceBase+count 精确回绕（0xFFFFFFF0+0x10=0）
+        // 绕不过 sane 收口——不崩、块清零；spriteId 巨号（> sane 上限钳后的
+        // idCeiling）同判坏账重派
+        std::ofstream f(root / ".lemon" / "manifest.json", std::ios::trunc);
+        f << "{\"assets\":["
+          << "{\"path\":\"Assets/sheet.png\",\"guid\":" << sheetGuid
+          << ",\"type\":\"sprite\",\"spriteId\":4294967295,\"slice\":{\"base\":4294967280,"
+            "\"count\":16}},"
+          << "{\"path\":\"Assets/whole.png\",\"guid\":" << wholeGuid
+          << ",\"type\":\"sprite\",\"spriteId\":4294967295}"
+          << "],\"nextSpriteId\":4294967295}";
+        f.close();
+        AssetIndex idx;
+        Expect(idx.Open(root.string(), 100) && idx.FromManifest(),
+               "wraparound: opens without crash/abort");
+        const lemon::assets::IndexedEntry* sh = idx.FindByGuid(sheetGuid);
+        const lemon::assets::IndexedEntry* wh = idx.FindByGuid(wholeGuid);
+        Expect(sh && wh, "wraparound: entries present");
+        if (sh && wh) {
+            Expect(sh->spriteId >= 100 && sh->spriteId < (1u << 23),
+                   "wraparound: giant spriteId bad account reassigned in sane range");
+            Expect(sh->sliceCount == 0,
+                   "wraparound: wrap-around slice block cleared (not giant-registered)");
+            Expect(idx.FindBySpriteId(4294967290) == nullptr,
+                   "wraparound: wrapped block range yields no lookup hit");
+        }
+    }
+    fs::remove_all(root, ec);
+}
+
+void TestBakedAtlasContainer() {
+    namespace fs = std::filesystem;
+    using namespace lemon::assets;
+
+    const fs::path dir = fs::temp_directory_path() /
+                         ("lemon-test-lat1-" + std::to_string(::getpid()));
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+
+    BakedAtlasBuild b;
+    b.pages = {{64, 32}, {16, 16}};
+    BakedAtlasEntry e1{}, e2{};
+    e1.guid = 0x3000000000000001ull, e1.page = 0, e1.x = 2, e1.y = 2, e1.w = 60, e1.h = 28;
+    e2.guid = 0x3000000000000002ull, e2.page = 1, e2.w = 16, e2.h = 16;
+    b.entries = {e1, e2};
+    b.pagePixels.emplace_back(64 * 32 * 4, 0xAB);
+    b.pagePixels.emplace_back(16 * 16 * 4, 0xCD);
+    const fs::path p = dir / "atlas.baked";
+    Expect(WriteBakedAtlasFile(p.string(), b), "LAT1 write ok");
+    BakedAtlasBuild r;
+    Expect(LoadBakedAtlasFile(p.string(), r), "LAT1 load ok");
+    Expect(r.pages == b.pages && r.entries == b.entries && r.pagePixels == b.pagePixels,
+           "LAT1 roundtrip fields+pixels equal");
+
+    // 写侧自洽校验（review 2026-10-05：坏 build 拒写盘——"写盘成功但永不可载"
+    // 的包在烤制期直白拒绝）：像素尺寸不符 / 页号越界 / 矩形越界 / 重复 guid
+    const fs::path rejectPath = dir / "reject.baked";
+    {
+        BakedAtlasBuild bad = b;
+        bad.pagePixels[0].pop_back(); // 像素载荷与页尺寸不符
+        Expect(!WriteBakedAtlasFile(rejectPath.string(), bad),
+               "LAT1 write rejects pixel/page size mismatch");
+    }
+    {
+        BakedAtlasBuild bad = b;
+        bad.entries[1].page = 2; // 页号越界
+        Expect(!WriteBakedAtlasFile(rejectPath.string(), bad), "LAT1 write rejects page oob");
+    }
+    {
+        BakedAtlasBuild bad = b;
+        bad.entries[0].w = 63; // 2+63 > 页宽 64
+        Expect(!WriteBakedAtlasFile(rejectPath.string(), bad), "LAT1 write rejects rect oob");
+    }
+    {
+        BakedAtlasBuild bad = b;
+        bad.entries[1].guid = bad.entries[0].guid; // 重复 guid
+        Expect(!WriteBakedAtlasFile(rejectPath.string(), bad), "LAT1 write rejects dup guid");
+    }
+    Expect(!fs::exists(rejectPath, ec), "LAT1 rejected builds leave no file");
+
+    // 篡改/截断阴性面：单字节改 → 拒载（拒载原因面 = 魔数/版本/头长/计数域/
+    // 尺寸域/payloadBytes 对账/条目界内/guid 唯一）
+    std::vector<uint8_t> raw;
+    {
+        std::ifstream f(p, std::ios::binary);
+        raw.assign((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    }
+    const auto RawWrite = [&](const std::vector<uint8_t>& bytes) {
+        std::ofstream f(dir / "tampered.baked", std::ios::binary | std::ios::trunc);
+        f.write((const char*)bytes.data(), (std::streamsize)bytes.size());
+    };
+    const auto TamperAt = [&](size_t off, uint8_t v, const char* what) {
+        std::vector<uint8_t> t = raw;
+        t[off] = v;
+        RawWrite(t);
+        BakedAtlasBuild rb;
+        Expect(!LoadBakedAtlasFile((dir / "tampered.baked").string(), rb), what);
+    };
+    TamperAt(0, 'X', "LAT1 bad magic rejected");
+    TamperAt(4, 2, "LAT1 bad version rejected");
+    TamperAt(6, 24, "LAT1 bad headerSize rejected");
+    TamperAt(28, uint8_t(raw[28] ^ 0xFF), "LAT1 payloadBytes mismatch rejected");
+    TamperAt(20, uint8_t(raw[20] + 1), "LAT1 entryCount mismatch rejected");
+    TamperAt(32, 0, "LAT1 zero page dim rejected");
+    { // 条目矩形越界：entry0.x 2 → 60（60+60 > 页宽 64）
+        std::vector<uint8_t> t = raw;
+        t[32 + 2 * 8 /*pageDims*/ + 10 /*entry0.x*/] = 60;
+        RawWrite(t);
+        BakedAtlasBuild rb;
+        Expect(!LoadBakedAtlasFile((dir / "tampered.baked").string(), rb),
+               "LAT1 entry rect out of page rejected");
+    }
+    { // guid 重复：entry1.guid := entry0.guid
+        std::vector<uint8_t> t = raw;
+        const size_t e1off = 32 + 2 * 8 + 1 * 18;
+        std::memcpy(&t[e1off], &raw[32 + 2 * 8], 8);
+        RawWrite(t);
+        BakedAtlasBuild rb;
+        Expect(!LoadBakedAtlasFile((dir / "tampered.baked").string(), rb),
+               "LAT1 duplicate guid rejected");
+    }
+    { // 截断
+        RawWrite({raw.begin(), raw.end() - 10});
+        BakedAtlasBuild rb;
+        Expect(!LoadBakedAtlasFile((dir / "tampered.baked").string(), rb),
+               "LAT1 truncated payload rejected");
+    }
+    { // 尾部多出
+        std::vector<uint8_t> t = raw;
+        t.insert(t.end(), {1, 2, 3});
+        RawWrite(t);
+        BakedAtlasBuild rb;
+        Expect(!LoadBakedAtlasFile((dir / "tampered.baked").string(), rb),
+               "LAT1 trailing bytes rejected");
+    }
+    { // 零条目
+        std::vector<uint8_t> t = raw;
+        t[20] = t[21] = t[22] = t[23] = 0; // entryCount = 0
+        RawWrite(t);
+        BakedAtlasBuild rb;
+        Expect(!LoadBakedAtlasFile((dir / "tampered.baked").string(), rb),
+               "LAT1 zero entries rejected");
+    }
+    fs::remove_all(dir, ec);
+}
+
+void TestAtlasBakePack() {
+    using namespace lemon::assets;
+    const auto MakeImage = [](uint64_t guid, uint32_t w, uint32_t h, uint8_t fill) {
+        BakedAtlasImage img;
+        img.guid = guid;
+        img.w = w;
+        img.h = h;
+        img.rgba.assign(size_t(w) * h * 4, 0);
+        for (size_t i = 0; i < img.rgba.size(); i += 4) {
+            img.rgba[i] = fill;
+            img.rgba[i + 3] = 0xFF;
+        }
+        return img;
+    };
+    const uint64_t gBig = 0x3100000000000001ull, gA = 0x3100000000000002ull,
+                   gB = 0x3100000000000003ull, gC = 0x3100000000000004ull,
+                   gD = 0x3100000000000005ull;
+    std::vector<BakedAtlasImage> images;
+    images.push_back(MakeImage(gBig, 5000, 8, 1)); // 超虚拟页宽 → 专属页
+    images.push_back(MakeImage(gA, 40, 30, 2));
+    images.push_back(MakeImage(gB, 20, 30, 3));
+    images.push_back(MakeImage(gC, 10, 10, 4));
+    images.push_back(MakeImage(gD, 100, 5, 5));
+    BakedAtlasBuild a, b;
+    std::string err;
+    Expect(PackAtlasPages(images, a, &err), "pack ok");
+    Expect(PackAtlasPages(images, b) && a.pages == b.pages && a.entries == b.entries &&
+               a.pagePixels == b.pagePixels,
+           "pack deterministic (byte equal rerun)");
+
+    // 布局断言：专属页独占 + 普通页 gutter 边距 + 矩形界内 + 互不重叠 + 像素对位
+    Expect(a.pages.size() == 3, "oversized gets dedicated page (3 pages)");
+    const BakedAtlasEntry* big = nullptr;
+    for (const BakedAtlasEntry& e : a.entries)
+        if (e.guid == gBig) big = &e;
+    Expect(big && big->x == 0 && big->y == 0 && big->w == 5000 && big->h == 8,
+           "oversized entry at origin full size");
+    Expect(big && a.pages[big->page].w == 5000 && a.pages[big->page].h == 8,
+           "dedicated page sized to sprite");
+    const BakedAtlasEntry* d = nullptr;
+    for (const BakedAtlasEntry& e : a.entries)
+        if (e.guid == gD) d = &e;
+    Expect(d && d->page != big->page && d->x >= kAtlasGutter && d->y >= kAtlasGutter,
+           "normal entry keeps gutter margins (dedicated page closed)");
+    for (size_t i = 0; i < a.entries.size(); ++i) {
+        const BakedAtlasEntry& e = a.entries[i];
+        const BakedAtlasPage& pg = a.pages[e.page];
+        Expect(uint32_t(e.x) + e.w <= pg.w && uint32_t(e.y) + e.h <= pg.h,
+               "entry rect within page");
+        for (size_t j = i + 1; j < a.entries.size(); ++j) { // 同页不重叠
+            const BakedAtlasEntry& o = a.entries[j];
+            if (o.page != e.page) continue;
+            const bool overlap = uint32_t(e.x) < uint32_t(o.x) + o.w &&
+                                 uint32_t(o.x) < uint32_t(e.x) + e.w &&
+                                 uint32_t(e.y) < uint32_t(o.y) + o.h &&
+                                 uint32_t(o.y) < uint32_t(e.y) + e.h;
+            Expect(!overlap, "same-page entries do not overlap");
+        }
+        // 像素对位：页面上精灵矩形逐字节 = 源图（合成正确性）
+        const BakedAtlasImage* src = nullptr;
+        for (const BakedAtlasImage& im : images)
+            if (im.guid == e.guid) src = &im;
+        Expect(src != nullptr, "entry maps to source image");
+        if (src) {
+            bool equal = true;
+            for (uint32_t row = 0; row < e.h && equal; ++row) {
+                const uint8_t* pageRow = &a.pagePixels[e.page][(size_t(e.y + row) * pg.w + e.x) * 4];
+                const uint8_t* srcRow = &src->rgba[size_t(row) * src->w * 4];
+                equal = std::memcmp(pageRow, srcRow, size_t(e.w) * 4) == 0;
+            }
+            Expect(equal, "page pixels match source at entry rect");
+        }
+    }
+
+    // 分页溢出：5 张 2040²（4 张恰满一页，第 5 张开新页——4096 虚拟域算术）
+    {
+        std::vector<BakedAtlasImage> big5;
+        for (uint64_t g = 1; g <= 5; ++g)
+            big5.push_back(MakeImage(0x3200000000000000ull + g, 2040, 2040, uint8_t(g)));
+        BakedAtlasBuild bb;
+        Expect(PackAtlasPages(big5, bb) && bb.pages.size() == 2, "2040x2040 x5 spills to 2 pages");
+    }
+
+    // 阴性：零尺寸/超 GPU 域/载荷不符/空输入
+    std::string msg;
+    BakedAtlasBuild junk;
+    Expect(!PackAtlasPages({}, junk, &msg), "empty pack rejected");
+    Expect(!PackAtlasPages({MakeImage(1, 0, 4, 0)}, junk, &msg), "zero-size sprite rejected");
+    Expect(!PackAtlasPages({MakeImage(1, 17000, 4, 0)}, junk, &msg), "over-GPU-dim rejected");
+    {
+        BakedAtlasImage bad = MakeImage(1, 4, 4, 0);
+        bad.rgba.pop_back();
+        Expect(!PackAtlasPages({bad}, junk, &msg), "pixel payload size mismatch rejected");
+    }
+}
+
+void TestAtlasStoreRegister() {
+    namespace fs = std::filesystem;
+    using namespace lemon::assets;
+
+    const fs::path root = fs::temp_directory_path() /
+                          ("lemon-test-lat1reg-" + std::to_string(::getpid()));
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root / "Assets", ec);
+    const uint64_t sheetGuid = 0x4000000000000001ull, wholeGuid = 0x4000000000000002ull;
+    // sheet.png 32×8（网格 4×2 格 cell 8×4 恰满图面）+ whole.png 10×6
+    const auto FillPattern = [](std::vector<uint8_t>& px, uint8_t seed) {
+        for (size_t i = 0; i < px.size(); i += 4) {
+            px[i] = uint8_t(seed + (i / 4) % 251);
+            px[i + 1] = uint8_t((seed * 7 + i) % 253);
+            px[i + 2] = uint8_t(seed ^ uint8_t(i));
+            px[i + 3] = 0xFF;
+        }
+    };
+    std::vector<uint8_t> sheetPx(32 * 8 * 4), wholePx(10 * 6 * 4);
+    FillPattern(sheetPx, 11);
+    FillPattern(wholePx, 22);
+    Expect(stbi_write_png((root / "Assets" / "sheet.png").string().c_str(), 32, 8, 4,
+                          sheetPx.data(), 32 * 4) != 0,
+           "seed sheet.png");
+    Expect(stbi_write_png((root / "Assets" / "whole.png").string().c_str(), 10, 6, 4,
+                          wholePx.data(), 10 * 4) != 0,
+           "seed whole.png");
+    { std::ofstream f(root / "Assets" / "sheet.png.meta", std::ios::trunc);
+      f << "{\"guid\":\"" << GuidToHex(sheetGuid) << "\",\"type\":\"sprite\","
+           "\"importer\":{\"slice\":\"grid\",\"cell\":[8,4],\"frames\":[4,2]}}"; }
+    { std::ofstream f(root / "Assets" / "whole.png.meta", std::ios::trunc);
+      f << "{\"guid\":\"" << GuidToHex(wholeGuid) << "\",\"type\":\"sprite\"}"; }
+
+    AssetIndex index;
+    Expect(index.Open(root.string(), 2), "fixture index opens");
+    const IndexedEntry* se = index.FindByGuid(sheetGuid);
+    const IndexedEntry* we = index.FindByGuid(wholeGuid);
+    Expect(se && we && se->Sliced() && se->sliceCount == 8, "sheet sliced 4x2");
+    Expect(se->spriteId != 0 && we->spriteId != 0, "sprite ids assigned");
+
+    // LAT1 build：同像素装箱（读回端到端不引 RHI——登记核纯面）
+    BakedAtlasImage im1, im2;
+    im1.guid = sheetGuid, im1.w = 32, im1.h = 8, im1.rgba = sheetPx;
+    im2.guid = wholeGuid, im2.w = 10, im2.h = 6, im2.rgba = wholePx;
+    BakedAtlasBuild build;
+    Expect(PackAtlasPages({im1, im2}, build), "fixture pack ok");
+
+    renderer::AtlasRegistry atlas;
+    for (size_t i = 0; i < build.pages.size(); ++i)
+        atlas.RegisterAtlas(uint32_t(2 + i), {}, build.pages[i].w, build.pages[i].h);
+    uint32_t reg = 0;
+    Expect(RegisterAtlasSprites(atlas, index, build, 2, reg) && reg == 2,
+           "register ok (2 whole sprites)");
+    for (const BakedAtlasEntry& ent : build.entries) {
+        const IndexedEntry* e = index.FindByGuid(ent.guid);
+        Expect(e != nullptr, "entry guid in index");
+        if (!e) continue;
+        const renderer::SpriteInfo& si = atlas.GetSprite(e->spriteId);
+        const BakedAtlasPage& pg = build.pages[ent.page];
+        Expect(si.atlasIndex == 2 + ent.page && si.widthPx == ent.w && si.heightPx == ent.h,
+               "whole sprite registered at manifest id");
+        ExpectNear(si.u0, float(ent.x) / float(pg.w), 1e-6f, "whole u0 math");
+        ExpectNear(si.v1, float(ent.y + ent.h) / float(pg.h), 1e-6f, "whole v1 math");
+        if (ent.guid == sheetGuid) { // 切片子矩形：cell → sliceBase + 行优先号
+            for (uint32_t cell = 0; cell < 8; ++cell) {
+                const uint32_t id = se->SliceSpriteId(cell);
+                const renderer::SpriteInfo& s = atlas.GetSprite(id);
+                const uint32_t cx = cell % 4, cy = cell / 4;
+                Expect(s.atlasIndex == 2 + ent.page && s.widthPx == 8 && s.heightPx == 4,
+                       "slice sprite size");
+                ExpectNear(s.u0, float(ent.x + cx * 8) / float(pg.w), 1e-6f, "slice u0 math");
+                ExpectNear(s.v0, float(ent.y + cy * 4) / float(pg.h), 1e-6f, "slice v0 math");
+            }
+        }
+    }
+
+    // 阴性：LAT1 条目与索引失配（缺 whole = 包与账不一致）→ 拒绝登记
+    {
+        BakedAtlasBuild partial;
+        Expect(PackAtlasPages({im1}, partial), "partial pack ok");
+        renderer::AtlasRegistry at2;
+        at2.RegisterAtlas(2, {}, partial.pages[0].w, partial.pages[0].h);
+        uint32_t r2 = 0;
+        Expect(!RegisterAtlasSprites(at2, index, partial, 2, r2),
+               "missing entry vs index rejected (package/ledger mismatch)");
+    }
+    { // 阴性：未知 guid 多一条
+        BakedAtlasBuild ghost = build;
+        BakedAtlasImage imG = im2;
+        imG.guid = 0x4000000000000099ull;
+        Expect(PackAtlasPages({im1, im2, imG}, ghost), "ghost pack ok");
+        renderer::AtlasRegistry at3;
+        for (size_t i = 0; i < ghost.pages.size(); ++i)
+            at3.RegisterAtlas(uint32_t(2 + i), {}, ghost.pages[i].w, ghost.pages[i].h);
+        uint32_t r3 = 0;
+        Expect(!RegisterAtlasSprites(at3, index, ghost, 2, r3), "unknown guid rejected");
+    }
+    fs::remove_all(root, ec);
+}
+
+void TestBakeProjectAtlas() {
+    namespace fs = std::filesystem;
+    using namespace lemon::assets;
+
+    const fs::path root = fs::temp_directory_path() /
+                          ("lemon-test-lat1bake-" + std::to_string(::getpid()));
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root / "Assets", ec);
+    const uint64_t oneGuid = 0x5000000000000001ull;
+    std::vector<uint8_t> px(13 * 7 * 4);
+    for (size_t i = 0; i < px.size(); i += 4) {
+        px[i] = uint8_t(i % 199);
+        px[i + 1] = uint8_t((i * 3) % 197);
+        px[i + 2] = uint8_t(i % 251);
+        px[i + 3] = 0xFF;
+    }
+    Expect(stbi_write_png((root / "Assets" / "one.png").string().c_str(), 13, 7, 4, px.data(),
+                          13 * 4) != 0,
+           "seed one.png");
+    { std::ofstream f(root / "Assets" / "one.png.meta", std::ios::trunc);
+      f << "{\"guid\":\"" << GuidToHex(oneGuid) << "\",\"type\":\"sprite\"}"; }
+
+    AssetIndex index;
+    Expect(index.Open(root.string(), 2), "bake fixture index opens");
+    AtlasBakeStats st;
+    const fs::path dst = root / ".lemon" / "baked" / "atlas" / "atlas.baked";
+    Expect(BakeProjectAtlas(index, dst.string(), st) && st.sprites == 1 && st.pages == 1,
+           "bake project atlas (1 sprite 1 page)");
+    BakedAtlasBuild rb;
+    Expect(LoadBakedAtlasFile(dst.string(), rb) && rb.entries.size() == 1,
+           "baked file loads back");
+    const BakedAtlasEntry& e = rb.entries[0];
+    Expect(e.guid == oneGuid && e.w == 13 && e.h == 7, "baked entry geometry");
+    bool equal = true;
+    for (uint32_t row = 0; row < 7 && equal; ++row)
+        equal = std::memcmp(&rb.pagePixels[0][(size_t(e.y + row) * rb.pages[0].w + e.x) * 4],
+                            &px[size_t(row) * 13 * 4], 13 * 4) == 0;
+    Expect(equal, "baked page pixels match png source");
+
+    // 无 sprite 项目：false 且 sprites==0（合法跳过形态，非错误）
+    {
+        const fs::path empty = fs::temp_directory_path() /
+                               ("lemon-test-lat1none-" + std::to_string(::getpid()));
+        fs::remove_all(empty, ec);
+        fs::create_directories(empty / "Assets", ec);
+        { std::ofstream f(empty / "Assets" / "walk.anim", std::ios::trunc); f << "{}"; }
+        { std::ofstream f(empty / "Assets" / "walk.anim.meta", std::ios::trunc);
+          f << "{\"guid\":\"" << GuidToHex(0x5000000000000002ull) << "\",\"type\":\"clip\"}"; }
+        AssetIndex ei;
+        Expect(ei.Open(empty.string(), 2), "spriteless index opens");
+        AtlasBakeStats es;
+        Expect(!BakeProjectAtlas(ei, (empty / "a.baked").string(), es) && es.sprites == 0,
+               "spriteless project skips atlas (false + zero sprites)");
+        fs::remove_all(empty, ec);
+    }
+    fs::remove_all(root, ec);
+}
+
 // ---- M6c 批⓪：音频核心（ADR-015；静音模式 = 无设备确定性）----
 
 void TestAudioMixerMath() {
@@ -7419,6 +7907,11 @@ int main() {
     TestSpriteGuidResolve();
     TestAssetIndexConsistency(); // M7a 批②：manifest 快路径 vs 回退扫描双路一致性
     TestAssetIndexPkgManifest(); // M7a 批⑤：打包账 ExportManifest → pkg 快路径回读全等 + 包账优先
+    TestAssetIndexSliceRebase(); // M7a 批⑥热修：号域平移切片块随本体连号重派 + 健康保号 + 坏账清零
+    TestBakedAtlasContainer();  // M7a 批⑥：LAT1 roundtrip + 篡改/截断拒载面
+    TestAtlasBakePack();        // M7a 批⑥：shelf 装箱确定性 + 专属页/分页/重叠/像素对位
+    TestAtlasStoreRegister();   // M7a 批⑥：LAT1 → AtlasRegistry 登记（切片 UV 数学 + 失配拒载）
+    TestBakeProjectAtlas();     // M7a 批⑥：项目面烤制端到端（PNG → LAT1 → 读回全等）
     TestEditorContextPrefabOps();
     TestPlaySpawnPrefab();
     TestRecentScenesAliasSafety();

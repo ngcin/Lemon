@@ -11,6 +11,8 @@ add_library(lemon-engine STATIC
   Assets/SpriteRefs.cpp
   Assets/StbImage.cpp
   Assets/TextureStore.cpp
+  Assets/AtlasBake.cpp
+  Assets/AtlasStore.cpp
   Assets/AnimAsset.cpp
   Assets/ControllerAsset.cpp
   Assets/TableAsset.cpp

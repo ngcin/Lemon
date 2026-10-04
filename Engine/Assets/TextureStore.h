@@ -15,6 +15,13 @@
 
 namespace lemon::assets {
 
+/// 网格切片登记（M7a 批⑥ 抽自由函数：TextureStore 整页导入与 AtlasStore 图集页
+/// 登记共用）。图面校验（网格像素超出图面 = 红字不切宁缺勿错，全幅仍可用）+
+/// 行优先 cell → sliceBase+cell 连号覆盖式登记。ox/oy = 图面在页内偏移
+///（整页导入 = 0,0；LAT1 条目矩形 = 条目 x/y）；imageW/H = 图面实际尺寸（校验域）。
+void RegisterGridSlices(renderer::AtlasRegistry& atlas, const IndexedEntry& e, uint32_t slot,
+                        uint32_t ox, uint32_t oy, uint32_t imageW, uint32_t imageH);
+
 class TextureStore {
 public:
     /// firstSlot：导入页起始 bindless 槽（运行时 0=程序化调色板 1=字体页 → 从 2 起；
@@ -53,9 +60,6 @@ private:
     };
     Page* Find(uint64_t guid);
     const Page* Find(uint64_t guid) const;
-    /// 网格切片登记（AssetGpuCache::RegisterSlices 同款：像素校验宁缺勿错，
-    /// 行优先 cell → sliceBase+cell 连号覆盖式登记）
-    void RegisterSlices(const IndexedEntry& e, uint32_t slot, uint32_t w, uint32_t h);
 
     rhi::Device* device_ = nullptr;
     renderer::AtlasRegistry* atlas_ = nullptr;

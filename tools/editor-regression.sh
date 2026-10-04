@@ -141,9 +141,10 @@ if [ "${MODE}" = "full" ]; then
                 local out
                 out="$("${TMP}/pkg/lemon-game" --smoke --frames 900 2>&1)" || return 1
                 echo "${out}" | grep -q "game-smoke: .* => OK" || return 1
+                echo "${out}" | grep -q "atlas=[1-9]" || return 1
                 echo "${out}" | grep -o "fps=[0-9.]*" | head -1 | awk -F= '{ exit !($2+0 >= 60) }'
             }
-            step "pkg-smoke (packager clean-dir bundle: closure+sc-runtime+baked-audio, zero-arg run fps>=60; M7a-b5)" \
+            step "pkg-smoke (packager clean-dir bundle: closure+sc-runtime+baked-audio+LAT1-atlas sprites, zero-arg run fps>=60; M7a-b5+b6)" \
                 pkg_smoke_run
         else
             echo "  FAIL pkg-smoke (出包/自检失败，日志 ${TMP}/pkg-build.log)"

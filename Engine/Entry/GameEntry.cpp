@@ -46,6 +46,7 @@
 #include "Assets/SaveStore.h"
 #include "Assets/SpriteRefs.h"
 #include "Assets/TextureStore.h"
+#include "Assets/AtlasStore.h"
 #include "Audio/AudioEngine.h"
 #include "Audio/AudioMount.h"
 #include "Audio/Spatial2D.h"
@@ -484,8 +485,20 @@ int main(int argc, char** argv) {
     assets::AssetIndex index;
     if (!index.Open(root, atlas.SpriteCount() + 1)) return 1;
     assets::TextureStore textures;
-    textures.Init(*device, &atlas, index, /*firstSlot=*/2);
-    textures.LoadAll();
+    assets::AtlasStore bakedAtlas;
+    uint32_t atlasPages = 0;
+    const std::string bakedAtlasPath = (fs::path(root) / assets::kBakedAtlasRelPath).string();
+    std::error_code atlasEc;
+    if (fs::is_regular_file(bakedAtlasPath, atlasEc)) {
+        // 包形态（批⑥ LAT1）：sprite 源不入包、链路全走图集 .baked——装载失败 =
+        // 包完整性事故，响亮退出不回退（manifest 号账与 LAT1 几何账 packager 同轮）
+        bakedAtlas.Init(*device, &atlas, index, /*firstSlot=*/2);
+        if (!bakedAtlas.Load(bakedAtlasPath)) return 1;
+        atlasPages = bakedAtlas.PageCount();
+    } else {
+        textures.Init(*device, &atlas, index, /*firstSlot=*/2);
+        textures.LoadAll();
+    }
 
     // ---- 音频（静音降级一等公民：无设备 = 红字 Warn 不阻断）----
     audio::AudioEngine audio;
@@ -654,7 +667,8 @@ int main(int argc, char** argv) {
     device->AddRecreateCallback("game-assets", [&](rhi::Device& d) {
         atlas.Reset();
         BuildProceduralPages(d);
-        textures.RebuildAll(d);
+        if (atlasPages) bakedAtlas.RebuildAll(d);
+        else textures.RebuildAll(d);
         ui.ReloadAllDocuments();
     });
 
@@ -877,11 +891,11 @@ int main(int argc, char** argv) {
                         hudShown && cardsShown;
         std::printf(
             "[lemon-game] RESULT game-smoke: frames=%llu fps=%.1f alive=%u visible=%u "
-            "batches=%u ticks=%llu uidoc=%u audio=%u scriptSys=%u contractErr=%u hud=%d "
-            "cards=%d => %s\n",
+            "batches=%u ticks=%llu uidoc=%u audio=%u atlas=%u scriptSys=%u contractErr=%u "
+            "hud=%d cards=%d => %s\n",
             (unsigned long long)frame, frameSec > 0 ? (double)statFrames / frameSec : 0.0,
             scene.AliveCount(), rm.LastStats().visible, batcher.LastBatchCount(),
-            (unsigned long long)world.TickIndex(), mountedUi, mountedAudio,
+            (unsigned long long)world.TickIndex(), mountedUi, mountedAudio, atlasPages,
             host.BatchSystemCount(), ui.ContractErrorCount(), hudShown ? 1 : 0,
             cardsShown ? 1 : 0, ok ? "OK" : "FAIL");
         std::fflush(stdout);

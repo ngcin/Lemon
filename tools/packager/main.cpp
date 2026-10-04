@@ -37,6 +37,7 @@
 #include <nlohmann/json.hpp>
 
 #include "Assets/AssetIndex.h"
+#include "Assets/AtlasBake.h"
 #include "Assets/AssetTypes.h"
 #include "Assets/ProjectFile.h"
 #include "Audio/BakedClip.h"
@@ -175,10 +176,11 @@ fs::path ResolveRpathRef(const std::string& name, const fs::path& pkgRoot,
     return {};
 }
 
-// 引用串 → 本体路径（绝对 = 原样；@rpath/@loader_path = 搜索序）
+// 引用串 → 本体路径（绝对 = 原样；@rpath/@loader_path = 搜索序）。
+// （批⑤ review ②：原首条件 "/@" 是 '/' 前缀的子集 = 死代码，已清）
 fs::path ResolveRef(const std::string& ref, const fs::path& pkgRoot,
                     const fs::path& buildEntryDir) {
-    if (ref.rfind("/@", 0) == 0 || ref.rfind('/', 0) == 0) {
+    if (!ref.empty() && ref[0] == '/') {
         std::error_code ec;
         return fs::exists(fs::path(ref), ec) ? fs::path(ref) : fs::path();
     }
@@ -203,9 +205,11 @@ bool CopyFileTo(const fs::path& src, const fs::path& dst) {
     return true;
 }
 
-// 递归拷贝目录（跳过 skip 顶层生成物；.meta 随文件走）
+// 递归拷贝目录（跳过 skipTop 顶层生成物；skipRel = 相对路径排除集——批⑥ sprite
+// 源+.meta 不入包，链路全走 LAT1；.meta 其余随文件走）
 bool CopyTree(const fs::path& src, const fs::path& dst,
-              const std::unordered_set<std::string>& skipTop) {
+              const std::unordered_set<std::string>& skipTop,
+              const std::unordered_set<std::string>& skipRel) {
     std::error_code ec;
     for (auto it = fs::recursive_directory_iterator(src, ec); it != fs::recursive_directory_iterator();
          it.increment(ec)) {
@@ -216,9 +220,16 @@ bool CopyTree(const fs::path& src, const fs::path& dst,
         const std::string name = it->path().filename().string();
         // 顶层跳过集（.lemon 等生成物）只对第一层生效
         if (it.depth() == 0 && skipTop.count(name)) it.disable_recursion_pending();
-        else if (it->is_regular_file(ec) &&
-                 !CopyFileTo(it->path(), dst / std::filesystem::relative(it->path(), src, ec)))
-            return false;
+        else if (it->is_regular_file(ec)) {
+            std::error_code rec;
+            const fs::path rel = fs::relative(it->path(), src, rec);
+            if (rec) {
+                Err("相对路径失败：" + it->path().string() + "（" + rec.message() + "）");
+                return false;
+            }
+            if (!skipRel.count(rel.generic_string()) && !CopyFileTo(it->path(), dst / rel))
+                return false;
+        }
     }
     return true;
 }
@@ -292,6 +303,32 @@ int main(int argc, char** argv) {
     const fs::path project = fs::absolute(fs::path(projectArg), ec);
     const fs::path buildDir = fs::absolute(fs::path(runtimeArg), ec);
     const fs::path out = fs::absolute(fs::path(outArg), ec);
+    // --out 与 --project 互含 guard（批⑤ review ①）：出包根在项目内 = CopyTree
+    // 边走边拷自膨胀；项目在出包根内 = --force 整删连项目一起毁——两向皆拒。
+    // review 2026-10-05：①相等（rel == "."）同样拒——原实现漏相等 case，
+    // --out == --project --force 会 remove_all 项目本体；②weakly_canonical 正规化
+    // ——防 symlink 项目根（/tmp/link→proj 形态 lexical relative 判不出来）
+    {
+        const auto Norm = [](const fs::path& p) {
+            std::error_code nec;
+            return fs::weakly_canonical(p, nec);
+        };
+        const fs::path outN = Norm(out), projectN = Norm(project);
+        if (outN == projectN) {
+            Err("--out 与 --project 相同（--force 会整删项目本体）：" + out.string());
+            return 1;
+        }
+        const auto IsUnder = [](const fs::path& inner, const fs::path& outer) {
+            std::error_code rec;
+            const std::string rel = fs::relative(inner, outer, rec).generic_string();
+            return !rec && !rel.empty() && rel != "." && rel != ".." && rel.rfind("../", 0) != 0;
+        };
+        if (IsUnder(outN, projectN) || IsUnder(projectN, outN)) {
+            Err("--out 与 --project 互含（自拷贝/误删风险）：" + out.string() + " vs " +
+                project.string());
+            return 1;
+        }
+    }
     const fs::path gameExe = buildDir / "Engine" / "Entry" / "lemon-game";
     const fs::path buildEntryDir = gameExe.parent_path();
     const fs::path buildScriptDir = buildDir / "Scripting" / "dotnet";
@@ -494,7 +531,16 @@ int main(int argc, char** argv) {
 
     // ---- 5. data/（项目直拷 + 预生成件）----
     const fs::path data = out / "data";
-    CopyTree(project, data, {".lemon", ".git"});
+    // sprite 源排除集（批⑥：链路全走 LAT1——源 PNG/JPG 不入包。**.meta 保留**：
+    // 网格切片几何（gridCols/cellW）与 guid 的真源在 .meta，运行时 LoadFromManifest
+    // 依赖包内 .meta 读入几何——验收热修 2026-10-05，连 .meta 一起排除会让切片
+    // 动画精灵全部不渲染；未索引散件不在集内照拷，死重无害）
+    std::unordered_set<std::string> skipSpriteRel;
+    for (const lemon::assets::IndexedEntry& e : index.Entries()) {
+        if (e.type != lemon::assets::AssetType::Sprite) continue;
+        skipSpriteRel.insert(e.relPath);
+    }
+    CopyTree(project, data, {".lemon", ".git"}, skipSpriteRel);
     if (g_errors) return 1;
     fs::create_directories(data / ".lemon" / "bin", ec);
     // Game.deps.json 宽容拷贝：publish 树里 deps 记账在宿主名下（已剪除）——
@@ -523,6 +569,16 @@ int main(int argc, char** argv) {
         } else
             Err("音频烤制失败：" + e.relPath);
     }
+    // 图集现烤（批⑥ LAT1）：sprite 全量 → 装箱页 → data/.lemon/baked/atlas/
+    // atlas.baked（GameEntry 探测在场即走 LAT1 链路；无 sprite 项目合法跳过）
+    lemon::assets::AtlasBakeStats atlasStats;
+    if (lemon::assets::BakeProjectAtlas(index, (data / lemon::assets::kBakedAtlasRelPath).string(),
+                                         atlasStats)) {
+        Record(data / lemon::assets::kBakedAtlasRelPath);
+    } else if (atlasStats.sprites > 0) {
+        Err("图集烤制失败（精灵 " + std::to_string(atlasStats.sprites) + "）");
+        return 1;
+    }
     if (!index.ExportManifest((data / ".lemon" / "manifest.pkg.json").string()))
         Err("manifest.pkg.json 导出失败");
     else
@@ -536,8 +592,9 @@ int main(int argc, char** argv) {
                data / "Fonts" / "NotoSansSC-Regular.otf");
     CopyFileTo(fs::path(LEMON_ENGINE_FONT_DIR) / "OFL.txt", data / "Fonts" / "OFL.txt"); // OFL 随包义务
 #endif
-    std::printf("[lemon-packager] data/：直拷 + Game.dll + 烤制 %u + manifest.pkg.json + 字体\n",
-                baked);
+    std::printf("[lemon-packager] data/：直拷 + Game.dll + 烤制 %u + 图集 %u/%u（页/精灵）"
+                "+ manifest.pkg.json + 字体\n",
+                baked, atlasStats.pages, atlasStats.sprites);
     if (g_errors) return 1;
 
     // ---- 6. 自检（otool 闭环 + 关键件 + 清单对账）----
@@ -570,6 +627,11 @@ int main(int argc, char** argv) {
             Err("关键件缺失：" + fs::relative(need, out, ec).string());
             ++essentialMiss;
         }
+    if (atlasStats.pages > 0 &&
+        !fs::is_regular_file(data / lemon::assets::kBakedAtlasRelPath, ec)) {
+        Err("关键件缺失：data/.lemon/baked/atlas/atlas.baked（烤制记账在场但包内缺失）");
+        ++essentialMiss;
+    }
     // 清单对账：记账 ⊆ 实走；publish 树（runtime/）外零多出
     uint32_t inventoryMiss = 0, extra = 0;
     std::set<std::string> actual;
@@ -597,9 +659,10 @@ int main(int argc, char** argv) {
     const bool ok = g_errors == 0;
     std::printf(
         "[lemon-packager] RESULT pkg-selfcheck: files=%llu bytes=%lluMiB dylibs=%u baked=%u "
-        "manifest=%u closureMiss=%u essentialMiss=%u inventoryMiss=%u extra=%u => %s\n",
+        "manifest=%u atlasPages=%u atlasSprites=%u closureMiss=%u essentialMiss=%u "
+        "inventoryMiss=%u extra=%u => %s\n",
         (unsigned long long)actual.size(), bytes >> 20, (unsigned)bundle.size(), baked,
-        (unsigned)index.Entries().size(), closureMiss, essentialMiss, inventoryMiss, extra,
-        ok ? "OK" : "FAIL");
+        (unsigned)index.Entries().size(), atlasStats.pages, atlasStats.sprites, closureMiss,
+        essentialMiss, inventoryMiss, extra, ok ? "OK" : "FAIL");
     return ok ? 0 : 1;
 }

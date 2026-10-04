@@ -71,20 +71,25 @@ lemon-game [--project <dir>] [--scene <rel>] [--frames N] [--smoke] [--validate]
 
 **家族共同口径**（ADR-015 M2 确立，本 ADR 重申并扩展到全类型）：magic 前缀 `L` + 类型字母 + 版本号（`LBA1`/`LAT1`/…）；**version 字段保升级通道**（v1 有误可升 v2 不破包）；**packager 单点消费**（编辑器/运行时只读）；运行时零解码器/零解析热路径。
 
-**`LAT1` 容器头 v1 草案**（小端；批⑥ writer 实现时定稿并在此追记）：
+**`LAT1` 容器头 v1 定稿**（小端；2026-10-04 批⑥ writer 实现定稿，替换下方原草案——差异：页尺寸表按页存储（裁剪页/专属页不可用单值表达）、`payloadBytes` 落 28（64 位域对账防回绕，LBA1 review 先例）、条目表 18B 紧排字节装配）：
 
 | 偏移 | 大小 | 字段 | 说明 |
 |---|---|---|---|
 | 0 | 4 | magic | `"LAT1"`（Lemon Baked Atlas v1） |
 | 4 | 2 | version | u16 = 1 |
-| 6 | 2 | headerSize | u16 自校验（对齐 LBA1 布局习惯） |
-| 8 | 2 | pageCount | u16 页数 |
-| 10 | 2 | flags | u16 预留（0；bit 用途批⑥ 定——如 Point 采样/禁旋转） |
-| 12 | 4 | pageWidth | u32（默认 4096） |
-| 16 | 4 | pageHeight | u32 |
-| 20 | 4 | entryCount | u32 条目数 |
-| 24 | … | 条目表 | 每条目：guid u64 + page u16 + uvRect（4×u16 归一化前整数像素矩形）——编码细节批⑥ 定 |
-| … | … | 页位图 payload | 页位图（PNG？RAW？批⑥ 定——倾向 RAW RGBA 免解码，对启动耗时判据有利） |
+| 6 | 2 | headerSize | u16 = 32（自校验，对齐 LBA1 布局习惯） |
+| 8 | 2 | pageCount | u16 页数（≥1；0 页拒载） |
+| 10 | 2 | flags | u16 = 0 预留（采样/旋转策略归消费侧渲染配置，不入容器） |
+| 12 | 4 | pageWidth | u32 虚拟装箱页宽（=4096；参考值，oversized 专属页不改变此字段） |
+| 16 | 4 | pageHeight | u32 同上 |
+| 20 | 4 | entryCount | u32 条目数（≥1） |
+| 24 | 4 | reserved | u32 = 0 |
+| 28 | 4 | payloadBytes | u32 Σ页 w×h×4（读取侧 64 位域对账；>4GiB 拒烤——压缩/分卷归 M7b） |
+| 32 | 8×pageCount | pageDims | 每页 w u32 + h u32——**裁剪后真实尺寸**（4px 对齐；oversized 条目 = 精灵尺寸同规则） |
+| … | 18×entryCount | entries | guid u64 + page u16 + x/y/w/h u16——页内**像素矩形 = 精灵本体**（gutter 是装载期采样防线，不入几何；spriteId 不入容器：manifest 记号账、LAT1 记几何账，packager 同轮生成保证一致，装载以 guid 为 join 键） |
+| … | Σ | payload | 页序 RGBA8 top-down 紧排（stb 解码行序，直传 `UploadTexture`——运行时零解码） |
+
+**几何/装箱语义（批⑥ 定稿）**：虚拟 4096 装箱 + shelf 行式（确定性排序 h desc → w desc → guid asc——同输入同字节，包可复现面）；精灵间 gutter 2px 透明（线性采样防渗色）；页右/下裁剪到用到 extent（4px 对齐——vs-survivor 模板 7 精灵一页 124KiB，固定 4096 页则 64MiB）；任一边 >4096 的精灵 → **专属页**（(0,0) 起独占，页边缘 clamp-to-edge 兜底）；任一边 >16384 拒烤（GPU maxImageDimension2D 域）。切片像素几何不入容器——装载期从 `.meta` 网格重派生子矩形（`RegisterGridSlices`，dev 一文件一页路径同款语义）。落位 `<root>/.lemon/baked/atlas/atlas.baked`（单图集 v1；多图集组归 06 §5 后续）。磁盘代价：RAW RGBA 相对 PNG 压缩源膨胀（模板实测 48KB→124KiB，2.6×）——启动零解码判据优先，压缩归 M7b；MaxRects 全量升级视余量（D4 保底口径）。
 
 ### M6 packager 形态与出包布局（D2，已拍板 2026-10-03：A 独立目标）
 

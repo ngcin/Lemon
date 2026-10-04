@@ -2,6 +2,12 @@
 # M4.4 起：lemon-editor-core（EditorContext/AssetDatabase 等无 ImGui 编辑器逻辑）入测
 add_executable(lemon-tests engine_tests.cpp)
 target_link_libraries(lemon-tests PRIVATE lemon-engine)
+# stb 头面（M7a 批⑥）：LAT1 单测播种 PNG 用 stb_image_write（实现符号已在
+# lemon-engine 的 StbImage.cpp 单 TU，此处只补头路径——无第二实现 TU）
+if(NOT stb_SOURCE_DIR)
+  message(FATAL_ERROR "stb dependency missing (cmake/Dependencies.cmake)")
+endif()
+target_include_directories(lemon-tests PRIVATE ${stb_SOURCE_DIR})
 if(LEMON_BUILD_EDITOR)
   target_link_libraries(lemon-tests PRIVATE lemon-editor-core)
   target_compile_definitions(lemon-tests PRIVATE LEMON_EDITOR_CORE=1)

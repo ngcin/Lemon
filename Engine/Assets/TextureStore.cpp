@@ -29,21 +29,22 @@ const TextureStore::Page* TextureStore::Find(uint64_t guid) const {
     return nullptr;
 }
 
-void TextureStore::RegisterSlices(const IndexedEntry& e, uint32_t slot, uint32_t w, uint32_t h) {
+void RegisterGridSlices(renderer::AtlasRegistry& atlas, const IndexedEntry& e, uint32_t slot,
+                        uint32_t ox, uint32_t oy, uint32_t imageW, uint32_t imageH) {
     // 像素整除/越界校验在解码侧（AssetIndex 只信 meta 声明）；行优先 cell →
     // sliceBase+cell 连号。宁缺勿错：网格与像素不符 = 红字不切（全幅仍可用）
     if (e.gridCols == 0 || e.sliceBase == 0) return;
     const uint32_t gw = (uint32_t)e.gridCols * e.cellW, gh = (uint32_t)e.gridRows * e.cellH;
-    if (gw > w || gh > h) {
+    if (gw > imageW || gh > imageH) {
         LEMON_ERROR("切片网格 %u×%u 格（%u×%u px）超出图面 %u×%u——按全幅处理：%s",
-                    (unsigned)e.gridCols, (unsigned)e.gridRows, gw, gh, w, h,
+                    (unsigned)e.gridCols, (unsigned)e.gridRows, gw, gh, imageW, imageH,
                     e.relPath.c_str());
         return;
     }
     for (uint32_t r = 0; r < e.gridRows; ++r)
         for (uint32_t c = 0; c < e.gridCols; ++c) {
             const uint32_t id = e.SliceSpriteId(r * e.gridCols + c);
-            atlas_->SetSpriteAt(id, slot, c * e.cellW, r * e.cellH, e.cellW, e.cellH);
+            atlas.SetSpriteAt(id, slot, ox + c * e.cellW, oy + r * e.cellH, e.cellW, e.cellH);
         }
     LEMON_LOG("切片登记：'%s' %u×%u 格 %u px → %u..%u（槽 %u）", e.relPath.c_str(),
               (unsigned)e.gridCols, (unsigned)e.gridRows, (unsigned)e.cellW, e.sliceBase,
@@ -93,7 +94,7 @@ bool TextureStore::LoadSprite(const IndexedEntry& e) {
         stbi_image_free(px);
         return false;
     }
-    RegisterSlices(e, p.slot, p.w, p.h);
+    RegisterGridSlices(*atlas_, e, p.slot, /*ox=*/0, /*oy=*/0, p.w, p.h);
     stbi_image_free(px);
 
     pages_.push_back(p); // LoadAll 调用方保证 spriteId 升序喂入

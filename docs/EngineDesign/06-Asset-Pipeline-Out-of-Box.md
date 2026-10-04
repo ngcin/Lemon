@@ -156,6 +156,15 @@ MyGame/                                   # 用户项目（升级永不触碰）
 - **M5 批③最小集注记**：MaxRects 打包前，已落"单页网格切片"（一 PNG 一页 +
   连号切片块，见 §2.2 注记）——切片消费面 = clip 帧引用；sprite 槽直接引用切片的
 > UI 与跨表打包归本节 M6c 工作（2026-09-24 重排）。
+- **M7a 批⑥ 落地注记（2026-10-04）**：图集 `.baked` v1 已定形——容器 `LAT1`
+  （字节表与装箱语义见 [ADR-016](../ADR/ADR-016-Standalone-Runtime-And-Minimal-Packager.md)
+  M5 定稿）：packager 侧 writer（`Engine/Assets/AtlasBake`，shelf 确定性装箱 +
+  页裁剪 + RAW RGBA 载荷）现烤入包 `data/.lemon/baked/atlas/atlas.baked`，sprite
+  源+.meta 不入包；运行时 reader（`Engine/Assets/AtlasStore`）页位图直传 + 按
+  manifest 号账登记，**零 PNG 解码**。编辑器维持一文件一页（D4 默认 packager
+  专用——回归面/金回放零影响）；MaxRects 全量升级与多图集组归后续（批⑥ 登记
+  项）。模板实测：7 精灵 → 1 页 124KiB、纹理槽 9→3、磁盘 48KB PNG → 124KiB RAW
+  （膨胀 2.6×，压缩归 M7b）。
 
 ## 6. 发布管线与 Steam
 

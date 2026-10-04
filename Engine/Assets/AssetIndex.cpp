@@ -232,24 +232,42 @@ bool AssetIndex::LoadFromManifest(const std::string& manifestPath) {
 
     // Sprite 补号（丢记账者）+ 切片块号域校验：块不落 [base, 上限) = 丢块转全幅。
     // 号域上限 = manifest nextSpriteId（在场时），缺省 = 已见最大号 + 1——
-    // 防御坏账把切片块指到程序化页/他页。
+    // 防御坏账把切片块指到程序化页/他页。**号域绝对 sane 上限**（review 2026-10-05，
+    // LBA1 sane-上限防线同语义）：AtlasRegistry::sprites_ 按号 resize，巨号直接
+    // 巨分配崩装载——idCeiling 一律钳 kMaxSpriteIdSanity，超限号全成坏账清零。
+    constexpr uint32_t kMaxSpriteIdSanity = 1u << 22; // 419 万（~168MB vector 上界）
     uint32_t idCeiling = spriteIdBase_;
-    if (doc.contains("nextSpriteId") && doc.at("nextSpriteId").is_number_unsigned())
-        idCeiling = std::max(idCeiling, doc.at("nextSpriteId").get<uint32_t>());
-    else
-        for (const IndexedEntry& e : entries_) {
-            idCeiling = std::max(idCeiling, e.spriteId + 1);
-            if (e.sliceCount) idCeiling = std::max(idCeiling, e.sliceBase + e.sliceCount);
+    if (doc.contains("nextSpriteId") && doc.at("nextSpriteId").is_number_unsigned()) {
+        const uint64_t declared = doc.at("nextSpriteId").get<uint64_t>();
+        idCeiling = uint32_t(std::min<uint64_t>(
+            kMaxSpriteIdSanity, std::max<uint64_t>(spriteIdBase_, declared)));
+    } else {
+        uint64_t seen = spriteIdBase_;
+        for (const IndexedEntry& e : entries_) { // 64 位域累算（防 u32 +1/求和回绕）
+            seen = std::max<uint64_t>(seen, uint64_t(e.spriteId) + 1);
+            if (e.sliceCount)
+                seen = std::max<uint64_t>(seen, uint64_t(e.sliceBase) + e.sliceCount);
         }
+        idCeiling = uint32_t(std::min<uint64_t>(seen, kMaxSpriteIdSanity));
+    }
+    // 块账 sane 域收口（review 2026-10-05：u32 加法回绕防线——sliceBase+sliceCount
+    // 精确回绕可绕过原防御，SetSpriteAt 以巨值 resize 直接 bad_alloc 崩装载，LBA1
+    // review 2026-10-01 同款教训在号域重演；收口先于随迁/保号消费，count 同时钳
+    // 编辑器网格上限 4096 = ReadGridImporter 同域）。真坏账清零转全幅（宁缺勿错）。
+    for (IndexedEntry& e : entries_) {
+        if (e.type != AssetType::Sprite || e.sliceCount == 0) continue;
+        if (e.sliceCount > 4096 || uint64_t(e.sliceBase) + e.sliceCount > idCeiling)
+            e.sliceBase = e.sliceCount = 0;
+    }
     uint32_t nextId = idCeiling;
     std::unordered_map<uint32_t, uint8_t> taken; // 已占号集（撞号检测；无 sprite 的
                                                  // 纯数据项目号域不消费 = 合法）
     for (IndexedEntry& e : entries_) {
         if (e.type != AssetType::Sprite) continue;
-        if (e.sliceCount > 0 && (e.sliceBase < spriteIdBase_ ||
-                                 e.sliceBase + e.sliceCount > idCeiling)) {
-            e.sliceBase = e.sliceCount = 0; // 块账异常 → 转全幅（宁缺勿错）
-        }
+        // 坏账两态清零重派：低域号（撞程序化页）/越号域上界（巨号巨 resize 面）
+        if (e.spriteId != 0 &&
+            (e.spriteId < spriteIdBase_ || e.spriteId > idCeiling))
+            e.spriteId = 0;
         if (e.spriteId != 0) {
             if (!taken.emplace(e.spriteId, 0).second) {
                 LEMON_ERROR("AssetIndex：manifest spriteId %u 重复记账（%s 丢号重派）",
@@ -258,11 +276,32 @@ bool AssetIndex::LoadFromManifest(const std::string& manifestPath) {
             }
         }
     }
-    for (IndexedEntry& e : entries_) {
+    // 切片块号域（验收热修 2026-10-05）：本体重派时低域块**随本体连号重发**（结构
+    // = 本体后紧跟连号块，ScanFallback 发号序同款）而非清零——几何真源在 .meta、
+    // 号只是进程内派生号，整体平移无害。低域块成因：packager 与运行时 spriteIdBase
+    // 不同（无编辑器账项目 fallback 自 base=2 记账，对 lemon-game 程序化页后大基线）。
+    std::vector<uint8_t> rebased(entries_.size(), 0);
+    for (size_t i = 0; i < entries_.size(); ++i) {
+        IndexedEntry& e = entries_[i];
         if (e.type != AssetType::Sprite || e.spriteId != 0) continue;
         while (taken.count(nextId)) ++nextId;
         e.spriteId = nextId++;
         taken.emplace(e.spriteId, 0);
+        rebased[i] = 1;
+        if (e.sliceCount > 0 && e.sliceBase < spriteIdBase_) {
+            while (taken.count(nextId)) ++nextId;
+            e.sliceBase = nextId;
+            nextId += e.sliceCount; // ≤4096（上方收口钳过）
+            for (uint32_t id = e.sliceBase; id < e.sliceBase + e.sliceCount; ++id)
+                taken.emplace(id, 0);
+        }
+    }
+    // 保号条目的低域怪块收尾（本体在域内而块指向程序化页 = 账不自洽）→ 清零转全幅
+    //（上界越界已在 sane 域收口清过）
+    for (size_t i = 0; i < entries_.size(); ++i) {
+        IndexedEntry& e = entries_[i];
+        if (e.type != AssetType::Sprite || e.sliceCount == 0 || rebased[i]) continue;
+        if (e.sliceBase < spriteIdBase_) e.sliceBase = e.sliceCount = 0;
     }
     return true;
 }
@@ -280,8 +319,9 @@ bool AssetIndex::ExportManifest(const std::string& path) const {
         if (e.type == AssetType::Sprite && e.spriteId != 0) a["spriteId"] = e.spriteId;
         if (e.sliceCount) a["slice"] = {{"base", e.sliceBase}, {"count", e.sliceCount}};
         doc["assets"].push_back(std::move(a));
-        idCeiling = std::max(idCeiling, e.spriteId + 1);
-        if (e.sliceCount) idCeiling = std::max(idCeiling, e.sliceBase + e.sliceCount);
+        idCeiling = std::max<uint64_t>(idCeiling, uint64_t(e.spriteId) + 1); // 64 位域
+        if (e.sliceCount)
+            idCeiling = std::max<uint64_t>(idCeiling, uint64_t(e.sliceBase) + e.sliceCount);
     }
     doc["nextSpriteId"] = idCeiling; // 号域上界（回读侧块账校验的 ceiling 口径）
     std::error_code ec;
@@ -373,7 +413,9 @@ const IndexedEntry* AssetIndex::FindBySpriteId(uint32_t spriteId) const {
     if (spriteId == 0) return nullptr;
     for (const IndexedEntry& e : entries_) {
         if (e.spriteId == spriteId) return &e;
-        if (e.sliceCount > 0 && spriteId >= e.sliceBase && spriteId < e.sliceBase + e.sliceCount)
+        // 64 位域区间（review 2026-10-05：u32 求和回绕防线）
+        if (e.sliceCount > 0 && spriteId >= e.sliceBase &&
+            uint64_t(spriteId) < uint64_t(e.sliceBase) + e.sliceCount)
             return &e;
     }
     return nullptr;
