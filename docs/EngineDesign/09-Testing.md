@@ -455,6 +455,10 @@ Hierarchy 面板）。回归口径 = 本命令三跑稳定。
 > 登记背景：08 §3/风险 #2/#7 三处把 CI 当既有前提引用，但 CI 从未建设（无 workflow，
 > 本册此前零提及）——[全栈审查](../Reports/2026-09-24-code-review-546a755.md) F-13
 > 的根源。本节是 CI 的**口径与门禁定义**；落地时 workflow 与 runner 细节随 Plans 条目。
+>
+> **2026-10-04 用户拍板：自动触发暂停**（workflow 已注释 push/PR 段，仅留
+> workflow_dispatch 手动档）——待编辑器可独立打包下载后恢复自动化（随 M7a
+> 批⑧/M7b 出包线）；本节口径为恢复后的目标态。
 
 - **Runner**：GitHub Actions macOS runner 先行（GPU 不可用——逻辑面门禁）；Windows
   runner 随 M7 移植加入（Vulkan 冒烟跑 llvmpipe/lavapipe 软件光栅档）。

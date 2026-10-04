@@ -1,14 +1,18 @@
-# Lemon CI — push/PR 逻辑面门禁（09 §9 最小落地，M7 批⓪ 2026-09-30）
+# Lemon CI — 逻辑面门禁（09 §9 最小落地，M7 批⓪ 2026-09-30）
 # macOS runner 无独显交互（GPU 不可用假设）：构建 + ctest 三项（engine-tests /
-# imgui-isolation / script-tests）。每日编辑器回归 + 性能基线门禁 + Windows runner
-# 随 M7a 批补齐（09 §9 全量口径）。runner 首跑调通前的观察项见
+# imgui-isolation / script-tests）。
+#
+# 2026-10-04 用户拍板：暂停自动触发（push/PR 注释），仅保留 workflow_dispatch
+# 手动档——待编辑器可独立打包下载后再恢复自动化（随 M7a 批⑧/M7b 出包线）。
+# 恢复 = 还原下方 push/pull_request 两段触发器。每日编辑器回归 + 性能基线门禁 +
+# Windows runner 随批⑦/批⑧ 补齐（09 §9 全量口径）。runner 首跑调通前的观察项见
 # docs/DevLog/2026-09-30-b0-gate-c-and-defect-batch1.md 尾巴 2。
 name: ci
 
 on:
-  push:
-    branches: [main]
-  pull_request:
+  # push:
+  #   branches: [main]
+  # pull_request:
   workflow_dispatch:
 
 jobs:
