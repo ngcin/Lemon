@@ -25,6 +25,7 @@ namespace {
 struct HostfxrApi {
     void* lib = nullptr;
     hostfxr_initialize_for_runtime_config_fn initForConfig = nullptr;
+    hostfxr_initialize_for_dotnet_command_line_fn initCmdLine = nullptr;
     hostfxr_get_runtime_delegate_fn getDelegate = nullptr;
     hostfxr_close_fn close = nullptr; // 部分 hostfxr 不导出（本机实测）——可选
 };
@@ -57,51 +58,29 @@ std::vector<long long> VersionKey(const std::string& v) {
     return parts;
 }
 
-// fxr 根解析链：显式参 → $LEMON_DOTNET_ROOT（引擎专用覆写）→ $DOTNET_ROOT（dotnet
+// fxr 根候选链：显式参 → $LEMON_DOTNET_ROOT（引擎专用覆写）→ $DOTNET_ROOT（dotnet
 // 官方变量；actions/setup-dotnet 等 CI 装配即设此——runner 的 dotnet 装在临时目录，
 // 只认 brew 默认路径会静默哑火，CI 首跑实证 2026-09-30）→ /usr/local/share/dotnet。
-std::filesystem::path DotnetRootFromEnv() {
+// 显式根两形态皆落空时继续走链（M7a 批⑤：dev 形态 exe 旁 runtime/ 只有托管件，
+// GameEntry 恒传该目录——回退到安装机 dotnet 的既有语义不变）。
+std::vector<std::filesystem::path> DotnetRootCandidates(const char* dotnetRoot) {
+    std::vector<std::filesystem::path> roots;
+    if (dotnetRoot && *dotnetRoot) roots.emplace_back(dotnetRoot);
     for (const char* var : {"LEMON_DOTNET_ROOT", "DOTNET_ROOT"})
         if (const char* v = getenv(var); v && *v)
-            return std::filesystem::path(v);
-    return std::filesystem::path("/usr/local/share/dotnet");
+            roots.emplace_back(v);
+    roots.emplace_back("/usr/local/share/dotnet");
+    return roots;
 }
 
-bool LoadHostfxr(HostfxrApi& api, const char* dotnetRoot) {
-    std::filesystem::path root =
-        (dotnetRoot && *dotnetRoot) ? std::filesystem::path(dotnetRoot) : DotnetRootFromEnv();
-    std::filesystem::path fxrDir = root / "host" / "fxr";
-    if (!std::filesystem::exists(fxrDir)) {
-        LEMON_WARN("no dotnet fxr dir at %s (brew install dotnet-sdk / set LEMON_DOTNET_ROOT 或 DOTNET_ROOT)",
-                   fxrDir.string().c_str());
-        return false;
-    }
-    std::string best;
-    std::vector<long long> bestKey;
-    for (auto& e : std::filesystem::directory_iterator(fxrDir)) {
-        if (!e.is_directory()) continue;
-        std::string name = e.path().filename().string();
-        auto key = VersionKey(name);
-        if (best.empty() || key > bestKey) {
-            best = name;
-            bestKey = key;
-        }
-    }
-    if (best.empty()) {
-        LEMON_WARN("no hostfxr version dir under %s", fxrDir.string().c_str());
-        return false;
-    }
-#if defined(_WIN32)
-    auto libPath = fxrDir / best / "hostfxr.dll";
-#else
-    auto libPath = fxrDir / best / "libhostfxr.dylib";
-#endif
+bool BindHostfxr(HostfxrApi& api, const std::filesystem::path& libPath) {
     api.lib = OpenLibrary(libPath.string().c_str());
     if (!api.lib) {
         LEMON_WARN("open %s failed", libPath.string().c_str());
         return false;
     }
     api.initForConfig = (hostfxr_initialize_for_runtime_config_fn)Sym(api.lib, "hostfxr_initialize_for_runtime_config");
+    api.initCmdLine = (hostfxr_initialize_for_dotnet_command_line_fn)Sym(api.lib, "hostfxr_initialize_for_dotnet_command_line");
     api.getDelegate = (hostfxr_get_runtime_delegate_fn)Sym(api.lib, "hostfxr_get_runtime_delegate");
     api.close = (hostfxr_close_fn)Sym(api.lib, "hostfxr_close_handle"); // 可选符号
     if (!api.initForConfig || !api.getDelegate) {
@@ -113,6 +92,46 @@ bool LoadHostfxr(HostfxrApi& api, const char* dotnetRoot) {
         setWriter(+[](const char* message) { LEMON_WARN("hostfxr: %s", message); });
     LEMON_LOG("hostfxr: %s (close=%s)", libPath.string().c_str(), api.close ? "yes" : "no");
     return true;
+}
+
+bool LoadHostfxr(HostfxrApi& api, const char* dotnetRoot) {
+    for (const std::filesystem::path& root : DotnetRootCandidates(dotnetRoot)) {
+        // 形态一（M7a 批⑤ 包形态）：self-contained 平铺——dotnet publish -r
+        // --self-contained 产物根直接持有 libhostfxr（无 host/fxr/<ver> 多版本层）
+        std::error_code ec;
+        std::filesystem::path flat = root / (std::string("libhostfxr") +
+#if defined(_WIN32)
+                                             ".dll"
+#else
+                                             ".dylib"
+#endif
+        );
+        if (std::filesystem::is_regular_file(flat, ec) && BindHostfxr(api, flat)) return true;
+        // 形态二（安装机/brew）：host/fxr/<ver> 多版本布局，取最高版
+        std::filesystem::path fxrDir = root / "host" / "fxr";
+        if (!std::filesystem::exists(fxrDir)) continue;
+        std::string best;
+        std::vector<long long> bestKey;
+        for (auto& e : std::filesystem::directory_iterator(fxrDir)) {
+            if (!e.is_directory()) continue;
+            std::string name = e.path().filename().string();
+            auto key = VersionKey(name);
+            if (best.empty() || key > bestKey) {
+                best = name;
+                bestKey = key;
+            }
+        }
+        if (best.empty()) continue;
+#if defined(_WIN32)
+        auto libPath = fxrDir / best / "hostfxr.dll";
+#else
+        auto libPath = fxrDir / best / "libhostfxr.dylib";
+#endif
+        if (BindHostfxr(api, libPath)) return true;
+    }
+    LEMON_WARN("no usable dotnet fxr root（brew install dotnet-sdk / set LEMON_DOTNET_ROOT"
+               " 或 DOTNET_ROOT / 包形态检查 runtime/ 自含产物）");
+    return false;
 }
 
 } // namespace
@@ -134,8 +153,21 @@ bool CoreCLRHost::Load(const char* dotnetRoot, const char* runtimeConfigPath,
     hostfxr_handle ctx = nullptr;
     int rc = fxr_->api.initForConfig(runtimeConfigPath, nullptr, &ctx);
     if (rc != 0 || ctx == nullptr) {
-        LEMON_WARN("hostfxr_initialize_for_runtime_config(%s) failed rc=%d", runtimeConfigPath, rc);
-        return false;
+        // 自含组件回退（M7a 批⑤ 包形态实测坑）：initialize_for_runtime_config
+        // 明确拒 SC 形态 runtimeconfig（includedFrameworks，rc=0x80008093）——改走
+        // apphost 同款 command_line 初始化（argv[0] = 入口程序集路径；hostfxr 自
+        // 取其旁 runtimeconfig，runtime/hostpolicy 按 app base = 程序集目录解析平
+        // 铺布局）。dev 形态（framework 引用）不受影响——首试路径命中即短路。
+        if (fxr_->api.initCmdLine && entryAssemblyPath && *entryAssemblyPath) {
+            const char_t* argv[1] = { entryAssemblyPath };
+            rc = fxr_->api.initCmdLine(1, argv, nullptr, &ctx);
+        }
+        if (rc != 0 || ctx == nullptr) {
+            LEMON_WARN("hostfxr_initialize_for_runtime_config(%s) failed rc=%d",
+                       runtimeConfigPath, rc);
+            return false;
+        }
+        LEMON_LOG("hostfxr：自含形态走 command_line 初始化（apphost 语义）");
     }
     rc = fxr_->api.getDelegate(ctx, hdt_load_assembly_and_get_function_pointer, &loadAssembly_);
     if (rc != 0 || loadAssembly_ == nullptr) {

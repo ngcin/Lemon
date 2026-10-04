@@ -401,6 +401,17 @@ int main(int argc, char** argv) {
     // vkCreateInstance 对裸文件名 library_path 的验证层 dlopen 找不到 brew 层
     // （VK_ERROR_LAYER_NOT_PRESENT，--validate 实抓；编辑器同为设备先行故无此症）
     InputCollector input;
+    // 包形态 ICD 自举（M7a 批⑤）：Vulkan loader 的 ICD 发现默认走系统注册位
+    // （brew /usr/local/etc/vulkan/icd.d）——干净机无注册位则 libMoltenVK 永不
+    // 装载。exe 旁 MoltenVK_icd.json 在场 = packager 产物，显式指包内清单
+    // （library_path 相对清单自身解析，随包可搬迁）；不覆写用户显式设置（调试态
+    // 注入系统 MoltenVK 仍优先）。须在 Device::Create（vkCreateInstance）前。
+    if (const char* prevIcd = getenv("VK_ICD_FILENAMES"); !prevIcd || !*prevIcd) {
+        std::error_code icdEc;
+        const fs::path bundledIcd = fs::path(exeDir) / "MoltenVK_icd.json";
+        if (fs::is_regular_file(bundledIcd, icdEc))
+            setenv("VK_ICD_FILENAMES", bundledIcd.string().c_str(), /*overwrite=*/0);
+    }
     auto window = Window::Create({.title = pf.name.c_str(), .width = 1280, .height = 720});
     if (!window) return 1;
     window->SetEventObserver(&InputCollector::OnEvent, &input);
@@ -439,7 +450,11 @@ int main(int argc, char** argv) {
                     gameDll.c_str());
         return 1;
     }
-    if (!host.Initialize(nullptr, (entryDir + "/Lemon.Entry.runtimeconfig.json").c_str(),
+    // dotnetRoot 恒传 entryDir（M7a 批⑤ 包形态：self-contained 平铺 libhostfxr
+    // 在场即命中;dev 形态该目录只有托管件——CoreCLRHost 落空后回退 env/brew 链，
+    // 行为与批④的 nullptr 等价）
+    if (!host.Initialize(entryDir.c_str(),
+                         (entryDir + "/Lemon.Entry.runtimeconfig.json").c_str(),
                          (entryDir + "/Lemon.Entry.dll").c_str()) ||
         !host.LoadUserAssembly(gameDll.c_str())) {
         LEMON_ERROR("lemon-game：C# 宿主装配失败（%s）", gameDll.c_str());

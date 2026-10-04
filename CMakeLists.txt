@@ -25,6 +25,7 @@ set(LEMON_CMAKE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/cmake" CACHE INTERNAL "")
 option(LEMON_BUILD_SPIKES "Build M0 spike programs" ON)
 option(LEMON_BUILD_TESTS "Build engine unit tests" ON)
 option(LEMON_BUILD_SAMPLES "Build engine samples/benches" ON)
+option(LEMON_BUILD_TOOLS "M7a 出包工具 lemon-packager（出包时需要 dotnet SDK）" ON)
 option(LEMON_BUILD_SCRIPTING "M3 C# 脚本层（需要 dotnet SDK 10；OFF 时引擎其余部分照常）" ON)
 option(LEMON_BUILD_EDITOR "M4 编辑器（ImGui docking；lemon-editor + lemon-imgui）" ON)
 
@@ -47,6 +48,11 @@ endif()
 
 if(LEMON_BUILD_SAMPLES)
   add_subdirectory(Samples)
+endif()
+
+# 独立工具目标（M7a 批⑤ lemon-packager——链 lemon-engine，出包时才需 dotnet）
+if(LEMON_BUILD_TOOLS)
+  add_subdirectory(tools)
 endif()
 
 if(LEMON_BUILD_SPIKES)

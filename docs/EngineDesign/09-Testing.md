@@ -437,8 +437,9 @@ Hierarchy 面板）。回归口径 = 本命令三跑稳定。
   异常禁用 → 对话框复活，帧下限 3000；批② T4 加**数值表**断言 tables=YES；T5 加
   **三档存档**断言——种子 meta.sav（vs.best 载入回显）+ 旧 game.sav（惰性迁移
   链）→ Stop 后 slot_0/meta 落盘 + 迁移内容回读 + 空档 settings 不落文件）/
-  `--final`（终验链）经 `tools/editor-regression.sh` 一键 **14 步**（批⓪ smoke-guid
-  起）；**未脚本化**的纯观感路径
+  `--final`（终验链）经 `tools/editor-regression.sh` 一键 **19 步**（M5 批⓪ 14 步
+  → M6c 17 → M7a 批④ 18（game-smoke）→ 批⑤ 19（pkg-smoke：lemon-packager 出包 +
+  自检 + 包体零参 smoke + fps≥60 数值判））；**未脚本化**的纯观感路径
   （Inspector 控件手感、面板排版）仍靠 [Editor-Manual-Test-Guide.md](./Editor-Manual-Test-Guide.md) 真人清单。
 - M2：bench-sim 早期怪群聚拢阶段存在 max ~145ms 单步尖峰（avg 判据不受影响；哈希重建
   并行化是已预留路径，触发 M5 压测 B 再做）；投射物穿透去重用全量 iFrames 策略（M5 细化）；

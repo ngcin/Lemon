@@ -74,6 +74,11 @@ public:
     /// 上次 Open 是否走 manifest 快路径（冒烟/单测探针位）
     bool FromManifest() const { return fromManifest_; }
 
+    /// 打包账导出（M7a 批⑤ packager 消费）：schema 与 LoadFromManifest 单源对齐
+    ///（assets[{path,guid,type,spriteId,slice}] + nextSpriteId 号域上界）。写入
+    /// `<root>/.lemon/manifest.pkg.json` 后，包形态运行时 Open 走 pkg 快路径。
+    bool ExportManifest(const std::string& path) const;
+
 private:
     bool LoadFromManifest(const std::string& manifestPath);
     void ScanFallback();

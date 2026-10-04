@@ -143,8 +143,12 @@ bool AssetIndex::Open(const std::string& projectRoot, uint32_t spriteIdBase) {
         return false;
     }
 
-    // 快路径：manifest 在场且合法 → 直读记账。主档坏 → .bak 兜底（编辑器 M21
-    // 写 .bak 的恢复语义，只读侧同享）；主/备全坏/缺失 → 回退扫描（红字）。
+    // 快路径（M7a 批⑤ 起两级）：packager 打包账 manifest.pkg.json（包形态，只读
+    // 消费）→ 编辑器账 manifest.json（主档坏 → .bak 兜底，编辑器 M21 写 .bak 的
+    // 恢复语义只读侧同享）→ 主/备全坏/缺失 → 回退扫描（红字）。
+    if (LoadFromManifest(root_ + "/.lemon/manifest.pkg.json")) {
+        fromManifest_ = true;
+    } else {
     const std::string manifestPath = root_ + "/.lemon/manifest.json";
     if (LoadFromManifest(manifestPath)) {
         fromManifest_ = true;
@@ -160,6 +164,7 @@ bool AssetIndex::Open(const std::string& projectRoot, uint32_t spriteIdBase) {
             ScanFallback();
         }
     }
+    } // manifest.json 链结束（pkg 账在场时整链跳过）
 
     std::sort(entries_.begin(), entries_.end(),
               [](const IndexedEntry& a, const IndexedEntry& b) {
@@ -260,6 +265,34 @@ bool AssetIndex::LoadFromManifest(const std::string& manifestPath) {
         taken.emplace(e.spriteId, 0);
     }
     return true;
+}
+
+bool AssetIndex::ExportManifest(const std::string& path) const {
+    if (!opened_) return false;
+    Json doc;
+    doc["assets"] = Json::array();
+    uint32_t idCeiling = spriteIdBase_;
+    for (const IndexedEntry& e : entries_) {
+        Json a;
+        a["path"] = e.relPath;
+        a["guid"] = e.guid; // 十进制 u64（LoadFromManifest 同款记账口径）
+        a["type"] = AssetTypeName(e.type);
+        if (e.type == AssetType::Sprite && e.spriteId != 0) a["spriteId"] = e.spriteId;
+        if (e.sliceCount) a["slice"] = {{"base", e.sliceBase}, {"count", e.sliceCount}};
+        doc["assets"].push_back(std::move(a));
+        idCeiling = std::max(idCeiling, e.spriteId + 1);
+        if (e.sliceCount) idCeiling = std::max(idCeiling, e.sliceBase + e.sliceCount);
+    }
+    doc["nextSpriteId"] = idCeiling; // 号域上界（回读侧块账校验的 ceiling 口径）
+    std::error_code ec;
+    fs::create_directories(fs::path(path).parent_path(), ec);
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    if (!f) {
+        LEMON_ERROR("AssetIndex：打包账导出失败（不可写）：%s", path.c_str());
+        return false;
+    }
+    f << doc.dump(2);
+    return f.good();
 }
 
 void AssetIndex::ScanFallback() {

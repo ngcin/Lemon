@@ -128,6 +128,31 @@ if [ "${MODE}" = "full" ]; then
     else
         echo "  SKIP game-smoke (missing ${GAME})"
     fi
+    # M7a 批⑤：出包链（lemon-packager 目录拷贝式：dylib 闭包 @rpath 重锚 + rpath
+    # 卫生 + MoltenVK ICD 自举 + self-contained runtime + 预烤音频 + manifest.pkg.json
+    # + 自检闭环/清单对账；包体**零参** --smoke = data/ 缺省路径端到端——"解包即跑"
+    # 的机器面）。夹具复用上方 game-smoke 的 ${TMP}/game;fps ≥ 60 = 08 M7a 判据。
+    PKGR="${BUILD}/Tools/packager/lemon-packager"
+    if [ -x "${PKGR}" ] && [ -d "${TMP}/game" ]; then
+        if "${PKGR}" --project "${TMP}/game" --runtime "${BUILD}" \
+                --out "${TMP}/pkg" --force >"${TMP}/pkg-build.log" 2>&1 &&
+           grep -q "pkg-selfcheck: .* => OK" "${TMP}/pkg-build.log"; then
+            pkg_smoke_run() {
+                local out
+                out="$("${TMP}/pkg/lemon-game" --smoke --frames 900 2>&1)" || return 1
+                echo "${out}" | grep -q "game-smoke: .* => OK" || return 1
+                echo "${out}" | grep -o "fps=[0-9.]*" | head -1 | awk -F= '{ exit !($2+0 >= 60) }'
+            }
+            step "pkg-smoke (packager clean-dir bundle: closure+sc-runtime+baked-audio, zero-arg run fps>=60; M7a-b5)" \
+                pkg_smoke_run
+        else
+            echo "  FAIL pkg-smoke (出包/自检失败，日志 ${TMP}/pkg-build.log)"
+            tail -5 "${TMP}/pkg-build.log" 2>/dev/null | sed 's/^/       /'
+            fail=$((fail+1))
+        fi
+    else
+        echo "  SKIP pkg-smoke (missing ${PKGR} 或夹具 ${TMP}/game)"
+    fi
     grep_step "guid-chain smoke (insert+rename+manifest-wipe -> reopen per-entity resolve; M6a-b0)" \
         "smoke-guid: .* => OK" \
         "${EDITOR}" --smoke-guid --no-reopen

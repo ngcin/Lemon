@@ -6158,6 +6158,67 @@ void TestAssetIndexConsistency() {
 }
 #endif // LEMON_EDITOR_CORE
 
+// ---- M7a 批⑤：打包账 manifest.pkg.json（AssetIndex::ExportManifest → pkg 快路径）----
+
+void TestAssetIndexPkgManifest() {
+    namespace fs = std::filesystem;
+    using lemon::assets::AssetIndex;
+    using lemon::assets::AssetType;
+
+    const fs::path root = fs::temp_directory_path() /
+                          ("lemon-test-pkgmanifest-" + std::to_string(::getpid()));
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root / "Assets", ec);
+    fs::create_directories(root / "Prefabs", ec);
+    // 夹具：无编辑器账（.lemon 不存在）——回退扫描 → 导出 → pkg 快路径回读全等
+    const uint64_t heroGuid = 0x2000000000000001ull, sheetGuid = 0x2000000000000002ull,
+                   walkGuid = 0x2000000000000003ull, mobGuid = 0x2000000000000004ull;
+    { std::ofstream f(root / "Assets" / "hero.png", std::ios::binary); f << "png"; }
+    { std::ofstream f(root / "Assets" / "hero.png.meta", std::ios::trunc);
+      f << "{\"guid\":\"" << lemon::assets::GuidToHex(heroGuid) << "\",\"type\":\"sprite\"}"; }
+    { std::ofstream f(root / "Assets" / "sheet.png", std::ios::binary); f << "png"; }
+    { std::ofstream f(root / "Assets" / "sheet.png.meta", std::ios::trunc);
+      f << "{\"guid\":\"" << lemon::assets::GuidToHex(sheetGuid)
+        << "\",\"type\":\"sprite\",\"importer\":{\"slice\":\"grid\",\"cell\":[8,8],"
+          "\"frames\":[2,2]}}"; }
+    { std::ofstream f(root / "Assets" / "walk.anim", std::ios::trunc); f << "{}"; }
+    { std::ofstream f(root / "Assets" / "walk.anim.meta", std::ios::trunc);
+      f << "{\"guid\":\"" << lemon::assets::GuidToHex(walkGuid) << "\",\"type\":\"clip\"}"; }
+    { std::ofstream f(root / "Prefabs" / "mob.prefab", std::ios::trunc); f << "{}"; }
+    { std::ofstream f(root / "Prefabs" / "mob.prefab.meta", std::ios::trunc);
+      f << "{\"guid\":\"" << lemon::assets::GuidToHex(mobGuid) << "\",\"type\":\"prefab\"}"; }
+
+    AssetIndex scan;
+    Expect(scan.Open(root.string(), 2) && !scan.FromManifest(), "scan opens fallback (no manifest)");
+    Expect(scan.ExportManifest((root / ".lemon" / "manifest.pkg.json").string()),
+           "export pkg manifest");
+
+    AssetIndex pkg;
+    Expect(pkg.Open(root.string(), 2) && pkg.FromManifest(), "reopen hits pkg manifest fast path");
+    Expect(pkg.Entries().size() == scan.Entries().size(), "pkg account entry count equal");
+    for (const lemon::assets::IndexedEntry& e : scan.Entries()) {
+        const lemon::assets::IndexedEntry* p = pkg.FindByPath(e.relPath);
+        Expect(p && p->guid == e.guid && p->type == e.type,
+               "pkg manifest: guid/path/type roundtrip");
+        if (e.type == AssetType::Sprite)
+            Expect(p && p->spriteId == e.spriteId && p->sliceBase == e.sliceBase &&
+                       p->sliceCount == e.sliceCount,
+                   "pkg manifest: spriteId/slice roundtrip");
+    }
+    const lemon::assets::IndexedEntry* sheet = pkg.FindByGuid(sheetGuid);
+    Expect(sheet && sheet->Sliced() && sheet->SliceSpriteId(2) == sheet->sliceBase + 2,
+           "pkg manifest: slice block usable (cell id contiguous)");
+    // 编辑器账不干扰包账优先级：写入 manifest.json 后 pkg 账仍首查（包形态语义）
+    { std::ofstream f(root / ".lemon" / "manifest.json", std::ios::trunc);
+      f << "{\"assets\":[],\"nextSpriteId\":2}"; }
+    AssetIndex stillPkg;
+    Expect(stillPkg.Open(root.string(), 2) && stillPkg.FromManifest() &&
+               stillPkg.Entries().size() == scan.Entries().size(),
+           "pkg manifest takes precedence over editor manifest");
+    fs::remove_all(root, ec);
+}
+
 // ---- M6c 批⓪：音频核心（ADR-015；静音模式 = 无设备确定性）----
 
 void TestAudioMixerMath() {
@@ -7357,6 +7418,7 @@ int main() {
     TestScriptBoxArchive();
     TestSpriteGuidResolve();
     TestAssetIndexConsistency(); // M7a 批②：manifest 快路径 vs 回退扫描双路一致性
+    TestAssetIndexPkgManifest(); // M7a 批⑤：打包账 ExportManifest → pkg 快路径回读全等 + 包账优先
     TestEditorContextPrefabOps();
     TestPlaySpawnPrefab();
     TestRecentScenesAliasSafety();
