@@ -26,6 +26,16 @@ public:
     /// 对齐——设备丢失重建同款约定）。返回成功页数（失败红字逐条，不中断）。
     uint32_t LoadAll();
 
+    /// 设备丢失重建（M7a 批④；AssetGpuCache::RebuildAll 同款）：pages_ 清空重导入。
+    /// 前置 = 调用方已 AtlasRegistry::Reset() 并重建程序化页（登记号已清空，
+    /// AddSpriteAt 复号成功的前提——编辑器 "editor-viewport"→"asset-gpu" 两段式
+    /// 同款时序，lemon-game 单回调内同序执行）
+    void RebuildAll(rhi::Device& device) {
+        Init(device, atlas_, *index_, firstSlot_);
+        pages_.clear();
+        LoadAll();
+    }
+
     /// 单发导入（prefab 装载期发现的延迟资产等；失败红字 false）
     bool LoadSprite(const IndexedEntry& e);
 

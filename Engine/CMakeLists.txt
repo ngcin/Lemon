@@ -15,6 +15,7 @@ add_library(lemon-engine STATIC
   Assets/ControllerAsset.cpp
   Assets/TableAsset.cpp
   Assets/PrefabCache.cpp
+  Assets/PlayCaches.cpp
   Assets/SaveStore.cpp
   Audio/AudioChannel.cpp
   Audio/AudioEngine.cpp
@@ -47,6 +48,7 @@ add_library(lemon-engine STATIC
   Renderer/Particles.cpp
   Renderer/BitmapFont.cpp
   Renderer/CameraFollow.cpp
+  Renderer/GameFx.cpp
   Renderer/SceneExtractor.cpp
   Ui/SdlTextInputHandler.cpp
   Ui/UiMount.cpp
@@ -75,6 +77,8 @@ target_link_libraries(lemon-engine
 # M3 脚本层（dotnet 程序集构建 + lemon-csharp 接口目标；ADR-010）
 if(LEMON_BUILD_SCRIPTING)
   add_subdirectory(Scripting)
+  # M7a 批④：独立游戏入口（链 lemon-csharp——entry dll 运行期定位 + 构建树回退）
+  add_subdirectory(Entry)
 endif()
 
 include(${LEMON_CMAKE_DIR}/CompileShaders.cmake)

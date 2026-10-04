@@ -6043,6 +6043,12 @@ void TestAssetIndexConsistency() {
     { std::ofstream f(root / "Prefabs" / "mob.prefab", std::ios::trunc); f << "{}"; }
     { std::ofstream f(root / "Prefabs" / "mob.prefab.meta", std::ios::trunc);
       f << "{\"guid\":\"" << lemon::assets::GuidToHex(mobGuid) << "\",\"type\":\"prefab\"}"; }
+    // M7a 批④：音频夹具（importer 段 loop/preload = AudioMount 装载消费面）
+    const uint64_t hitGuid = 0x1000000000000005ull;
+    { std::ofstream f(root / "Assets" / "hit.wav", std::ios::binary); f << "wav"; }
+    { std::ofstream f(root / "Assets" / "hit.wav.meta", std::ios::trunc);
+      f << "{\"guid\":\"" << lemon::assets::GuidToHex(hitGuid)
+        << "\",\"type\":\"audio\",\"importer\":{\"loop\":[1.5,10.0],\"preload\":true}}"; }
 
     // 编辑器建账（发号 + manifest 落盘；base=100 与 TestSpriteGuidResolve 同款）
     AssetDatabase db;
@@ -6073,6 +6079,38 @@ void TestAssetIndexConsistency() {
            "fast-path: guid lookup consistent");
     Expect(idx.FindByLowId(AssetType::Prefab, (uint32_t)mobGuid) != nullptr,
            "fast-path: low-32 prefab lookup");
+    // M7a 批④：音频条目——类型串写入面（AssetTypeName Audio 分支勘误的锁）+
+    // importer 字段（loop/preload 走 .meta 小 IO 读入）
+    {
+        std::ifstream mf(root / ".lemon" / "manifest.json", std::ios::binary);
+        const std::string manifestText((std::istreambuf_iterator<char>(mf)),
+                                       std::istreambuf_iterator<char>());
+        Expect(manifestText.find("\"audio\"") != std::string::npos,
+               "manifest writes 'audio' type string (AssetTypeName fix)");
+        const lemon::assets::IndexedEntry* hit = idx.FindByPath("Assets/hit.wav");
+        Expect(hit && hit->type == AssetType::Audio, "fast-path: audio entry typed");
+        Expect(hit && hit->audioLoopStart == 1.5f && hit->audioLoopEnd == 10.0f &&
+                   hit->audioPreload,
+               "fast-path: audio importer fields from .meta");
+        // generic 自愈：旧账期音频被记 "generic"（AssetTypeName 漏分支产物）——
+        // 快路径按扩展名重派（否则 AudioMount 漏装全部音频）
+        {
+            std::string m = manifestText;
+            const size_t pos = m.find("\"audio\"");
+            Expect(pos != std::string::npos, "self-heal: audio marker found");
+            if (pos != std::string::npos) {
+                m.replace(pos, 7, "\"generic\"");
+                { std::ofstream of(root / ".lemon" / "manifest.json", std::ios::trunc);
+                  of << m; }
+                AssetIndex heal;
+                Expect(heal.Open(root.string(), 100) && heal.FromManifest(),
+                       "self-heal: reopen with generic-typed audio");
+                const lemon::assets::IndexedEntry* h2 = heal.FindByPath("Assets/hit.wav");
+                Expect(h2 && h2->type == AssetType::Audio,
+                       "self-heal: generic re-derived from extension");
+            }
+        }
+    }
 
     // ---- 回退：删 manifest（+.bak）→ .meta 真源扫描，派生号确定性 ----
     fs::remove(root / ".lemon" / "manifest.json", ec);
@@ -6084,6 +6122,12 @@ void TestAssetIndexConsistency() {
         const lemon::assets::IndexedEntry* ie = idx2.FindByPath(dbe.relPath);
         Expect(ie && ie->guid == dbe.guid && ie->type == dbe.type,
                "fallback: guid/path/type equal (meta is truth)");
+    }
+    { // M7a 批④：回退扫描的音频 importer 字段（与快路径同值——.meta 单源）
+        const lemon::assets::IndexedEntry* hit2 = idx2.FindByPath("Assets/hit.wav");
+        Expect(hit2 && hit2->type == AssetType::Audio && hit2->audioLoopStart == 1.5f &&
+                   hit2->audioLoopEnd == 10.0f && hit2->audioPreload,
+               "fallback: audio importer fields from .meta");
     }
     // 路径序派生号：hero(路径序首 sprite)=100、sheet 本体=101 + 块 102..105
     const lemon::assets::IndexedEntry* hero2 = idx2.FindByPath("Assets/hero.png");

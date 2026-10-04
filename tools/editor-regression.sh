@@ -14,14 +14,15 @@ export LEMON_NO_ACTIVATE=1
 # 疑似交互会话 → 中止交人裁决（自动杀交互会话 = 丢用户未存状态）。
 stale_pids=""
 live_pids=""
-for pid in $(pgrep -f lemon-editor 2>/dev/null); do
+# M7a 批④：守卫面扩 lemon-game（独立运行时同争 GPU；交互局同样不自动杀）
+for pid in $(pgrep -f 'lemon-editor|lemon-game' 2>/dev/null); do
     cmd="$(ps -p "${pid}" -o command= 2>/dev/null)" || continue
     [ -z "${cmd}" ] && continue
     # review 2026-10-02 #30：可执行名改取 ucomm——此前 "${cmd%% *}" 取首空格前段，
     # build 目录含空格时截成目录名 → 残留实例既不清理也不中止（守卫静默失效，
     # 正是本守卫要防的 GPU 争用场景）。ucomm = 可执行名，与路径空格无关。
     exe="$(basename "$(ps -p "${pid}" -o ucomm= 2>/dev/null)")"
-    [ "${exe}" = "lemon-editor" ] || continue
+    [ "${exe}" = "lemon-editor" ] || [ "${exe}" = "lemon-game" ] || continue
     case "${cmd}" in
         *--smoke*|*--bench*|*--frames*|*--final*|*--play*|*--scene*|*--save-scene*|*--screenshot*|*--gen-vs-template*)
             stale_pids="${stale_pids} ${pid}" ;;
@@ -108,6 +109,25 @@ if [ "${MODE}" = "full" ]; then
     grep_step "template-chain smoke (wizard copy + build + play menu/run/cards/death/revive/results/restart/pause/settings/tomenu; M5-b4+M6b-b3d2)" \
         "smoke-template: .* => OK" \
         "${EDITOR}" --smoke-template --frames 3400 --no-reopen
+    # M7a 批④：独立运行时全链（lemon-game 直渲染 swapchain：entry dll 解析/
+    # AssetIndex/四缓存/存档装载/UI 点击进局/prefab 运行时 spawn/渲染提取/
+    # 存档回写）。夹具 = vs-survivor 模板拷贝 + 脚本侧 dotnet build（"构建归
+    # 编辑器/packager，lemon-game 只消费"口径在回归里由脚本代行）
+    GAME="${BUILD}/Engine/Entry/lemon-game"
+    if [ -x "${GAME}" ]; then
+        cp -R Templates/vs-survivor "${TMP}/game"
+        if dotnet build "${TMP}/game/Game/Game.csproj" -c Release \
+                -o "${TMP}/game/.lemon/bin" >/dev/null 2>&1; then
+            grep_step "game-smoke (lemon-game standalone runtime: four caches + ui-click-to-run + prefab spawn + direct render + saves; M7a-b4)" \
+                "game-smoke: .* => OK" \
+                "${GAME}" --project "${TMP}/game" --frames 900 --smoke
+        else
+            echo "  FAIL game-smoke (夹具 Game/ 编译失败：dotnet build ${TMP}/game)"
+            fail=$((fail+1))
+        fi
+    else
+        echo "  SKIP game-smoke (missing ${GAME})"
+    fi
     grep_step "guid-chain smoke (insert+rename+manifest-wipe -> reopen per-entity resolve; M6a-b0)" \
         "smoke-guid: .* => OK" \
         "${EDITOR}" --smoke-guid --no-reopen

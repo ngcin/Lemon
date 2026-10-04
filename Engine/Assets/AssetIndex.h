@@ -34,6 +34,11 @@ struct IndexedEntry {
     uint16_t gridCols = 0, gridRows = 0;
     uint32_t sliceBase = 0;
     uint32_t sliceCount = 0;
+    // 音频 importer 段（M7a 批④；AudioMount 装载消费——loop 冻结在 .baked 头，
+    // preload 决定流式分流。manifest 不载此字段：.meta 一次小 IO 读入，与 Sprite
+    // 的网格声明同款口径）
+    float audioLoopStart = 0.0f, audioLoopEnd = 0.0f; // 秒；0/0 = 全曲循环
+    bool audioPreload = false;                         // 显式整载（默认 >1MiB 流式）
     bool Sliced() const { return sliceBase != 0 && sliceCount != 0; }
     uint32_t SliceSpriteId(uint32_t cell) const {
         return cell < sliceCount ? sliceBase + cell : 0;

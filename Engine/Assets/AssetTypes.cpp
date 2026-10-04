@@ -19,6 +19,11 @@ const char* AssetTypeName(AssetType t) {
         case AssetType::Controller: return "controller"; // T3d：.controller 状态机
         case AssetType::Rml: return "rml";   // M6b 批③b：UI 文档（ADR-014 一屏一文档）
         case AssetType::Rcss: return "rcss"; // M6b 批③b：UI 样式表（<link> 引用）
+        case AssetType::Audio:
+            return "audio"; // M6c 竖切批。M7a 批④ 勘误：M6c 起本函数漏 Audio 分支
+                            //（default → "generic"），.meta/manifest 类型串失真；编辑器
+                            // 读侧靠扩展名重派无感，AssetIndex 快路径信 manifest 串则漏装
+                            // 音频——既有 "generic" 记账由 AssetIndex 扩展名自愈兜底
         default: return "generic";
     }
 }

@@ -80,6 +80,32 @@ void ReadGridImporter(const fs::path& assetPath, IndexedEntry& e) {
     e.gridRows = frames.y;
 }
 
+/// 读 .meta 的音频 importer 段（AssetDatabase::ParseAudioImporter 同款宽容度：
+/// "loop":[起,止(秒)] + "preload":bool；坏段 = 全曲循环 + 非预载）。M7a 批④：
+/// AudioMount 装载消费（loop 冻结在 .baked 头、preload 决定流式分流）。
+void ReadAudioImporter(const fs::path& assetPath, IndexedEntry& e) {
+    e.audioLoopStart = e.audioLoopEnd = 0.0f;
+    e.audioPreload = false;
+    std::ifstream mf(assetPath.string() + ".meta", std::ios::binary);
+    if (!mf) return;
+    std::string text((std::istreambuf_iterator<char>(mf)), std::istreambuf_iterator<char>());
+    const Json doc = Json::parse(text, nullptr, false);
+    if (doc.is_discarded()) return;
+    auto it = doc.find("importer");
+    if (it == doc.end() || !it->is_object()) return;
+    const Json& imp = *it;
+    if (auto loop = imp.find("loop"); loop != imp.end() && loop->is_array() && loop->size() == 2) {
+        const Json& a = (*loop)[0];
+        const Json& b = (*loop)[1];
+        if (a.is_number() && b.is_number()) {
+            e.audioLoopStart = (float)a.get<double>();
+            e.audioLoopEnd = (float)b.get<double>();
+        }
+    }
+    if (auto pre = imp.find("preload"); pre != imp.end() && pre->is_boolean())
+        e.audioPreload = pre->get<bool>();
+}
+
 /// 读 .meta 的 guid（无/坏 = 0）——回退扫描的真源
 uint64_t ReadMetaGuid(const fs::path& assetPath) {
     std::ifstream mf(assetPath.string() + ".meta", std::ios::binary);
@@ -169,6 +195,10 @@ bool AssetIndex::LoadFromManifest(const std::string& manifestPath) {
             e.type = TypeFromName(a.at("type").get<std::string>());
         else
             e.type = TypeOf(e.relPath);
+        // 类型串自愈（M7a 批④）：manifest 记 "generic" 但扩展名有强类型 → 按扩展名
+        // 重派。既有项目音频记账全为 "generic"（AssetTypeName 漏 Audio 分支时期的
+        // 产物，批④已修写入面）；编辑器类型本就恒 = TypeOf(relPath)，重派不发明事实
+        if (e.type == AssetType::Generic) e.type = TypeOf(e.relPath);
         if (a.contains("spriteId") && a.at("spriteId").is_number_unsigned())
             e.spriteId = a.at("spriteId").get<uint32_t>();
         if (a.contains("slice") && a.at("slice").is_object()) {
@@ -183,9 +213,12 @@ bool AssetIndex::LoadFromManifest(const std::string& manifestPath) {
         if (e.type == AssetType::Sprite && e.spriteId != 0 && e.spriteId < spriteIdBase_)
             e.spriteId = 0;
         // Sprite 条目补 .meta 网格声明（manifest 只记 slice 块号，切片像素几何
-        // 在 .meta importer 段——TextureStore 登记消费；一次小 IO，与像素装载同量级）
+        // 在 .meta importer 段——TextureStore 登记消费）；Audio 条目补 importer
+        // 段（loop/preload——AudioMount 消费）。均一次小 IO，与像素装载同量级
         if (e.type == AssetType::Sprite)
             ReadGridImporter(fs::path(root_) / e.relPath, e);
+        if (e.type == AssetType::Audio)
+            ReadAudioImporter(fs::path(root_) / e.relPath, e);
         out.push_back(std::move(e));
     }
     if (badEntries)
@@ -282,6 +315,7 @@ void AssetIndex::ScanFallback() {
                 nextId += e.sliceCount;
             }
         }
+        if (e.type == AssetType::Audio) ReadAudioImporter(file, e);
         entries_.push_back(std::move(e));
     }
     if (noMeta)
