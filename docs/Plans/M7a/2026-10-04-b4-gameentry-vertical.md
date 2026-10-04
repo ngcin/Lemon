@@ -2,7 +2,7 @@
 
 Status: **done**（2026-10-04：装配序列/主循环/CLI 全落 + 三下沉件（PlayCaches/GameFx/运行时适配器族）+ AssetTypes·AssetIndex 音频勘误 + 回归 18 步（game-smoke 新步，重排后复验全绿）+ ctest 3/3 + 单测 34220 + `--validate` 直渲染路径零验证层报错（D8 A 案关账，见 §6）；完成情况见 §4）
 
-> [M7a.md](./M7a.md) §4 批④ 落名批文件。出口判据：**mac `lemon-game --project demo/svr-test` 四屏全流程零 C++（真人初验——待用户）**；`git clean -xfd`（删 `.lemon/` 缓存）后再跑成功（manifest 回退扫描机器复验过）；fps 采样 ≥60（自动化档实测 484–1010，交互档 Fifo vsync 60 钳）。回归 game-smoke 步（17→18）绿。
+> [M7a.md](./M7a.md) §4 批④ 落名批文件。出口判据：**mac `lemon-game --project demo/svr-test` 四屏全流程零 C++（真人初验——已过 2026-10-04，项目按下方勘误 = vs-survivor 模板副本）**；`git clean -xfd`（删 `.lemon/` 缓存）后再跑成功（manifest 回退扫描机器复验过）；fps 采样 ≥60（自动化档实测 484–1010，交互档 Fifo vsync 60 钳）。回归 game-smoke 步（17→18）绿。
 >
 > **2026-10-04 验收勘误**：上段验收项目 `demo/svr-test` 系误指——demo 的对战 HUD/升级三选一/首死复活对话全押 RtUi（编辑器叠层，lemon-game 无呈现面，见 §5 勘误行）。**真人验收项目 = vs-survivor 模板副本**（玩法 UI 已全迁 RmlUi）；demo 仅菜单/暂停/设置/结算四屏可用于 lemon-game。
 
@@ -53,7 +53,7 @@ Status: **done**（2026-10-04：装配序列/主循环/CLI 全落 + 三下沉件
 | manifest 回退 | ✅ | 删 manifest+.bak → 红字警告 + 36 条回退扫描 + guid 归一 → smoke 仍 OK |
 | 音频勘误 | ✅ | 单测四锁（写入串/快路径字段/自愈/回退同值）；svr/模板音频 9/7 全装载（修复前快路径会漏装全部） |
 | 回归 18 步 | ✅ | full 首跑 18/18（game-smoke 绿；既有 17 步零扰动——PlayCaches/GameFx 下沉的行为对拍面） |
-| 真人验收 | **待用户** | ①`lemon-game --project <vs-survivor 模板副本>`（**验收日勘误：原写 demo/svr-test 系误指**——demo 玩法 HUD/卡片/复活走 RtUi 无呈现面，且首死即卡死；四屏全流程零 C++：WASD/空格移动攻击、Esc|P 暂停、升级三选一、死亡复活/结算、重开不叠曲）②窗口 resize 后渲染复原（设备重建链）③`--validate` 验证层零报错抽查 |
+| 真人验收 | ✅ **过 2026-10-04** | ①`lemon-game --project build/mac/game-fixture`（vs-survivor 模板副本；**验收日勘误：原写 demo/svr-test 系误指**——demo 玩法 HUD/卡片/复活走 RtUi 无呈现面，且首死即卡死）四屏全流程零 C++ **用户实测过**②窗口 resize 后渲染复原（设备重建链）**用户实测过**③`--validate` 验证层零报错——机器复验（300 帧 smoke 零 VALIDATION-ERROR，§6） |
 
 ## 5. 登记项（移交）
 
