@@ -156,12 +156,15 @@ struct Color {
 constexpr float Lerp(float a, float b, float t) { return a + (b - a) * t; }
 constexpr Vec2 Lerp(Vec2 a, Vec2 b, float t) { return a + (b - a) * t; }
 
-/// 帧率无关指数阻尼系数：t = 1 - exp(-rate·dt)（Camera2D 平滑跟随 / Prowl2D smooth-damp 同族）
-constexpr float Damp(float rate, float dt) { return 1.0f - std::exp(-rate * dt); }
+/// 帧率无关指数阻尼系数：t = 1 - exp(-rate·dt)（Camera2D 平滑跟随 / Prowl2D smooth-damp 同族）。
+/// inline 非 constexpr（批⑦ CI 实锤）：std::exp 的 constexpr 是 libc++ 扩展（C++23
+/// 未进标准面），MSVC/libstdc++ 均不标——常量求值无消费方，按 Length() 同款口径
+inline float Damp(float rate, float dt) { return 1.0f - std::exp(-rate * dt); }
 
-/// 吸附到网格（像素完美相机用；pixel = 网格尺寸，如 1/zoom）
-constexpr float SnapTo(float v, float grid) { return grid * std::round(v / grid); }
-constexpr Vec2 SnapTo(Vec2 v, float grid) { return {SnapTo(v.x, grid), SnapTo(v.y, grid)}; }
+/// 吸附到网格（像素完美相机用；pixel = 网格尺寸，如 1/zoom）。同上：std::round
+/// 非 constexpr 可移植面 → inline（Vec2 重载经 float 版间接调用，一并降级）
+inline float SnapTo(float v, float grid) { return grid * std::round(v / grid); }
+inline Vec2 SnapTo(Vec2 v, float grid) { return {SnapTo(v.x, grid), SnapTo(v.y, grid)}; }
 
 // ------------------------------------------------------- 三角函数查找表 --
 // 4096 项 LUT + 线性插值：热路径（每实例仿射 15 万次/帧级）替代 libm sin/cos，
