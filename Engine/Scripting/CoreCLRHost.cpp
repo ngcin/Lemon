@@ -130,15 +130,18 @@ bool BindHostfxr(HostfxrApi& api, const std::filesystem::path& libPath) {
 bool LoadHostfxr(HostfxrApi& api, const char* dotnetRoot) {
     for (const std::filesystem::path& root : DotnetRootCandidates(dotnetRoot)) {
         // 形态一（M7a 批⑤ 包形态）：self-contained 平铺——dotnet publish -r
-        // --self-contained 产物根直接持有 libhostfxr（无 host/fxr/<ver> 多版本层）
+        // --self-contained 产物根直接持有 hostfxr（无 host/fxr/<ver> 多版本层）。
+        // 文件名平台各异：POSIX = libhostfxr.dylib，Windows = hostfxr.dll（无 lib
+        // 前缀——批⑦实锤：按 libhostfxr.dll 探测永远落空，链尾被 DOTNET_ROOT 短路
+        // 后以 framework-dependent 语义找 hostpolicy 必败，VM 包体 smoke 实抓）
         std::error_code ec;
-        std::filesystem::path flat = root / (std::string("libhostfxr") +
+        std::filesystem::path flat = root /
 #if defined(_WIN32)
-                                             ".dll"
+                                     "hostfxr.dll"
 #else
-                                             ".dylib"
+                                     "libhostfxr.dylib"
 #endif
-        );
+        ;
         if (std::filesystem::is_regular_file(flat, ec) && BindHostfxr(api, flat)) return true;
         // 形态二（安装机/brew）：host/fxr/<ver> 多版本布局，取最高版
         std::filesystem::path fxrDir = root / "host" / "fxr";
