@@ -96,10 +96,14 @@ jobs:
           dotnet-version: 10.0.x
 
       - name: Configure
-        run: cmake --preset win
+        # win-ci preset = win + "Visual Studio 18 2026" 生成器：windows-2025 镜像
+        # 2026-06 迁移后内置 VS2026（VS2022 不在镜像），"VS 17 2022" 生成器找不到
+        # 实例（首跑实抓）。真机 W1 仍走 win preset（VS2022）——CI/真机双 MSVC 版本
+        # 各自把门。生成器需 CMake ≥ 4.2（runner 自带版本满足）
+        run: cmake --preset win-ci
 
       - name: Build
-        run: cmake --build --preset win
+        run: cmake --build --preset win-ci
 
       - name: Test
         run: ctest --test-dir build/win -C Release --output-on-failure

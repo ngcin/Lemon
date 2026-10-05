@@ -40,12 +40,19 @@
       "displayName": "Windows (VS2022 + Vulkan, Debug)",
       "inherits": "win",
       "binaryDir": "${sourceDir}/build/win-debug"
+    },
+    {
+      "name": "win-ci",
+      "displayName": "Windows CI (VS2026 generator, Release)",
+      "inherits": "win",
+      "generator": "Visual Studio 18 2026"
     }
   ],
   "buildPresets": [
     { "name": "mac", "configurePreset": "mac" },
     { "name": "mac-debug", "configurePreset": "mac-debug" },
     { "name": "win", "configurePreset": "win", "configuration": "Release" },
-    { "name": "win-debug", "configurePreset": "win-debug", "configuration": "Debug" }
+    { "name": "win-debug", "configurePreset": "win-debug", "configuration": "Debug" },
+    { "name": "win-ci", "configurePreset": "win-ci", "configuration": "Release" }
   ]
 }
