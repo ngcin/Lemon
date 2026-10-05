@@ -15,15 +15,21 @@
 #include <vector>
 
 #include <vulkan/vulkan.h>
+// clang 诊断屏蔽（vulkan.h/VMA 头的告警面）——MSVC 侧 #pragma clang = C4068
+// 未知杂注警告（CI win 首跑 ×6），按编译器守卫（批⑦ 首编清账）
+#if defined(__clang__)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wall"
 #pragma clang diagnostic ignored "-Wextra"
 #pragma clang diagnostic ignored "-Wunused-parameter"
 #pragma clang diagnostic ignored "-Wnullability-completeness"
 #pragma clang diagnostic ignored "-Wunused-private-field"
+#endif
 #define VMA_IMPLEMENTATION
 #include <vk_mem_alloc.h>
+#if defined(__clang__)
 #pragma clang diagnostic pop
+#endif
 
 #include "Core/FileOps.h"
 #include "Core/Log.h"

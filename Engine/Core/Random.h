@@ -28,8 +28,11 @@ public:
         Next();
     }
 
-    /// 核心步进：LCG 状态推进 + XSH-RR 64→32 输出（PCG32 经典变体）
-    uint32_t Next() {
+    /// 核心步进：LCG 状态推进 + XSH-RR 64→32 输出（PCG32 经典变体）。
+    /// constexpr（CI win 热修④）：Seed 的空转调用要求 Next 可常量求值——MSVC 对
+    /// constexpr 函数体主动诊断（C3615），clang 仅在实际常量求值时才查（mac 绿的
+    /// 原因）；体为纯算术，本就够格
+    constexpr uint32_t Next() {
         uint64_t old = state_;
         state_ = old * 6364136223846793005ull + inc_;
         // XSH-RR：高 32 位异或移位后按低位旋转
