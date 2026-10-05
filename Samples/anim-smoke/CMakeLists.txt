@@ -7,10 +7,14 @@ set(ANIM_SCRIPT_OUT ${CMAKE_CURRENT_BINARY_DIR}/script)
 
 file(GLOB_RECURSE ANIM_CS_SOURCES CONFIGURE_DEPENDS ${ANIM_SCRIPT_SRC}/*.cs)
 
+# UNC 源码路径（\\Mac 共享构建）下 //server/... 正斜杠形式会被 dotnet→MSBuild 当开关
+# （MSB1001，同 Engine/Scripting/CMakeLists.txt）；posix 平台 TO_NATIVE_PATH 原样返回
+file(TO_NATIVE_PATH "${ANIM_SCRIPT_SRC}" ANIM_SCRIPT_PROJ)
+
 add_custom_command(
   OUTPUT ${ANIM_SCRIPT_OUT}/.stamp
   COMMAND ${CMAKE_COMMAND} -E make_directory ${ANIM_SCRIPT_OUT}
-  COMMAND ${LEMON_DOTNET} build ${ANIM_SCRIPT_SRC} -c $<CONFIG> -o ${ANIM_SCRIPT_OUT}
+  COMMAND ${LEMON_DOTNET} build ${ANIM_SCRIPT_PROJ} -c $<CONFIG> -o ${ANIM_SCRIPT_OUT}
   COMMAND ${CMAKE_COMMAND} -E touch ${ANIM_SCRIPT_OUT}/.stamp
   DEPENDS ${ANIM_CS_SOURCES} ${ANIM_SCRIPT_SRC}/AnimSmoke.csproj
   COMMENT "dotnet build (AnimSmoke)"

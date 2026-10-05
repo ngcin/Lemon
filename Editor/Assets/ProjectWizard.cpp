@@ -33,7 +33,7 @@ namespace {
 void ReanchorSdkHintPath(const fs::path& gameDir, const std::string& sdkDir) {
     std::error_code ec;
     if (!fs::is_directory(gameDir, ec)) return;
-    const std::string want = "<HintPath>" + (fs::path(sdkDir) / "Lemon.SDK.dll").string() +
+    const std::string want = "<HintPath>" + (fs::path(sdkDir) / "Lemon.SDK.dll").generic_string() +
                              "</HintPath>";
     for (auto it = fs::directory_iterator(gameDir, ec); it != fs::directory_iterator();
          it.increment(ec)) {
@@ -229,7 +229,7 @@ bool ProjectWizard::WriteGameProject(const ProjectDesc& d, uint64_t spawnGuid) {
           << "  </PropertyGroup>\n"
           << "  <ItemGroup>\n"
           << "    <Reference Include=\"Lemon.SDK\">\n"
-          << "      <HintPath>" << (sdk / "Lemon.SDK.dll").string() << "</HintPath>\n"
+          << "      <HintPath>" << (sdk / "Lemon.SDK.dll").generic_string() << "</HintPath>\n"
           << "    </Reference>\n"
           << "  </ItemGroup>\n"
           << "</Project>\n";

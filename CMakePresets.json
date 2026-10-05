@@ -46,6 +46,12 @@
       "displayName": "Windows CI (VS2026 generator, Release)",
       "inherits": "win",
       "generator": "Visual Studio 18 2026"
+    },
+    {
+      "name": "win-share",
+      "displayName": "Windows VM local (source on \\\\Mac share, build on C:)",
+      "inherits": "win-ci",
+      "binaryDir": "C:/lemon-build/win"
     }
   ],
   "buildPresets": [
@@ -53,6 +59,7 @@
     { "name": "mac-debug", "configurePreset": "mac-debug" },
     { "name": "win", "configurePreset": "win", "configuration": "Release" },
     { "name": "win-debug", "configurePreset": "win-debug", "configuration": "Debug" },
-    { "name": "win-ci", "configurePreset": "win-ci", "configuration": "Release" }
+    { "name": "win-ci", "configurePreset": "win-ci", "configuration": "Release" },
+    { "name": "win-share", "configurePreset": "win-share", "configuration": "Release" }
   ]
 }

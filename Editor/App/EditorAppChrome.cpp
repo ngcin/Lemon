@@ -102,7 +102,7 @@ void EditorApp::BuildMenuBar() {
                 // 可点性 = 根下有 project.lemon（目录被删/手滑改名 → 灰显可辨）
                 const bool usable =
                     fsr::is_regular_file(fsr::path(p) / "project.lemon", ec);
-                if (ImGui::MenuItem(fsr::path(p).filename().c_str(), p.c_str(), false,
+                if (ImGui::MenuItem(fsr::path(p).filename().string().c_str(), p.c_str(), false,
                                     usable && !ctx_.dirty)) {
                     if (OpenProjectInSession(p)) LEMON_LOG("已打开最近项目：%s", p.c_str());
                 }
@@ -459,7 +459,7 @@ void EditorApp::BuildNoProjectCard() {
                 ImGui::PushID(p.c_str());
                 std::error_code ec;
                 if (fsr::is_regular_file(fsr::path(p) / "project.lemon", ec) && !ctx_.dirty) {
-                    if (ImGui::SmallButton(fsr::path(p).filename().c_str())) {
+                    if (ImGui::SmallButton(fsr::path(p).filename().string().c_str())) {
                         if (OpenProjectInSession(p)) LEMON_LOG("已打开最近项目：%s", p.c_str());
                     }
                 }

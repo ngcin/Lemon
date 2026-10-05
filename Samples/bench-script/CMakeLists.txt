@@ -7,10 +7,14 @@ set(BENCH_SCRIPT_OUT ${CMAKE_CURRENT_BINARY_DIR}/script)
 
 file(GLOB_RECURSE BENCH_CS_SOURCES CONFIGURE_DEPENDS ${BENCH_SCRIPT_SRC}/*.cs)
 
+# UNC 源码路径（\\Mac 共享构建）下 //server/... 正斜杠形式会被 dotnet→MSBuild 当开关
+# （MSB1001，同 Engine/Scripting/CMakeLists.txt）；posix 平台 TO_NATIVE_PATH 原样返回
+file(TO_NATIVE_PATH "${BENCH_SCRIPT_SRC}" BENCH_SCRIPT_PROJ)
+
 add_custom_command(
   OUTPUT ${BENCH_SCRIPT_OUT}/.stamp
   COMMAND ${CMAKE_COMMAND} -E make_directory ${BENCH_SCRIPT_OUT}
-  COMMAND ${LEMON_DOTNET} build ${BENCH_SCRIPT_SRC} -c $<CONFIG> -o ${BENCH_SCRIPT_OUT}
+  COMMAND ${LEMON_DOTNET} build ${BENCH_SCRIPT_PROJ} -c $<CONFIG> -o ${BENCH_SCRIPT_OUT}
   COMMAND ${CMAKE_COMMAND} -E touch ${BENCH_SCRIPT_OUT}/.stamp
   DEPENDS ${BENCH_CS_SOURCES} ${BENCH_SCRIPT_SRC}/BenchScript.csproj
   COMMENT "dotnet build (BenchScript)"

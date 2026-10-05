@@ -20,12 +20,19 @@ set(LEMON_SCRIPT_DIR ${CMAKE_BINARY_DIR}/Scripting/dotnet CACHE INTERNAL
 # CONFIGURE_DEPENDS：新增 .cs 文件时自动重跑 glob（否则 ninja 依赖表不含新文件——实测坑）
 file(GLOB_RECURSE LEMON_CS_SOURCES CONFIGURE_DEPENDS ${LEMON_SCRIPT_SRC}/*.cs)
 
+# 源码位于 UNC 路径（如 Parallels \\Mac 共享上构建）时，CMake 以 //server/share
+# 正斜杠形式传参，dotnet 转发给 MSBuild 会把开头的 / 解析成开关（MSB1001）。
+# 转 native 分隔符规避；posix 平台 TO_NATIVE_PATH 原样返回，不影响 mac 构建。
+file(TO_NATIVE_PATH "${LEMON_SCRIPT_SRC}/Lemon.SDK"   LEMON_DOTNET_PROJ_SDK)
+file(TO_NATIVE_PATH "${LEMON_SCRIPT_SRC}/Lemon.Entry" LEMON_DOTNET_PROJ_ENTRY)
+file(TO_NATIVE_PATH "${LEMON_SCRIPT_SRC}/TestScript"  LEMON_DOTNET_PROJ_TEST)
+
 add_custom_command(
   OUTPUT ${LEMON_SCRIPT_DIR}/.stamp
   COMMAND ${CMAKE_COMMAND} -E make_directory ${LEMON_SCRIPT_DIR}
-  COMMAND ${LEMON_DOTNET} build ${LEMON_SCRIPT_SRC}/Lemon.SDK -c $<CONFIG> -o ${LEMON_SCRIPT_DIR}
-  COMMAND ${LEMON_DOTNET} build ${LEMON_SCRIPT_SRC}/Lemon.Entry -c $<CONFIG> -o ${LEMON_SCRIPT_DIR}
-  COMMAND ${LEMON_DOTNET} build ${LEMON_SCRIPT_SRC}/TestScript -c $<CONFIG> -o ${LEMON_SCRIPT_DIR}
+  COMMAND ${LEMON_DOTNET} build ${LEMON_DOTNET_PROJ_SDK} -c $<CONFIG> -o ${LEMON_SCRIPT_DIR}
+  COMMAND ${LEMON_DOTNET} build ${LEMON_DOTNET_PROJ_ENTRY} -c $<CONFIG> -o ${LEMON_SCRIPT_DIR}
+  COMMAND ${LEMON_DOTNET} build ${LEMON_DOTNET_PROJ_TEST} -c $<CONFIG> -o ${LEMON_SCRIPT_DIR}
   COMMAND ${CMAKE_COMMAND} -E copy
           ${LEMON_SCRIPT_SRC}/Lemon.Entry/Lemon.Entry.runtimeconfig.json
           ${LEMON_SCRIPT_DIR}/Lemon.Entry.runtimeconfig.json

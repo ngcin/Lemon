@@ -1407,11 +1407,11 @@ void TestSpatialHashQueryFastPath() {
     s.Emplace<Meta>(t1b).team = 1;
     s.Emplace<Meta>(t2).team = 2;
     s.Emplace<Meta>(bad).team = 40;
-    Entity far[3];
+    Entity farEnt[3];
     for (int i = 0; i < 3; ++i) {
-        far[i] = s.Create();
-        s.Emplace<Transform2D>(far[i], Transform2D{{500.0f + (float)i, 0.0f}});
-        s.Emplace<Meta>(far[i]).team = 1;
+        farEnt[i] = s.Create();
+        s.Emplace<Transform2D>(farEnt[i], Transform2D{{500.0f + (float)i, 0.0f}});
+        s.Emplace<Meta>(farEnt[i]).team = 1;
     }
 
     SpatialHash hash;
@@ -2110,9 +2110,9 @@ void TestVerifyMagnetAndPickup() {
 
     // 双侧取大（段 A）：玩家磁力 120 > 宝石自程 48 → 100px 外的宝石也吸；
     // 负对照 200px 超两侧触程 → 原地不动
-    Entity far = s.Create();
-    s.Emplace<Transform2D>(far, Transform2D{{100, 0}});
-    s.Emplace<Collectible>(far, Collectible{.kind = 1, .value = 7.0f});
+    Entity farGem = s.Create();
+    s.Emplace<Transform2D>(farGem, Transform2D{{100, 0}});
+    s.Emplace<Collectible>(farGem, Collectible{.kind = 1, .value = 7.0f});
     Entity idle = s.Create();
     s.Emplace<Transform2D>(idle, Transform2D{{200, 0}});
     s.Emplace<Collectible>(idle, Collectible{.kind = 0});
@@ -2120,13 +2120,13 @@ void TestVerifyMagnetAndPickup() {
     s.Get<Stats>(player).pickupRadius = 120.0f;
 
     world.Step(dt);
-    Expect(s.Get<Collectible>(far).state == 1, "player stat side wins (max rule)");
-    Expect(s.Get<Transform2D>(far).pos.x < 100.0f, "far gem flying");
+    Expect(s.Get<Collectible>(farGem).state == 1, "player stat side wins (max rule)");
+    Expect(s.Get<Transform2D>(farGem).pos.x < 100.0f, "far gem flying");
     const Vec2 idlePos = s.Get<Transform2D>(idle).pos;
     for (int i = 0; i < 4; ++i) world.Step(dt);
     Expect(s.Get<Transform2D>(idle).pos == idlePos, "out of both radii stays idle");
-    for (int i = 0; i < 40 && s.Alive(far); ++i) world.Step(dt);
-    Expect(!s.Alive(far), "coin picked up");
+    for (int i = 0; i < 40 && s.Alive(farGem); ++i) world.Step(dt);
+    Expect(!s.Alive(farGem), "coin picked up");
     Expect(s.Get<Inventory>(player).gold == 7u, "coin -> gold");
 
     // heart：触距内 → 同 tick 磁吸即入账；治疗上限钳制
@@ -5793,11 +5793,14 @@ void TestRecentScenesAliasSafety() {
                ctx.RecentScenes().front() == a,
            "alias of front(): entry intact, no empty injected");
 
-    // 读档洗脏档：预写含空串 + 重复条目的档 → 过滤空串、保序去重（首见留）
+    // 读档洗脏档：预写含空串 + 重复条目的档 → 过滤空串、保序去重（首见留）。
+    // Windows 绝对路径的反斜杠直接拼进 JSON 是非法转义（引擎侧会整档判坏），
+    // 用 generic_string 正斜杠拼写；CanonicalPath 会折叠回规范形参与比较
     fs::create_directories(root / ".lemon", ec);
     {
         std::ofstream f(root / ".lemon" / "recent-scenes.json", std::ios::binary | std::ios::trunc);
-        f << "{\"scenes\":[\"" << a << "\", \"\", \"Scenes/b.scene\", \"" << a << "\"]}\n";
+        f << "{\"scenes\":[\"" << fs::path(a).generic_string()
+          << "\", \"\", \"Scenes/b.scene\", \"" << fs::path(a).generic_string() << "\"]}\n";
     }
     ctx.LoadRecentScenes();
     // CanonicalPath 落地后（2026-09-24）条目一律为规范形：期望值两侧同归一化
@@ -6854,7 +6857,7 @@ void TestAudioLifecycle() {
     eng3.Init({.forceSilent = true});
     const uint32_t p1 = eng3.RegisterClip({pcm100.data(), 100, 1, 0, 0});
     const uint32_t lp = eng3.Play(p1, {.loop = true});                       // Sfx 循环
-    const uint32_t ui = eng3.Play(p1, {.loop = true, .group = audio::Group::Ui});
+    const uint32_t ui = eng3.Play(p1, {.group = audio::Group::Ui, .loop = true});
     Expect(lp != 0 && ui != 0, "pause-test voices started");
     eng3.SetPaused(true);
     eng3.MixOffline(out, 1);
@@ -7587,7 +7590,7 @@ void TestAudioFadeEnvelope() {
     // review 2026-10-02 #12：v1 改循环声部——一次性版 3600/4800 帧后仅剩 1200 帧，
     // 0.05s 淡出需 2400 帧，自然终点先亡 mask 掉 stopAtFadeEnd 断言（FadeVoice
     // 完全失效断言也过）；循环声部无自然终点，终结只能来自淡出到 0
-    const uint32_t v1 = eng.Play(clip, {.volume = 1.0f, .fadeInSec = 0.05f, .loop = true});
+    const uint32_t v1 = eng.Play(clip, {.volume = 1.0f, .loop = true, .fadeInSec = 0.05f});
     Expect(v1 != 0, "fade-in voice");
     float out[4800 * 2];
     eng.MixOffline(out, 1200);

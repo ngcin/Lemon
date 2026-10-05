@@ -11,6 +11,11 @@
 #include <cstring>
 #include <vector>
 
+// strtok_r 是 POSIX 接口；MSVC 的等价物是 strtok_s（签名一致：str/delim/&ctx）
+#if defined(_MSC_VER)
+#define strtok_r strtok_s
+#endif
+
 #include <memory>
 
 #include "Components/BehaviorComponents.h"

@@ -637,8 +637,8 @@ void WriteGameSources(const std::filesystem::path& game, const std::string& sdkD
           << "  </PropertyGroup>\n"
           << "  <ItemGroup>\n"
           << "    <Reference Include=\"Lemon.SDK\">\n"
-          << "      <HintPath>" << (fs::path(sdkDir) / "Lemon.SDK.dll").string()
-          << "</HintPath>\n"
+          << "      <HintPath>" << (fs::path(sdkDir) / "Lemon.SDK.dll").generic_string()
+              << "</HintPath>\n"
           << "    </Reference>\n"
           << "  </ItemGroup>\n"
           << "</Project>\n";
