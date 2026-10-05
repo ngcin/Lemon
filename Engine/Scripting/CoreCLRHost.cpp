@@ -30,9 +30,21 @@ struct HostfxrApi {
     hostfxr_close_fn close = nullptr; // 部分 hostfxr 不导出（本机实测）——可选
 };
 
+#if defined(_WIN32)
+// UTF-8 路径 → LoadLibraryW（批⑦）：LoadLibraryA 按 ACP 解释窄码——非 ASCII
+// 安装路径（中文用户名等）下 hostfxr 装载哑火；FileOps::RenameReplace 的 widen
+// 同款口径，就地小实现不引依赖
+std::wstring Widen(const char* s) {
+    const int n = MultiByteToWideChar(CP_UTF8, 0, s, -1, nullptr, 0);
+    std::wstring w((size_t)(n > 0 ? n : 1), L'\0');
+    if (n > 0) MultiByteToWideChar(CP_UTF8, 0, s, -1, w.data(), n);
+    return w;
+}
+#endif
+
 void* OpenLibrary(const char* path) {
 #if defined(_WIN32)
-    return (void*)LoadLibraryA(path);
+    return (void*)LoadLibraryW(Widen(path).c_str());
 #else
     return dlopen(path, RTLD_NOW | RTLD_LOCAL);
 #endif
@@ -60,7 +72,8 @@ std::vector<long long> VersionKey(const std::string& v) {
 
 // fxr 根候选链：显式参 → $LEMON_DOTNET_ROOT（引擎专用覆写）→ $DOTNET_ROOT（dotnet
 // 官方变量；actions/setup-dotnet 等 CI 装配即设此——runner 的 dotnet 装在临时目录，
-// 只认 brew 默认路径会静默哑火，CI 首跑实证 2026-09-30）→ /usr/local/share/dotnet。
+// 只认 brew 默认路径会静默哑火，CI 首跑实证 2026-09-30）→ 平台默认安装位
+// （macOS = /usr/local/share/dotnet；Windows = %ProgramFiles%\dotnet——批⑦ 补）。
 // 显式根两形态皆落空时继续走链（M7a 批⑤：dev 形态 exe 旁 runtime/ 只有托管件，
 // GameEntry 恒传该目录——回退到安装机 dotnet 的既有语义不变）。
 std::vector<std::filesystem::path> DotnetRootCandidates(const char* dotnetRoot) {
@@ -69,7 +82,13 @@ std::vector<std::filesystem::path> DotnetRootCandidates(const char* dotnetRoot) 
     for (const char* var : {"LEMON_DOTNET_ROOT", "DOTNET_ROOT"})
         if (const char* v = getenv(var); v && *v)
             roots.emplace_back(v);
+#if defined(_WIN32)
+    if (const char* pf = getenv("ProgramFiles"); pf && *pf)
+        roots.emplace_back(std::filesystem::path(pf) / "dotnet");
+    roots.emplace_back("C:/Program Files/dotnet");
+#else
     roots.emplace_back("/usr/local/share/dotnet");
+#endif
     return roots;
 }
 
@@ -87,9 +106,23 @@ bool BindHostfxr(HostfxrApi& api, const std::filesystem::path& libPath) {
         LEMON_WARN("hostfxr %s missing required exports", libPath.string().c_str());
         return false;
     }
-    // 错误回调：把宿主侧错误引到引擎日志（可选导出）
-    if (auto setWriter = (void (*)(void (*)(const char*)))Sym(api.lib, "hostfxr_set_error_writer"))
-        setWriter(+[](const char* message) { LEMON_WARN("hostfxr: %s", message); });
+    // 错误回调：把宿主侧错误引到引擎日志（可选导出；hostfxr 错误串按 char_t 传——
+    // POSIX = char，Windows = wchar_t，两侧各自分支，批⑦ char_t 分叉清账）
+    if (auto setWriter = (hostfxr_set_error_writer_fn)Sym(api.lib, "hostfxr_set_error_writer")) {
+#if defined(_WIN32)
+        setWriter(+[](const char_t* message) {
+            if (!message) return;
+            const int n = WideCharToMultiByte(CP_UTF8, 0, message, -1, nullptr, 0, nullptr, nullptr);
+            std::string u8((size_t)(n > 0 ? n : 1), '\0');
+            if (n > 0) WideCharToMultiByte(CP_UTF8, 0, message, -1, u8.data(), n, nullptr, nullptr);
+            LEMON_WARN("hostfxr: %s", u8.c_str());
+        });
+#else
+        setWriter(+[](const char_t* message) {
+            if (message) LEMON_WARN("hostfxr: %s", message);
+        });
+#endif
+    }
     LEMON_LOG("hostfxr: %s (close=%s)", libPath.string().c_str(), api.close ? "yes" : "no");
     return true;
 }
@@ -151,7 +184,15 @@ bool CoreCLRHost::Load(const char* dotnetRoot, const char* runtimeConfigPath,
     if (!LoadHostfxr(fxr_->api, dotnetRoot)) return false;
 
     hostfxr_handle ctx = nullptr;
+    // hostfxr API 的字符串参数全按 char_t 走（review 实锤⑤：Windows = wchar_t）。
+    // 宽化一律走 Widen（CP_UTF8）——fs::path(std::string) 在 win 按 ACP 解释窄串，
+    // UTF-8 中文路径会被转错（review 二轮自查实抓）
+#if defined(_WIN32)
+    const std::wstring wCfg = Widen(runtimeConfigPath ? runtimeConfigPath : "");
+    int rc = fxr_->api.initForConfig(wCfg.c_str(), nullptr, &ctx);
+#else
     int rc = fxr_->api.initForConfig(runtimeConfigPath, nullptr, &ctx);
+#endif
     if (rc != 0 || ctx == nullptr) {
         // 自含组件回退（M7a 批⑤ 包形态实测坑）：initialize_for_runtime_config
         // 明确拒 SC 形态 runtimeconfig（includedFrameworks，rc=0x80008093）——改走
@@ -159,7 +200,15 @@ bool CoreCLRHost::Load(const char* dotnetRoot, const char* runtimeConfigPath,
         // 取其旁 runtimeconfig，runtime/hostpolicy 按 app base = 程序集目录解析平
         // 铺布局）。dev 形态（framework 引用）不受影响——首试路径命中即短路。
         if (fxr_->api.initCmdLine && entryAssemblyPath && *entryAssemblyPath) {
+            // char_t 分叉（批⑦）：Windows = wchar_t——UTF-8 入参经 Widen 宽化
+            // （CP_UTF8，不用 fs::path——win 侧窄串按 ACP 解释）；POSIX = char 直传。
+            // argv 生命周期只在 initCmdLine 调用内 → 局部串安全
+#if defined(_WIN32)
+            const std::wstring wEntry = Widen(entryAssemblyPath);
+            const char_t* argv[1] = { wEntry.c_str() };
+#else
             const char_t* argv[1] = { entryAssemblyPath };
+#endif
             rc = fxr_->api.initCmdLine(1, argv, nullptr, &ctx);
         }
         if (rc != 0 || ctx == nullptr) {
@@ -185,9 +234,20 @@ bool CoreCLRHost::Load(const char* dotnetRoot, const char* runtimeConfigPath,
 void* CoreCLRHost::GetExport(const char* typeNameWithAsm, const char* methodName) const {
     if (!IsLoaded()) return nullptr;
     void* fn = nullptr;
+    // load_assembly 三字符串参也是 char_t（review 实锤⑤同源）：类型/方法名是 ASCII
+    // 标识符但参数类型不豁免——win 侧统一经 Widen（CP_UTF8 对 ASCII 恒等）
+#if defined(_WIN32)
+    const std::wstring wAsm = Widen(entryAssemblyPath_.c_str());
+    const std::wstring wType = Widen(typeNameWithAsm);
+    const std::wstring wMethod = Widen(methodName);
+    int rc = ((load_assembly_and_get_function_pointer_fn)loadAssembly_)(
+        wAsm.c_str(), wType.c_str(), wMethod.c_str(), UNMANAGEDCALLERSONLY_METHOD,
+        nullptr, &fn);
+#else
     int rc = ((load_assembly_and_get_function_pointer_fn)loadAssembly_)(
         entryAssemblyPath_.c_str(), typeNameWithAsm, methodName, UNMANAGEDCALLERSONLY_METHOD,
         nullptr, &fn);
+#endif
     if (rc != 0 || fn == nullptr) {
         LEMON_WARN("load export %s.%s failed hr=0x%08x", typeNameWithAsm, methodName,
                    (unsigned)rc);

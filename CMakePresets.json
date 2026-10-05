@@ -27,7 +27,7 @@
       "binaryDir": "${sourceDir}/build/win",
       "cacheVariables": {
         "CMAKE_CONFIGURATION_TYPES": "Release;Debug",
-        "LEMON_BUILD_SPIKES": "ON"
+        "LEMON_BUILD_SPIKES": "OFF"
       },
       "condition": {
         "type": "equals",

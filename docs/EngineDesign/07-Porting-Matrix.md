@@ -126,7 +126,7 @@
 | **M2 ECS** | MoteurJV 组件目录（C ✅ 27 组件+注册表）、yami Team schema（C ✅ 内联默认表）/RLE codec（M6c）/分区自适应（M6c）、Luma JobSystem（B ✅ 值语义修正）+ 系统调度（C ✅）、F3 清单（C ✅ 统计层+--stats 文本）；新增第三方 nlohmann/json v3.11.3（.scene 序列化，THIRD_PARTY 已登记） |
 | **M3 脚本** | Luma CoreCLRHost 全量 + ScriptLoadContext（B）、yami 生命周期形状（C）、Prowl2D SceneDispatcher 调度 / 命名级 API 面 / MainThreadContext（C）、Prowl Roslyn（C，后期） |
 | **M4 编辑器** | Luma 面板框架与面板集（B）、MoteurJV Play 快照（C）、Prowl2D Undo 双轨 / PrefabLink + Inspector override（C）、Editor-RPG2D 模式栈/焦点仲裁/放行约定（A）、yami GUID+manifest（C）；新增第三方 Dear ImGui v1.92.9b-docking（MIT，编辑器 UI，THIRD_PARTY 已登记，M4.0）+ stb（公有领域，PNG 导入/截屏，M4.0） |
-| **M5 VS 模板** | duality SpriteAnimator 思想（C）、yami 存档接口（C）、yami 默认素材底包（MIT 直用）；新增第三方 **RmlUi 6.3**（MIT，v1.x 富 UI 首选，spike-04 三判据验收通过，ADR-008；CPM 锁 tag，THIRD_PARTY 已登记；**2026-09-28 批③a 转正式**——ADR-014，`Engine/Ui` + 自研 RenderInterface over RHI）+ **rbfx**（MIT fork，RmlUi↔引擎渲染层适配 D 级对照，ADR-008 接入形态依据）；FreeType 走系统 brew 2.14.3（RmlUi 字体引擎，暂不 vendored） |
+| **M5 VS 模板** | duality SpriteAnimator 思想（C）、yami 存档接口（C）、yami 默认素材底包（MIT 直用）；新增第三方 **RmlUi 6.3**（MIT，v1.x 富 UI 首选，spike-04 三判据验收通过，ADR-008；CPM 锁 tag，THIRD_PARTY 已登记；**2026-09-28 批③a 转正式**——ADR-014，`Engine/Ui` + 自研 RenderInterface over RHI）+ **rbfx**（MIT fork，RmlUi↔引擎渲染层适配 D 级对照，ADR-008 接入形态依据）；FreeType VER-2-14-3 CPM 单源（RmlUi 字体引擎；2026-10-05 批⑦ mac 自 brew 切 CPM 同版 + win 缺口补齐，THIRD_PARTY 已更新） |
 | **M6c 音频** | 新增第三方 **miniaudio 0.11.25**（公有领域/MIT-0，vendored 三件 `Engine/Audio/thirdparty/`，网络阻断 CPM 不可行用户手备包，THIRD_PARTY 已登记，ADR-015；miniaudio 类型不出 `AudioEngine.cpp`）；无参考引擎移植项（音频为规划外缺口补齐，自研封装） |
 | **M9 TD 模板**（编号沿革 M6c→M6d→M9，2026-09-30 定） | duality Tilemaps（B）、Editor-RPG2D 放置状态机/自动瓦片/chunk 烘焙（B） |
 | **M7 发布** | yami Deployment 清单（C）、Editor-RPG2D 序列化骨架（C） |
@@ -139,7 +139,9 @@ A/B 级（真拷代码）合计约 **45–55 人天**；C 级 schema/思想项�
 ## 3.5 OS 平台差异验证点（macOS 先行；Windows 移植时逐项过）
 
 引擎经 SDL3 语义层隔离 OS 差异，但"接口隔离"≠"行为一致"——下列功能 macOS 已实测，
-Windows 首次移植时需人工复验（M4.6 §7 登记；新 OS 级功能在此追加）：
+Windows 首次移植时需人工复验（M4.6 §7 登记；新 OS 级功能在此追加）。
+**批⑦（2026-10-05）**：win 侧机器面（编译/出包）已就绪，本表四项 + codepage 归
+[批⑦ 真机清单](../DevLog/2026-10-05-m7a-b7-windows-closure.md)（§3.6 批⑦ 增补表其后）：
 
 | 功能 | 语义层接口 | macOS 状态 | Windows 验证点 |
 |---|---|---|---|
@@ -161,13 +163,32 @@ preset 就能编"不成立**；M7 开工前（Gate C 前置，08 §M7）逐项�
 | 4 | `popen/pclose` 拼 shell 编译命令 | `Editor/Assets/ProjectWizard.cpp` | 进程抽象层（`CreateProcessW`/`_popen` + 宽字符 argv，顺带消 shell 注入面） | ✅ 编译面：MSVC `_popen/_pclose` 宏分支过渡。**行为面未清**：中文路径 codepage 归 Windows 真机首调（届时按原方向换 CreateProcessW 宽字符） |
 | 5 | `std::filesystem::rename` 覆盖既有目标 | 存档/管线缓存写路径（原子写已收敛在 `WriteFileAtomic`——一处收口） | 语义层封装（Windows 走先删后改名或 `ReplaceFile`） | ✅ 新增 `Engine/Core/FileOps.{h,cpp}` `RenameReplace()`：Win = `MoveFileExW(MOVEFILE_REPLACE_EXISTING)`（同卷原子、UTF-8→UTF-16），POSIX = `fs::rename`；`WriteFileAtomic`（AssetDatabase）与管线缓存写（RHI）已切换 |
 
-伴生项：宽字符路径（资产绝对路径 `std::string` 全链在 Windows 长路径/中文路径下的
-形态）——**未处置，归真机首调**；`win` CMake preset ✅ 已入 CMakePresets（VS2022 x64
-多配置生成器 + `condition` 限 Windows host）。
+**批⑦ 增补（2026-10-05）**——批④⑤ 新代码面（GameEntry/packager/新测试）带入的
+阻断 + 依赖缺口，静态扫描实证后全数处置：
 
-> **验证口径**：以上处置均只在 macOS 侧验证"不回归"（构建 + 回归 full 16/16）；
-> **MSVC 实际编译仍待首次真机验证**——07 §3.5 行为验证表与 Gate C ② 的最终勾销
-> 以该次为准（[DevLog](../DevLog/2026-09-30-b0-gate-c-and-defect-batch1.md)）。
+| # | 阻断点 | 位置 | 处置 | 处置状态（2026-10-05） |
+|---|---|---|---|---|
+| 6 | win 分支用 `DWORD`/`GetModuleFileNameA` 但全 TU 无 `<windows.h>`；ICD 自举块 `setenv` POSIX-only | `Engine/Entry/GameEntry.cpp` | 补 `_WIN32` include；ICD 块收窄 `__APPLE__`（win 侧 ICD 走驱动注册表，无此概念） | ✅ 批⑦ A1 |
+| 7 | CoreCLRHost `char_t` 分叉两处（`hostfxr_set_error_writer` 回调 / `initCmdLine` argv——win = `wchar_t` 编译不过）；dotnet 根候选链无 win 默认位；`LoadLibraryA` ACP 窄码中文路径哑火 | `Engine/Scripting/CoreCLRHost.cpp` | 回调/argv 按平台分支（win 侧 UTF-8→UTF-16 经 `fs::path`）；根链尾补 `%ProgramFiles%\dotnet`；`LoadLibraryW` + widen | ✅ 批⑦ A2（宽字符仅保 load-bearing 两处，见伴生项） |
+| 8 | `<unistd.h>` / `::getpid` / `::setenv` / `::popen` 残留（批④⑤ 新代码面） | `tests/engine_tests.cpp`（unistd+24 处 getpid）、`Samples/bench-script/main.cpp`、`Tools/packager/main.cpp` | `Core/Process.h`；`_putenv_s` 分支；`_popen/_pclose` 宏分支（阻断项④ 同款）+ win 双引号 `Quote`（cmd.exe 不认单引号） | ✅ 批⑦ A3/A4/A8 |
+| 9 | spike dlfcn 无守卫（`spike/03-csharp`；04 的 vendored vulkan.h 反而有守卫） | `spike/` | win preset `LEMON_BUILD_SPIKES=OFF`——M0 mac 验收产物不为 win 面维护（决策 D-7d） | ✅ 批⑦ A5 |
+| 10 | RmlUi 软依赖 FreeType 在 win 无系统源（mac 走 brew）——CI/真机首编的依赖缺口 | `cmake/Dependencies.cmake` | FreeType CPM `VER-2-14-3` 三平台单源（SDL3 先例）+ `Freetype::Freetype` ALIAS 接线（RmlUi 软依赖 target 检查直取，`FT_DISABLE_*` 五连关）；mac 自 brew 2.14.3 切同版 | ✅ 批⑦ A7（smoke-uirml `font=Noto` 断言把守） |
+| 11 | MSVC 默认 `/MD` → 干净机需 VC redist（`vcruntime140.dll` 进闭包） | 根 `CMakeLists.txt` | `CMP0091 NEW` + `CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded[Debug]`（静态 CRT；决策 D-7c——win 闭包预期只剩 vulkan-1.dll） | ✅ 批⑦ A6 |
+| 12 | **review 轮实抓**：hostfxr API 字符串参数全 `char_t`（首版只分支了回调/initCmdLine，漏 `initForConfig` 与 `GetExport` 三参）；windows.h min/max 宏咬 `std::min/max`（`Process.h` 公共头泄漏面） | `CoreCLRHost.cpp` / 根 CMakeLists | 四调用全 `Widen`（CP_UTF8——`fs::path(std::string)` win 按 ACP 非按 UTF-8，自查纠）；MSVC 全局 `NOMINMAX WIN32_LEAN_AND_MEAN` | ✅ 批⑦ review（mock 门实抓，[DevLog](../DevLog/2026-10-05-b7-review-hardening.md)） |
+
+伴生项（宽字符路径）**范围收窄（2026-10-05）**：全链 UTF-8→UTF-16 仍是 M8 级工程；
+批⑦ 只保真机判据直接依赖的两处（CoreCLRHost `LoadLibraryW`/`initCmdLine` argv——
+包在非 ASCII 安装路径能起 CoreCLR）。其余（窄 argv 入口、manifest/索引编码、编辑器
+CJK 资产名）维持"归真机首调"口径，见 §3.5 表。`win` CMake preset ✅ 既有 + 批⑦
+`LEMON_BUILD_SPIKES=OFF`。
+
+> **验证口径（批⑦ 更新）**：①–⑫ 全部 macOS 侧验证"不回归"（构建 + 回归 full
+> 19/19 + ctest 4/4）；win 分支另过 **mock 门**（mac clang 真编 `_WIN32` 段，实抓
+> ⑫ 两处，[review DevLog](../DevLog/2026-10-05-b7-review-hardening.md)）；**MSVC
+> 实际编译的机器门禁 = CI `win-build-test` job**（2026-10-05 落地，LunarG SDK
+> 静默装 + preset win + ctest -C Release；首跑待 workflow_dispatch）——07 §3.5
+> 行为验证表与 Gate C ② 的最终勾销仍以**真机**为准
+> （[DevLog 批⑦](../DevLog/2026-10-05-m7a-b7-windows-closure.md) 真机清单）。
 
 ## 4. 登记模板（新增移植项用）
 

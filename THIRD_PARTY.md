@@ -14,7 +14,7 @@
 | Dear ImGui（docking 分支） | v1.92.9b-docking | MIT | CPM 锁 tag（`cmake/Dependencies.cmake`；包装目标 `lemon-imgui` 只在 Editor/） | 编辑器 UI（M4；ADR-005；ImGui 头不出 Editor/，`tests/imgui_isolation.cmake` 断言） | M4.0 |
 | stb（stb_image / stb_image_write） | master@2c980bb | 公有领域 | CPM 锁 commit | PNG 解码（M4.4 导入器）+ 截屏写盘（编辑器冒烟） | M4.0 |
 | RmlUi | 6.3 | MIT | CPM 锁 tag（`lemon-engine` 经 `Engine/Renderer/RmlUiBackend.cpp` + `Engine/Ui/UiSubsystem.cpp` 正式消费；spike/04-rmlui 保留为验收壳） | 运行时 UI（M5 ADR-008 spike 三判据验收 → **M6a 批③a 转正式依赖**，ADR-014；自研 RenderInterface over RHI） | M5→M6a③a |
-| FreeType | 2.14.3（系统 brew） | FreeType License (MIT 兼容) | find_package(Freetype)（RmlUi 依赖） | 字体光栅（RmlUi FreeType 引擎） | M5 |
+| FreeType | VER-2-14-3 | FreeType License (MIT 兼容) | CPM 锁 tag（**M7a 批⑦ 三平台单源**：mac 自 brew 切同版 CPM、win 补 RmlUi find_package 缺口；FT_DISABLE_ZLIB/BZIP2/PNG/HARFBUZZ/BROTLI 五连关 + Freetype::Freetype ALIAS 接线） | 字体光栅（RmlUi FreeType 引擎） | M5→M7a⑦ |
 | yami-rpg-editor 默认素材（第一批） | arpg-ts-chinese 模板（源树拷贝） | MIT（资产随模板再分发） | `Samples/Assets/yami-dungeon/`（5 精灵表 + 3 clip；06 §7） | 素材包底包（M5 批③起；模板/压测共用） | M5 |
 | yami-rpg-editor 音频素材（第二批） | 同上（`Assets/音频/正在使用的音频` + `Assets/UI/标题画面`；文件名去 yami 哈希缀） | MIT（同上） | `demo/svr-test/Assets/Audio/` 8 件（bgm.mp3=watery_cave + 6 wav SE + 1 ogg SE） | M6c 竖切批实测素材（注意：同仓 `音乐/Royalty Free Music Loops OGG` 为 **CC BY 4.0** 不在 MIT 面内，未取用） | M6c 批⓪.5 |
 | Noto Sans SC（Regular，SubsetOTF 8.3MB） | notofonts/noto-cjk main（2026-09-28 取） | SIL OFL 1.1 | `Engine/Ui/Fonts/NotoSansSC-Regular.otf` + 同目录 `OFL.txt`（随仓库版本管理） | 引擎 UI 正字（M6a 批③b，ADR-014：RmlUi 主/fallback 字体，系统字体链降级兜底） | M6a③b |

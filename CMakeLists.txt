@@ -15,6 +15,16 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 if(MSVC)
   add_compile_options(/utf-8 /permissive-)
+  # windows.h 卫生（批⑦ review 实锤②）：min/max 宏会咬 std::min/std::max
+  # （GameEntry 1 处/engine_tests 8 处——Process.h 公共头把 windows.h 带进消费方）；
+  # LEAN_AND_MEAN 缩小 windows.h 面。全局定义覆盖自有 TU + CPM 子项目（SDL3 的
+  # SDL_vulkan.h 在 win 侧也引 windows.h）
+  add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
+  # 静态 CRT（M7a 批⑦）：/MT 替默认 /MD——干净 Win 机零 VC redist（vcruntime140.dll
+  # 不进包闭包）；CMP0091 NEW = 经 CMAKE_MSVC_RUNTIME_LIBRARY 而非 /M* 裸旗标，
+  # CPM 子项目（SDL3/RmlUi/freetype）同步跟随
+  cmake_policy(SET CMP0091 NEW)
+  set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 else()
   # -Wno-missing-field-initializers：Vulkan 惯用 {VK_STRUCTURE_TYPE_X} 部分初始化
   add_compile_options(-Wall -Wextra -Werror=return-type -Wno-missing-field-initializers)
@@ -52,7 +62,7 @@ endif()
 
 # 独立工具目标（M7a 批⑤ lemon-packager——链 lemon-engine，出包时才需 dotnet）
 if(LEMON_BUILD_TOOLS)
-  add_subdirectory(tools)
+  add_subdirectory(tools) # 目录名 = git 权威小写 tools/（批⑦核对过，非笔误）
 endif()
 
 if(LEMON_BUILD_SPIKES)

@@ -59,7 +59,11 @@ int main(int argc, char** argv) {
     // GC 验收确定性：先于 CoreCLR 初始化关分层编译（判据 4 前提，见文件头注）。
     // 实测矩阵：{默认分层, TC=0} × {GetExport 每调, 缓存} = {9/10 FAIL, 1/10, 10/10 PASS}
     // ——分层记账与 GetExport 分配是两个独立来源，后者已修（ScriptHost 缓存指针）。
+#if defined(_MSC_VER) // 批⑦ win 清账：setenv POSIX-only，_putenv_s 覆写语义等价
+    _putenv_s("DOTNET_TieredCompilation", "0");
+#else
     ::setenv("DOTNET_TieredCompilation", "0", 1);
+#endif
     Config cfg;
     for (int i = 1; i < argc; ++i) {
         auto next = [&]() -> const char* { return (i + 1 < argc) ? argv[++i] : ""; };

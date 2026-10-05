@@ -72,6 +72,8 @@
 
 #if defined(__APPLE__)
 #include <mach-o/dyld.h> // _NSGetExecutablePath
+#elif defined(_WIN32)
+#include <windows.h> // GetModuleFileNameA（ExeDir 批⑦：win 分支首次真编）
 #endif
 
 namespace fs = std::filesystem;
@@ -402,17 +404,20 @@ int main(int argc, char** argv) {
     // vkCreateInstance 对裸文件名 library_path 的验证层 dlopen 找不到 brew 层
     // （VK_ERROR_LAYER_NOT_PRESENT，--validate 实抓；编辑器同为设备先行故无此症）
     InputCollector input;
-    // 包形态 ICD 自举（M7a 批⑤）：Vulkan loader 的 ICD 发现默认走系统注册位
+    // 包形态 ICD 自举（M7a 批⑤；mac 专属——Windows 侧 Vulkan ICD 由显卡驱动
+    // 注册表发现，无注册位问题）：Vulkan loader 的 ICD 发现默认走系统注册位
     // （brew /usr/local/etc/vulkan/icd.d）——干净机无注册位则 libMoltenVK 永不
     // 装载。exe 旁 MoltenVK_icd.json 在场 = packager 产物，显式指包内清单
     // （library_path 相对清单自身解析，随包可搬迁）；不覆写用户显式设置（调试态
     // 注入系统 MoltenVK 仍优先）。须在 Device::Create（vkCreateInstance）前。
+#if defined(__APPLE__)
     if (const char* prevIcd = getenv("VK_ICD_FILENAMES"); !prevIcd || !*prevIcd) {
         std::error_code icdEc;
         const fs::path bundledIcd = fs::path(exeDir) / "MoltenVK_icd.json";
         if (fs::is_regular_file(bundledIcd, icdEc))
             setenv("VK_ICD_FILENAMES", bundledIcd.string().c_str(), /*overwrite=*/0);
     }
+#endif
     auto window = Window::Create({.title = pf.name.c_str(), .width = 1280, .height = 720});
     if (!window) return 1;
     window->SetEventObserver(&InputCollector::OnEvent, &input);

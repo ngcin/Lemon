@@ -75,11 +75,35 @@ CPMAddPackage(
 )
 
 # ---------------------------------------------------------------------------
+# FreeType — 字体光栅化（RmlUi 软依赖；M7a 批⑦ win 缺口补齐）
+# 三平台 CPM 单源（SDL3 先例）：win 侧 RmlUi 的 find_package(Freetype) 无系统源
+# （vcpkg/手装 = 真机首编摩擦）；mac 侧此前走 brew 2.14.3，本批切同版 CPM。
+# FT_DISABLE_* 五连关：RmlUi 只要光栅化核心，zlib/png/bzip2/harfbuzz/brotli
+# 全不需要（我们分发的 Noto otf 非压缩容器）。
+CPMAddPackage(
+  NAME freetype
+  GITHUB_REPOSITORY freetype/freetype
+  GIT_TAG VER-2-14-3
+  OPTIONS
+    "FT_DISABLE_ZLIB ON"
+    "FT_DISABLE_BZIP2 ON"
+    "FT_DISABLE_PNG ON"
+    "FT_DISABLE_HARFBUZZ ON"
+    "FT_DISABLE_BROTLI ON"
+)
+# Freetype::Freetype 接线：上游 CMake 只给 freetype-interface 的 EXPORT_NAME
+# （安装态命名），本构建树内无该 target——补 ALIAS 供 RmlUi 软依赖 target 检查
+# 消费（CMake 自带 FindFreetype 的 NOT TARGET 守卫即短路，零 cache 变量 hack）。
+if(TARGET freetype-interface AND NOT TARGET Freetype::Freetype)
+  add_library(Freetype::Freetype ALIAS freetype-interface)
+endif()
+
+# ---------------------------------------------------------------------------
 # RmlUi — 运行时 UI（M6a 批③a 正式依赖，ADR-014；锁 tag 6.3）
 # 纪律（AGENTS）：已登记 THIRD_PARTY.md + 07 移植矩阵。正式消费者 =
 # Engine/Renderer/RmlUiBackend.cpp（自研 RenderInterface over RHI）+ Engine/Ui/
 # UiSubsystem.cpp；spike/04-rmlui 保留为验收壳（本地后端拷贝直接编入，不用官方
-# Backends 目标——SHELL OFF 不拉 rmlui_backend_*）。FreeType 用系统 brew 件（2.14.3）。
+# Backends 目标——SHELL OFF 不拉 rmlui_backend_*）。FreeType 见上（CPM 单源）。
 CPMAddPackage(
   NAME RmlUi
   GITHUB_REPOSITORY mikke89/RmlUi

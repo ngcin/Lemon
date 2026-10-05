@@ -17,11 +17,14 @@
 //   --out      出包根（须不存在或空；--force = 先清）
 //   --force    出包根在场时整删重建
 //
-// 自检（RESULT pkg-selfcheck 行，回归口径）：otool 依赖闭环 + 关键件在场 +
+// 自检（RESULT pkg-selfcheck 行，回归口径）：依赖闭环 + 关键件在场 +
 // 文件清单对账（组装期记账 ⊆ 实走；runtime/ publish 树外零多出）。
-// 依赖本机工具：otool / install_name_tool / codesign / dotnet（批⑦ win 换 dumpbin）。
+// 依赖本机工具：dotnet（win 侧闭包用内置 PE import 解析——dumpbin 要 vcvars
+// 环境，用户裸 shell 会哑火，批⑦ 决策 D-7b 弃外呼）。
+#include <cctype>
 #include <cstdio>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -32,7 +35,15 @@
 #include <unordered_set>
 #include <vector>
 
-#include <unistd.h> // getpid（合成宿主工程临时目录名）
+#include "Core/Process.h" // CurrentProcessId（批⑦ win 清账：unistd/getpid POSIX-only）
+
+#if defined(_MSC_VER) // popen 编译面（07 §3.6 阻断项④ ProjectWizard 同款过渡口径）
+    #define LEMON_POPEN _popen
+    #define LEMON_PCLOSE _pclose
+#else
+    #define LEMON_POPEN ::popen
+    #define LEMON_PCLOSE ::pclose
+#endif
 
 #include <nlohmann/json.hpp>
 
@@ -41,6 +52,7 @@
 #include "Assets/AssetTypes.h"
 #include "Assets/ProjectFile.h"
 #include "Audio/BakedClip.h"
+#include "PeImports.h"
 
 namespace fs = std::filesystem;
 using Json = nlohmann::json;
@@ -61,9 +73,16 @@ void Err(const std::string& msg) {
     std::printf("[lemon-packager] ERROR: %s\n", msg.c_str());
 }
 
-std::string Quote(const fs::path& p) { return "'" + p.string() + "'"; }
+std::string Quote(const fs::path& p) {
+    // cmd.exe 不认单引号（POSIX sh 语义）——win 侧双引号（批⑦）
+#if defined(_WIN32)
+    return "\"" + p.string() + "\"";
+#else
+    return "'" + p.string() + "'";
+#endif
+}
 
-// ---- 子进程（otool 读输出；其余只看退出码）----
+// ---- 子进程（读输出；其余只看退出码）----
 struct CmdResult {
     int rc = -1;
     std::string out;
@@ -71,11 +90,11 @@ struct CmdResult {
 
 CmdResult Run(const std::string& cmd) {
     CmdResult r;
-    FILE* f = ::popen(cmd.c_str(), "r"); // NOLINT(cert-env33-c) 工具目标
+    FILE* f = LEMON_POPEN(cmd.c_str(), "r"); // NOLINT(cert-env33-c) 工具目标
     if (!f) return r;
     char buf[4096];
     while (size_t n = std::fread(buf, 1, sizeof(buf), f)) r.out.append(buf, n);
-    r.rc = ::pclose(f);
+    r.rc = LEMON_PCLOSE(f);
     return r;
 }
 
@@ -89,6 +108,8 @@ bool RunOk(const std::string& cmd, const std::string& what) {
 }
 
 // otool -L 依赖清单（跳过首行 = 本体 install name；逐行取 " (" 前的引用串）
+// —— mac 闭包专属（win 走 PeImports 内置解析，批⑦ D-7b）
+#if !defined(_WIN32)
 std::vector<std::string> OtoolDeps(const fs::path& macho) {
     std::vector<std::string> deps;
     const CmdResult r = Run("otool -L " + Quote(macho));
@@ -189,6 +210,7 @@ fs::path ResolveRef(const std::string& ref, const fs::path& pkgRoot,
     const std::string rest = ref.substr(slash + 1); // 剥 @rpath/ 或 @loader_path/
     return ResolveRpathRef(rest, pkgRoot, buildEntryDir);
 }
+#endif // !_WIN32（otool/重锚助手族）
 
 // ---- 组装记账（清单对账面：自检步消费）----
 std::set<std::string> g_written;
@@ -281,23 +303,45 @@ void CheckDanglingRefs(const fs::path& projectRoot, const lemon::assets::AssetIn
 } // namespace
 
 int main(int argc, char** argv) {
-    std::string projectArg, runtimeArg, outArg;
+    std::string projectArg, runtimeArg, outArg, ridArg;
     bool force = false;
     for (int i = 1; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--project") && i + 1 < argc) projectArg = argv[++i];
         else if (!std::strcmp(argv[i], "--runtime") && i + 1 < argc) runtimeArg = argv[++i];
         else if (!std::strcmp(argv[i], "--out") && i + 1 < argc) outArg = argv[++i];
+        else if (!std::strcmp(argv[i], "--rid") && i + 1 < argc) ridArg = argv[++i];
         else if (!std::strcmp(argv[i], "--force")) force = true;
         else {
-            std::printf("lemon-packager：未知参数 %s（--project/--runtime/--out/--force）\n",
+            std::printf("lemon-packager：未知参数 %s（--project/--runtime/--out/--rid/--force）\n",
                         argv[i]);
             return 2;
         }
     }
     if (projectArg.empty() || runtimeArg.empty() || outArg.empty()) {
         std::printf("用法：lemon-packager --project <dir> --runtime <engine-build-dir> "
-                    "--out <pkg> [--force]\n");
+                    "--out <pkg> [--rid win-x64|osx-x64] [--force]\n");
         return 2;
+    }
+    // dotnet publish RID（批⑦）：缺省按打包宿主平台（mac 机出 mac 包 / win 机出 win 包）；
+    // --rid 显式覆盖。**宿主一致性 guard（review 实锤④）**：交叉出包 v1 不支持——
+    // mac 收集的 lemon-game 二进制配 win-x64 runtime = 静默坏包（起不了 CoreCLR/
+    // exe 架构不匹配），响亮拒绝；交叉出包需求出现时再立项（runtime 面可行，但
+    // 闭包/自检面按平台各有隐式假设，v1 不背）
+    const std::string rid = !ridArg.empty() ? ridArg
+#if defined(_WIN32)
+                              : "win-x64";
+#else
+                              : "osx-x64";
+#endif
+#if defined(_WIN32)
+    if (rid != "win-x64") {
+#else
+    if (rid != "osx-x64") {
+#endif
+        std::printf("lemon-packager：--rid %s 与打包宿主平台不符（v1 仅支持本机出包——"
+                    "win 机用 win-x64 / mac 机用 osx-x64）\n",
+                    rid.c_str());
+        return 1;
     }
     std::error_code ec;
     const fs::path project = fs::absolute(fs::path(projectArg), ec);
@@ -329,7 +373,27 @@ int main(int argc, char** argv) {
             return 1;
         }
     }
+#if defined(_WIN32)
+    // VS 多配置生成器默认把 exe 落 Entry/<Config>/（CMAKE_RUNTIME_OUTPUT_DIRECTORY
+    // 未钉时）——按 Release → Debug → 平铺三候选解析
+    fs::path gameExe;
+    for (const fs::path& cand :
+         {buildDir / "Engine" / "Entry" / "Release" / "lemon-game.exe",
+          buildDir / "Engine" / "Entry" / "Debug" / "lemon-game.exe",
+          buildDir / "Engine" / "Entry" / "lemon-game.exe"}) {
+        if (fs::is_regular_file(cand, ec)) {
+            gameExe = cand;
+            break;
+        }
+    }
+    if (gameExe.empty()) {
+        Err("引擎构建树缺 lemon-game.exe：" + (buildDir / "Engine" / "Entry").string() +
+            "（--runtime 指向 build/win，先 cmake --build --preset win）");
+        return 1;
+    }
+#else
     const fs::path gameExe = buildDir / "Engine" / "Entry" / "lemon-game";
+#endif
     const fs::path buildEntryDir = gameExe.parent_path();
     const fs::path buildScriptDir = buildDir / "Scripting" / "dotnet";
 
@@ -350,7 +414,8 @@ int main(int argc, char** argv) {
         return 1;
     }
     if (!fs::is_regular_file(gameExe, ec)) {
-        Err("引擎构建树缺 lemon-game：" + gameExe.string() + "（--runtime 指向 build/mac）");
+        Err("引擎构建树缺 lemon-game：" + gameExe.string() +
+            "（--runtime 指向 build/mac（mac）/ build/win（win，Release|Debug 子目录或平铺））");
         return 1;
     }
     if (!fs::is_regular_file(buildScriptDir / "Lemon.Entry.dll", ec)) {
@@ -384,7 +449,74 @@ int main(int argc, char** argv) {
     }
     fs::create_directories(out, ec);
 
-    // ---- 3. 二进制 + dylib 闭包（otool 递归收 → 拷贝 → 重锚 → 签名）----
+    // ---- 3. 二进制 + 依赖闭包（mac：otool 递归收 → 拷贝 → 重锚 → 签名；win：PE
+    // import 递归收 → 拷贝——无重锚/签名/ICD，loader 搜索序 exe 目录优先）----
+#if defined(_WIN32)
+    const fs::path exeOut = out / "lemon-game.exe";
+    CopyFileTo(gameExe, exeOut);
+    // Windows 系统 DLL 白名单（大小写不敏感；api-ms-*/ext-ms-* API 集通配）：静态
+    // CRT（D-7c）+ SDL3/RmlUi 全静态链入 → 非系统 import 预期只剩 vulkan-1.dll 级；
+    // 白名单漏名 = 收件红字（按名补即可——响亮失败优于静默漏收）
+    const auto IsSystemDllWin = [](const std::string& dll) {
+        std::string n = dll;
+        for (char& c : n) c = (char)std::tolower((unsigned char)c);
+        if (n.rfind("api-ms-", 0) == 0 || n.rfind("ext-ms-", 0) == 0) return true;
+        static const std::unordered_set<std::string> kSys = {
+            "kernel32.dll", "kernelbase.dll", "ntdll.dll", "user32.dll", "gdi32.dll",
+            "shell32.dll", "advapi32.dll", "ole32.dll", "oleaut32.dll", "uuid.dll",
+            "ws2_32.dll", "bcrypt.dll", "crypt32.dll", "secur32.dll", "shlwapi.dll",
+            "imm32.dll", "setupapi.dll", "winmm.dll", "version.dll", "dbghelp.dll",
+            "dwmapi.dll", "comctl32.dll", "comdlg32.dll", "msvcrt.dll", "ucrtbase.dll",
+            "avrt.dll", "userenv.dll", "powrprof.dll", "wintrust.dll", "mswsock.dll",
+            "cfgmgr32.dll", "hid.dll", "normaliz.dll"};
+        return kSys.count(n) > 0;
+    };
+    // 收件源候选链：构建树 exe 目录 → $VULKAN_SDK/Bin（SDK 机）→ System32
+    // （显卡驱动装的系统 loader 件——Vulkan loader 许可允许再分发，ADR-016 口径）
+    const auto ResolveDll = [&](const std::string& name) -> fs::path {
+        std::vector<fs::path> cands{buildEntryDir / name};
+        if (const char* sdk = std::getenv("VULKAN_SDK"); sdk && *sdk)
+            cands.push_back(fs::path(sdk) / "Bin" / name);
+        const char* sysroot = std::getenv("SystemRoot");
+        cands.push_back(fs::path(sysroot && *sysroot ? sysroot : "C:\\Windows") / "System32" /
+                        name);
+        for (const fs::path& c : cands) {
+            std::error_code lec;
+            if (fs::is_regular_file(c, lec)) return c;
+        }
+        return {};
+    };
+    std::unordered_map<std::string, fs::path> bundle; // dll 名（小写键）→ 本体路径
+    std::vector<fs::path> work{exeOut};
+    while (!work.empty()) {
+        const fs::path pe = work.back();
+        work.pop_back();
+        std::string perr;
+        const std::vector<std::string> deps = lemon::pkg::PeImportDlls(pe, perr);
+        if (!perr.empty()) {
+            Err("PE 解析失败：" + pe.filename().string() + "（" + perr + "）");
+            continue;
+        }
+        for (const std::string& dep : deps) {
+            std::string low = dep;
+            for (char& c : low) c = (char)std::tolower((unsigned char)c);
+            if (IsSystemDllWin(dep) || bundle.count(low)) continue;
+            const fs::path real = ResolveDll(dep);
+            if (real.empty()) {
+                Err("依赖不可解析：" + dep + "（被 " + pe.filename().string() +
+                    " 引用）——构建树 / $VULKAN_SDK/Bin / System32 均无（系统件则白名单补名）");
+                continue;
+            }
+            bundle[low] = real;
+            work.push_back(real);
+        }
+    }
+    if (g_errors) return 1;
+    for (const auto& [low, real] : bundle) CopyFileTo(real, out / real.filename());
+    std::printf("[lemon-packager] 闭包：dll %u 件（静态 CRT 预期主体 = vulkan-1.dll）\n",
+                (unsigned)bundle.size());
+    if (g_errors) return 1;
+#else
     CopyFileTo(gameExe, out / "lemon-game");
     fs::path moltenVk;
     for (const fs::path& c : {fs::path("/usr/local/opt/molten-vk/lib/libMoltenVK.dylib"),
@@ -477,10 +609,11 @@ int main(int argc, char** argv) {
     std::printf("[lemon-packager] 闭包：dylib %u 件%s\n", (unsigned)bundle.size(),
                 moltenVk.empty() ? "（MoltenVK 未收——干净机将无 ICD）" : " + MoltenVK ICD");
     if (g_errors) return 1;
+#endif
 
     // ---- 4. runtime/（dotnet publish self-contained；类库拒自含 → 合成宿主工程）----
     const fs::path hostDir = fs::temp_directory_path(ec) /
-                             ("lemon-pkg-host-" + std::to_string(::getpid()));
+                             ("lemon-pkg-host-" + std::to_string(lemon::CurrentProcessId()));
     fs::create_directories(hostDir, ec);
     {
         std::ofstream cs(hostDir / "Host.csproj", std::ios::trunc);
@@ -508,7 +641,8 @@ int main(int argc, char** argv) {
         pm << "internal static class Program { static void Main() {} }\n";
     }
     const CmdResult pub = Run("dotnet publish " + Quote(hostDir / "Host.csproj") +
-                              " -c Release -r osx-x64 --self-contained -o " + Quote(out / "runtime"));
+                              " -c Release -r " + rid + " --self-contained -o " +
+                              Quote(out / "runtime"));
     if (pub.rc != 0) {
         Err("dotnet publish 失败（输出见上）");
         std::printf("%s", pub.out.c_str());
@@ -525,9 +659,11 @@ int main(int argc, char** argv) {
     // 自含式 runtimeconfig 落 GameEntry 消费名（hostfxr 以 config 所在目录为 app
     // base 找 hostpolicy——平铺产物即自含布局；CoreCLRHost 批⑤ 平铺形态命中）
     CopyFileTo(rt / "Host.runtimeconfig.json", rt / "Lemon.Entry.runtimeconfig.json");
-    for (const char* prune : {"Host", "Host.dll", "Host.pdb", "Host.deps.json"})
-        fs::remove(rt / prune, ec); // 宿主可执行/产物剪除（native 入口仍是 Lemon.Entry）
-    std::printf("[lemon-packager] runtime/：dotnet publish self-contained（osx-x64）落位\n");
+    for (const char* prune : {"Host", "Host.exe", "Host.dll", "Host.pdb", "Host.deps.json"})
+        fs::remove(rt / prune, ec); // 宿主可执行/产物剪除（native 入口仍是 Lemon.Entry；
+                                    // Host.exe = win publish 形态，review 实锤④）
+    std::printf("[lemon-packager] runtime/：dotnet publish self-contained（%s）落位\n",
+                rid.c_str());
 
     // ---- 5. data/（项目直拷 + 预生成件）----
     const fs::path data = out / "data";
@@ -597,8 +733,28 @@ int main(int argc, char** argv) {
                 baked, atlasStats.pages, atlasStats.sprites);
     if (g_errors) return 1;
 
-    // ---- 6. 自检（otool 闭环 + 关键件 + 清单对账）----
+    // ---- 6. 自检（依赖闭环 + 关键件 + 清单对账；mac=otool/rpath，win=PE import）----
     uint32_t closureMiss = 0;
+#if defined(_WIN32)
+    std::vector<fs::path> pes{out / "lemon-game.exe"};
+    for (const auto& [low, real] : bundle) pes.push_back(out / real.filename());
+    for (const fs::path& m : pes) {
+        std::string perr;
+        const std::vector<std::string> deps = lemon::pkg::PeImportDlls(m, perr);
+        if (!perr.empty()) {
+            Err("PE 解析失败（自检）：" + m.filename().string() + "（" + perr + "）");
+            ++closureMiss;
+            continue;
+        }
+        for (const std::string& dep : deps) {
+            if (IsSystemDllWin(dep)) continue;
+            if (!fs::is_regular_file(out / dep, ec)) {
+                Err("闭包缺口：" + m.filename().string() + " -> " + dep);
+                ++closureMiss;
+            }
+        }
+    }
+#else
     std::vector<fs::path> machos{out / "lemon-game"};
     for (const auto& [name, real] : bundle) machos.push_back(out / name);
     for (const fs::path& m : machos) {
@@ -616,7 +772,22 @@ int main(int argc, char** argv) {
                 ++closureMiss;
             }
     }
+#endif
     uint32_t essentialMiss = 0;
+#if defined(_WIN32)
+    // win 关键件：self-contained publish 平铺 hostfxr/hostpolicy/coreclr；无 MoltenVK
+    // （ICD 归显卡驱动注册表发现）；vulkan-1.dll 闭包在场 = 干净机可跑前提
+    for (const fs::path& need :
+         {rt / "hostfxr.dll", rt / "hostpolicy.dll", rt / "coreclr.dll", rt / "Lemon.Entry.dll",
+          rt / "Lemon.Entry.runtimeconfig.json", rt / "Game.dll", rt / "Lemon.SDK.dll",
+          data / "project.lemon", data / entryScene, data / ".lemon" / "bin" / "Game.dll",
+          data / ".lemon" / "manifest.pkg.json", data / "Fonts" / "NotoSansSC-Regular.otf",
+          out / "vulkan-1.dll", out / "lemon-game.exe"})
+        if (!fs::is_regular_file(need, ec)) {
+            Err("关键件缺失：" + fs::relative(need, out, ec).string());
+            ++essentialMiss;
+        }
+#else
     for (const fs::path& need :
          {rt / "libhostfxr.dylib", rt / "libhostpolicy.dylib", rt / "Lemon.Entry.dll",
           rt / "Lemon.Entry.runtimeconfig.json", rt / "Game.dll", rt / "Lemon.SDK.dll",
@@ -627,6 +798,7 @@ int main(int argc, char** argv) {
             Err("关键件缺失：" + fs::relative(need, out, ec).string());
             ++essentialMiss;
         }
+#endif
     if (atlasStats.pages > 0 &&
         !fs::is_regular_file(data / lemon::assets::kBakedAtlasRelPath, ec)) {
         Err("关键件缺失：data/.lemon/baked/atlas/atlas.baked（烤制记账在场但包内缺失）");

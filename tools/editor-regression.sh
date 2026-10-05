@@ -83,7 +83,7 @@ grep_step() { # grep_step <名称> <期望子串> <命令...>
 echo "== Lemon editor regression (mode=${MODE}, build=${BUILD}) =="
 
 echo "-- ctest --"
-step "ctest 3/3 (engine-tests/imgui-isolation/script-tests)" \
+step "ctest 4/4 (engine-tests/imgui-isolation/script-tests/pkg-pe-selftest)" \
     ctest --test-dir "${BUILD}" --output-on-failure
 
 echo "-- editor smoke --"

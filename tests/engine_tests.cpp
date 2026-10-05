@@ -1,6 +1,7 @@
 // Lemon 引擎单测 — 纯逻辑层（数学/批键/图集 UV/相机/粒子池/音频混音）
 // 断言风格：LEMON_ASSERT 失败即 abort，进程退出码非 0 = 测试失败。
 #include "Core/Log.h"
+#include "Core/Process.h" // CurrentProcessId（批⑦ win 清账：unistd/getpid 是 POSIX-only）
 
 #include <chrono>
 #include <cstdio>
@@ -11,7 +12,6 @@
 #include <filesystem>
 #include <fstream>
 #include <thread>
-#include <unistd.h>
 
 #include "Audio/AudioChannel.h" // M6c 批②：命令通道（World.h 链亦达，显式声明测试意图）
 #include "Audio/AudioEngine.h"
@@ -3998,7 +3998,7 @@ void TestProjectFile() {
 
     // ResolveEntryScene 三态（临时项目夹具）
     const fs::path root = fs::temp_directory_path() /
-                          ("lemon-test-projfile-" + std::to_string(::getpid()));
+                          ("lemon-test-projfile-" + std::to_string(lemon::CurrentProcessId()));
     std::error_code ec;
     fs::remove_all(root, ec);
     fs::create_directories(root / "Scenes", ec);
@@ -4123,7 +4123,7 @@ void TestAssetDatabaseLow32Collision() {
     using lemon::editor::AssetEntry;
 
     const fs::path root = fs::temp_directory_path() /
-                          ("lemon-test-low32-" + std::to_string(::getpid()));
+                          ("lemon-test-low32-" + std::to_string(lemon::CurrentProcessId()));
     std::error_code ec;
     fs::remove_all(root, ec);
 
@@ -4159,7 +4159,7 @@ void TestOrphanMetaSweep() {
     using lemon::editor::AssetDatabase;
 
     const fs::path root = fs::temp_directory_path() /
-                          ("lemon-test-sweep-" + std::to_string(::getpid()));
+                          ("lemon-test-sweep-" + std::to_string(lemon::CurrentProcessId()));
     std::error_code ec;
     fs::remove_all(root, ec);
 
@@ -4222,7 +4222,7 @@ void TestAssetDatabaseLifecycle() {
     using lemon::editor::AssetType;
 
     const fs::path root = fs::temp_directory_path() /
-                          ("lemon-test-assets-" + std::to_string(::getpid()));
+                          ("lemon-test-assets-" + std::to_string(lemon::CurrentProcessId()));
     std::error_code ec;
     fs::remove_all(root, ec);
 
@@ -4329,7 +4329,7 @@ void TestGridSliceConfig() {
     using lemon::editor::AssetEntry;
 
     const fs::path root = fs::temp_directory_path() /
-                          ("lemon-test-slice-" + std::to_string(::getpid()));
+                          ("lemon-test-slice-" + std::to_string(lemon::CurrentProcessId()));
     std::error_code ec;
     fs::remove_all(root, ec);
     AssetDatabase db;
@@ -4382,7 +4382,7 @@ void TestAssetPathContainment() {
     using lemon::editor::AssetEntry;
 
     const fs::path root = fs::temp_directory_path() /
-                          ("lemon-test-paths-" + std::to_string(::getpid()));
+                          ("lemon-test-paths-" + std::to_string(lemon::CurrentProcessId()));
     std::error_code ec;
     fs::remove_all(root, ec);
     fs::create_directories(root / "Assets", ec);
@@ -4427,7 +4427,7 @@ void TestSaveChannelSplits() {
     using namespace lemon::ecs;
     using lemon::assets::SaveStore;
 
-    const std::string tag = std::to_string(::getpid());
+    const std::string tag = std::to_string(lemon::CurrentProcessId());
     const fs::path root = fs::temp_directory_path() / ("lemon-test-savesplit-" + tag);
     std::error_code ec;
     fs::remove_all(root, ec);
@@ -4542,7 +4542,7 @@ public:
 void TestPrefabCachePlaySpawn() {
     using namespace lemon::ecs;
     namespace fs = std::filesystem;
-    const std::string tag = std::to_string(::getpid());
+    const std::string tag = std::to_string(lemon::CurrentProcessId());
     const fs::path root = fs::temp_directory_path() / ("lemon-test-prefabc-" + tag);
     std::error_code ec;
     fs::remove_all(root, ec);
@@ -5035,7 +5035,7 @@ void TestManifestBakRecovery() {
     using lemon::editor::AssetEntry;
 
     const fs::path root = fs::temp_directory_path() /
-                          ("lemon-test-manifestbak-" + std::to_string(::getpid()));
+                          ("lemon-test-manifestbak-" + std::to_string(lemon::CurrentProcessId()));
     std::error_code ec;
     fs::remove_all(root, ec);
 
@@ -5287,7 +5287,7 @@ void TestTableAssetImport() {
     using lemon::editor::AssetType;
     using lemon::assets::ParseTableJson;
 
-    const std::string tag = std::to_string(::getpid());
+    const std::string tag = std::to_string(lemon::CurrentProcessId());
     const fs::path root = fs::temp_directory_path() / ("lemon-test-table-" + tag);
     const fs::path src = fs::temp_directory_path() / ("lemon-test-table-src-" + tag + ".csv");
     const fs::path badSrc =
@@ -5533,7 +5533,7 @@ void TestSpriteGuidResolve() {
     using namespace lemon::ecs;
 
     const fs::path root = fs::temp_directory_path() /
-                          ("lemon-test-spriteguid-" + std::to_string(::getpid()));
+                          ("lemon-test-spriteguid-" + std::to_string(lemon::CurrentProcessId()));
     std::error_code ec;
     fs::remove_all(root, ec);
 
@@ -5630,7 +5630,7 @@ void TestEditorContextPrefabOps() {
     using lemon::editor::AssetType;
 
     const fs::path root = fs::temp_directory_path() /
-                          ("lemon-test-prefab-" + std::to_string(::getpid()));
+                          ("lemon-test-prefab-" + std::to_string(lemon::CurrentProcessId()));
     std::error_code ec;
     fs::remove_all(root, ec);
 
@@ -5692,7 +5692,7 @@ void TestPlaySpawnPrefab() {
     using lemon::editor::AssetType;
 
     const fs::path root = fs::temp_directory_path() /
-                          ("lemon-test-playspawn-" + std::to_string(::getpid()));
+                          ("lemon-test-playspawn-" + std::to_string(lemon::CurrentProcessId()));
     std::error_code ec;
     fs::remove_all(root, ec);
 
@@ -5770,7 +5770,7 @@ void TestRecentScenesAliasSafety() {
     using lemon::editor::EditorContext;
 
     const fs::path root = fs::temp_directory_path() /
-                          ("lemon-test-recent-" + std::to_string(::getpid()));
+                          ("lemon-test-recent-" + std::to_string(lemon::CurrentProcessId()));
     std::error_code ec;
     fs::remove_all(root, ec);
 
@@ -5817,7 +5817,7 @@ void TestProjectWizard() {
     using lemon::editor::ProjectDesc;
 
     const fs::path parent = fs::temp_directory_path() /
-                            ("lemon-test-wizard-" + std::to_string(::getpid()));
+                            ("lemon-test-wizard-" + std::to_string(lemon::CurrentProcessId()));
     std::error_code ec;
     fs::remove_all(parent, ec);
 
@@ -5910,7 +5910,7 @@ void TestEditorUsability() {
 
     // AddBehaviourScript：模板落盘 + GameMain 注册锚点插入 + 非法名/重名拒绝
     const fs::path parent = fs::temp_directory_path() /
-                            ("lemon-test-newscript-" + std::to_string(::getpid()));
+                            ("lemon-test-newscript-" + std::to_string(lemon::CurrentProcessId()));
     std::error_code ec;
     fs::remove_all(parent, ec);
     ProjectDesc d;
@@ -5953,7 +5953,7 @@ void TestAutosaveRecovery() {
     using lemon::editor::EditorContext;
 
     const fs::path root = fs::temp_directory_path() /
-                          ("lemon-test-autosave-" + std::to_string(::getpid()));
+                          ("lemon-test-autosave-" + std::to_string(lemon::CurrentProcessId()));
     std::error_code ec;
     fs::remove_all(root, ec);
 
@@ -6024,7 +6024,7 @@ void TestAssetIndexConsistency() {
     using lemon::editor::AssetDatabase;
 
     const fs::path root = fs::temp_directory_path() /
-                          ("lemon-test-assetindex-" + std::to_string(::getpid()));
+                          ("lemon-test-assetindex-" + std::to_string(lemon::CurrentProcessId()));
     std::error_code ec;
     fs::remove_all(root, ec);
     fs::create_directories(root / "Assets", ec);
@@ -6169,7 +6169,7 @@ void TestAssetIndexPkgManifest() {
     using lemon::assets::AssetType;
 
     const fs::path root = fs::temp_directory_path() /
-                          ("lemon-test-pkgmanifest-" + std::to_string(::getpid()));
+                          ("lemon-test-pkgmanifest-" + std::to_string(lemon::CurrentProcessId()));
     std::error_code ec;
     fs::remove_all(root, ec);
     fs::create_directories(root / "Assets", ec);
@@ -6234,7 +6234,7 @@ void TestAssetIndexSliceRebase() {
     // 低域切片块**随本体连号重派**（几何真源 .meta 在场即登记链活）；健康块保号；
     // 越上界坏账块清零（原防御保留）
     const fs::path root = fs::temp_directory_path() /
-                          ("lemon-test-slicerebase-" + std::to_string(::getpid()));
+                          ("lemon-test-slicerebase-" + std::to_string(lemon::CurrentProcessId()));
     std::error_code ec;
     fs::remove_all(root, ec);
     fs::create_directories(root / "Assets", ec);
@@ -6339,7 +6339,7 @@ void TestBakedAtlasContainer() {
     using namespace lemon::assets;
 
     const fs::path dir = fs::temp_directory_path() /
-                         ("lemon-test-lat1-" + std::to_string(::getpid()));
+                         ("lemon-test-lat1-" + std::to_string(lemon::CurrentProcessId()));
     std::error_code ec;
     fs::remove_all(dir, ec);
     fs::create_directories(dir, ec);
@@ -6552,7 +6552,7 @@ void TestAtlasStoreRegister() {
     using namespace lemon::assets;
 
     const fs::path root = fs::temp_directory_path() /
-                          ("lemon-test-lat1reg-" + std::to_string(::getpid()));
+                          ("lemon-test-lat1reg-" + std::to_string(lemon::CurrentProcessId()));
     std::error_code ec;
     fs::remove_all(root, ec);
     fs::create_directories(root / "Assets", ec);
@@ -6653,7 +6653,7 @@ void TestBakeProjectAtlas() {
     using namespace lemon::assets;
 
     const fs::path root = fs::temp_directory_path() /
-                          ("lemon-test-lat1bake-" + std::to_string(::getpid()));
+                          ("lemon-test-lat1bake-" + std::to_string(lemon::CurrentProcessId()));
     std::error_code ec;
     fs::remove_all(root, ec);
     fs::create_directories(root / "Assets", ec);
@@ -6691,7 +6691,7 @@ void TestBakeProjectAtlas() {
     // 无 sprite 项目：false 且 sprites==0（合法跳过形态，非错误）
     {
         const fs::path empty = fs::temp_directory_path() /
-                               ("lemon-test-lat1none-" + std::to_string(::getpid()));
+                               ("lemon-test-lat1none-" + std::to_string(lemon::CurrentProcessId()));
         fs::remove_all(empty, ec);
         fs::create_directories(empty / "Assets", ec);
         { std::ofstream f(empty / "Assets" / "walk.anim", std::ios::trunc); f << "{}"; }

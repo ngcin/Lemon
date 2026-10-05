@@ -4,9 +4,16 @@
 #
 # 2026-10-04 用户拍板：暂停自动触发（push/PR 注释），仅保留 workflow_dispatch
 # 手动档——待编辑器可独立打包下载后再恢复自动化（随 M7a 批⑧/M7b 出包线）。
-# 恢复 = 还原下方 push/pull_request 两段触发器。每日编辑器回归 + 性能基线门禁 +
-# Windows runner 随批⑦/批⑧ 补齐（09 §9 全量口径）。runner 首跑调通前的观察项见
+# 恢复 = 还原下方 push/pull_request 两段触发器。每日编辑器回归 + 性能基线门禁
+# 随批⑧ 补齐（09 §9 全量口径）。runner 首跑调通前的观察项见
 # docs/DevLog/2026-09-30-b0-gate-c-and-defect-batch1.md 尾巴 2。
+#
+# win job（M7a 批⑦ 2026-10-05）：MSVC 全目标编译门禁 = "win preset 首编清账"
+# 的机器面（07 §3.6 "MSVC 实际编译"的唯一自动门禁）；ctest 逻辑面同 mac 口径
+# （无 GPU）。Vulkan SDK = LunarG 安装器静默装（InstallBuilder --mode unattended；
+# choco 包 2019 年起废弃不用，Mesa CI 同样直装先例）+ 缓存复用；SDK 自带
+# glslangValidator = shader 编译依赖同源解决。首跑观察项：latest 下载 URL 可用性
+# / 安装目录版本号发现 / 长路径——见 DevLog 批⑦ 条目真机清单。
 name: ci
 
 on:
@@ -36,3 +43,53 @@ jobs:
 
       - name: Test
         run: ctest --test-dir build/mac --output-on-failure
+
+  win-build-test:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v4
+
+      # Vulkan SDK（头/loader/glslang）：整目录缓存命中则跳过下载安装
+      # （安装器 ~1GiB，静默装 ~2min；缓存恢复 ~1min 且免外网抖动）
+      - name: Vulkan SDK cache
+        id: vksdk
+        uses: actions/cache@v4
+        with:
+          path: C:\VulkanSDK
+          key: vulkansdk-win-latest
+
+      - name: Install Vulkan SDK
+        if: steps.vksdk.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          curl.exe -L -o VulkanSDK.exe https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe
+          if ($LASTEXITCODE -ne 0) { throw "Vulkan SDK download failed" }
+          # LunarG 安装器 = BitRock InstallBuilder：unattended 模式默认落
+          # C:\VulkanSDK\<version>\（含 Include/Lib/Bin——Bin 有 glslangValidator）
+          .\VulkanSDK.exe --mode unattended --accept-all-licenses --default-answer yes
+          if ($LASTEXITCODE -ne 0) { throw "Vulkan SDK install failed" }
+
+      - name: Resolve Vulkan SDK env
+        shell: pwsh
+        run: |
+          $sdk = (Get-ChildItem C:\VulkanSDK -Directory | Sort-Object Name -Descending |
+                  Select-Object -First 1).FullName
+          if (-not $sdk -or -not (Test-Path "$sdk\Include\vulkan\vulkan.h")) {
+            throw "Vulkan SDK resolve failed (C:\VulkanSDK empty?)"
+          }
+          Write-Host "VULKAN_SDK=$sdk"
+          "VULKAN_SDK=$sdk" >> $env:GITHUB_ENV
+          "$sdk\Bin" >> $env:GITHUB_PATH
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Configure
+        run: cmake --preset win
+
+      - name: Build
+        run: cmake --build --preset win
+
+      - name: Test
+        run: ctest --test-dir build/win -C Release --output-on-failure
