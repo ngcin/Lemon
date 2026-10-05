@@ -54,7 +54,8 @@ constexpr FieldMeta kMeta[] = {
 constexpr FieldEditorMeta kEdMeta[] = {
     ED_TIP("Prefab 回链（0 = 非实例）"), ED, ED_TIP("碰撞/过滤层位索引 [0,16)"),
     ED_TIP("实体短名（Hierarchy 显示）"), ED_HIDE};
-constexpr FieldMeta kDestroyQueueTag[] = {};
+// 零字段标签组件不定义空数组（CI win 热修⑤）：`T x[] = {}` 零长数组是 GCC/clang
+// 扩展，MSVC C2466 拒——改走 REGISTER_TAG（fields=nullptr, count=0）
 
 // ---- Render（id 5..8）----
 constexpr FieldMeta kSpriteRenderer[] = {
@@ -413,6 +414,15 @@ void ReservePool(Scene& s, uint32_t n) {
                   ForEachComponent<Name>, RemoveComponent<Name>,                      \
                   CountComponent<Name>, ForEachComponentRange<Name>,                  \
                   ConstructDefault<Name>, PoolDataBase<Name>, ReservePool<Name>});
+// 零字段标签组件（批⑦ CI 热修⑤）：fields=nullptr + count=0——零长数组是
+// GCC/clang 扩展（MSVC C2466），消费端一律按 count 循环，nullptr 不可达
+#define REGISTER_TAG(Name)                                                            \
+    reg.Register({#Name, 0, 0, (uint32_t)sizeof(Name), nullptr, nullptr, nullptr,     \
+                  HasComponent<Name>, EmplaceComponent<Name>, ReadComponent<Name>,    \
+                  GetComponent<Name>,                                                \
+                  ForEachComponent<Name>, RemoveComponent<Name>,                      \
+                  CountComponent<Name>, ForEachComponentRange<Name>,                  \
+                  ConstructDefault<Name>, PoolDataBase<Name>, ReservePool<Name>});
 #define REGISTER_ED(Name, fields, ed)                                                \
     reg.Register({#Name, 0, (uint16_t)(sizeof(fields) / sizeof(FieldMeta)),           \
                   (uint32_t)sizeof(Name), fields, ed, nullptr,                        \
@@ -451,7 +461,7 @@ void RegisterAllComponents() {
     REGISTER(Velocity, kVelocity)
     REGISTER_ED(Hierarchy, kHierarchy, kEdHierarchy)
     REGISTER_ED(Meta, kMeta, kEdMeta)
-    REGISTER(DestroyQueueTag, kDestroyQueueTag)
+    REGISTER_TAG(DestroyQueueTag)
     REGISTER_ED(SpriteRenderer, kSpriteRenderer, kEdSpriteRenderer)
     REGISTER_ED(Animator2D, kAnimator2D, kEdAnimator2D)
     REGISTER_ED(ParticleEmitterRef, kParticleEmitterRef, kEdParticleEmitterRef)
