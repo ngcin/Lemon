@@ -10,10 +10,13 @@
 #
 # win job（M7a 批⑦ 2026-10-05）：MSVC 全目标编译门禁 = "win preset 首编清账"
 # 的机器面（07 §3.6 "MSVC 实际编译"的唯一自动门禁）；ctest 逻辑面同 mac 口径
-# （无 GPU）。Vulkan SDK = LunarG 安装器静默装（InstallBuilder --mode unattended；
-# choco 包 2019 年起废弃不用，Mesa CI 同样直装先例）+ 缓存复用；SDK 自带
-# glslangValidator = shader 编译依赖同源解决。首跑观察项：latest 下载 URL 可用性
-# / 安装目录版本号发现 / 长路径——见 DevLog 批⑦ 条目真机清单。
+# （无 GPU）。Vulkan SDK = LunarG 安装器静默装（新版安装器 = Qt Installer
+# Framework：`--accept-licenses --default-answer --confirm-command install`——
+# 首跑实抓旧 InstallBuilder 语法 `--mode unattended` 已不认，热修见 DevLog
+# 2026-10-05-ci-win-sdk-installer-fix；choco 包 2019 年起废弃不用，Mesa CI
+# 同样直装先例）+ 缓存复用；SDK 自带 glslangValidator = shader 编译依赖同源
+# 解决。首跑观察项：latest 下载 URL 可用性 ✅（首跑 289MB 直下 OK）/ 安装目录
+# 版本号发现 / 长路径——见 DevLog 批⑦ 条目真机清单。
 name: ci
 
 on:
@@ -64,9 +67,11 @@ jobs:
         run: |
           curl.exe -L -o VulkanSDK.exe https://sdk.lunarg.com/sdk/download/latest/windows/vulkan-sdk.exe
           if ($LASTEXITCODE -ne 0) { throw "Vulkan SDK download failed" }
-          # LunarG 安装器 = BitRock InstallBuilder：unattended 模式默认落
-          # C:\VulkanSDK\<version>\（含 Include/Lib/Bin——Bin 有 glslangValidator）
-          .\VulkanSDK.exe --mode unattended --accept-all-licenses --default-answer yes
+          # LunarG 安装器（新版 = Qt Installer Framework）：`install` 子命令 +
+          # 三旗标 = 全默认静默装，落 C:\VulkanSDK\<version>\（含 Include/Lib/Bin
+          # ——Bin 有 glslangValidator）。旧 InstallBuilder 的 --mode unattended
+          # 首跑实证已不认（Unknown option: mode）
+          .\VulkanSDK.exe --accept-licenses --default-answer --confirm-command install
           if ($LASTEXITCODE -ne 0) { throw "Vulkan SDK install failed" }
 
       - name: Resolve Vulkan SDK env
