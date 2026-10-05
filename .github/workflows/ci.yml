@@ -8,6 +8,9 @@
 # 随批⑧ 补齐（09 §9 全量口径）。runner 首跑调通前的观察项见
 # docs/DevLog/2026-09-30-b0-gate-c-and-defect-batch1.md 尾巴 2。
 #
+# 2026-10-05 用户拍板：mac job 暂停注释（CI 首跑已绿 + 本机回归全绿；win job
+# 首跑迭代期省每跑 ~6min brew/CPM 装配）——恢复 = 还原下方 mac-build-test 段。
+#
 # win job（M7a 批⑦ 2026-10-05）：MSVC 全目标编译门禁 = "win preset 首编清账"
 # 的机器面（07 §3.6 "MSVC 实际编译"的唯一自动门禁）；ctest 逻辑面同 mac 口径
 # （无 GPU）。Vulkan SDK = LunarG 安装器静默装（新版安装器 = Qt Installer
@@ -26,26 +29,28 @@ on:
   workflow_dispatch:
 
 jobs:
-  mac-build-test:
-    runs-on: macos-15
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install toolchain
-        run: brew install molten-vk vulkan-loader vulkan-headers glslang ninja
-
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: 10.0.x
-
-      - name: Configure
-        run: cmake --preset mac
-
-      - name: Build
-        run: cmake --build --preset mac
-
-      - name: Test
-        run: ctest --test-dir build/mac --output-on-failure
+  # mac-build-test（2026-10-05 用户拍板暂停——CI 首跑绿 + 本机回归全绿；恢复 =
+  # 取消下方注释。macOS runner 无独显交互：构建 + ctest 三项逻辑面门禁）
+  # mac-build-test:
+  #   runs-on: macos-15
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #
+  #     - name: Install toolchain
+  #       run: brew install molten-vk vulkan-loader vulkan-headers glslang ninja
+  #
+  #     - uses: actions/setup-dotnet@v4
+  #       with:
+  #         dotnet-version: 10.0.x
+  #
+  #     - name: Configure
+  #       run: cmake --preset mac
+  #
+  #     - name: Build
+  #       run: cmake --build --preset mac
+  #
+  #     - name: Test
+  #       run: ctest --test-dir build/mac --output-on-failure
 
   win-build-test:
     runs-on: windows-2025
