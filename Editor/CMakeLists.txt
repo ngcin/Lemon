@@ -86,6 +86,12 @@ target_include_directories(lemon-editor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${st
 target_link_libraries(lemon-editor PRIVATE lemon-editor-core lemon-imgui)
 target_compile_features(lemon-editor PRIVATE cxx_std_20)
 
+if(MSVC)
+  # W6 拖入闪退取证（2026-10-06）：链接器 map = 崩溃偏移→符号的文本表，配合
+  # WER LocalDumps 的 dmp 免调试器定位出错函数（只出 .map 文件，零行为影响）
+  target_link_options(lemon-editor PRIVATE "/MAP")
+endif()
+
 # M4.4 脚本宿主：--script 需要 LEMON.Entry 产物路径宏（无脚本层构建 = 该参数降级告警）
 if(LEMON_BUILD_SCRIPTING)
   target_link_libraries(lemon-editor PRIVATE lemon-csharp)

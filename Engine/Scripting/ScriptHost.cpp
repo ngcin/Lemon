@@ -10,6 +10,7 @@
 #include "Components/RenderComponents.h"
 #include "Audio/AudioEngine.h" // NativeAudioMasterVolGet 直读引擎态（M6c 批②）
 #include "Core/Log.h"
+#include "Core/FileOps.h" // AcpToUtf8：win 侧 ACP 路径过 C++/C# UTF-8 边界前归一
 #include "ECS/ComponentRegistry.h"
 #include "Systems/Systems.h" // SeparationSystem 完整定义（调参下放通道）
 
@@ -579,7 +580,9 @@ bool ScriptHost::Initialize(const char* dotnetRoot, const char* runtimeConfigPat
 }
 
 bool ScriptHost::LoadUserAssembly(const char* path) {
-    if (!dmLoad_ || dmLoad_(path) != 1) return false;
+    // C++/C# 边界契约 UTF-8（Exports.cs 按 UTF8.GetString 解码）；win 侧 argv/fs
+    // 派生路径是 ACP——不归一即 GBK→'???' FileNotFound（W6 2026-10-06 真机实抓）
+    if (!dmLoad_ || dmLoad_(AcpToUtf8(path).c_str()) != 1) return false;
     userLoaded_ = true;
     batchPulled_ = false;     // 惰性：注册表此时可能尚未登记（World 未构造），首帧再拉
     behaviourNames_.clear();  // 换装程序集 → 类型名表重拉（M4.5 热重载同路径）
@@ -594,7 +597,7 @@ ScriptHost::HotReloadInfo ScriptHost::HotReloadAssembly(const char* path) {
     std::error_code eca;
     const std::string abs = std::filesystem::absolute(path, eca).generic_string();
     int leaks = 0, collected = 0;
-    info.ok = dmReload_(abs.c_str(), &leaks, &collected) == 1;
+    info.ok = dmReload_(AcpToUtf8(abs).c_str(), &leaks, &collected) == 1; // 同 LoadUserAssembly：边界前归一 UTF-8
     info.leakCount = leaks;
     info.lastCollected = collected != 0;
     if (hrReloadsFn_) hrCount_ = hrReloadsFn_();

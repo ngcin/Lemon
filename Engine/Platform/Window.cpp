@@ -77,12 +77,12 @@ bool Window::PollEvents() {
                 break;
             }
             case SDL_EVENT_DROP_FILE: // OS 拖入窗口（路径在事件回调外失效 → 即拷即存）
-                // drop.data 归应用所有，SDL3 约定必须 SDL_free（空串也占分配；
-                // data 是 const char*，所有权转移需去 const 转 void*）
-                if (ev.drop.data) {
-                    if (ev.drop.data[0]) m->drops.emplace_back(ev.drop.data);
-                    SDL_free((void*)ev.drop.data);
-                }
+                // SDL3 语义：drop.data 是 SDL_CreateTemporaryString 的临时串——由 SDL
+                // 自身在事件队列排水时回收，应用不得 free（SDL2 才要求 SDL_free）。
+                // W6 2026-10-06 真机实抓：多此一举的 SDL_free = 双 free，NT 堆即报
+                // 0xc0000374 闪退（macOS 分配器对小对象双 free 常不报 = 侥幸绿）
+                if (ev.drop.data && ev.drop.data[0])
+                    m->drops.emplace_back(ev.drop.data);
                 break;
             default:
                 break;

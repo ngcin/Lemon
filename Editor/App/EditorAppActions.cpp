@@ -12,6 +12,7 @@
 #include "Assets/AnimAsset.h" // M6a 批② T3：smoke-anim clip 编辑链（面板数据面同款）
 #include "Components/CoreComponents.h"
 #include "Core/Log.h"
+#include "Core/FileOps.h" // Utf8ToAcp：SDL drop 路径（UTF-8）过 win fs（ACP）前归一
 #include "EditorContext.h"
 #include "Panels/BuiltInPanels.h"
 #include "Ui/UiSubsystem.h" // 批③a（ADR-014）：游戏 UI 层（RmlUi）
@@ -320,8 +321,11 @@ void EditorApp::PasteClipboard() {
 void EditorApp::ImportDroppedFile(const std::string& absPath) {
     // §5-3：OS 拖入窗口的文件 → 当前资产目录（AssetBrowser 浏览目录；面板不可见 = 根）
     namespace fs = std::filesystem;
+    // SDL drop 路径是 UTF-8 契约；win 侧 fs::path(窄串) 按 ACP 解——中文文件名不
+    // 归一会被误判"非文件"跳过（W6 2026-10-06 真机实抓，07 §3.5 ②）
+    const std::string nativePath = Utf8ToAcp(absPath);
     std::error_code ec;
-    if (!fs::is_regular_file(absPath, ec)) {
+    if (!fs::is_regular_file(nativePath, ec)) {
         LEMON_WARN("拖入跳过（非文件）：%s", absPath.c_str());
         return;
     }
@@ -338,12 +342,12 @@ void EditorApp::ImportDroppedFile(const std::string& absPath) {
         }
     if (!subDir.empty() && subDir.back() != '/') subDir += '/';
     // 重名不覆盖：自动加序号（拖同名文件静默覆盖旧资产太危险）
-    const std::string stem = fs::path(absPath).stem().string();
-    const std::string ext = fs::path(absPath).extension().string();
+    const std::string stem = fs::path(nativePath).stem().string();
+    const std::string ext = fs::path(nativePath).extension().string();
     std::string relDest = subDir + stem + ext;
     for (int i = 2; ctx_.Assets().FindByPath("Assets/" + relDest); ++i)
         relDest = subDir + stem + " " + std::to_string(i) + ext;
-    if (const AssetEntry* e = ctx_.Assets().ImportFile(absPath, relDest)) {
+    if (const AssetEntry* e = ctx_.Assets().ImportFile(nativePath, relDest)) {
         if (e->type == AssetType::Sprite) gpuAssets_.ImportSprite(*e);
         LEMON_LOG("拖入导入：%s（guid %016llx）", e->relPath.c_str(),
                   (unsigned long long)e->guid);

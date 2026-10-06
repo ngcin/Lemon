@@ -13,9 +13,19 @@ namespace lemon {
 /// 原子替换式改名。POSIX = rename(2)（同文件系统覆盖目标为原子替换）；
 /// Windows = MoveFileExW(MOVEFILE_REPLACE_EXISTING)（同卷原子；不带 COPY_ALLOWED，
 /// 跨卷失败优于非原子拷贝——调用方 tmp 与目标同目录，天然同卷）。
-/// 路径按 UTF-8 解释（Windows 侧内部转 UTF-16）。返回 false = 失败（不打日志，
-/// 由调用方决定语义）。
+/// 路径按调用方编码经 win 侧 ACP 转换（见 RenameReplace 实现注记）。返回 false =
+/// 失败（不打日志，由调用方决定语义）。
 bool RenameReplace(const std::string& from, const std::string& to);
+
+/// ACP 窄路径 → UTF-8（W6 2026-10-06 真机实抓新增）：win 侧 argv/fs 派生窄串
+/// 按 ACP 走（与 fs::path(std::string) 的窄串解释同源），而 C++/C# 边界契约是
+/// UTF-8——过边界前就地归一。POSIX 恒等（argv 本就是 UTF-8）。
+std::string AcpToUtf8(const std::string& s);
+
+/// UTF-8 → ACP 窄路径（逆函数，同 W6）：SDL drop/剪贴板等外来路径按 UTF-8 契约
+/// 进来，win 侧 fs::path(窄串) 按 ACP 解——过 fs 前就地归一（不可逆字符会变 '?'，
+/// 调用方限路径场景）。POSIX 恒等。
+std::string Utf8ToAcp(const std::string& s);
 
 /// 原子整文件落盘（共享工具，2026-09-24 审查 F-04/P-13；M7a 批③ 自编辑器
 /// AssetDatabase 下沉——运行时 SaveStore 与编辑器写侧共用）：同目录 .tmp 全量

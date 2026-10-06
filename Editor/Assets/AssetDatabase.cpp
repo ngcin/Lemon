@@ -880,6 +880,18 @@ const AssetEntry* AssetDatabase::ImportFile(const std::string& absSrc, const std
         LEMON_WARN("导入失败：目标路径越出资产目录（拒绝）：%s", relDest.c_str());
         return nullptr;
     }
+#if defined(_WIN32)
+    // W6 2026-10-06 真机实抓：win 窄链（fs 走 ACP / 引擎串按 UTF-8）下非 ASCII
+    // 资产名会以 GBK 字节入库——SaveManifest 序列化 type_error.316（已另拦不致
+    // 崩，但资产即脏数据）。入口拒绝 + 红字指路；CJK 资产名全链支持归 M8
+    //（07 §3.6 伴生项）
+    for (unsigned char c : relDest)
+        if (c >= 0x80) {
+            LEMON_ERROR("导入拒绝：Windows 版暂不支持非 ASCII 资产名（%s）——"
+                        "请改用英文名（中文文件名支持归 M8）", relDest.c_str());
+            return nullptr;
+        }
+#endif
     // .csv → .tab 转换导入（M6a 批② T1 / ADR-012 D1）：解析后同名 .tab 落库，
     // csv 源不拷入（.tab 为唯一权威，避免双源漂移；批量再编辑 = Excel 改完重拖，
     // 同名覆盖再导入）。解析失败（坏编码/超限）红字拒入，不留半档。
@@ -949,6 +961,18 @@ void AssetDatabase::SaveManifest() const {
         arr.push_back(std::move(item));
     }
     doc["assets"] = std::move(arr);
+    // dump 拦截（W6 2026-10-06 真机实抓）：nlohmann dump() 对字符串做严格 UTF-8
+    // 校验——win 窄链下 GBK 资产路径抛 type_error.316，未捕获 = terminate 闪退。
+    // 数据不允许杀死编辑器：跳过落盘 + 红字指路（全链 UTF-8 归 M8）
+    std::string jsonText;
+    try {
+        jsonText = doc.dump(2);
+    } catch (const std::exception& e) {
+        LEMON_ERROR("manifest 序列化失败（%s）——记账未落盘；多因资产路径含非 UTF-8 "
+                    "字节（win 侧中文文件名资产，M8 前不支持），请改名或移除",
+                    e.what());
+        return;
+    }
     // 原子写（2026-09-24 审查 P-13）：manifest 是高频落盘点（每次 Rescan 后必写），
     // 旧实现 trunc 直写——写中崩溃/磁盘满 = 半截 JSON，下次启动走"弃档重建"
     // （spriteId 重排、已存场景引用悬空），空文件还会静默跳过损坏告警。
@@ -974,7 +998,7 @@ void AssetDatabase::SaveManifest() const {
             // 备份失败不阻断主写（.bak 是降级路径，主档照走原子写）
         }
     }
-    if (!WriteFileAtomic(manifestPath, doc.dump(2) + "\n", /*durable=*/true))
+    if (!WriteFileAtomic(manifestPath, jsonText + "\n", /*durable=*/true))
         LEMON_ERROR("manifest.json 写入失败（磁盘满/权限？）——记账未落盘，"
                     "下次启动 spriteId 可能重排");
 }

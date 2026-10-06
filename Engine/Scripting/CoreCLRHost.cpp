@@ -31,20 +31,28 @@ struct HostfxrApi {
 };
 
 #if defined(_WIN32)
-// UTF-8 路径 → LoadLibraryW（批⑦）：LoadLibraryA 按 ACP 解释窄码——非 ASCII
-// 安装路径（中文用户名等）下 hostfxr 装载哑火；FileOps::RenameReplace 的 widen
-// 同款口径，就地小实现不引依赖
+// UTF-8 字符串 → 宽（批⑦）：只用于 ASCII 标识符（托管类型/方法名）——/utf-8 下
+// 引擎字面量确是 UTF-8。路径类入参一律 WidenAcp：argv/fs 派生窄串在 win 按 ACP
+// 走（与 fs::path(std::string) 同源），W6 真机实抓（2026-10-06 中文项目路径
+// 装载 Game.dll 得 "???" FileNotFound）；全链 UTF-8 归 M8（07 §3.6 伴生项）
 std::wstring Widen(const char* s) {
     const int n = MultiByteToWideChar(CP_UTF8, 0, s, -1, nullptr, 0);
     std::wstring w((size_t)(n > 0 ? n : 1), L'\0');
     if (n > 0) MultiByteToWideChar(CP_UTF8, 0, s, -1, w.data(), n);
     return w;
 }
+// 路径专用：ACP 窄串 → 宽（win 侧 argv/fs 派生路径的真实编码）
+std::wstring WidenAcp(const char* s) {
+    const int n = MultiByteToWideChar(CP_ACP, 0, s, -1, nullptr, 0);
+    std::wstring w((size_t)(n > 0 ? n : 1), L'\0');
+    if (n > 0) MultiByteToWideChar(CP_ACP, 0, s, -1, w.data(), n);
+    return w;
+}
 #endif
 
 void* OpenLibrary(const char* path) {
 #if defined(_WIN32)
-    return (void*)LoadLibraryW(Widen(path).c_str());
+    return (void*)LoadLibraryW(WidenAcp(path).c_str());
 #else
     return dlopen(path, RTLD_NOW | RTLD_LOCAL);
 #endif
@@ -188,10 +196,10 @@ bool CoreCLRHost::Load(const char* dotnetRoot, const char* runtimeConfigPath,
 
     hostfxr_handle ctx = nullptr;
     // hostfxr API 的字符串参数全按 char_t 走（review 实锤⑤：Windows = wchar_t）。
-    // 宽化一律走 Widen（CP_UTF8）——fs::path(std::string) 在 win 按 ACP 解释窄串，
-    // UTF-8 中文路径会被转错（review 二轮自查实抓）
+    // 路径参数宽化走 WidenAcp——argv/fs 派生窄串在 win 是 ACP 非 UTF-8（W6
+    // 2026-10-06 真机实抓）；fs::path(std::string) 的 win 侧解释同源
 #if defined(_WIN32)
-    const std::wstring wCfg = Widen(runtimeConfigPath ? runtimeConfigPath : "");
+    const std::wstring wCfg = WidenAcp(runtimeConfigPath ? runtimeConfigPath : "");
     int rc = fxr_->api.initForConfig(wCfg.c_str(), nullptr, &ctx);
 #else
     int rc = fxr_->api.initForConfig(runtimeConfigPath, nullptr, &ctx);
@@ -203,11 +211,11 @@ bool CoreCLRHost::Load(const char* dotnetRoot, const char* runtimeConfigPath,
         // 取其旁 runtimeconfig，runtime/hostpolicy 按 app base = 程序集目录解析平
         // 铺布局）。dev 形态（framework 引用）不受影响——首试路径命中即短路。
         if (fxr_->api.initCmdLine && entryAssemblyPath && *entryAssemblyPath) {
-            // char_t 分叉（批⑦）：Windows = wchar_t——UTF-8 入参经 Widen 宽化
-            // （CP_UTF8，不用 fs::path——win 侧窄串按 ACP 解释）；POSIX = char 直传。
-            // argv 生命周期只在 initCmdLine 调用内 → 局部串安全
+            // char_t 分叉（批⑦）：Windows = wchar_t——路径入参经 WidenAcp 宽化
+            // （ACP，与 fs::path win 侧窄串解释同源；W6 真机实抓）；POSIX = char
+            // 直传。argv 生命周期只在 initCmdLine 调用内 → 局部串安全
 #if defined(_WIN32)
-            const std::wstring wEntry = Widen(entryAssemblyPath);
+            const std::wstring wEntry = WidenAcp(entryAssemblyPath);
             const char_t* argv[1] = { wEntry.c_str() };
 #else
             const char_t* argv[1] = { entryAssemblyPath };
@@ -238,9 +246,9 @@ void* CoreCLRHost::GetExport(const char* typeNameWithAsm, const char* methodName
     if (!IsLoaded()) return nullptr;
     void* fn = nullptr;
     // load_assembly 三字符串参也是 char_t（review 实锤⑤同源）：类型/方法名是 ASCII
-    // 标识符但参数类型不豁免——win 侧统一经 Widen（CP_UTF8 对 ASCII 恒等）
+    // 标识符（Widen 对 ASCII 恒等）；程序集路径走 WidenAcp（argv/fs 派生 = ACP）
 #if defined(_WIN32)
-    const std::wstring wAsm = Widen(entryAssemblyPath_.c_str());
+    const std::wstring wAsm = WidenAcp(entryAssemblyPath_.c_str());
     const std::wstring wType = Widen(typeNameWithAsm);
     const std::wstring wMethod = Widen(methodName);
     int rc = ((load_assembly_and_get_function_pointer_fn)loadAssembly_)(

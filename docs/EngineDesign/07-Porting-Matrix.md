@@ -141,14 +141,18 @@ A/B 级（真拷代码）合计约 **45–55 人天**；C 级 schema/思想项�
 引擎经 SDL3 语义层隔离 OS 差异，但"接口隔离"≠"行为一致"——下列功能 macOS 已实测，
 Windows 首次移植时需人工复验（M4.6 §7 登记；新 OS 级功能在此追加）。
 **批⑦（2026-10-05）**：win 侧机器面（编译/出包）已就绪，本表四项 + codepage 归
-[批⑦ 真机清单](../DevLog/2026-10-05-m7a-b7-windows-closure.md)（§3.6 批⑦ 增补表其后）：
+[批⑦ 真机清单](../DevLog/2026-10-05-m7a-b7-windows-closure.md)（§3.6 批⑦ 增补表其后）。
+**W6 执行（2026-10-06，Parallels zh-CN VM + lavapipe）**：**四项全过**
+（[W6 DevLog](../DevLog/2026-10-06-w6-behavior-table-and-codepage-fixes.md)，
+codepage 实抓五修 ⑬–⑰：hostfxr 宽化 ACP 化 / RenameReplace+fsync / dmLoad 边界
+UTF-8 归一 / SDL3 drop 双 free / manifest UTF-8 拦截 + 非 ASCII 资产名拒绝）。
 
 | 功能 | 语义层接口 | macOS 状态 | Windows 验证点 |
 |---|---|---|---|
-| 窗口标题动态改写 | `Window::SetTitle` | ✅ M4.6 标题栏 | 中文/●脏标记编码正常 |
-| 外部文件拖入导入 | `Window::TakeDroppedFiles`（SDL_EVENT_DROP_FILE） | ✅ M4.6b（Finder 拖 PNG） | 资源管理器拖入路径形态（盘符/反斜杠）经 `std::filesystem` 归一 |
-| 关闭按钮/退出确认 | `Window::PollEvents` 返回 false → 状态机 | ✅ M4.6（--smoke-close） | 无差异预期；跑同款冒烟即可 |
-| 文件选择器手输路径 | FilePicker（编辑器内实现，无 OS 对话框） | ✅ M4.6b | `C:\` 盘符路径回车直达 |
+| 窗口标题动态改写 | `Window::SetTitle` | ✅ M4.6 标题栏 | ✅ W6 2026-10-06：场景名/引擎字面量正常；**项目名乱码**（窄 argv GBK → SDL 按 UTF-8 解码）——显示层已知限制，归 M8 全链 UTF-8（§3.6 伴生项），功能无碍 |
+| 外部文件拖入导入 | `Window::TakeDroppedFiles`（SDL_EVENT_DROP_FILE） | ✅ M4.6b（Finder 拖 PNG） | ✅ W6 2026-10-06 真人：ASCII 名拖入导入 ✓（盘符/反斜杠归一链通）；CJK 名 = 红字拒绝不崩（win 暂不支持非 ASCII 资产名，M8）——实抓三 bug 修复链见 §3.6 ⑯⑰（SDL2 遗风双 free / manifest UTF-8 拦截） |
+| 关闭按钮/退出确认 | `Window::PollEvents` 返回 false → 状态机 | ✅ M4.6（--smoke-close） | ✅ W6 2026-10-06：`--smoke-close clean` OK（30 帧退出/无确认弹窗，与 mac 无差异） |
+| 文件选择器手输路径 | FilePicker（编辑器内实现，无 OS 对话框） | ✅ M4.6b | ✅ W6 2026-10-06 真人：手输 `C:\` 回车直达 C 盘 ✓ |
 
 ## 3.6 Windows 编译阻断项（首次移植前清零；2026-09-24 全栈审查 F-11 登记；**2026-09-30 第 0 批全数处置**）
 
@@ -175,12 +179,20 @@ preset 就能编"不成立**；M7 开工前（Gate C 前置，08 §M7）逐项�
 | 10 | RmlUi 软依赖 FreeType 在 win 无系统源（mac 走 brew）——CI/真机首编的依赖缺口 | `cmake/Dependencies.cmake` | FreeType CPM `VER-2-14-3` 三平台单源（SDL3 先例）+ `Freetype::Freetype` ALIAS 接线（RmlUi 软依赖 target 检查直取，`FT_DISABLE_*` 五连关）；mac 自 brew 2.14.3 切同版 | ✅ 批⑦ A7（smoke-uirml `font=Noto` 断言把守） |
 | 11 | MSVC 默认 `/MD` → 干净机需 VC redist（`vcruntime140.dll` 进闭包） | 根 `CMakeLists.txt` | `CMP0091 NEW` + `CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded[Debug]`（静态 CRT；决策 D-7c——win 闭包预期只剩 vulkan-1.dll） | ✅ 批⑦ A6 |
 | 12 | **review 轮实抓**：hostfxr API 字符串参数全 `char_t`（首版只分支了回调/initCmdLine，漏 `initForConfig` 与 `GetExport` 三参）；windows.h min/max 宏咬 `std::min/max`（`Process.h` 公共头泄漏面） | `CoreCLRHost.cpp` / 根 CMakeLists | 四调用全 `Widen`（CP_UTF8——`fs::path(std::string)` win 按 ACP 非按 UTF-8，自查纠）；MSVC 全局 `NOMINMAX WIN32_LEAN_AND_MEAN` | ✅ 批⑦ review（mock 门实抓，[DevLog](../DevLog/2026-10-05-b7-review-hardening.md)） |
+| 13 | **W6 真机实抓（2026-10-06）**：批⑦/review 的 `Widen(CP_UTF8)` 假设输入是 UTF-8——实际 win 侧路径入参（argv/fs 派生）是 **ACP(GBK)**，zh-CN 中文项目路径宽化得 `???` → Game.dll FileNotFound | `CoreCLRHost.cpp` 四路径位（LoadLibraryW/wCfg/wEntry/wAsm） | 新增 `WidenAcp`（CP_ACP，与 `fs::path(std::string)` win 侧解释同源）用于路径位；`Widen`(UTF-8) 保留给 ASCII 标识符位 | ✅ W6（本夹具四处全 ASCII 为不可见位，属同根因一致性修正；证据在 ⑭⑮） |
+| 14 | **W6 真机实抓**：`RenameReplace` 的 UTF-8→UTF-16 同 ⑬ 病根（中文项目 manifest.json 原子写失败）；`FsyncFile` 用 `_O_RDONLY` 开 fd 但 `_commit`=FlushFileBuffers 要求写句柄（POSIX `fsync(O_RDONLY)` 合法 → mac 侧测不出） | `Engine/Core/FileOps.cpp` | widen 改 CP_ACP；`_O_RDONLY`→`_O_RDWR`；新增 `AcpToUtf8()`（FileOps.h，win 转换/POSIX 恒等） | ✅ W6 阴性→阳性：修前 manifest 写失败+fsync 告警 → 修后双清（`WriteFileAtomic` durable 全链） |
+| 15 | **W6 真机实抓**：C++/C# 边界契约 UTF-8（`Exports.cs` 按 `Encoding.UTF8.GetString` 解码 `byte*`），win 侧 GBK 路径直传 → 托管侧解出 `???` → `LoadFromAssemblyPath` FileNotFound（mac argv 本就 UTF-8 从不暴露） | `Engine/Scripting/ScriptHost.cpp`（dmLoad/dmReload 两调用点） | 过边界前 `AcpToUtf8()` 归一（契约不动，C# 零改动）；diag 三导出同款留待需要时 | ✅ W6 阴性→阳性：`脚本装配失败 FileNotFound` → `脚本宿主就绪（类型 8 个）` + 300 帧 Play 完整 |
+| 16 | **W6-② 拖入实抓（全平台 UB）**：`Window.cpp` 对 `SDL_EVENT_DROP_FILE.data` 调 `SDL_free` = SDL2 遗风——SDL3 该串是 `SDL_CreateTemporaryString` 临时串（事件队列排水时 SDL 自回收），应用再 free = 双 free。win NT 堆即报 `0xc0000374` 闪退；macOS 分配器对小对象双 free 常不报 = M4.6b 起"侥幸绿" | `Engine/Platform/Window.cpp` | 删 SDL_free（即拷即存保留） | ✅ W6（修后同夹具不再堆崩，暴露下一层 ⑰） |
+| 17 | **W6-② 拖入实抓（win CJK 资产名）**：中文文件名经 fs 窄链（ACP）入库为 GBK 字节 → `SaveManifest` 的 nlohmann `dump()` 严格 UTF-8 校验抛 `type_error.316` 未捕获 → terminate/abort `0xc0000409`（dump+map 解栈实锤：`SaveManifest+0xc78 → dump_escaped → _CxxThrowException → terminate`；错误串 `invalid UTF-8 byte at index 11: 0xCF` = "Assets/W6-拖入测试.png" GBK 首字节对） | `Editor/Assets/AssetDatabase.cpp` | ① `ImportFile` win 侧入口拒绝非 ASCII `relDest`（红字指路，CJK 资产名全链归 M8）；② `SaveManifest` dump 包 catch——序列化失败红字跳过落盘，**数据不允许杀死编辑器**；拖入路径 `Utf8ToAcp` 归一（`EditorAppActions.cpp`，SDL UTF-8 契约 → win fs ACP） | ✅ W6 真人：ASCII 拖入导入 ✓；CJK 拖入红字拒绝不崩 ✓（曾致启动重扫即崩循环 = 夹具清场修复）；取证装备 = WER LocalDumps + 链接器 `/MAP`（免调试器符号化，Editor/CMakeLists 挂 MSVC 分支） |
 
-伴生项（宽字符路径）**范围收窄（2026-10-05）**：全链 UTF-8→UTF-16 仍是 M8 级工程；
-批⑦ 只保真机判据直接依赖的两处（CoreCLRHost `LoadLibraryW`/`initCmdLine` argv——
-包在非 ASCII 安装路径能起 CoreCLR）。其余（窄 argv 入口、manifest/索引编码、编辑器
-CJK 资产名）维持"归真机首调"口径，见 §3.5 表。`win` CMake preset ✅ 既有 + 批⑦
-`LEMON_BUILD_SPIKES=OFF`。
+伴生项（宽字符路径）**范围收窄（2026-10-05）+ W6 真机首调结论（2026-10-06）**：
+全链 UTF-8→UTF-16 仍是 M8 级工程。批⑦ 保真机判据直接依赖两处；**W6 实抓后再修
+三处**（⑬⑭⑮）——zh-CN（ACP=GBK）实测结论：**GBK 窄链整体往返成立**（fs 全链 /
+`_popen` dotnet build 中文路径 OK / CoreCLR 装载经归一 OK），即"能干活"；剩余破口
+= 显示层（窗口标题/日志项目名乱码——GBK 被 SDL/终端按 UTF-8 解）与 **en-US 系统
++中文路径**（argv 窄化即丢字 `'?'`，`GetCommandLineA` 有损）——两者都归 M8 宽入口
+（`wmain`/`GetCommandLineW` 归一 + `fs::u8path` 全链）一并收口。编辑器 CJK 资产名
+维持"归真机首调"口径不变（§3.5 表）。
 
 > **验证口径（批⑦ 更新）**：①–⑫ 全部 macOS 侧验证"不回归"（构建 + 回归 full
 > 19/19 + ctest 4/4）；win 分支另过 **mock 门**（mac clang 真编 `_WIN32` 段，实抓

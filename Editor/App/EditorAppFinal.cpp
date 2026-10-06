@@ -157,8 +157,10 @@ bool EditorApp::FinalVerdict(uint32_t playAliveAtStop, double playEnterMs,
                     autosaveOk ? "OK" : "FAIL");
         std::printf("[lemon] final-coldstart: %.0fms(<2000) => %s\n", firstFrameMs,
                     coldOk ? "OK" : "FAIL");
-        if (!finalOk) std::printf("[lemon] final FAIL 项：bag=%d hr=%d fps=%d cold=%d autosave=%d play=%d\n",
-                                  bagOk, hrOk, fpsOk, coldOk, autosaveOk, playVerified);
+        // 印失败位（1=该项挂）——首版误印通过位，"FAIL 项：bag=1"实为 bag 通过，
+        // W6 当晚回归三连读错归因（2026-10-06）
+        if (!finalOk) std::printf("[lemon] final FAIL 项（1=挂）：bag=%d hr=%d fps=%d cold=%d autosave=%d play=%d\n",
+                                  !bagOk, !hrOk, !fpsOk, !coldOk, !autosaveOk, !playVerified);
     }
     return finalOk;
 }
