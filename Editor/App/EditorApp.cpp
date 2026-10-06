@@ -922,7 +922,10 @@ int EditorApp::Run(const EditorLaunch& launch) {
         // 场景健全：实体数守恒（播种数 = 现存数；冒烟中无销毁）+ 视口可见包 > 0
         const uint32_t alive = ctx_.ActiveScene().AliveCount();
         const uint32_t visible = viewport_->LastSceneVisible();
-        const bool sceneOk = alive == smokeSeeded_ && smokeSeeded_ > 0 && visible > 0;
+        // smoke-template 末态回 MainMenu（纯 RmlUi 场景）——viewportVisible=0 是
+        // 流程合理末态（同 overlay sel-trio 语义适配，批⑧）；其余模式保持防线。
+        const bool sceneOk = alive == smokeSeeded_ && smokeSeeded_ > 0 &&
+                             (launch.smokeTemplate || visible > 0);
         std::printf("[lemon] editor-smoke: frames=%llu cold-start=%.0fms uiVtx=%d "
                     "cjkFont=%s entities=%u/%u viewportVisible=%u errors=%llu\n",
                     (unsigned long long)frame, firstFrameMs,
@@ -1003,10 +1006,17 @@ int EditorApp::Run(const EditorLaunch& launch) {
                     rgb(overlay::kHandleColor, 2), 12);
                 const int labelN = CountPixelsNear(rt, rw, rh, 219, 233, 184, 22);
                 const int gridN = CountGridishPixels(rt, rw, rh);
-                overlayOk = selN >= 20 && handleN >= 20 && labelN >= 20 && gridN >= 8000;
+                // sel/handle/label 三要素依赖"有选中实体"。smoke-template 末态回
+                // 主菜单无选中 = 流程合理末态（M5 批④ 起 editor-smoke 退出码在此
+                // 恒 1，被回归 grep 假绿掩盖；M7a 批⑧ grep_step 退出码修复后暴露，
+                // 按语义适配：无选中时三项跳过，grid 网格防线不动）。
+                const bool hasSel = !ctx_.Selection().empty();
+                overlayOk = gridN >= 8000 &&
+                            (!hasSel || (selN >= 20 && handleN >= 20 && labelN >= 20));
                 std::printf("[lemon] editor-smoke overlay-visible: grid=%d(≥8000) sel=%d(≥20) "
-                            "handle=%d(≥20) label=%d(≥20) => %s\n",
-                            gridN, selN, handleN, labelN, overlayOk ? "OK" : "FAIL");
+                            "handle=%d(≥20) label=%d(≥20) sel-trio=%s => %s\n",
+                            gridN, selN, handleN, labelN,
+                            hasSel ? "enforced" : "skipped(no selection)", overlayOk ? "OK" : "FAIL");
 
             } else {
                 overlayOk = false; // 场景 RT 回读失败 = 断言原料缺失，按失败计

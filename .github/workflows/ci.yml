@@ -5,7 +5,8 @@
 # 2026-10-04 用户拍板：暂停自动触发（push/PR 注释），仅保留 workflow_dispatch
 # 手动档——待编辑器可独立打包下载后再恢复自动化（随 M7a 批⑧/M7b 出包线）。
 # 恢复 = 还原下方 push/pull_request 两段触发器。每日编辑器回归 + 性能基线门禁
-# 随批⑧ 补齐（09 §9 全量口径）。runner 首跑调通前的观察项见
+# 已随批⑧ 补齐（2026-10-06 工具落地；**2026-10-07 用户改拍板手动档**，定时撤，
+# 见下方 on: 段注记与 09 §9）。runner 首跑调通前的观察项见
 # docs/DevLog/2026-09-30-b0-gate-c-and-defect-batch1.md 尾巴 2。
 #
 # 2026-10-05 用户拍板：mac job 暂停注释（CI 首跑已绿 + 本机回归全绿；win job
@@ -27,6 +28,11 @@ on:
   #   branches: [main]
   # pull_request:
   workflow_dispatch:
+  # 每日回归（M7a 批⑧ 2026-10-06 落地，09 §9）：**2026-10-07 用户改拍板 = 手动档**
+  # （dispatch-only，schedule 已撤）；本机 mac 全量同改手动（launchd 卸载，
+  # Tools/ci-daily.sh 手动一键 = 增量构建 + full 回归 20 步 + 报告）。恢复定时 =
+  # 还原下方 schedule 段 + 重装 LaunchAgent（配方在 Tools/com.lemon.ci-daily.plist
+  # 头注）。push/PR 自动触发维持暂停（恢复归 M7b）。
 
 jobs:
   # mac-build-test（2026-10-05 用户拍板暂停——CI 首跑绿 + 本机回归全绿；恢复 =

@@ -38,6 +38,7 @@ struct Config {
     int threads = 0;
     uint64_t seed = 20260919ull;
     bool stats = false;
+    bool noGate = false; // 09 §9 门禁分流③（M7a 批⑧）：录制/诊断跑不做 avg 门禁
     const char* recordFile = nullptr;
     const char* replayFile = nullptr;
 };
@@ -130,6 +131,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--threads")) cfg.threads = std::atoi(next());
         else if (!std::strcmp(argv[i], "--seed")) cfg.seed = std::strtoull(next(), nullptr, 10);
         else if (!std::strcmp(argv[i], "--stats")) cfg.stats = true;
+        else if (!std::strcmp(argv[i], "--no-gate")) cfg.noGate = true;
         else if (!std::strcmp(argv[i], "--record")) cfg.recordFile = next();
         else if (!std::strcmp(argv[i], "--replay")) cfg.replayFile = next();
     }
@@ -275,5 +277,9 @@ int main(int argc, char** argv) {
 
     if (recFp) std::fclose(recFp);
     if (repFp) std::fclose(repFp);
-    return replaying ? (hashMismatches == 0 ? 0 : 1) : (avg <= 8.0 ? 0 : 1);
+    // 回放模式 = 确定性门禁（hash 比对）；录制模式默认 avg≤8ms 门禁（M2 验收
+    // 判据），--no-gate = 纯诊断（09 §9 ③：性能阈值与诊断模式分流）
+    if (replaying) return hashMismatches == 0 ? 0 : 1;
+    if (cfg.noGate) return 0;
+    return avg <= 8.0 ? 0 : 1;
 }

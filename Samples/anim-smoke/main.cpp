@@ -378,7 +378,9 @@ int main(int argc, char** argv) {
         }
         prevMs = now;
         ++frame;
-        if (frame % 60 == 0 && cppProbe.id) {
+        // 30 帧一采样：默认 --frames 120 采 4 点 ≥ Distinct>=3 判据下限（09 §9
+        // 门禁分流②，M7a 批⑧ 修——原 60 间隔下 120 帧仅 2 采样 = 确定性误报）
+        if (frame % 30 == 0 && cppProbe.id) {
             cppSamples.push_back(s.Get<SpriteRenderer>(cppProbe).spriteId);
             if (csProbe.id && script) csSamples.push_back(s.Get<SpriteRenderer>(csProbe).spriteId);
         }

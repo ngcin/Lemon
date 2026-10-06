@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Lemon 本机每日 CI LaunchAgent 模板（M7a 批⑧；**2026-10-07 用户拍板 = 手动档，
+     未装载**——定时任务不启用，每日门禁手动跑 `Tools/ci-daily.sh` 即可；本模板
+     留档 = 恢复定时时的安装配方）：
+       sed "s|__LEMON_ROOT__|$(pwd)|" Tools/com.lemon.ci-daily.plist \
+         > ~/Library/LaunchAgents/com.lemon.ci-daily.plist
+       launchctl load ~/Library/LaunchAgents/com.lemon.ci-daily.plist
+     卸载：launchctl unload + 删 plist。
+     时点 03:30 本机；睡眠错过唤醒后补跑一次；关机整天则跳过（次日报告缺号可辨）。
+     报告在 <仓库>/build/ci-reports/（不入 git）。 -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.lemon.ci-daily</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__LEMON_ROOT__/Tools/ci-daily.sh</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/tmp/lemon-ci-daily.out</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/lemon-ci-daily.err</string>
+</dict>
+</plist>

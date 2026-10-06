@@ -437,9 +437,10 @@ Hierarchy 面板）。回归口径 = 本命令三跑稳定。
   异常禁用 → 对话框复活，帧下限 3000；批② T4 加**数值表**断言 tables=YES；T5 加
   **三档存档**断言——种子 meta.sav（vs.best 载入回显）+ 旧 game.sav（惰性迁移
   链）→ Stop 后 slot_0/meta 落盘 + 迁移内容回读 + 空档 settings 不落文件）/
-  `--final`（终验链）经 `tools/editor-regression.sh` 一键 **19 步**（M5 批⓪ 14 步
+  `--final`（终验链）经 `tools/editor-regression.sh` 一键 **20 步**（M5 批⓪ 14 步
   → M6c 17 → M7a 批④ 18（game-smoke）→ 批⑤ 19（pkg-smoke：lemon-packager 出包 +
-  自检 + 包体零参 smoke + fps≥60 数值判））；**未脚本化**的纯观感路径
+  自检 + 包体零参 smoke + fps≥60 数值判）→ 批⑧ 20（bench-survivor 性能基线门禁
+  fps≥76.5 + grep_step 退出码双判 + smoke-drag 两次取优，§9））；**未脚本化**的纯观感路径
   （Inspector 控件手感、面板排版）仍靠 [Editor-Manual-Test-Guide.md](./Editor-Manual-Test-Guide.md) 真人清单。
 - M2：bench-sim 早期怪群聚拢阶段存在 max ~145ms 单步尖峰（avg 判据不受影响；哈希重建
   并行化是已预留路径，触发 M5 压测 B 再做）；投射物穿透去重用全量 iFrames 策略（M5 细化）；
@@ -459,6 +460,17 @@ Hierarchy 面板）。回归口径 = 本命令三跑稳定。
 > **2026-10-04 用户拍板：自动触发暂停**（workflow 已注释 push/PR 段，仅留
 > workflow_dispatch 手动档）——待编辑器可独立打包下载后恢复自动化（随 M7a
 > 批⑧/M7b 出包线）；本节口径为恢复后的目标态。
+>
+> **2026-10-06 批⑧ 落账：每日回归 + 性能基线门禁工具就绪**（形态 D8-1 初版 =
+> 本机 launchd + GitHub win scheduled）——**2026-10-07 用户改拍板 = 手动档**：
+> launchd 已卸载（模板留档 `Tools/com.lemon.ci-daily.plist` 含恢复配方）、
+> workflow schedule 已撤（dispatch-only）。现行口径：**门禁手动一键** =
+> `Tools/ci-daily.sh`（增量构建 → `editor-regression.sh full` **20 步**（第 20 步
+> = bench-survivor 门禁 fps≥76.5 = 基线 85×0.9，§10">10% 回退标红"机器化；
+> 45fps 硬线在 `BenchVerdict` 退出码内）→ 报告 `build/ci-reports/`）+ GitHub
+> win job 手动 dispatch（逻辑面门禁；macOS runner 10× 计费不跑 GPU 面——性能
+> 门禁只在固定硬件数字可比）。恢复定时 = 还原 workflow schedule 段 + 重装
+> LaunchAgent（两处配方在批⑧ 批文件 §B）。
 
 - **Runner**：GitHub Actions macOS runner 先行（GPU 不可用——逻辑面门禁）；Windows
   runner 随 M7 移植加入（Vulkan 冒烟跑 llvmpipe/lavapipe 软件光栅档）。
@@ -470,12 +482,22 @@ Hierarchy 面板）。回归口径 = 本命令三跑稳定。
   self-hosted GPU）零 VUID。
 - **flake 治理**：smoke-ui 等已知飘忽项按 §8 口径"重跑至全绿"放行，但**同一项
   连续 20 次出现飘忽即转硬阻断**（修测试基建后方可放行——Gate C"连续 20 次
-  无 flake"的门禁方向）。
-- **门禁分流（既有测试基建缺陷，随 CI 落地一并修）**：① `editor-regression.sh`
-  的 `grep_step` 增查子进程退出码（输出匹配但退出非 0 = FAIL）；②
-  `anim-smoke --frames 120` 的采样数与 `Distinct>=3` 断言矛盾（120 帧仅 2 个采样
-  = 确定性误报，CI 用 180 帧或修采样）；③ `bench-sim` 录制模式 `avg>8ms` 混入
-  退出码——性能阈值与诊断模式分流（`--no-gate` 或仅回放模式作门禁）。
+  无 flake"的门禁方向）。**批⑧ 机器化（2026-10-06）**：smoke-drag（注入抖动
+  三跑三态，§8/Plans 登记项）= `retry_step` 两次取优（一次红自动重跑，绿 =
+  PASS 标 `retry 1`；两次红 = FAIL）——"重跑至全绿"从口头先例转脚本语义；
+  连续飘忽观察面 = `build/ci-reports/` 日报里数 `retry 1` 频次（≥20 连续转硬
+  阻断待达阈值时处置）。另实证：**回归须前台会话跑**——后台/非 GUI 会话注入
+  链（合成点击/拖拽）会话上下文缺失 = smoke-anim flow/pick 位确定性假红
+  （批⑧ 首跑实抓；launchd LaunchAgent 属用户 Aqua 会话不受影响）。
+- **门禁分流（既有测试基建缺陷，随 CI 落地一并修）**：① ~~`editor-regression.sh`
+  的 `grep_step` 增查子进程退出码~~ ✅ 批⑧（输出匹配 AND rc=0 双判）——首跑即
+  实抓真果：smoke-template 退出码自 M5 批④ 起恒 1（overlay sel-trio/viewport
+  可见性断言不适用于"回主菜单"合理末态），被旧 grep 假绿掩盖一年批次；两处
+  按语义适配（无选中跳过 sel-trio / MainMenu 末态豁免 visible）+ 双向验证
+  （基础 smoke enforced 路径 169/42/83 像素照常断言）；② ~~`anim-smoke
+  --frames 120` 采样数矛盾~~ ✅ 批⑧（采样间隔 60→30 帧：120 帧 4 采样 ≥
+  Distinct>=3 判据下限，语义不变）；③ ~~`bench-sim` 录制模式 avg>8ms 混入
+  退出码~~ ✅ 批⑧（`--no-gate` 纯诊断档；默认门禁与回放 hash 门禁不动）。
 
 ## 10. 更新约定
 

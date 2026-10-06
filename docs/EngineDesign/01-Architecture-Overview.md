@@ -150,54 +150,43 @@ struct ISystem { virtual void OnStage(SystemStage, World&, float dt) = 0; };
 
 ## 5. 引擎目录结构（仓库级纪律）
 
-> **2026-10-02 修订（review #101）**：下树为 M0 设计基准。实际演进差异（以仓库为准）：
-> `Math/` 并入 `Core/Math.h`（仅 2D 数学单头足够）；`Input/` 并入 `ECS/Input.h`
->（输入快照直挂 World）；`Navigation/`、`Engine/Assets/` 尚未建立（M6d / M7a 批②）；
-> `Renderer/` 无 `RHI/`、`Batch/`、`Particles/`、`Text/`、`Passes/` 子目录（RHI/
-> Batch/Particles/BitmapFont 皆平铺单文件，Shaders/ 在位）；新增 `Platform/`（窗口/
-> SDL 装配）、`Ui/`（RmlUi 集成，ADR-014）、`Scripting/dotnet/{Lemon.Entry,Lemon.SDK}`
->（原规划的顶层 `CSharp/` 收进 Scripting）；`External/` 由 `~/.cache/Lemon-CPM` +
-> `Engine/Scripting/host`（vendored 头）承担；`Tools/` 现为 `tools/`。M7a 批⑧ 收官时
-> 按实况重绘本树并删除本注记。
+> **M7a 批⑧ 重绘（2026-10-06）**：本树 = 仓库实况（M0 设计树的历史差异已吸收：
+> `Math/` 并入 `Core/`；`Input/` 并入 `ECS/Input.h`；`Navigation/` 未建（M9）；
+> `Renderer/` 平铺无子目录；`CSharp/` 收进 `Scripting/dotnet/`；`External/` 由
+> `~/.cache/Lemon-CPM` + vendored 头承担）。
 
 ```
 Lemon/
-├── Engine/                     # C++ 运行时内核（随游戏发布，静态或动态库）
-│   ├── Core/                   # 平台抽象、日志、断言、Time、FrameArena、Pool、JobSystem、Event
-│   ├── Math/                   # 仅 2D：Vec2/Rect/Mat3(2D仿射)/颜色/随机流(seeded, 确定性)
-│   ├── ECS/                    # World、系统管线、组件注册表（对 EnTT 的薄封装）
-│   ├── Components/             # 组件目录（Transform2D/Sprite/...，纯数据，见 03 文档）
-│   ├── Systems/                # 系统实现（Movement/Hits/Spawner/Director/...）
+├── Engine/                     # C++ 运行时内核（lemon-engine，静态链进两入口）
+│   ├── Core/                   # 平台抽象（FileOps/Process.h）、日志、断言、Time、FrameArena、Math（仅 2D 单头）
+│   ├── ECS/                    # World、系统管线（SystemStage：Extract/FixedTick/...）、组件注册表（EnTT 薄封装）、Input（输入快照直挂 World）
+│   ├── Components/             # 组件目录（Transform2D/SpriteRenderer/...，纯数据，见 03 文档）
+│   ├── Systems/                # 系统实现（Movement/Hits/Spawner/Director/Tween/Audio/RenderExtract/...）
 │   ├── Physics2D/              # 查询层：空间哈希、overlap/raycast、触发器、分离力
-│   ├── Navigation/             # FlowField、A*、导航网格构建
-│   ├── Renderer/               # 渲染层（Vulkan 类型只允许出现在 .cpp）
-│   │   ├── RHI/                # Vulkan+VMA 封装：Device/Swapchain/Pipeline/Buffer/Texture/ShaderCache
-│   │   ├── Batch/              # RenderableManager、批键、图集运行时、排序
-│   │   ├── Particles/          # 粒子池/发射器/渲染
-│   │   ├── Text/               # 位图字体(v1)、SDF(v2)
-│   │   └── Passes/             # 后处理、(M8)光照
-│   ├── Scripting/              # CoreCLRHost、C# 桥、事件队列、绑定辅助（见 04）
-│   ├── Assets/                 # 资产库：GUID/manifest、导入器运行时侧、热重载
-│   ├── Audio/                  # miniaudio 封装：总线、音量池、2D 混音
-│   ├── Input/                  # 输入快照、虚拟轴、手柄映射（yami input.ts 思想）
-│   └── Serialization/          # JSON schema 读写、场景 codec（RLE）、存档通道
-├── Editor/                     # C++ ImGui 编辑器（仅开发机存在，不随游戏发布）
-│   ├── App/                    # EditorEntry、主循环、布局持久化
+│   ├── Renderer/               # 渲染层平铺单文件族（RHI/Batch/SpriteBatcher/Particles/BitmapFont + Shaders/；Vulkan 类型只允许出现在 .cpp）
+│   ├── Scripting/              # CoreCLRHost、ScriptHost、vtable 桥、事件队列（见 04）+ dotnet/{Lemon.Entry,Lemon.SDK} + host/（vendored hostfxr 头）
+│   ├── Assets/                 # 运行时资产层（M7a 批②③ 自编辑器下沉）：AssetIndex 只读索引（manifest 快路径+回退扫描）/ TextureStore / 图集 LAT1 读写（AtlasBake/AtlasStore）/ PrefabCache / SaveStore / UiMount / AudioMount / PlayCaches / 解析器（Anim/Controller/Table）
+│   ├── Audio/                  # miniaudio 封装（AudioEngine/命令表/流式 SPSC；thirdparty/ = miniaudio + stb_vorbis，ADR-015）
+│   ├── Ui/                     # RmlUi 集成（ADR-014：UiSubsystem/UiMount/SdlTextInputHandler + Fonts/Noto 随引擎）
+│   ├── Platform/               # Window（SDL3 装配/事件泵/IME）
+│   ├── Entry/                  # GameEntry —— lemon-game 独立运行时入口（M7a 批④，不链 editor-core/ImGui；ADR-005 同源双入口兑现）
+│   └── Serialization/          # JSON schema 读写、场景 codec（RLE）
+├── Editor/                     # C++ ImGui 编辑器（lemon-editor；仅开发机存在，不随游戏发布）
+│   ├── App/                    # EditorEntry、EditorApp 主循环 + smoke/bench 族
 │   ├── Panels/                 # IEditorPanel 实现（见 05）
-│   ├── Interaction/            # 模式栈、焦点仲裁、放置状态机、Gizmo（见 05）
-│   └── Tooling/                # Tilemap 笔刷、动画/粒子编辑、图集打包器、性能面板
-├── CSharp/                     # C# 侧
-│   ├── Lemon.SDK/            # 门面 API + 绑定（随脚本程序集引用）
-│   ├── Lemon.ScriptLib/      # 引擎内置 C# 库（行为脚本、UI 钩子，源码随项目可见可改）
-│   └── Generator/              # （后期）绑定生成器 / Inspector 元数据源生成
-├── Templates/                  # 模板项目：vs-survivor/、tower-defense/、incremental/、blank/
-├── Tools/                      # CLI：打包器、图集离线打包、资产校验、导表
-├── Samples/                    # 压测场景（bench-mow、bench-defense）与特性示例
-├── External/                   # CPM/vcpkg 依赖（Luma 模式）
-├── docs/                       # 本套设计文档 + 后续 ADR（架构决策记录）
-├── CMakeLists.txt
-├── CMakePresets.json           # win-release / mac-dev(MoltenVK) / asan / bench
-└── CMakeUserPresets.json       # 本机覆盖（gitignore）
+│   ├── Interaction/            # ViewportRenderer/模式栈/焦点仲裁/Gizmo（见 05）
+│   ├── Assets/                 # 写侧资产 DB（AssetDatabase/.meta/manifest、导入器、ProjectWizard/VsTemplateGen）
+│   ├── Templates/              # vs-survivor 模板生成器
+│   └── Tooling/                # stb TU（StbImpl.cpp）、ThumbCache 等编辑工具件
+├── Templates/                  # 模板项目：vs-survivor/（首发；TD/incremental 归 M9+）
+├── Samples/                    # 压测（bench-mow/sim/sprites/script/particles）+ 特性示例（anim-smoke/rhi-smoke）+ Assets/（压测素材，yami-dungeon/cc0-audio）
+├── Tools/                      # editor-regression.sh（回归 20 步）+ ci-daily.sh & plist（本机每日 CI，09 §9）+ packager/（lemon-packager 出包器，M7a 批⑤）
+├── demo/                       # 用户项目（svr-test —— M6a 起真人验收对象）
+├── spike/                      # M0 Go/No-Go 验证件（win preset OFF）
+├── docs/                       # 五区制：EngineDesign/ Plans/ DevLog/ ADR/ Reports/ Archive/
+├── .github/workflows/          # ci.yml（win job 每日 scheduled + dispatch；mac job 注释待 M7b 恢复）
+├── CMakeLists.txt / CMakePresets.json   # mac / mac-debug / win / win-ci（spikes 开关、静态 CRT）
+└── THIRD_PARTY.md              # 第三方依赖登记（SDL3/VMA/EnTT/RmlUi/FreeType/miniaudio/stb/...）
 ```
 
 纪律：`Engine/` 头文件不得 `#include` 任何 Vulkan/SDL/EnTT 头（Pimpl + 前置声明 + 自有句柄）；`Editor/` 不得被 `Engine/` 引用；`CSharp/` 不含引擎机密，SDK 源码对用户可见（学习与调试友好）。

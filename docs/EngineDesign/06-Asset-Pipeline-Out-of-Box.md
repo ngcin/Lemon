@@ -147,6 +147,11 @@ MyGame/                                   # 用户项目（升级永不触碰）
 - 扩展名 `.prefab`（与 Unity 一致，2026-09-19 定）；JSON 结构同场景实体段；支持嵌套（Prefab 引 Prefab）与实例覆盖（`overrides` 深合并，字段级）。
 - 运行时 `Instantiate` 读资产缓存（无 JSON 解析热路径——编辑器导入时烘焙为二进制紧凑格式，`.baked`，发布只带烘焙产物）。
 - **双格式策略**：开发态 JSON（diff 友好），发布态烘焙二进制（加载快 + 轻度混淆）；`Tools/packager` 负责转换与校验。
+  > **M7a 现状注记（2026-10-06 批⑧ 落账）**：发布态已落两半——二进制半边 = 音频
+  > `LBA1` + 图集 `LAT1`（packager 现烤入包，运行时零解码，ADR-016 家族口径）；
+  > 结构化半边（场景/Prefab/clip/controller/tab/rml/rcss）= **JSON 直拷**（D3 拍板：
+  > 解析器已在引擎，"目录拷贝"判据本义；"运行时 Instantiate 无 JSON 热路径"由
+  > PrefabCache 装配期一次解析满足）。全类型二进制转换 + 资源校验归 M7b。
 
 ## 5. 图集打包
 
@@ -169,6 +174,8 @@ MyGame/                                   # 用户项目（升级永不触碰）
 ## 6. 发布管线与 Steam
 
 ### 6.1 打包流程（`Tools/packager`，一键出包）
+
+> **M7a 对表注记（2026-10-06 批⑧ 落账）**：目录拷贝式 v1 已落地（[ADR-016](../ADR/ADR-016-Standalone-Runtime-And-Minimal-Packager.md)）——上流程图中**已实现** = 组装段（`lemon-game` + dylib/PE 闭包重锚 + `dotnet publish --self-contained` runtime/ + data/ 直拷 + 音频/图集现烤 + `manifest.pkg.json` + 字体随包；mac/win 双分支，干净机解包即跑已验：mac 批⑤ + Win lavapipe W4，Win 真机 GPU 待物理机 W5）；**归 M7b** = 压缩/加密/增量、全类型二进制转换与资源校验（§4 注记）、安装器与 Steam depot、`.app` bundle 签名公证、zip 分发。项目校验最小面已含（guid 冲突/entryScene/悬空引用红字）。
 
 ```
 项目校验（孤儿资产/缺失依赖/GUID 冲突）

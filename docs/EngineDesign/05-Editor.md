@@ -13,6 +13,7 @@
 - **同源双入口**（Luma `EditorEntry.cpp`/`GameEntry.cpp` 模式）：编辑器 = 运行时内核 + ImGui 编辑器层，同一份 `libLemon`；打包后的游戏 = `GameEntry` + 用户项目数据，编辑器代码完全不进包。
 - **编辑器直接驱动真渲染管线**：SceneView/GameView 是引擎相机渲到纹理贴进 ImGui 视口——所见即实机（Prowl2D S8 教训："编辑器相机走了另一条管线" 这类问题从结构上排除）。
 - **Play 沙盒运行在编辑器进程内的独立 World**：Edit World（被编辑的数据）与 Play World（运行实例）物理隔离。
+  > **M7a 注记（2026-10-06 批⑧ 落账）**：`lemon-game`（`Engine/Entry/GameEntry`，批④）落地后，**Play 从"运行游戏的唯一方式"降级为编辑器特权**（预览/调参工作流；装配链与 lemon-game 同源——批②③ 引擎件 + hooks 三族，编辑器只是其中一个宿主）。出包形态（批⑤ packager）只带 lemon-game，编辑器代码完全不进包——上行"同源双入口"从设计承诺变为交付现状。
 
 ## 2. 面板框架
 

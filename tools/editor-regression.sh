@@ -70,14 +70,35 @@ step() { # step <名称> <命令...> — 退出码 0 = PASS
     fi
 }
 grep_step() { # grep_step <名称> <期望子串> <命令...>
+    # 09 §9 门禁分流①（批⑧ 落地）：输出匹配 AND 退出码 0 才 PASS——
+    # 关死"打印 => OK 但进程非 0 退出"的假绿口子（smoke 退出码与结论行应同源，
+    # 双判让不同步当场现形）
     local name="${1}" want="${2}"; shift 2
-    local out; out="$("$@" 2>&1)"
-    if echo "${out}" | grep -q "${want}"; then
+    local out rc
+    out="$("$@" 2>&1)"; rc=$?
+    if [ ${rc} -eq 0 ] && echo "${out}" | grep -q "${want}"; then
         printf '  OK   %s\n' "${name}"; pass=$((pass+1))
     else
-        printf '  FAIL %s (want: %s)\n' "${name}" "${want}"
+        printf '  FAIL %s (rc=%d want: %s)\n' "${name}" "${rc}" "${want}"
         echo "${out}" | tail -5 | sed 's/^/       /'; fail=$((fail+1))
     fi
+}
+retry_step() { # retry_step <名称> <期望子串> <命令...>——已知注入抖动位两次取优
+    # （09 §9 flake 治理；smoke-drag 三跑三态/HEAD 同场再现，M7a §8 登记项收口）
+    # 首跑红自动重跑一次：重跑绿 = PASS 标 retry 1（"重跑至全绿放行"口径机器化）；
+    # 两次红 = FAIL。判定与 grep_step 同源双判。
+    local name="${1}" want="${2}"; shift 2
+    local out rc
+    out="$("$@" 2>&1)"; rc=$?
+    if [ ${rc} -eq 0 ] && echo "${out}" | grep -q "${want}"; then
+        printf '  OK   %s\n' "${name}"; pass=$((pass+1)); return
+    fi
+    out="$("$@" 2>&1)"; rc=$?
+    if [ ${rc} -eq 0 ] && echo "${out}" | grep -q "${want}"; then
+        printf '  OK   %s (retry 1——首跑抖动)\n' "${name}"; pass=$((pass+1)); return
+    fi
+    printf '  FAIL %s (rc=%d 两次均红; want: %s)\n' "${name}" "${rc}" "${want}"
+    echo "${out}" | tail -5 | sed 's/^/       /'; fail=$((fail+1))
 }
 
 echo "== Lemon editor regression (mode=${MODE}, build=${BUILD}) =="
@@ -93,7 +114,9 @@ grep_step "smoke-close clean (clean scene exits at once)" "OK" \
     "${EDITOR}" --smoke-close clean --frames 300
 grep_step "smoke-close dirty (dirty scene confirm)" "OK" \
     "${EDITOR}" --smoke-close dirty --frames 300
-grep_step "smoke-drag (viewport gizmo move+rotate+resize+zoom+sling+focus injection)" \
+# smoke-drag = 已知注入抖动位（M7a §8 登记：三跑三态、HEAD 基线同场再现，
+# 复跑绿是口头先例）——两次取优机器化（09 §9 flake 口径）
+retry_step "smoke-drag (viewport gizmo move+rotate+resize+zoom+sling+focus injection)" \
     "smoke-drag: .* => OK" \
     "${EDITOR}" --smoke-drag --frames 90 --no-reopen
 grep_step "smoke-ui (real-person session: shortcuts/undo/scrub/save/play/rename/reparent/nav/layout)" \
@@ -187,6 +210,23 @@ if [ "${MODE}" = "full" ]; then
         "${EDITOR}" --smoke --frames 60 --save-scene "${TMP}/rt.scene"
     grep_step "scene CLI roundtrip: --scene reopen" "editor-smoke PASS" \
         "${EDITOR}" --smoke --frames 60 --scene "${TMP}/rt.scene"
+    # M7a 批⑧：性能基线门禁（回归第 20 步；09 §9/§10"对基线回退 >10% 标红"口径）。
+    # bench-survivor 退出码自带 45fps 硬判据（BenchVerdict 聚合，08 §3），本步附加
+    # 软门禁 fps >= 76.5 = 基线 85（批⑥ 2026-10-04 实测 85/87）× 0.9；基线刷新随批
+    # DevLog 人工更新本常量。--frames 900 = 批⓪ 基线刷新先例口径（怪海涨满 ~240 帧
+    # 预热 + 波次 ≥3）。
+    echo "-- perf gate --"
+    bench_out="$("${EDITOR}" --bench-survivor --frames 900 2>&1)"; bench_rc=$?
+    bench_fps="$(echo "${bench_out}" | grep -o "fps=[0-9.]*" | head -1 | cut -d= -f2)"
+    if [ ${bench_rc} -eq 0 ] && echo "${bench_out}" | grep -q "=> PASS" && \
+       awk -v f="${bench_fps:-0}" 'BEGIN { exit !(f+0 >= 76.5) }'; then
+        printf '  OK   bench-survivor gate (fps=%s >= 76.5 = baseline-85 regression <10%%; M7a-b8)\n' "${bench_fps}"
+        pass=$((pass+1))
+    else
+        printf '  FAIL bench-survivor gate (rc=%d fps=%s floor=76.5)\n' \
+            "${bench_rc}" "${bench_fps:-none}"
+        echo "${bench_out}" | tail -5 | sed 's/^/       /'; fail=$((fail+1))
+    fi
 fi
 
 echo "== summary: PASS=${pass} FAIL=${fail} =="

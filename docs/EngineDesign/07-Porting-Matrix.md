@@ -154,6 +154,19 @@ UTF-8 归一 / SDL3 drop 双 free / manifest UTF-8 拦截 + 非 ASCII 资产名�
 | 关闭按钮/退出确认 | `Window::PollEvents` 返回 false → 状态机 | ✅ M4.6（--smoke-close） | ✅ W6 2026-10-06：`--smoke-close clean` OK（30 帧退出/无确认弹窗，与 mac 无差异） |
 | 文件选择器手输路径 | FilePicker（编辑器内实现，无 OS 对话框） | ✅ M4.6b | ✅ W6 2026-10-06 真人：手输 `C:\` 回车直达 C 盘 ✓ |
 
+### 3.5.1 交付物矩阵（M7a 批⑧ 落账 2026-10-06）
+
+M7a 出包线新增的**交付物**（非引擎源码件）及其平台状态——出包细节见
+[06 §6.1](./06-Asset-Pipeline-Out-of-Box.md) 与 [ADR-016](../ADR/ADR-016-Standalone-Runtime-And-Minimal-Packager.md)：
+
+| 交付物 | 形态 | macOS | Windows |
+|---|---|---|---|
+| `lemon-editor` | 编辑器（brew 工具链 + dotnet SDK 开发机形态） | ✅ 本机全量回归 20 步（批⑧ 起） | ✅ W1 VM 构建 + ctest 4/4 / W6 行为表（真机 GPU 待 W5 物理机） |
+| `lemon-game` | 独立运行时（`Engine/Entry/GameEntry`，不链 editor-core/ImGui） | ✅ 批④ 四屏零 C++ + 批⑤ 干净包 | ✅ W2 构建 / W3 lavapipe 冒烟 / W4 出包双击即玩 |
+| `lemon-packager` | 出包器（`Tools/packager`，链 lemon-engine） | ✅ 批⑤（dylib 闭包 + MoltenVK ICD 自举 + ad-hoc 签） | ✅ 批⑦/W4（PE 闭包白名单 + 静态 CRT + vulkan-1.dll） |
+| dotnet runtime 分发 | `dotnet publish -r <rid> --self-contained` → 包内 `runtime/`（干净机零 dotnet 安装） | ✅ 批⑤（CoreCLRHost 三修） | ✅ W4（hostfxr.dll 探测名热修 + ACP 宽化 W6） |
+| CI 门禁 | GitHub Actions win job（逻辑面）+ 本机 `Tools/ci-daily.sh`（mac 全量，09 §9）——**手动档**（2026-10-07 用户拍板：schedule/launchd 定时均撤，工具留档） | ✅ 手动一键（批⑧） | ✅ run #10 首绿 + 手动 dispatch（批⑧） |
+
 ## 3.6 Windows 编译阻断项（首次移植前清零；2026-09-24 全栈审查 F-11 登记；**2026-09-30 第 0 批全数处置**）
 
 §3.5 行为验证表默认"能编译"——下列阻断项不清零则到不了行为层。**"补一个 win
