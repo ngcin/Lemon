@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "name": "run",
+  "fps": 8,
+  "loop": true,
+  "frames": [
+    {
+      "sheet": "b6c8ac38f5df255c",
+      "cell": 0
+    },
+    {
+      "sheet": "b6c8ac38f5df255c",
+      "cell": 1
+    },
+    {
+      "sheet": "b6c8ac38f5df255c",
+      "cell": 2
+    },
+    {
+      "sheet": "b6c8ac38f5df255c",
+      "cell": 3
+    },
+    {
+      "sheet": "b6c8ac38f5df255c",
+      "cell": 4
+    },
+    {
+      "sheet": "b6c8ac38f5df255c",
+      "cell": 5
+    },
+    {
+      "sheet": "b6c8ac38f5df255c",
+      "cell": 6
+    },
+    {
+      "sheet": "b6c8ac38f5df255c",
+      "cell": 7
+    },
+    {
+      "sheet": "b6c8ac38f5df255c",
+      "cell": 8
+    },
+    {
+      "sheet": "b6c8ac38f5df255c",
+      "cell": 9
+    },
+    {
+      "sheet": "b6c8ac38f5df255c",
+      "cell": 10
+    },
+    {
+      "sheet": "b6c8ac38f5df255c",
+      "cell": 11
+    },
+    {
+      "sheet": "b6c8ac38f5df255c",
+      "cell": 12
+    },
+    {
+      "sheet": "b6c8ac38f5df255c",
+      "cell": 13
+    },
+    {
+      "sheet": "b6c8ac38f5df255c",
+      "cell": 14
+    },
+    {
+      "sheet": "b6c8ac38f5df255c",
+      "cell": 15
+    }
+  ]
+}

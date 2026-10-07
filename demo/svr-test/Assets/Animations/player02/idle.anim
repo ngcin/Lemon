@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "name": "idle",
+  "fps": 8,
+  "loop": true,
+  "frames": [
+    {
+      "sheet": "baad4ebc125109ff",
+      "cell": 0
+    },
+    {
+      "sheet": "baad4ebc125109ff",
+      "cell": 1
+    },
+    {
+      "sheet": "baad4ebc125109ff",
+      "cell": 2
+    },
+    {
+      "sheet": "baad4ebc125109ff",
+      "cell": 3
+    }
+  ]
+}

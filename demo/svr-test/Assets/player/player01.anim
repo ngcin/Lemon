@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "name": "player01",
+  "fps": 9,
+  "loop": true,
+  "frames": [
+    {
+      "sheet": "3d95edfa7dc1455f",
+      "cell": 0
+    },
+    {
+      "sheet": "13049de664d70a42",
+      "cell": 0
+    },
+    {
+      "sheet": "b1247709b67a72e6",
+      "cell": 0
+    },
+    {
+      "sheet": "df0b222c6d9a21b4",
+      "cell": 0
+    },
+    {
+      "sheet": "f326f732eb556c5d",
+      "cell": 0
+    },
+    {
+      "sheet": "d3f0f56d46142dce",
+      "cell": 0
+    },
+    {
+      "sheet": "a6e904ed5b3a7705",
+      "cell": 0
+    },
+    {
+      "sheet": "7504531784fe031c",
+      "cell": 0
+    },
+    {
+      "sheet": "98d4cfce44d45877",
+      "cell": 0
+    }
+  ]
+}
