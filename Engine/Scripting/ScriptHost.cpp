@@ -293,6 +293,26 @@ void NativeFxBar(uint64_t entity, float frac, uint32_t color, float width) {
     if (g_world) g_world->Fx().Bar(entity, frac, color, width);
 }
 
+// M7c 批①（Fx 表现升级）：全参数形态——飘字动效（scale/life/driftX/curve）与
+// 贴图血条（bg/fg guid + 延迟条 + 高度）。guid→spriteId 复用 spriteOfGuid 钩子
+// 通道（编辑器 DB / 运行时 AssetIndex 两态同一解析；未装/坏 guid = 0 → 白精灵
+// 现状路径，游戏侧零防御）
+void NativeFxPopupEx(const char* text, float x, float y, uint32_t color, float scale,
+                     float life, float driftX, uint8_t curve) {
+    if (g_world)
+        g_world->Fx().PopupTextEx(text, x, y, color, scale, life, driftX,
+                                  (ecs::FxCurve)curve);
+}
+void NativeFxBarEx(uint64_t entity, float frac, uint32_t color, float width,
+                   const char* bgGuidHex, const char* fgGuidHex, uint32_t lagColor,
+                   float height, float anchorDy) {
+    if (!g_world || entity == 0) return;
+    g_world->Fx().BarEx(entity, frac, color, width,
+                        bgGuidHex && *bgGuidHex ? NativeSpriteOfGuid(bgGuidHex) : 0,
+                        fgGuidHex && *fgGuidHex ? NativeSpriteOfGuid(fgGuidHex) : 0,
+                        lagColor, height, anchorDy);
+}
+
 // 2026-09-26 调参下放批：分离力参数场景侧覆盖（引擎默认不动；呈现/调参通道
 // 不入 StateHash，基准场脚本零调用 = 回放零漂移）
 void NativeSetSeparation(float radius, float strength, int32_t maxNeighbors,
@@ -469,7 +489,9 @@ const NativeApiVtable kNativeApi{NativeIsAlive,
                                  NativeAudioMasterVol,
                                  NativeAudioMasterVolGet,
                                  NativeAudioSetPaused,
-                                 NativeAudioPausedGet};
+                                 NativeAudioPausedGet,
+                                 NativeFxPopupEx,
+                                 NativeFxBarEx};
 } // namespace
 
 void SetScriptIoHooks(const ScriptIoHooks& hooks) { g_scriptIo = hooks; }

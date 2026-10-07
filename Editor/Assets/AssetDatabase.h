@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "Assets/AssetTypes.h"    // M7a 批②：类型域单源（编辑器/运行时两侧共用）
+#include "Assets/FontBake.h"      // M7c 批①：FontBakeParams（AssetEntry::FontBake 打包）
 #include "Assets/SpriteRefs.h"    // M7a 批②：SpriteRefSource（guid 归一查询面）
 #include "Core/FileOps.h"         // M7a 批③：WriteFileAtomic 实现单源（下方同名转发）
 
@@ -60,6 +61,23 @@ struct AssetEntry {
     float audioLoopStart = 0.0f; // 秒；烤制期换算帧写 LBA1 头（0/0 = 全曲循环）
     float audioLoopEnd = 0.0f;
     bool audioPreload = false;   // true = 整载 RAM（批①b 流式落地前的显式覆盖位）
+
+    // ---- 字体 importer（M7c 批①：.meta importer 段；每次重扫重读，变更经
+    // paramsHash 头对比触发增量重烘——见 FontBake）----
+    std::string fontCharset;     // UTF-8 字符集（空 = ASCII 95 默认）
+    uint16_t fontPx = 24;        // 烘焙字号（px）
+    uint8_t fontOutlinePx = 0;   // 描边扩边（0 = 无）
+    uint32_t fontOutlineColor = 0xFF202020u; // 描边色 RGBA
+
+    /// 字体烘焙参数打包（FontBake 消费；meta 段 → 参数结构一一对应）
+    assets::FontBakeParams FontBake() const {
+        assets::FontBakeParams p;
+        p.fontSizePx = fontPx;
+        p.charset = fontCharset;
+        p.outlinePx = fontOutlinePx;
+        p.outlineColor = fontOutlineColor;
+        return p;
+    }
     /// 切片序号（行优先）→ spriteId（越界 = 0）
     uint32_t SliceSpriteId(uint32_t cell) const {
         return cell < sliceCount ? sliceBase + cell : 0;

@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "Assets/AssetTypes.h"
+#include "Assets/FontBake.h" // M7c 批①：FontBakeParams（IndexedEntry::FontBake 打包）
 
 namespace lemon::assets {
 
@@ -39,6 +40,21 @@ struct IndexedEntry {
     // 的网格声明同款口径）
     float audioLoopStart = 0.0f, audioLoopEnd = 0.0f; // 秒；0/0 = 全曲循环
     bool audioPreload = false;                         // 显式整载（默认 >1MiB 流式）
+    // 字体 importer 段（M7c 批①；packager 烤制消费——paramsHash 冻结在 .baked 头）
+    uint16_t fontPx = 24;
+    uint8_t fontOutlinePx = 0;
+    uint32_t fontOutlineColor = 0xFF202020u;
+    std::string fontCharset; // 空 = ASCII 95 默认
+
+    /// 字体烘焙参数（FontBake/packager 消费）
+    FontBakeParams FontBake() const {
+        FontBakeParams p;
+        p.fontSizePx = fontPx;
+        p.charset = fontCharset;
+        p.outlinePx = fontOutlinePx;
+        p.outlineColor = fontOutlineColor;
+        return p;
+    }
     bool Sliced() const { return sliceBase != 0 && sliceCount != 0; }
     uint32_t SliceSpriteId(uint32_t cell) const {
         return cell < sliceCount ? sliceBase + cell : 0;

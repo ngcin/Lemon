@@ -114,12 +114,21 @@ void SpriteBatcher::Bake(const AtlasRegistry& atlas, std::span<const SpritePacke
                 const SpriteInfo& spr = atlas.GetSprite(p.spriteId);
                 SpriteInstance& inst = seg[written++];
                 FillInstanceAffine(inst, p.posX, p.posY, p.rot, p.scaleX, p.scaleY);
-                inst.u0 = spr.u0;
-                inst.v0 = spr.v0;
-                inst.u1 = spr.u1;
-                inst.v1 = spr.v1;
+                // M7c 批① S2：产包 UV 覆盖（贴图血条横向裁剪）——实例布局不动，
+                // 覆盖位只切 CPU 侧取值来源；flags 位面只放行 flip（bit2 不进实例）
+                if (p.flags & kPktUvOverride) {
+                    inst.u0 = p.uv0u;
+                    inst.v0 = p.uv0v;
+                    inst.u1 = p.uv1u;
+                    inst.v1 = p.uv1v;
+                } else {
+                    inst.u0 = spr.u0;
+                    inst.v0 = spr.v0;
+                    inst.u1 = spr.u1;
+                    inst.v1 = spr.v1;
+                }
                 inst.colorBits = p.colorBits;
-                inst.flags = p.flags;
+                inst.flags = p.flags & (kInstFlipX | kInstFlipY);
             }
         }
     };

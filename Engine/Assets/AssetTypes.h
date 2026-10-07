@@ -17,9 +17,11 @@ namespace lemon::assets {
 // Controller = .controller 动画状态机（M6a 批② T3d，ADR-013）
 // Rml/Rcss = 游戏 UI 文档/样式表（M6b 批③b，ADR-014）
 // Audio = 音频源（M6c，ADR-015：.wav/.ogg/.mp3/.flac → 烤制 LBA1）
+// Font = 字体源（M7c 批①：.ttf/.otf → 导入期烘焙位图图集页，ADR-015 烤制先例
+//        同款；运行时零 FreeType 零栅格化——02 §7 红线不破）
 enum class AssetType
     : uint8_t { Sprite, Prefab, Script, Clip, Table, AnimSet, Controller, Rml, Rcss, Audio,
-                Generic };
+                Font, Generic };
 
 const char* AssetTypeName(AssetType t);
 

@@ -12,6 +12,9 @@ add_executable(lemon-tests
   engine/EditorTests.cpp
   engine/AudioTests.cpp)
 target_link_libraries(lemon-tests PRIVATE lemon-engine)
+# M7c 批①：字体烘焙 golden 单测的 TTF 源（引擎随仓 Noto Sans SC；编辑器字体链同源）
+target_compile_definitions(lemon-tests PRIVATE
+  LEMON_ENGINE_FONT_DIR="${CMAKE_SOURCE_DIR}/Engine/Ui/Fonts")
 # stb 头面（M7a 批⑥）：LAT1 单测播种 PNG 用 stb_image_write（实现符号已在
 # lemon-engine 的 StbImage.cpp 单 TU，此处只补头路径——无第二实现 TU）
 if(NOT stb_SOURCE_DIR)

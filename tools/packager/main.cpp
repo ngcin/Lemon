@@ -49,6 +49,7 @@
 
 #include "Assets/AssetIndex.h"
 #include "Assets/AtlasBake.h"
+#include "Assets/FontBake.h" // M7c 批①：字体烘焙（包形态现烤）
 #include "Assets/AssetTypes.h"
 #include "Assets/ProjectFile.h"
 #include "Audio/BakedClip.h"
@@ -704,6 +705,22 @@ int main(int argc, char** argv) {
             ++baked;
         } else
             Err("音频烤制失败：" + e.relPath);
+    }
+    // 字体现烤（M7c 批①：FontBakedPath 同路径 <root>/.lemon/baked/fonts/——参数自
+    // .meta importer（AssetIndex 读入面），fxFont 页装载在 GameEntry）
+    uint32_t fonts = 0;
+    fs::create_directories(data / ".lemon" / "baked" / "fonts", ec);
+    for (const lemon::assets::IndexedEntry& e : index.Entries()) {
+        if (e.type != lemon::assets::AssetType::Font) continue;
+        char hex[17];
+        std::snprintf(hex, sizeof(hex), "%016llx", (unsigned long long)e.guid);
+        const fs::path dst = data / ".lemon" / "baked" / "fonts" / (std::string(hex) + ".baked");
+        if (lemon::assets::BakeFontFile(index.AbsolutePath(e).c_str(), dst.string().c_str(),
+                                        e.FontBake())) {
+            Record(dst);
+            ++fonts;
+        } else
+            Err("字体烤制失败：" + e.relPath);
     }
     // 图集现烤（批⑥ LAT1）：sprite 全量 → 装箱页 → data/.lemon/baked/atlas/
     // atlas.baked（GameEntry 探测在场即走 LAT1 链路；无 sprite 项目合法跳过）

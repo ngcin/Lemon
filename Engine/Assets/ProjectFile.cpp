@@ -30,6 +30,11 @@ ProjectFile ParseProjectFile(std::string_view text) {
         pf.engineVersion = j.at("engineVersion").get<std::string>();
     if (j.contains("entryScene") && j.at("entryScene").is_string())
         pf.entryScene = j.at("entryScene").get<std::string>();
+    if (j.contains("fxFont")) { // M7c 批①：Fx 飘字字体资产（16 位 hex）
+        const nlohmann::json& f = j.at("fxFont");
+        if (f.is_string()) pf.fxFont = HexToGuid(f.get<std::string>().c_str());
+        else if (f.is_number_unsigned()) pf.fxFont = f.get<uint64_t>();
+    }
     pf.ok = true;
     return pf;
 }

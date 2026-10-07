@@ -1,6 +1,12 @@
 # M7c 批① —— Fx 表现升级（TTF 烘焙器 / 贴图血条+延迟条 / 飘字动效）
 
-Status: planned
+Status: done（2026-10-07 机器面全过 + svr-test 实装；**真人走查待用户**——ani.scene 决斗场三项同屏 / Main.scene 战斗 15% 暴击糖；截图基线待前台会话补。落地明细与教训 = [DevLog 2026-10-07 批①](../../DevLog/2026-10-07-m7c-b1-fx-presentation-upgrade.md)）
+
+> **S2 首查项定案**：方案 A（SpritePacket 尾加 UV 覆盖 + flags bit2）——侦察发现
+> `SpriteInstance` 48B 实例块本就有逐实例 u0/v0/u1/v1（02 §3.3），覆盖只是 Bake
+> 期 CPU 取值来源切换：**实例布局零改动、shader 零改动 → 免 ADR-017**（"若涉
+> 实例布局变更"条件不成立）。BitmapFont 外部页字形产包同走此通道（sprite 表
+> 零登记，资产号段结构性无冲突）。
 
 > 来源：用户需求 2026-10-07（血条要做好看=贴图；飘字要暴击/闪避/调字体）+ 三引擎对照讨论结论——Unity/UE/Godot 均无引擎级战斗飘字通道（怪海规模下三家用户手搓的终点 = Lemon 现有 FxChannel 形态），Lemon 缺的是三家家有的**表现力地基**：TTF 字体资产管线（对标 TMP SDF 烘焙）与贴图比例填充原语（对标 uGUI Filled Image / UE ProgressBar）。
 >
@@ -61,5 +67,5 @@ SDF 距离场缩放 / 九宫格血条 / 飘字池提额 / 渐变填充 / kerning
 
 ## 5. 验收判据（出口）
 
-- **机器面**：单测新增四件——烘焙器 golden（同 TTF 同字符集两次烘焙字节一致 + 字符集增减增量重烘）/ Fx 数学（lag 追赶收敛、UV 裁剪区间、Pop 曲线采样）/ hash 反例（S4）/ 多页寻址与缺字形回退；ctest 4/4；回归 full 20/20；bench-survivor 门禁 fps≥76.5（飘字/血条满载场景不降）。
-- **真人面**：svr-test 一局走查——暴击中文弹跳黄字 / 贴图血条 / 延迟白条三项可见且不过火；截图基线入档。
+- **机器面 ✅（2026-10-07）**：单测新增四件全落——烘焙器 golden（两次烘焙**字节一致** + 四种参数变更态 stale）/ Fx 数学（lag 单调收敛+回升贴平、UV 裁剪区间+白精灵现状路径回归、Pop 出生 1.4× 回落+陡升、寿命覆盖+过期隐形、池语义）/ hash 反例（TestFxSdk：新参数全开 StateHash 逐位不变）/ 多页寻址与缺字形回退（UV 覆盖产包+批键烘焙槽+混排回退）；checks 34,346→**34,402**；**ctest 4/4**；实跑链路（--play ani.scene 900 帧：装载 ×2 / play-roundtrip byte-exact / errors=0 / duel.winner 落档）+ `--validate` 两场 1080 帧零 VUID；回归 full 两轮（15/20→19/20，注入族首轮假红全数转绿）+ **bench 独立 ×3 = 85/87/87 全 PASS 且 `fx 256+128 饱和` 口径 ≥ 基线 85**（数字与 flake 判读 = [DevLog](../../DevLog/2026-10-07-m7c-b1-fx-presentation-upgrade.md)）。
+- **真人面（待用户）**：svr-test 一局走查——ani.scene 决斗场暴击中文弹跳黄字 / 贴图血条 / 延迟白条三项同屏（或 Main.scene 战斗 15% 暴击糖 + 怪贴图血条）；截图基线待前台会话补（本会话窗口回读黑 = 09 §9 后台现象，基线 smoke 截图对照复现确认非批① 缺陷）。走查轮④（暴击显示邻字形/血条悬空——烘焙器像素基址 bug + 帧边距锚定）落地 = [DevLog 轮④](../../DevLog/2026-10-07-m7c-b1-fx-presentation-upgrade.md)。

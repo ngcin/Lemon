@@ -48,6 +48,7 @@ EditorApp::EditorApp() = default;
 EditorApp::~EditorApp()
 {
     StopAudioBaker(); // 批①：幂等——早退路径（--gen-vs-template 等）的线程收口兜底
+    StopFontBaker();  // M7c 批①：字体 worker 同款收口
 }
 
 namespace {
@@ -297,6 +298,9 @@ int EditorApp::Run(const EditorLaunch& launch) {
         if (launch.smokeUirml && gameUi_) SeedSmokeUiDocument();
         // 批①：音频导入期预热（后台烤制——EnterPlay 命中缓存，消除 230ms 同步顿）
         WarmAudioBakes();
+        // M7c 批①：字体导入期预热（同款；装载侧 Read fxFont → .baked 命中缓存）
+        WarmFontBakes();
+        LoadFxFontPage(); // fxFont 页装载（预热刚入队——BakeStale 兜底同步烤首档）
         // 批①：--smoke-audio 资产链冒烟（真项目资产：导入→meta→后台烤→Peek→试听）
         if (launch.smokeAudio) {
             const bool ok = RunSmokeAudioChain();
@@ -1055,6 +1059,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
     device_->WaitIdle(); // ImGui 后端资源（描述符池/采样器）可能被在途帧引用，先等闲
     ui_->Shutdown();
     StopAudioBaker(); // 批①：后台烤制线程先于 AudioEngine 成员析构收口
+    StopFontBaker();  // M7c 批①：字体烤制线程同款收口
     SetLogSink(nullptr, nullptr);
     device_->SavePipelineCache();
     if (gameUi_) { // 批③a：UI 子系统先于 viewport/device 收尾（Rml 收尾仍回调后端 + WaitIdle + 反注册）

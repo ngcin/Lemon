@@ -18,6 +18,7 @@ add_library(lemon-engine STATIC
   Assets/TableAsset.cpp
   Assets/PrefabCache.cpp
   Assets/PlayCaches.cpp
+  Assets/FontBake.cpp
   Assets/SaveStore.cpp
   Audio/AudioChannel.cpp
   Audio/AudioEngine.cpp
@@ -73,7 +74,7 @@ set_source_files_properties(Audio/MiniAudioImpl.c Assets/StbImage.cpp PROPERTIES
 target_compile_features(lemon-engine PUBLIC cxx_std_20)
 target_link_libraries(lemon-engine
   PRIVATE SDL3::SDL3 Vulkan::Vulkan GPUOpen::VulkanMemoryAllocator nlohmann_json::nlohmann_json
-          RmlUi::RmlUi ${CMAKE_DL_LIBS}
+          RmlUi::RmlUi Freetype::Freetype ${CMAKE_DL_LIBS}
   PUBLIC EnTT::EnTT)
 
 # M3 脚本层（dotnet 程序集构建 + lemon-csharp 接口目标；ADR-010）

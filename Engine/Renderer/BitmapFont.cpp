@@ -2,8 +2,10 @@
 
 #include <cstring>
 
+#include "Assets/FontBake.h"
 #include "Core/Log.h"
 #include "Renderer/Atlas.h"
+#include "Renderer/SpriteTypes.h" // kPktUvOverride
 
 namespace lemon::renderer {
 
@@ -131,6 +133,148 @@ void BitmapFont::DrawText(std::vector<SpritePacket>& out, const char* text, Vec2
 
 float BitmapFont::TextWidth(const char* text, float charScale) const {
     return (float)(kCellW * (uint32_t)std::strlen(text)) * charScale;
+}
+
+// ---- 外部烘焙页（M7c 批① S1；LBF1 装载 + UTF-8 寻址 + 内置页回退）----
+
+bool BitmapFont::LoadBaked(rhi::Device& device, AtlasRegistry& atlas, uint32_t bindlessSlot,
+                           const char* bakedPath) {
+    uint32_t pw = 0, ph = 0;
+    if (HasBaked() && bindlessSlot == bakedSlot_) {
+        // 同槽换页（字体资产热改重烘 → 重装载）：字形零 sprite 登记（UV 覆盖
+        // 通道），UnregisterAtlas 无悬空引用，干净换
+        atlas.UnregisterAtlas(bindlessSlot);
+        bakedSlot_ = 0;
+    } else if (atlas.AtlasTexture(bindlessSlot, pw, ph).IsValid()) {
+        LEMON_WARN("BitmapFont::LoadBaked 失败：槽位 %u 已被占用", bindlessSlot);
+        return false;
+    }
+    assets::BakedFontInfo info;
+    std::vector<assets::FontGlyph> glyphs;
+    std::vector<uint8_t> rgba;
+    if (!assets::LoadBakedFont(bakedPath, info, glyphs, rgba)) {
+        LEMON_WARN("font: 烘焙产物不可读（重导或等后台烤制完成）：%s", bakedPath);
+        return false;
+    }
+    rhi::Texture tex = device.CreateTexture(
+        {.width = info.pageW, .height = info.pageH, .debugName = "fontBakedPage"});
+    device.UploadTexture(tex, rgba.data(), rgba.size());
+    device.BindTextureToSlot(tex, bindlessSlot);
+    atlas.RegisterAtlas(bindlessSlot, tex, info.pageW, info.pageH);
+    bakedGlyphs_.clear();
+    bakedGlyphs_.reserve(glyphs.size() * 2);
+    for (const assets::FontGlyph& g : glyphs) {
+        GlyphMeta m;
+        m.advance = g.advance;
+        m.bearingX = g.bearingX;
+        m.bearingY = g.bearingY;
+        m.w = g.width;
+        m.h = g.height;
+        m.pageX = g.pageX;
+        m.pageY = g.pageY;
+        bakedGlyphs_[g.codepoint] = m;
+    }
+    bakedSlot_ = bindlessSlot;
+    bakedPageW_ = info.pageW;
+    bakedPageH_ = info.pageH;
+    bakedAscender_ = info.ascender;
+    bakedDescender_ = info.descender;
+    bakedPath_ = bakedPath; // 留档（RebuildBaked 用）
+    fallbackWarned_ = false; // 新页装载重置（换字体后缺字面可能变化）
+    LEMON_LOG("font: 烘焙页装载（%u 字形，%ux%u，槽 %u）：%s", info.glyphCount,
+              info.pageW, info.pageH, bindlessSlot, bakedPath);
+    return true;
+}
+
+float BitmapFont::LineHeight(float scale) const {
+    if (!HasBaked()) return (float)kCellH * scale;
+    return (float)(bakedAscender_ - bakedDescender_) * scale;
+}
+
+void BitmapFont::DrawTextEx(std::vector<SpritePacket>& out, const char* utf8, Vec2 pos,
+                            float scale, uint32_t colorBits, uint8_t layer) const {
+    // 无外部页：整体走内置 ASCII 路径（现网行为，缺字 '?' 补位语义不变）
+    if (!HasBaked()) {
+        DrawText(out, utf8, pos, scale, colorBits, layer);
+        return;
+    }
+    std::vector<uint32_t> cps;
+    assets::DecodeUtf8(utf8, cps);
+    const SpriteBatchKey extKey = MakeBatchKey(bakedSlot_, BlendKind::Alpha,
+                                               FilterKind::Linear, layer);
+    const uint64_t extKh = (extKey.hash >> 45) & 0xFFFFull;
+    const float baseline = pos.y + (float)bakedAscender_ * scale;
+    // UV 覆盖通道产包：spriteId 占位 = 内置页合法号（Bake 查表被覆盖位短路，
+    // 批键 textureAtlas = 烘焙页槽决定采样页）
+    const uint32_t placeSprite = glyphSprites_['?' - kFirstChar];
+    float x = pos.x;
+    for (uint32_t cp : cps) {
+        if (auto it = bakedGlyphs_.find(cp); it != bakedGlyphs_.end()) {
+            const GlyphMeta& m = it->second;
+            if (m.w && m.h) { // 空白字形（空格类）只步进
+                SpritePacket p;
+                p.sortKey = ((uint64_t)layer << 56) | (extKh << 40) | (uint64_t)out.size();
+                p.key = extKey;
+                p.spriteId = placeSprite;
+                p.colorBits = colorBits;
+                p.flags = kPktUvOverride;
+                p.uv0u = (float)m.pageX / (float)bakedPageW_;
+                p.uv0v = (float)m.pageY / (float)bakedPageH_;
+                p.uv1u = (float)(m.pageX + m.w) / (float)bakedPageW_;
+                p.uv1v = (float)(m.pageY + m.h) / (float)bakedPageH_;
+                // 世界 Y 向下（Camera2D 直映射，DevLog 批① 教训④）：字形顶 =
+                // baseline - bearingY（bearingY = 基线上方为正）→ quad 中心 =
+                // baseline - (bearingY - h/2)*scale
+                p.posX = x + ((float)m.bearingX + (float)m.w * 0.5f) * scale;
+                p.posY = baseline - ((float)m.bearingY - (float)m.h * 0.5f) * scale;
+                p.rot = 0;
+                p.scaleX = (float)m.w * scale;
+                p.scaleY = (float)m.h * scale;
+                out.push_back(p);
+            }
+            x += (float)m.advance * scale;
+            continue;
+        }
+        // 缺字形：ASCII 可显 → 内置 5×7 回退（换页 = 换批键，自然分批）
+        if (cp >= kFirstChar && cp < kFirstChar + kCharCount && cp != ' ') {
+            if (!fallbackWarned_) {
+                fallbackWarned_ = true;
+                LEMON_WARN("font: 烘焙页缺字形 U+%04X，回退内置 5×7（词表字符集未覆盖"
+                           "——改 .meta charset 重烘）",
+                           cp);
+            }
+            const SpriteBatchKey fbKey = MakeBatchKey(atlasSlot_, BlendKind::Alpha,
+                                                      FilterKind::Point, layer);
+            const uint64_t fbKh = (fbKey.hash >> 45) & 0xFFFFull;
+            SpritePacket p;
+            p.sortKey = ((uint64_t)layer << 56) | (fbKh << 40) | (uint64_t)out.size();
+            p.key = fbKey;
+            p.spriteId = glyphSprites_[cp - kFirstChar];
+            p.colorBits = colorBits;
+            p.flags = 0;
+            p.posX = x + (float)kCellW * 0.5f * scale;
+            // 基线对齐：内置页 quad 底贴基线（5×7 无下伸的近似对齐）
+            p.posY = baseline - (float)kGlyphH * 0.5f * scale;
+            p.rot = 0;
+            p.scaleX = (float)kCellW * scale;
+            p.scaleY = (float)kGlyphH * scale;
+            out.push_back(p);
+        }
+        x += (float)kCellW * scale; // 缺字步进按内置 cell（含空格）
+    }
+}
+
+float BitmapFont::TextWidthEx(const char* utf8, float scale) const {
+    if (!HasBaked()) return TextWidth(utf8, scale);
+    std::vector<uint32_t> cps;
+    assets::DecodeUtf8(utf8, cps);
+    float w = 0;
+    for (uint32_t cp : cps) {
+        auto it = bakedGlyphs_.find(cp);
+        w += it != bakedGlyphs_.end() ? (float)it->second.advance * scale
+                                      : (float)kCellW * scale;
+    }
+    return w;
 }
 
 } // namespace lemon::renderer

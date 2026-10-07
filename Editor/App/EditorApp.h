@@ -114,6 +114,15 @@ public:
     /// 开项目一次性预热全部音频（批①：导入期烤制——EnterPlay 命中缓存）
     void WarmAudioBakes();
     void StopAudioBaker(); // 幂等（Run 尾 + 析构双保险——早退路径靠析构收线程）
+    /// M7c 批①：字体后台烤制（音频 worker 同款三件套；EnqueueFontBake 入队
+    /// guid+源+产物路径+参数，Rescan 增量 / 开项目预热，EnterPlay 装载侧兜缺漏）
+    void EnqueueFontBake(const AssetEntry& e);
+    void WarmFontBakes();
+    void StopFontBaker();
+    /// M7c 批①：Fx 字体页装载（project.lemon fxFont → 烘焙页 → GameView 飘字
+    /// 字体；BakeStale 兜底同步烤一次。触发 = 开项目 / 字体资产 Rescan 变更 /
+    /// 进 Play；无 fxFont / 失败 = 内置 5×7 页降级）
+    void LoadFxFontPage();
     /// M6c 批①：--smoke-audio 资产链冒烟（导入→meta→后台烤→Peek→试听；须 --project）
     bool RunSmokeAudioChain();
     EditorLogRing& Log() { return log_; }
@@ -386,6 +395,19 @@ private:
     std::deque<std::tuple<uint64_t, std::string, std::string, float, float>> audioBakeQueue_;
     bool audioBakeStop_ = false;
     std::atomic<int> audioBakePending_{0};
+    // M7c 批①：字体后台烤制（音频 worker 同款；job = guid+源+产物+参数快照——
+    // 参数在入队期抓取，meta 热改后 Rescan 的 modified 事件重新入队即重烘）
+    std::thread fontBakeThread_;
+    std::mutex fontBakeMtx_;
+    std::condition_variable fontBakeCv_;
+    struct FontBakeJob {
+        uint64_t guid;
+        std::string src, dst;
+        assets::FontBakeParams params;
+    };
+    std::deque<FontBakeJob> fontBakeQueue_;
+    bool fontBakeStop_ = false;
+    std::atomic<int> fontBakePending_{0};
     std::unique_ptr<scripting::ScriptHost> host_; // C# 宿主（--script/项目 Game；null = 无）
     AssetGpuCache gpuAssets_;
     FileWatcher watcher_;

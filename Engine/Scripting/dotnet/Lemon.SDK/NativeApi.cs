@@ -60,6 +60,8 @@ public unsafe struct NativeApi
     public delegate* unmanaged<float> AudioMasterVolGet;                       // M6c 批②（D6）：主音量读（引擎态直读）
     public delegate* unmanaged<int, void> AudioSetPaused;                      // M6c 批②（D5）：显式暂停（引擎不自动映射 TimeScale）
     public delegate* unmanaged<byte> AudioPausedGet;                          // review 2026-10-02 #71：暂停态读（引擎态直读；表尾追加，旧宿主 = null 判空降级）
+    public delegate* unmanaged<byte*, float, float, uint, float, float, float, byte, void> FxPopupEx; // M7c 批①：飘字动效全参（scale/life/driftX/curve）
+    public delegate* unmanaged<ulong, float, uint, float, byte*, byte*, uint, float, float, void> FxBarEx;   // M7c 批①：贴图血条（bg/fg guid + 延迟条 + 高度 + 锚点修正）
 }
 
 internal static unsafe class Native
@@ -225,6 +227,39 @@ internal static unsafe class Native
     internal static void FxBar(ulong entity, float frac, uint color, float width)
     {
         if (Api.FxBar != null) Api.FxBar(entity, frac, color, width);
+    }
+
+    // ---- M7c 批①（Fx 表现升级；旧宿主未注册时安全降级丢弃）----
+
+    internal static unsafe void FxPopupEx(string text, float x, float y, uint color,
+                                          float scale, float life, float driftX, byte curve)
+    {
+        if (Api.FxPopupEx == null || text == null) return;
+        byte* t = stackalloc byte[16];
+        CopyUtf8(text, t, 15); // 与通道 char[16] 同口径（中文约 5 字截断）
+        Api.FxPopupEx(t, x, y, color, scale, life, driftX, curve);
+    }
+
+    internal static unsafe void FxBarEx(ulong entity, float frac, uint color, float width,
+                                        string? bgGuid, string? fgGuid, uint lagColor,
+                                        float height, float anchorDy)
+    {
+        if (Api.FxBarEx == null) return;
+        byte* bg = stackalloc byte[17];
+        byte* fg = stackalloc byte[17];
+        GuidPtr(bgGuid, bg);
+        GuidPtr(fgGuid, fg);
+        Api.FxBarEx(entity, frac, color, width, bg, fg, lagColor, height, anchorDy);
+    }
+
+    /// guid hex（16 位）→ NUL 结尾窄串；null/空 = 空串（引擎侧 0 = 白精灵路径）
+    private static unsafe void GuidPtr(string? guid, byte* dst)
+    {
+        dst[0] = 0;
+        if (string.IsNullOrEmpty(guid)) return;
+        int n = Math.Min(guid.Length, 16);
+        for (int i = 0; i < n; ++i) dst[i] = (byte)guid[i];
+        dst[n] = 0;
     }
 
     // ---- 调参下放批（分离力参数场景侧覆盖；旧宿主未注册时安全降级丢弃）----

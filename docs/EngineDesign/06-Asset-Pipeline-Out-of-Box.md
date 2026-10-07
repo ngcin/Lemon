@@ -63,7 +63,7 @@ MyGame/                                   # 用户项目（升级永不触碰）
 | sprite | png/jpg | 纹理 + 切片（自动/网格/手动，Prowl `TextureImporter` 思路） | 切片 GUID 稳定匹配（重导入不漂移） |
 | atlas | 目录/手选集 | 图集页 + sprite 重定向表（MaxRects，Prowl2D M0 实现移植思想） | §5 |
 | audio | wav/ogg | PCM16 预解码缓存（`.meta` importer 记循环点/预载；烘焙入 **.baked** 容器 v1，[ADR-015](../ADR/ADR-015-Audio-System-And-Baked-Format.md)；运行时零解码器） | miniaudio（**M6c**，2026-09-30 设计定形；原表 2026-09-24 行改号 M6b 已过时，双行收敛） |
-| font | ttf/otf | 位图字体页(v1)/SDF 图集(v2) | 02 §7 |
+| font | ttf/otf | 位图字体页(v1)/SDF 图集(v2) | 02 §7。**v1 ✅ M7c 批① 落地（2026-10-07）**：`Assets/FontBake` LBF1 `.baked`（位图页+度量表+paramsHash 增量重烘）；.meta importer 段 `charset/size/outline`（词表配置，热改=Rescan modified 重烘）；编辑器后台烤制（音频 worker 同款）+ packager 包形态现烤；消费 = `BitmapFont` 外部页（Fx 飘字，project.lemon `fxFont` 选定；字形产包 UV 覆盖通道零 sprite 登记） |
 | clip2d | json | 帧动画资产（**.anim**，T3d 批④前 .clip） | AnimationEditor 产出 |
 | animset | json | 动画集/每角色绑定（**.override**，批④前 .ani；段名→clip 引用清单） | AnimationEditor 产出 |
 | controller | json | 动画状态机（**.controller**：状态词表/参数/过渡；ADR-013） | 手写 JSON（图编辑器挂起） |
@@ -241,8 +241,17 @@ MyGame/                                   # 用户项目（升级永不触碰）
 > World 级 `FxChannel`（RtUi 同款第三呈现通道，不入 StateHash）——飘字 = 内置
 > 位图字体页（5×7 复用，层 252 文本段合批，寿命 0.8s 上浮淡出）+ 血条 = 白精灵
 > 双四边形（层 251 精灵段，按实体锚定 sticky 自隐）；池化 256/128 最老者淘汰
-> （03 §10）；C# `Lemon.Fx`（vtable 尾加 `fxPopup/fxBar`）。bench-survivor 饱和
+>（03 §10）；C# `Lemon.Fx`（vtable 尾加 `fxPopup/fxBar`）。bench-survivor 饱和
 > 口径（256+128 全量在场）fps=78（判据 ≥45，09 §6.10 台账）。
+>
+> **M7c 批① 表现升级注（2026-10-07）**：FxChannel 三向扩张（尾加零迁移）——
+> ① 飘字动效参数化（scale/寿命覆盖/driftX/Pop 弹跳曲线，过期就地隐形）；② 血条
+> 贴图化（bg/fg sprite + **横向 UV 裁剪**（SpritePacket UV 覆盖通道——实例块
+> 48B 零改动）+ 延迟条 lagFrac 线性收敛 0.35/s + 高度参数）；③ 中文字形
+>（TTF 烘焙页外部字体，project.lemon fxFont；UTF-8 寻址 + 缺字回退内置页）。
+> C# 面 `FxStyle`/`FxBarSkin` + `Fx.Crit/Miss` 糖（vtable 47→49）；表现层不入
+> StateHash 的机械反例单测锁死（TestFxSdk）。验收演示场 = svr-test ani.scene
+> 决斗（三项同屏）。
 
 ## 9. 本地化
 

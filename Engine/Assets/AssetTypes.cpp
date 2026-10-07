@@ -19,6 +19,7 @@ const char* AssetTypeName(AssetType t) {
         case AssetType::Controller: return "controller"; // T3d：.controller 状态机
         case AssetType::Rml: return "rml";   // M6b 批③b：UI 文档（ADR-014 一屏一文档）
         case AssetType::Rcss: return "rcss"; // M6b 批③b：UI 样式表（<link> 引用）
+        case AssetType::Font: return "font"; // M7c 批①：字体源（.ttf/.otf → LBF1 图集）
         case AssetType::Audio:
             return "audio"; // M6c 竖切批。M7a 批④ 勘误：M6c 起本函数漏 Audio 分支
                             //（default → "generic"），.meta/manifest 类型串失真；编辑器
@@ -42,6 +43,8 @@ AssetType TypeOf(const std::string& relPath) {
     if (ext == ".rcss") return AssetType::Rcss;   // M6b 批③b UI 样式表
     if (ext == ".wav" || ext == ".ogg" || ext == ".mp3" || ext == ".flac")
         return AssetType::Audio; // M6c 竖切批：音频源（ADR-015 D1 四格式）
+    if (ext == ".ttf" || ext == ".otf")
+        return AssetType::Font; // M7c 批①：字体源（导入期烘焙位图图集）
     return AssetType::Generic;
 }
 

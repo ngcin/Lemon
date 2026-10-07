@@ -22,6 +22,8 @@
 #include <mutex>
 #include <thread>
 #include "Assets/AssetDatabase.h"
+#include "Assets/FontBake.h" // M7c 批①：字体离线烘焙（后台 worker 消费）
+#include "Assets/ProjectFile.h" // M7c 批①：LoadProjectFile（fxFont 装载）
 #include "Assets/ProjectWizard.h"
 #include "Interaction/ViewportRenderer.h"
 #include "Tooling/ThumbCache.h"
@@ -222,6 +224,7 @@ bool EditorApp::EnterPlayProgrammatic() {
     MountSceneUiDocuments(); // 批③d 前置（通道 A）：场景声明装载 + EnterPlay 归位
     MountPlayAudio();        // M6c 竖切批：烤制/装载音频资产（guid→clip；无资产 no-op）
     WirePlayAudioBackend();  // M6c 批②：命令表提交引擎 + guid 解析
+    LoadFxFontPage();        // M7c 批①：Fx 字体页兜底装载（worker 未烤完时同步补）
     return true;
 }
 
@@ -363,6 +366,96 @@ void EditorApp::StopAudioBaker() {
 
 uint32_t EditorApp::AudioClipOfGuid(uint64_t guid) const {
     return audioMount_.ClipIdOfGuid(guid);
+}
+
+// ---- 字体后台烤制（M7c 批①：音频 worker 同款三件套；BakeStale 头对比抓字符集
+// 热改——入队到执行间可能已被装载侧兜底烤过，执行前复查省一遍 FreeType）----
+
+void EditorApp::EnqueueFontBake(const AssetEntry& e) {
+    if (e.type != AssetType::Font || e.missing) return;
+    const std::string root = ctx_.Assets().ProjectRoot();
+    if (root.empty()) return;
+    std::error_code ec;
+    std::filesystem::create_directories(
+        std::filesystem::path(root) / ".lemon" / "baked" / "fonts", ec);
+    {
+        std::lock_guard<std::mutex> lk(fontBakeMtx_);
+        fontBakeQueue_.push_back(
+            {e.guid, ctx_.Assets().AbsolutePath(e), assets::FontBakedPath(root, e.guid),
+             e.FontBake()});
+    }
+    ++fontBakePending_;
+    if (!fontBakeThread_.joinable()) // 惰性起（音频 worker 同款）
+        fontBakeThread_ = std::thread([this] {
+            for (;;) {
+                FontBakeJob job;
+                {
+                    std::unique_lock<std::mutex> lk(fontBakeMtx_);
+                    fontBakeCv_.wait(lk, [this] { return fontBakeStop_ || !fontBakeQueue_.empty(); });
+                    if (fontBakeQueue_.empty()) break;
+                    job = std::move(fontBakeQueue_.front());
+                    fontBakeQueue_.pop_front();
+                }
+                // 异常隔离（音频 worker #21 同款）：烤制失败红字继续吃队列
+                try {
+                    if (assets::BakeFontStale(job.src.c_str(), job.dst.c_str(),
+                                             job.params.Hash()))
+                        if (!assets::BakeFontFile(job.src.c_str(), job.dst.c_str(),
+                                                  job.params))
+                            LEMON_ERROR("font: 后台烤制失败（见上方红字）：%s",
+                                        job.src.c_str());
+                } catch (const std::exception& ex) {
+                    LEMON_ERROR("font: 后台烤制异常中止（%s）：%s", ex.what(),
+                                job.src.c_str());
+                } catch (...) {
+                    LEMON_ERROR("font: 后台烤制未知异常：%s", job.src.c_str());
+                }
+                --fontBakePending_;
+            }
+        });
+    fontBakeCv_.notify_one();
+}
+
+void EditorApp::WarmFontBakes() {
+    for (const AssetEntry& e : ctx_.Assets().Entries())
+        if (e.type == AssetType::Font && !e.missing) EnqueueFontBake(e);
+}
+
+void EditorApp::StopFontBaker() {
+    {
+        std::lock_guard<std::mutex> lk(fontBakeMtx_);
+        fontBakeStop_ = true;
+    }
+    fontBakeCv_.notify_all();
+    if (fontBakeThread_.joinable()) fontBakeThread_.join();
+}
+
+void EditorApp::LoadFxFontPage() {
+    if (!viewport_ || !device_) return;
+    const std::string root = ctx_.Assets().ProjectRoot();
+    if (root.empty()) return;
+    const assets::ProjectFile pf = assets::LoadProjectFile(root);
+    if (!pf.ok || pf.fxFont == 0) return; // 未配置 = 内置页（零噪声）
+    const AssetEntry* e = ctx_.Assets().FindByGuid(pf.fxFont);
+    if (!e || e->type != AssetType::Font || e->missing) {
+        LEMON_WARN("fxFont 指向的字体资产不存在（guid %016llx）——飘字用内置 5×7 页",
+                   (unsigned long long)pf.fxFont);
+        return;
+    }
+    const std::string src = ctx_.Assets().AbsolutePath(*e);
+    const std::string dst = assets::FontBakedPath(root, pf.fxFont);
+    const assets::FontBakeParams params = e->FontBake();
+    if (assets::BakeFontStale(src.c_str(), dst.c_str(), params.Hash())) {
+        // worker 在烤（WarmFontBakes 刚入队/Rescan 增量）→ 同步兜底让路：双烤
+        // 同一 dst 的 rename 竞争会假红字（首次实跑抓的）；烤成后由下次触发点
+        // （Rescan/EnterPlay）装载
+        if (fontBakePending_.load() > 0) return;
+        if (!assets::BakeFontFile(src.c_str(), dst.c_str(), params))
+            return; // 红字已打；内置页降级（后台 worker 烤好后下次触发点重试）
+    }
+    auto& font = viewport_->Assets().Font();
+    font.LoadBaked(*device_, viewport_->Assets().Registry(),
+                   renderer::BitmapFont::kDefaultBakedSlot, dst.c_str());
 }
 
 uint32_t EditorApp::AudioPlayByGuid(uint64_t guid, int32_t group, float volume, float pan,

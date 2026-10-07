@@ -135,6 +135,15 @@ struct NativeApiVtable {
     uint8_t (*audioPausedGet)(void);               // review 2026-10-02 #71：Paused get/set 对称
                                                    //（引擎态直读，MasterVolGet 同款口径；表尾追加
                                                    // 零重录——基准场零调用零漂移）
+    // ---- M7c 批①（Fx 表现升级：飘字动效 FxStyle / 贴图血条+延迟条 FxBarSkin；
+    // 表尾追加同上约定。参数全默认 = M6a 现状行为——基准场零漂移；表现层通道
+    // 不入 StateHash（M6a 批① 口径，FxChannel 头注记）----
+    void (*fxPopupEx)(const char* text, float x, float y, uint32_t color, float scale,
+                      float life, float driftX, uint8_t curve); // curve = FxCurve 枚举
+    void (*fxBarEx)(uint64_t entity, float frac, uint32_t color, float width,
+                    const char* bgGuidHex, const char* fgGuidHex, uint32_t lagColor,
+                    float height, float anchorDy); // bg/fg guid hex → spriteId（解析失败 0 =
+                                                   // 白精灵路径）；anchorDy = 头顶锚定修正
 };
 
 /// 编辑器资产钩子（M4.4：编辑器宿主装配期经 SetEditorAssetHooks 注入；

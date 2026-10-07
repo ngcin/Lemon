@@ -505,6 +505,27 @@ int main(int argc, char** argv) {
         textures.LoadAll();
     }
 
+    // ---- M7c 批①：Fx 飘字字体页（project.lemon fxFont → 烘焙页；编辑器/
+    // packager 烤好 .baked 在场才装载——运行时零 FreeType 零栅格化红线，缺档 =
+    // 内置 5×7 页降级红字）----
+    if (pf.fxFont != 0) {
+        if (const assets::IndexedEntry* fe = index.FindByGuid(pf.fxFont)) {
+            const std::string dst = assets::FontBakedPath(root, pf.fxFont);
+            std::error_code fontEc;
+            if (fs::is_regular_file(dst, fontEc))
+                font.LoadBaked(*device, atlas, renderer::BitmapFont::kDefaultBakedSlot,
+                               dst.c_str());
+            else
+                LEMON_WARN("lemon-game：fxFont 烘焙产物缺失（编辑器打开项目后台烤制"
+                           "后重试）：%s——飘字用内置 5×7 页",
+                           dst.c_str());
+        } else {
+            LEMON_WARN("lemon-game：fxFont 指向的字体资产不存在（guid %016llx）——"
+                       "飘字用内置 5×7 页",
+                       (unsigned long long)pf.fxFont);
+        }
+    }
+
     // ---- 音频（静音降级一等公民：无设备 = 红字 Warn 不阻断）----
     audio::AudioEngine audio;
     audio.Init();
@@ -842,8 +863,8 @@ int main(int argc, char** argv) {
                                          std::chrono::duration<float>(now - lastFxTime).count(),
                                          0.0f, 0.1f);
             lastFxTime = now;
-            renderer::AppendGameFx(world.Fx(), scene, view, whiteSprite, font, fxDt,
-                                   fxBarPackets, textPackets);
+            renderer::AppendGameFx(world.Fx(), scene, view, whiteSprite, font, atlas,
+                                   fxDt, fxBarPackets, textPackets);
         }
         batcher.Bake(atlas, packets, {}, textPackets,
                      std::span<const SpritePacket>(fxBarPackets));

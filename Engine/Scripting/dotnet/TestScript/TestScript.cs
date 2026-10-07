@@ -58,6 +58,10 @@ public static class GameMain
         // script-tests TestAudioSdk 消费：staging 返回值/Stop 真值序/主音量往返/
         // 坏 guid 降级；引擎侧对拍 bgm 槽与活跃声部计数）
         Lemon.Behaviours.Register<AudioProbeBehaviour>();
+        // M7c 批①：Lemon.Fx 表现升级全 API 面（typeId 19，表尾注册同上约定——
+        // script-tests TestFxSdk 消费：新参数全开调用后 ComputeStateHash 跨帧
+        // 逐位不变——"表现层永不入回放"的机械反例；引擎侧对拍 Fx 通道计数）
+        Lemon.Behaviours.Register<FxProbeBehaviour>();
         // 批③c 静态订阅（Configure 期一次，跨局存活）：UI 事件计数经 RtUi 回读
         // （编辑器 --smoke-uirml --script 断言链）；DocumentReloaded → Refill
         // （M2 契约：热重载后 C# 重灌——不灌则屏幕空回夹具初值）
@@ -737,6 +741,41 @@ public sealed class AudioProbeBehaviour : Lemon.LemonBehaviour
             Mark((ushort)(1552 + (pget ? 1 : 0)));
             Lemon.Audio.Paused = false; // 复位（引擎侧对拍旗清 + 挂起声部可解）
             Lemon.Audio.StopAll();
+            gameObject.Destroy();
+        }
+    }
+}
+
+/// <summary>M7c 批①（typeId 19）：Lemon.Fx 表现升级全 API 面（script-tests
+/// TestFxSdk 装配——FxStyle 动效（scale/life/drift/Pop 曲线）、贴图血条
+/// FxBarSkin（假 guid 走白精灵降级不炸）、Crit/Miss 糖。帧1 = 新参数全开
+/// 全家桶；帧2 = 自毁。事件号段 1700..1719（Audio 1500 / Tween 1600 互不重叠）。
+/// C++ 侧断言 ComputeStateHash 跨帧不变——"Fx 表现层永不入回放"机械反例
+///（M6a 批① 通道语义在升级面扩张后仍锁死）。</summary>
+public sealed class FxProbeBehaviour : Lemon.LemonBehaviour
+{
+    private void Mark(ushort id)
+        => Lemon.Events.Push(Lemon.Interop.GameEvent.Custom, id, default, default);
+
+    protected override void Update()
+    {
+        var fc = Lemon.Time.FrameCount;
+        if (fc == 1) {
+            // 动效全参：Pop 曲线 + 缩放 + 寿命覆盖 + 漂移
+            Lemon.Fx.Text("2333", new Lemon.Vec2(0f, 40f), 0xFF5060F0u,
+                          new Lemon.FxStyle(1.2f, 1.0f, 20f, Lemon.FxCurve.Pop));
+            Lemon.Fx.Crit("暴击 233", new Lemon.Vec2(0f, 60f));   // 中文 + Pop 糖
+            Lemon.Fx.Miss(new Lemon.Vec2(0f, 20f));                // 闪避糖
+            // 旧签名并存（向后兼容面；同实体先写——skin 版后写为最终态，通道
+            // 键控覆写语义顺带被锁）
+            Lemon.Fx.Text("legacy", new Lemon.Vec2(0f, 80f));
+            Lemon.Fx.Bar(gameObject, 0.5f, 0xFF30B0F0u, 32f);
+            // 贴图血条：假 guid → 桥内解析 0 = 白精灵路径（降级不炸）；延迟条 + 高度
+            Lemon.Fx.Bar(gameObject, 0.6f, 0xFF30B0F0u, 40f,
+                         new Lemon.FxBarSkin("0000000000000099", "0000000000000099",
+                                             0xFFE0F0F0u, 6f));
+            Mark(1701);
+        } else if (fc == 2) {
             gameObject.Destroy();
         }
     }

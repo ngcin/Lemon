@@ -46,5 +46,8 @@ static_assert(sizeof(SpritePushConstants) == 48);
 // 实例 flags 位
 constexpr uint32_t kInstFlipX = 1u << 0;
 constexpr uint32_t kInstFlipY = 1u << 1;
+// Packet 侧位（M7c 批① S2）：bit2 = 产包自带 UV 覆盖（Bake 消费，不进实例——
+// sprite.vert 的 flags 位面不变）
+constexpr uint32_t kPktUvOverride = 1u << 2;
 
 } // namespace lemon::renderer

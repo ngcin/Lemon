@@ -293,6 +293,16 @@ void ProceduralAtlas::ReleaseGpu(rhi::Device& device) {
     uint32_t w = 0, h = 0;
     if (rhi::Texture f = atlas_.AtlasTexture(font_.AtlasSlot(), w, h); f.IsValid())
         device.DestroyTexture(f);
+    // M7c 批①：烘焙字体页同款取回释放。HasBaked() 守卫必须——BakedSlot() 无
+    // 外部页时是 0（= 程序化调色板槽，本函数上两行已释放），无守卫会把调色板
+    // 页二次注销（UnregisterAtlas 撞活 sprite 断言，首次实跑抓的）
+    if (font_.HasBaked()) {
+        if (rhi::Texture f = atlas_.AtlasTexture(font_.BakedSlot(), w, h); f.IsValid()) {
+            device.DestroyTexture(f);
+            atlas_.UnregisterAtlas(font_.BakedSlot());
+        }
+        font_.ClearBaked(); // path 留档同清（防换项目 Build 时旧页复活一帧）
+    }
     if (page_.IsValid()) device.DestroyTexture(page_);
     if (iconPage_.IsValid()) device.DestroyTexture(iconPage_);
     page_ = iconPage_ = {};
@@ -339,6 +349,10 @@ void ProceduralAtlas::Build(rhi::Device& device) {
     point_ = device.CreateSampler({.min = rhi::FilterMode::Point, .mag = rhi::FilterMode::Point});
     device.BindSamplerToSlot(linear_, 0);
     device.BindSamplerToSlot(point_, 1);
+    // M7c 批①：外部烘焙字体页重建（设备丢失路径 Registry().Reset 清页后接续；
+    // 首次 Build 无外部页 = no-op；换项目路径旧页随 Reset 蒸发、path 留档被
+    // EditorApp::LoadFxFontPage 重装载覆盖）
+    font_.RebuildBaked(device, atlas_);
 }
 
 void ProceduralAtlas::IconUV(IconKind k, float& u0, float& v0, float& u1, float& v1) const {
@@ -514,8 +528,8 @@ void ViewportRenderer::RenderViewport(rhi::CommandList& cl, uint32_t idx, Sprite
                                      0.0f, 0.1f);
         lastFxTime_ = now;
         renderer::AppendGameFx(ctx.ActiveWorld().Fx(), ctx.ActiveScene(), view,
-                               assets_.WhiteSprite(), assets_.Font(), fxDt, fxBarPackets,
-                               textPackets);
+                               assets_.WhiteSprite(), assets_.Font(), assets_.Registry(),
+                               fxDt, fxBarPackets, textPackets);
     } else if (!withOverlay) {
         lastFxTime_ = {}; // 出 Play 复位（重进 Play 首帧 dt=0）
     }

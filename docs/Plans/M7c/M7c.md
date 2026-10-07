@@ -1,6 +1,6 @@
 # M7c 实施计划 —— 引擎与编辑器功能段（2026-10-07 规划：M7b 发行侧后移，引擎优先）
 
-Status: in-progress（**批⓪ ✅ 2026-10-07**——四件全落、回归 full 20/20，[DevLog](../../DevLog/2026-10-07-m7c-b0-engineering-hygiene.md)；批① 已分解待开工；批② 起随 svr-test 需求滚动登记）
+Status: in-progress（**批⓪ ✅ 2026-10-07**——四件全落、回归 full 20/20，[DevLog](../../DevLog/2026-10-07-m7c-b0-engineering-hygiene.md)；**批① ✅ 2026-10-07 机器面**——Fx 表现升级五子项全落（TTF 烘焙器/贴图血条+延迟条/飘字动效/SDK vtable 49/svr-test 实装），单测 34,402、ctest 4/4，[批文件](./2026-10-07-b1-fx-presentation-upgrade.md)、[DevLog](../../DevLog/2026-10-07-m7c-b1-fx-presentation-upgrade.md)，真人走查待用户；批② 起随 svr-test 需求滚动登记）
 
 > 总览页惯例（M6b/M6c/M7a 同款）：每批一个文件（落 `Plans/M7c/`），开工前分解到文件/行级，完工后批文件内勾销；事件流水与实测数字记 [DevLog](../../DevLog/)。本页只做拆解与验收映射，设计定形物（如需）另落 ADR。
 >
@@ -32,7 +32,7 @@ Status: in-progress（**批⓪ ✅ 2026-10-07**——四件全落、回归 full 
 | 批 | 文件 | 主题 | 预估 | 出口判据 |
 |---|---|---|---|---|
 | ⓪ ✅ | [2026-10-07-b0-engineering-hygiene.md](./2026-10-07-b0-engineering-hygiene.md) | 工程卫生四件：AGENTS.md 瘦身（50KB 巨段 → 指针化）/ 测试拆文件（139 函数按域拆 TU）/ ccache+sccache 接入六 preset / .clang-format 最小集 | 0.5–1 天（实际 1 日） | AGENTS.md <150 行且待用户清单保留；checks 34,346 不变；回归 full 20/20；干净重建时间对比数字入 DevLog |
-| ① | [2026-10-07-b1-fx-presentation-upgrade.md](./2026-10-07-b1-fx-presentation-upgrade.md) | Fx 表现升级：TTF→位图图集离线烘焙器（中文字形/描边）+ 贴图血条+延迟条（UV 裁剪）+ 飘字动效参数化（scale/life/漂移/曲线）+ `Lemon.Fx` 重载 | 3.5–5 天 | svr-test 暴击中文弹跳黄字/贴图血条/延迟条真人走查过；hash 反例单测；bench-survivor 门禁不降 |
+| ① ✅ | [2026-10-07-b1-fx-presentation-upgrade.md](./2026-10-07-b1-fx-presentation-upgrade.md) | Fx 表现升级：TTF→位图图集离线烘焙器（中文字形/描边）+ 贴图血条+延迟条（UV 裁剪）+ 飘字动效参数化（scale/life/漂移/曲线）+ `Lemon.Fx` 重载 | 3.5–5 天（实际 1 日） | svr-test 暴击中文弹跳黄字/贴图血条/延迟条真人走查过；hash 反例单测；bench-survivor 门禁不降 |
 | ②+ | （滚动登记，开工落文件） | 候选池：动画 auto-slice（T3-UX2 遗留）/ per-资产音频参数（M6c 登记项）/ LoadScene 档2 / 手柄输入（随 Steam 目标确认，与 M7b 联动）/ 飘字池提额（若一局满屏跳字触顶） | — | 每批开工前本表登记一行 + 批文件落位 |
 
 ## 3. 段内排序与全局位次

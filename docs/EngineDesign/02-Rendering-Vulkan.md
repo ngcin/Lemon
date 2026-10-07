@@ -177,6 +177,7 @@ struct ParticleGPUData {                   // GPU 平行数组 = 4×vec4，上�
 ## 7. 文本渲染（两阶段）
 
 - **v1（M1）**：位图字体。引擎内置生成器（离线把 TTF → 等距/距离图集 + Kerning 表）；HUD 数字（伤害飘字/计数）走**位图数字页 + UV 换页**（yami 性能四件套之二：高频数字绝不动态栅格化）；低频富文本（对话/日志）走 ImGui 文本路径（编辑器/菜单足够，字体加载与 IME 白送）。
+  - **2026-10-07 批① 落地注（M7c）**：TTF→图集离线烘焙器正式落地——`Assets/FontBake`（FreeType 光栅 + 描边 + shelf 装箱 → LBF1 `.baked`：位图页 + 度量表，paramsHash 头增量重烘）；字体资产 `.ttf/.otf` 进管线（.meta charset/size/outline 词表配置），编辑器后台烤制（ADR-015 音频 worker 同款）+ packager 包形态现烤；`BitmapFont` 外部页与内置 5×7 并存（**字形产包走 SpritePacket UV 覆盖通道——sprite 表零登记，资产号段结构性无冲突**），缺字形回退内置页 + 红字一次；UTF-8 寻址（中文飘字「暴击」可显）。运行时零 FreeType 零栅格化（红线不破，RmlUi 运行时字体链并存各管各的）。Fx 飘字选字体 = project.lemon `fxFont`（缺省内置页）。
 - **v2（M8 后按需）**：SDF 文本（msdf-atlas-gen 离线生成 + 运行时 outline/shadow 着色器变体），服务游戏内富文本（ARPG 对话）。**决策点**：若 v1 + ImGui 已覆盖品类需求，v2 可无限期推迟。
 
 ## 8. 2D 光照与阴影（M8，非阻塞增强）

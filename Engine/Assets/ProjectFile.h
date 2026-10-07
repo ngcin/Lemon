@@ -16,6 +16,7 @@ struct ProjectFile {
     uint64_t guid = 0;
     std::string engineVersion;  // 不匹配 = 警告不阻断（ADR-016 M2）
     std::string entryScene;     // 可选（D6）：相对项目根路径；缺省 ""
+    uint64_t fxFont = 0;        // 可选（M7c 批①）：Fx 飘字字体资产 guid（0 = 内置 5×7 页）
 };
 
 /// project.lemon 文本 → ProjectFile（纯函数，单测直测；坏档 ok=false 不炸）

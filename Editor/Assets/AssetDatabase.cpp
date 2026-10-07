@@ -155,6 +155,36 @@ static void ParseAudioImporter(const Json& doc, AssetEntry& e) {
         e.audioPreload = pre->get<bool>();
 }
 
+// 字体 importer 段（M7c 批①）：`"charset":"词表…" + "size":24 + "outline":[1,"ff202020"]`。
+// 音频同款口径：每次重扫重读，热改 meta 即生效（BakeStale 头对比抓变更触发重烘）
+static void ParseFontImporter(const Json& doc, AssetEntry& e) {
+    e.fontCharset.clear();
+    e.fontPx = 24;
+    e.fontOutlinePx = 0;
+    e.fontOutlineColor = 0xFF202020u;
+    auto it = doc.find("importer");
+    if (it == doc.end() || !it->is_object()) return;
+    const Json& imp = *it;
+    if (auto cs = imp.find("charset"); cs != imp.end() && cs->is_string())
+        e.fontCharset = cs->get<std::string>();
+    if (auto sz = imp.find("size"); sz != imp.end() && sz->is_number_unsigned()) {
+        const uint64_t v = sz->get<uint64_t>();
+        if (v >= 8 && v <= 128) e.fontPx = (uint16_t)v; // 防荒谬声明
+    }
+    if (auto ol = imp.find("outline"); ol != imp.end() && ol->is_array() && ol->size() == 2) {
+        const Json& px = (*ol)[0];
+        const Json& col = (*ol)[1];
+        if (px.is_number_unsigned()) {
+            const uint64_t v = px.get<uint64_t>();
+            if (v <= 8) e.fontOutlinePx = (uint8_t)v; // 描边 >8px 无视觉意义还炸页
+        }
+        if (col.is_string()) {
+            const uint64_t c = std::stoull(col.get<std::string>(), nullptr, 16);
+            e.fontOutlineColor = (uint32_t)c;
+        }
+    }
+}
+
 static void ParseGridImporter(const Json& doc, AssetEntry& e) {
     e.cellW = e.cellH = e.gridCols = e.gridRows = 0;
     auto it = doc.find("importer");
@@ -244,6 +274,7 @@ void AssetDatabase::SyncMeta(AssetEntry& e) const {
         if (!doc.is_discarded()) {
             ParseGridImporter(doc, e); // 每次重扫重读（热改 meta 即生效）
             if (e.type == AssetType::Audio) ParseAudioImporter(doc, e);
+            if (e.type == AssetType::Font) ParseFontImporter(doc, e);
         }
     }
     if (e.guid == 0) e.guid = GenerateUniqueGuid(e.type);
@@ -258,6 +289,13 @@ void AssetDatabase::SyncMeta(AssetEntry& e) const {
         Json imp;
         imp["loop"] = {0.0, 0.0};
         imp["preload"] = false;
+        doc["importer"] = imp;
+    }
+    if (e.type == AssetType::Font) { // M7c 批①：字体默认 importer 段（ASCII 95 无描边）
+        Json imp;
+        imp["charset"] = "";
+        imp["size"] = 24;
+        imp["outline"] = {0, "ff202020"};
         doc["importer"] = imp;
     }
     // #33：新建 .meta 走原子替换（同文件 SetGridSlice 的既定纪律）——裸 ofstream
@@ -625,6 +663,13 @@ void AssetDatabase::Rescan() {
                 // review 2026-10-02 #8：音频 .meta importer 段热改也算 modified——
                 // loop 冻结在 .baked 头里，源 hash 不变时此前不触发重烤，热改
                 // 永不生效（与 06 §2.1「热改 meta 即生效（下次烤制消费）」对齐）
+                lastChange_.modified.push_back(e.guid);
+            } else if (e.type == AssetType::Font &&
+                       (prev.fontPx != e.fontPx || prev.fontOutlinePx != e.fontOutlinePx ||
+                        prev.fontOutlineColor != e.fontOutlineColor ||
+                        prev.fontCharset != e.fontCharset)) {
+                // M7c 批①：字体 importer 段热改同款（字符集/字号/描边全在
+                // paramsHash 头里，源不变时不触发重烘 = 热改永不生效）
                 lastChange_.modified.push_back(e.guid);
             }
         } else {

@@ -39,6 +39,8 @@
 #include "ECS/Hierarchy.h"
 #include "Renderer/Atlas.h"
 #include "Renderer/BitmapFont.h"
+#include "Renderer/SpriteTypes.h" // kPktUvOverride（M7c 批① 寻址断言）
+#include "Assets/FontBake.h" // M7c 批①：烘焙 golden 单测本体
 #include "Renderer/Camera2D.h"
 #include "Renderer/Particles.h"
 #include "Renderer/Quality.h"
@@ -457,6 +459,173 @@ void TestBitmapFontLayout() {
     ExpectNear(font.TextWidth("", 1.0f), 0.0f, 1e-4f, "empty text");
 }
 
+// ---- M7c 批①：TTF→位图图集烘焙 golden + LBF1 产物结构（S1 验收件 1/4）----
+void TestFontBakeGolden() {
+    namespace fs = std::filesystem;
+    using namespace lemon::assets;
+    const fs::path src = fs::path(LEMON_ENGINE_FONT_DIR) / "NotoSansSC-Regular.otf";
+    if (!fs::exists(src)) { // 引擎字体源缺席 = 环境异常（该文件随仓走）
+        Expect(false, "engine font source present");
+        return;
+    }
+    const fs::path dir = fs::temp_directory_path() /
+                         ("lemon-font-bake-" + std::to_string(lemon::CurrentProcessId()));
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    const std::string a = (dir / "a.baked").string();
+    const std::string b = (dir / "b.baked").string();
+
+    FontBakeParams p;
+    p.fontSizePx = 24;
+    p.charset = "0123456789暴击闪避格挡MISS";
+    p.outlinePx = 1;
+    p.outlineColor = 0xFF101010u;
+    Expect(BakeFontFile(src.c_str(), a.c_str(), p), "bake #1 ok");
+    Expect(BakeFontFile(src.c_str(), b.c_str(), p), "bake #2 ok");
+    // golden：同 TTF 同参数两次烘焙字节一致（装箱序稳定 + FreeType 光栅确定）
+    {
+        std::vector<uint8_t> va, vb;
+        std::ifstream fa(a, std::ios::binary), fb(b, std::ios::binary);
+        va.assign(std::istreambuf_iterator<char>(fa), std::istreambuf_iterator<char>());
+        vb.assign(std::istreambuf_iterator<char>(fb), std::istreambuf_iterator<char>());
+        Expect(va.size() == vb.size() && !va.empty() &&
+                   std::equal(va.begin(), va.end(), vb.begin()),
+               "two bakes byte-identical");
+    }
+    // 产物结构：参数 hash 头往返 / 表升序 / 字符集全覆盖（含中文）/ 行框 sane
+    BakedFontInfo info;
+    std::vector<FontGlyph> glyphs;
+    std::vector<uint8_t> rgba;
+    Expect(LoadBakedFont(a.c_str(), info, glyphs, rgba), "load baked");
+    Expect(info.paramsHash == p.Hash(), "params hash round-trip");
+    // 字符集去重：10 数字 + 暴击闪避格挡 6 汉字 + MISS 的 M/I/S 3 字母 = 19
+    Expect(info.glyphCount == glyphs.size() && glyphs.size() == 19, "glyph count");
+    bool asc = true, covered = true;
+    std::vector<uint32_t> cps;
+    DecodeUtf8(p.charset, cps);
+    for (size_t i = 1; i < glyphs.size(); ++i)
+        if (glyphs[i].codepoint <= glyphs[i - 1].codepoint) asc = false;
+    for (uint32_t cp : cps) {
+        bool hit = false;
+        for (const FontGlyph& g : glyphs)
+            if (g.codepoint == cp) { hit = true; break; }
+        if (!hit) covered = false;
+    }
+    Expect(asc, "glyph table ascending");
+    Expect(covered, "charset fully covered (CJK included)");
+    Expect(info.ascender > 0 && info.descender <= 0 &&
+               (float)(info.ascender - info.descender) >= p.fontSizePx * 0.8f,
+           "sane line box");
+    Expect(rgba.size() == (size_t)info.pageW * info.pageH * 4, "pixel payload size");
+    // 像素落位回归（2026-10-07 走查轮④：序列化像素基址误用表游标 → 第 k 个
+    // 字形位图整体左移 (N-1-k)*5px、后写覆盖先写——「暴击」采样成邻槽「格挡」；
+    // golden 字节一致只锁自一致测不出）。两条不变量：
+    //   ① 页墨水守恒：页内非零像素总数 == 各字形声明格内墨水之和（错位必然
+    //      把墨水写进格间 1px 间隙/邻格 → 严格不等）
+    //   ② 逐格非空：每个 w/h > 0 的字形其声明格内至少 1 墨水像素
+    {
+        auto inkAt = [&](uint32_t x, uint32_t y) {
+            return rgba[((size_t)y * info.pageW + x) * 4 + 3] != 0;
+        };
+        size_t pageInk = 0;
+        for (size_t i = 0; i < rgba.size(); i += 4) pageInk += rgba[i + 3] != 0;
+        size_t cellInk = 0;
+        bool allCellsNonEmpty = true;
+        for (const FontGlyph& g : glyphs) {
+            if (!g.width || !g.height) continue; // 空格类只记 advance
+            size_t inCell = 0;
+            for (uint32_t y = 0; y < g.height; ++y)
+                for (uint32_t x = 0; x < g.width; ++x)
+                    inCell += inkAt(g.pageX + x, g.pageY + y);
+            if (!inCell) allCellsNonEmpty = false;
+            cellInk += inCell;
+        }
+        Expect(pageInk == cellInk, "page ink conservation (no glyph pixel displacement)");
+        Expect(allCellsNonEmpty, "every declared cell holds its own ink");
+    }
+    // 增量重烘判定（S1 验收）：同参数 = 不陈旧；参数变（字符集增减/字号/描边）=
+    // 陈旧；产物删 = 陈旧
+    Expect(!BakeFontStale(src.c_str(), a.c_str(), p.Hash()), "same params not stale");
+    FontBakeParams p2 = p;
+    p2.charset += "+/%";
+    Expect(BakeFontStale(src.c_str(), a.c_str(), p2.Hash()),
+           "charset change detected stale");
+    p2 = p;
+    p2.fontSizePx = 32;
+    Expect(BakeFontStale(src.c_str(), a.c_str(), p2.Hash()), "size change stale");
+    p2 = p;
+    p2.outlinePx = 2;
+    Expect(BakeFontStale(src.c_str(), a.c_str(), p2.Hash()), "outline change stale");
+    fs::remove(b, ec);
+    Expect(BakeFontStale(src.c_str(), b.c_str(), p.Hash()), "missing product stale");
+    fs::remove_all(dir, ec);
+}
+
+// ---- M7c 批①：外部烘焙页寻址与缺字形回退（S1 验收件 4/4——两页并存语义）----
+void TestBitmapFontBakedAddressing() {
+    namespace fs = std::filesystem;
+    using namespace lemon::assets;
+    using lemon::renderer::BitmapFont;
+    using lemon::renderer::SpritePacket;
+    const fs::path src = fs::path(LEMON_ENGINE_FONT_DIR) / "NotoSansSC-Regular.otf";
+    if (!fs::exists(src)) {
+        Expect(false, "engine font source present (addressing)");
+        return;
+    }
+    const fs::path dir = fs::temp_directory_path() /
+                         ("lemon-font-addr-" + std::to_string(lemon::CurrentProcessId()));
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    const std::string baked = (dir / "f.baked").string();
+    FontBakeParams p;
+    p.fontSizePx = 24;
+    p.charset = "0123456789"; // 只含数字——字母 = 缺字形回退路径
+    Expect(BakeFontFile(src.c_str(), baked.c_str(), p), "bake digits-only");
+
+    BitmapFont font;
+    // 无外部页：DrawTextEx 整体走内置 ASCII（现网行为）——产包即内置语义
+    {
+        std::vector<SpritePacket> out;
+        font.DrawTextEx(out, "12", Vec2{0, 0}, 1.0f, 0xFFFFFFFFu, 252);
+        Expect(out.size() == 2, "no baked page -> builtin path quads");
+    }
+    Expect(font.LoadBakedMetricsForTest(baked.c_str()), "load metrics");
+    Expect(font.HasBaked(), "has baked");
+    // 外部页命中：UV 覆盖通道产包（批键挂烘焙槽、flags 覆盖位、UV 单调区间）
+    {
+        std::vector<SpritePacket> out;
+        font.DrawTextEx(out, "10", Vec2{0, 0}, 1.0f, 0xFFFFFFFFu, 252);
+        Expect(out.size() == 2, "digits on baked page");
+        for (const SpritePacket& q : out) {
+            Expect(q.key.textureAtlas == BitmapFont::kDefaultBakedSlot, "batch key on baked slot");
+            Expect(q.flags & lemon::renderer::kPktUvOverride, "uv override flag");
+            Expect(q.uv0u >= 0.0f && q.uv1u > q.uv0u && q.uv1u <= 1.0f, "u range sane");
+            Expect(q.uv0v >= 0.0f && q.uv1v > q.uv0v && q.uv1v <= 1.0f, "v range sane");
+            Expect(q.scaleX > 0.0f && q.scaleY > 0.0f, "glyph quad size");
+        }
+        // 步进 = advance（'1' 的 advance > 0 → 笔位右移）
+        Expect(out[1].posX > out[0].posX, "pen advances right");
+    }
+    // 缺字形回退：字母不在字符集 → 内置 5×7 页（批键回内置槽、无覆盖位）
+    {
+        std::vector<SpritePacket> out;
+        font.DrawTextEx(out, "A5", Vec2{0, 0}, 1.0f, 0xFFFFFFFFu, 252);
+        Expect(out.size() == 2, "fallback + hit mix");
+        Expect(out[0].key.textureAtlas != BitmapFont::kDefaultBakedSlot,
+               "missing glyph falls back to builtin page");
+        Expect(!(out[0].flags & lemon::renderer::kPktUvOverride), "fallback no uv override");
+        Expect(out[1].key.textureAtlas == BitmapFont::kDefaultBakedSlot,
+               "next digit still on baked page");
+    }
+    // 测宽（外部页 advance 累计 / 回退按内置 cell）
+    {
+        const float w = font.TextWidthEx("10A", 1.0f);
+        Expect(w > 0.0f, "TextWidthEx positive");
+        ExpectNear(font.TextWidthEx("A", 1.0f), 6.0f, 1e-4f, "fallback width = builtin cell");
+    }
+    fs::remove_all(dir, ec);
+}
+
 // 相机跟随：优先级 Camera > Player > 脚本实体；首帧吸附 + 刚性跟随 + 目标死亡
 // 重扫 + Reset 复位（无 GPU 纯逻辑）
 
@@ -585,6 +754,8 @@ void RunRendererTests() {
     TestCamera2D();
     TestQuality();
     TestBitmapFontLayout();
+    TestFontBakeGolden();        // M7c 批① S1：烘焙 golden + 增量重烘判定
+    TestBitmapFontBakedAddressing(); // M7c 批① S1：外部页寻址 + 缺字形回退
 #ifdef LEMON_EDITOR_CORE
     TestCameraFollowCore();
 #endif

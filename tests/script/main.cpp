@@ -334,7 +334,7 @@ void TestDomainManager() {
         auto listFn = (int (*)(char*, int))GetExport("lemon_behaviours_list");
         char buf[4096];
         int n = listFn ? listFn(buf, (int)sizeof buf) : -1;
-        Expect(n == 19, "behaviours list after hot reload (+M11/M15/F-08.2/T3/b1/b2/T3c/T3d/A档tween/T5存档档/b3c UI/M6c b2 audio probes)");
+        Expect(n == 20, "behaviours list after hot reload (+M11/M15/F-08.2/T3/b1/b2/T3c/T3d/A档tween/T5存档档/b3c UI/M6c b2 audio/M7c b1 fx probes)");
         // M4.6 回归（用户实测闪退根因）：相对路径进 dm_reload 曾抛 ArgumentException
         // 逃逸 UnmanagedCallersOnly → coreclr abort。拦截层必须转 0 返回且进程存活
         // （本断言能跑到 = 进程没死）。换装失败后旧域已弃——再换一次真路径恢复。
@@ -648,6 +648,57 @@ void TestAudioSdk() {
     Expect(eng.ActiveVoiceCount() == 0, "stopall cleared engine voices");
     w.Step(0.25f); // 销毁提交 + 派发
     Expect(ComputeStateHash(s) == h0, "scene back to empty after destroy");
+}
+
+// M7c 批①：Lemon.Fx 表现升级全 API 面（FxProbeBehaviour typeId 19 装配——动效
+// FxStyle / 贴图血条 FxBarSkin（假 guid 白精灵降级）/ Crit/Miss 糖 / 旧签名并存）。
+// 断言：Fx 通道被写入（引擎侧对拍 TextCount/BarCount——升级面真实到达通道）+
+// **ComputeStateHash 跨帧逐位不变**（新参数全开调用零哈希面——表现层永不入回放
+// 在 S2/S3/S4 扩张后仍锁死；TestAudioSdk 同款机械反例）。
+void TestFxSdk() {
+    using namespace lemon::ecs;
+    auto opsSubmit = (void (*)(unsigned char, unsigned char, uint64_t))GetExport("lemon_ops_submit");
+    auto timeResetFn = (void (*)())GetExport("lemon_time_reset");
+    Expect(opsSubmit && timeResetFn, "ops/time exports resolved (fx)");
+    timeResetFn(); // FxProbe 按 FrameCount 分段
+
+    WorldDesc d;
+    d.threadCount = 1;
+    World w(d);
+    Scene& s = w.CreateScene("FxT");
+    w.SetActiveScene(&s);
+    w.SetScriptBackend(&g_sh);
+    w.Pipeline().AddSystem(std::make_unique<DestroyCommitSystem>());
+    w.Pipeline().AddSystem(std::make_unique<CSharpBatchSystem>());
+    w.Pipeline().AddSystem(std::make_unique<ScriptEventDispatchSystem>());
+    w.Pipeline().ResolveOrder();
+
+    const uint64_t h0 = ComputeStateHash(s);
+    int mark = 0;
+    w.SetEventSink([&](World&, const EventPacket& p) {
+        if (p.type == GameEvent::Custom && p.user >= 1700 && p.user < 1720)
+            mark = (int)p.user - 1700;
+    });
+    opsSubmit(0, 0, 0x800000000000B001ull);                // Create
+    opsSubmit(2, 0 /*Transform2D*/, 0x800000000000B001ull); // 组件在场 = 哈希非平凡
+    opsSubmit(4, 19 /*FxProbeBehaviour*/, 0x800000000000B001ull);
+
+    w.Step(0.25f); // 帧1：新参数全开全家桶（动效/贴图/糖）+ 旧签名
+    Expect(mark == 1, "probe f1 ran");
+    Expect(w.Fx().TextCount() == 4, "fx: styled+crit+miss+legacy texts in channel");
+    Expect(w.Fx().BarCount() == 1, "fx: skinned+legacy bars collapse to one entity slot");
+    const FxBar* fb = nullptr;
+    for (const FxBar& b : w.Fx().Bars())
+        if (b.entity != 0) fb = &b;
+    Expect(fb && fb->lagColor == 0xFFE0F0F0u && fb->height == 6.0f &&
+               fb->bgSpriteId == 0 && fb->fgSpriteId == 0,
+           "fx: skin fields landed (fake guid -> white sprite fallback)");
+    const uint64_t h1 = ComputeStateHash(s); // 探针实体 + Transform 在场
+    w.Step(0.25f); // 帧2：自毁提交
+    Expect(ComputeStateHash(s) == h1,
+           "fx upgraded calls never touch state hash (replay-immune counterexample)");
+    w.Step(0.25f); // 销毁落地
+    Expect(ComputeStateHash(s) == h0, "scene back to empty after destroy (fx)");
 }
 
 // M5 批①：Time.Scale（native 表往返 + 缩放 dt 链到 Time.DeltaTime）与
@@ -1907,6 +1958,7 @@ int main() {
     TestSaveChannels(); // M6a 批② T5：Lemon.Save × Chan 分档通道端到端
     TestUiSdk();        // M6b 批③c：Lemon.UI 线格式对拍 + 事件反向直灌
     TestAudioSdk();     // M6c 批②：Lemon.Audio 全 API 面 + 哈希免疫反例
+    TestFxSdk();        // M7c 批①：Lemon.Fx 表现升级面 + 哈希免疫反例
 
     // M4.6 探针（编辑器切项目场景）：同进程二次 ScriptHost 生命周期。CoreCLR 运行时
     // 进程单例——第二次 Initialize 的真实行为必须钉板（成功/失败都合法，崩 = 缺陷）。

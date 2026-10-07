@@ -56,10 +56,14 @@ struct SpritePacket {
     SpriteBatchKey key;
     uint32_t spriteId;
     uint32_t colorBits;
-    uint32_t flags;   // kInstFlipX/kInstFlipY
+    uint32_t flags;   // kInstFlipX/kInstFlipY/kPktUvOverride
     float posX, posY; // 插值后世界坐标
     float rot;        // 弧度
     float scaleX, scaleY;
+    // M7c 批① S2：逐实例 UV 覆盖（kPktUvOverride 置位时 Bake 用这组值替代
+    // spriteId 查表——贴图血条横向裁剪用；实例块 48B 布局零改动，纯 CPU 产包侧
+    // 来源切换，shader 无感）
+    float uv0u = 0, uv0v = 0, uv1u = 0, uv1v = 0;
 };
 
 // --------------------------------------------------------- Renderable 管理 --

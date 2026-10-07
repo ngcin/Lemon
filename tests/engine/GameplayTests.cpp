@@ -1294,9 +1294,9 @@ void TestVerifyFxChannel() {
         const float riseMid = fx.TextRise(t), alphaMid = fx.TextAlpha(t);
         fx.Simulate(0.36f); // age 0.76（末 30% 窗内）
         const float riseLate = fx.TextRise(t), alphaLate = fx.TextAlpha(t);
-        Expect(riseMid > 0.0f && riseMid < FxChannel::kTextRise && alphaMid == 1.0f &&
-                   riseLate == FxChannel::kTextRise && alphaLate < 1.0f && alphaLate > 0.0f,
-               "fx: rise ramps then holds; alpha fades in last 30%");
+        Expect(riseMid < 0.0f && riseMid > -FxChannel::kTextRise && alphaMid == 1.0f &&
+                   riseLate == -FxChannel::kTextRise && alphaLate < 1.0f && alphaLate > 0.0f,
+               "fx: rise ramps then holds (Y-down: rise = -y); alpha fades in last 30%");
         fx.Simulate(0.05f); // age 0.81 ≥ life 0.8 → 回收
         Expect(fx.TextCount() == 0, "fx: expired text recycled");
     }
@@ -1335,13 +1335,15 @@ void TestVerifyFxChannel() {
         fx.Bar(0x100u, 0.5f, 0xFF30B0F0u, 32.0f); // 在视野内
         fx.Bar(0x101u, 1.0f, 0xFF30B0F0u, 32.0f); // 视野外（右侧远处）
         fx.Bar(0x102u, 1.0f, 0xFF30B0F0u, 32.0f); // 悬空实体（resolve false）
-        auto resolve = [](uint64_t e, Vec2& out) {
+        auto resolve = [](uint64_t e, Vec2& out, float& outTop) {
             if (e == 0x100u) {
                 out = {0.0f, 0.0f};
+                outTop = 12.0f; // 精灵头顶（贴头顶锚定断言）
                 return true;
             }
             if (e == 0x101u) {
                 out = {5000.0f, 0.0f};
+                outTop = 0.0f;
                 return true;
             }
             return false; // 0x102 悬空
@@ -1355,8 +1357,111 @@ void TestVerifyFxChannel() {
         Expect(bg.size.x == 32.0f && bg.size.y == FxChannel::kBarHeight &&
                    bg.color == FxChannel::kBarBgColor && bg.center.x == 0.0f,
                "fx: bg quad full width centered");
+        ExpectNear(bg.center.y, -12.0f * 0.5f - FxChannel::kBarHeight * 0.5f - 2.0f, 1e-4f,
+                   "fx: bar anchored above sprite top (Y-down: head = center - outTop/2)");
         Expect(fg.size.x == 16.0f && fg.center.x == -8.0f && fg.color == 0xFF30B0F0u,
                "fx: fg quad proportional width left-anchored");
+    }
+}
+
+// ---- M7c 批① S2/S3：Fx 表现升级数学（lag 收敛/UV 裁剪区间/Pop 曲线/寿命覆盖）----
+void TestFxPresentationUpgradeMath() {
+    // ① 延迟条 lagFrac：掉血线性收敛向 frac；回升贴平（fg 全盖不可见语义）
+    {
+        FxChannel fx;
+        fx.BarEx(0x200u, 1.0f, 0xFF30B0F0u, 40.0f, 0, 0, 0xFFE0F0F0u, 6.0f);
+        const FxBar* b = nullptr;
+        for (const FxBar& s : fx.Bars())
+            if (s.entity == 0x200u) b = &s;
+        Expect(b && b->lagFrac == 1.0f && b->height == 6.0f && b->lagColor != 0,
+               "fx: bar-ex birth has no fake lag");
+        fx.BarEx(0x200u, 0.2f, 0xFF30B0F0u, 40.0f, 0, 0, 0xFFE0F0F0u, 6.0f); // 掉血
+        float prevLag = 1.0f;
+        bool monotone = true, converged = false;
+        for (int i = 0; i < 150; ++i) { // 2.5s @60fps：138 步收敛，全程在 sticky 3s 内
+            fx.Simulate(1.0f / 60.0f);
+            if (b->lagFrac > prevLag + 1e-6f) monotone = false;
+            prevLag = b->lagFrac;
+            if (std::fabs(b->lagFrac - 0.2f) < 1e-4f) converged = true;
+        }
+        Expect(monotone, "fx: lag descends monotonically after damage");
+        Expect(converged && std::fabs(b->lagFrac - 0.2f) < 1e-4f,
+               "fx: lag converges to frac");
+        fx.BarEx(0x200u, 0.9f, 0xFF30B0F0u, 40.0f, 0, 0, 0xFFE0F0F0u, 6.0f); // 回升
+        fx.Simulate(1.0f / 60.0f);
+        Expect(std::fabs(b->lagFrac - 0.9f) < 1e-5f, "fx: heal snaps lag to frac");
+    }
+    // ② 贴图产包：bg 全幅 + lag/fg 横向 UV 裁剪区间（uFrac = 比例，防压扁语义）
+    {
+        FxChannel fx;
+        fx.BarEx(0x300u, 1.0f, 0xFF30B0F0u, 64.0f, 0x11u, 0x22u, 0xFFE0E0E0u, 8.0f);
+        fx.BarEx(0x300u, 0.5f, 0xFF30B0F0u, 64.0f, 0x11u, 0x22u, 0xFFE0E0E0u, 8.0f);
+        fx.Simulate(1.0f); // 掉血后 1s：lagFrac ≈ 1-0.35 = 0.65 > frac
+        auto resolve = [](uint64_t, Vec2& out, float& outTop) {
+            out = {0.0f, 0.0f};
+            outTop = 0.0f;
+            return true;
+        };
+        FxQuad q[4];
+        const uint32_t n = fx.ExtractBarQuads(q, 4, resolve, Rect{Vec2{-320, -180}, Vec2{320, 180}});
+        Expect(n == 3, "fx: textured bar emits bg+lag+fg");
+        Expect(q[0].spriteId == 0x11u && q[0].uFrac == 1.0f && q[0].color == 0xFFFFFFFFu,
+               "fx: bg full-bleed texture");
+        Expect(q[1].spriteId == 0x22u && q[1].color == 0xFFE0E0E0u && q[1].uFrac > 0.5f,
+               "fx: lag textured with lagColor, uFrac trails");
+        Expect(q[2].spriteId == 0x22u && q[2].uFrac == 0.5f && q[2].size.x == 32.0f,
+               "fx: fg u-clipped at frac (width proportional)");
+        // 无 lag（白精灵现状路径）：2 quads、spriteId 0
+        FxChannel fx2;
+        fx2.Bar(0x301u, 0.5f);
+        const uint32_t n2 = fx2.ExtractBarQuads(q, 4, resolve, Rect{Vec2{-320, -180}, Vec2{320, 180}});
+        Expect(n2 == 2 && q[0].spriteId == 0 && q[1].uFrac == 0.5f,
+               "fx: legacy bar path unchanged");
+    }
+    // ③ Pop 曲线：出生 1.4× 回落 1.0、上浮比 Linear 陡；漂移恒速；寿命覆盖
+    {
+        FxText pop{}, lin{};
+        pop.curve = FxCurve::Pop;
+        pop.life = 1.0f;
+        lin.life = 1.0f;
+        float dx, dy, sc, al;
+        pop.age = 0.0f;
+        FxChannel::TextMotion(pop, dx, dy, sc, al);
+        ExpectNear(sc, 1.0f + FxChannel::kPopScaleBoost, 1e-4f, "pop scale born at boost");
+        ExpectNear(dy, 0.0f, 1e-4f, "pop born at anchor");
+        pop.age = 0.5f; // 窗口（0.35）外
+        FxChannel::TextMotion(pop, dx, dy, sc, al);
+        ExpectNear(sc, 1.0f, 1e-4f, "pop scale settles to 1.0");
+        lin.age = 0.5f;
+        float ldx, ldy, lsc, lal;
+        FxChannel::TextMotion(lin, ldx, ldy, lsc, lal);
+        Expect(dy < ldy, "pop rise steeper than linear at mid-life (Y-down: rise = -y)");
+        pop.driftX = 30.0f;
+        pop.age = 0.4f;
+        FxChannel::TextMotion(pop, dx, dy, sc, al);
+        ExpectNear(dx, 12.0f, 1e-4f, "drift = velocity × age");
+        // 寿命覆盖：life 2.0 的条目在 0.81s（默认寿命+ε）后仍在场且过期即隐形
+        FxChannel fx;
+        fx.PopupTextEx("2s", 0, 0, 0xFFFFFFFFu, 1.0f, 2.0f, 0.0f, FxCurve::Linear);
+        fx.PopupText("d", 10, 0); // 默认 0.8s
+        fx.Simulate(0.81f);
+        Expect(fx.TextCount() == 2, "fx: per-text life honored");
+        Expect(std::string(fx.TextAt(0).text).empty() == false,
+               "fx: long-life text alive");
+        Expect(std::string(fx.TextAt(1).text).empty(), "fx: expired text hidden in place");
+        fx.Simulate(1.2f); // 总 2.01s ≥ 2.0：长寿命条到寿回收，早已隐形的短寿命条
+        // 一并从队首滑出（环形计数回收逐条推进到未过期队首为止）
+        Expect(fx.TextCount() == 0, "fx: long-life text recycled at its own life");
+    }
+    // ④ 池语义不变：PopupTextEx 满池仍最老者淘汰（S3 登记不排口径的回归锚）
+    {
+        FxChannel fx;
+        char buf[8];
+        for (int i = 0; i < 257; ++i) {
+            std::snprintf(buf, sizeof(buf), "%d", i);
+            fx.PopupTextEx(buf, 0, 0, 0xFFFFFFFFu, 1.5f, 1.2f, 5.0f, FxCurve::Pop);
+        }
+        Expect(fx.TextCount() == 256, "fx: ex pool capped same as legacy");
     }
 }
 
@@ -1636,6 +1741,7 @@ void RunGameplayTests() {
     TestVerifyAnimatorPingPong();
     TestTweenTable();
     TestVerifyFxChannel();
+    TestFxPresentationUpgradeMath(); // M7c 批① S2/S3：lag/UV 裁剪/Pop/寿命
     TestVerifyStatEffectsAndXp();
     TestVerifyMovementKnockbackAndClamp();
     TestVerifyProjectileLifetime();

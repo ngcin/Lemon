@@ -52,6 +52,13 @@ public sealed class PlayerBehaviour : LemonBehaviour
     private const uint kFxBarMob = 0xFF30B0F0u;     // 怪显伤条：红
     private const uint kFxBarPlayer = 0xFF60D060u;  // 玩家常显条：绿
 
+    // M7c 批① 表现升级：贴图血条皮肤（bar_bg/bar_fg 64×10；宽 26px → 高 26×10/64≈4）
+    // + 15% 暴击率（纯表现层展示——伤害结算在引擎 ShooterSystem，演示 Crit 样式）
+    private static readonly FxBarSkin kMobBarSkin =
+        new("7e57000000000101", "7e57000000000102", 0xFFE8E8E8u, 4f);
+    private const double kCritChance = 0.15;
+    private static readonly System.Random kCritRng = new();
+
     private const float kArenaHalf = 1000f; // 软竞技场边界（脚本层钳制）
     private const uint kColorHp = 0xFF30B0F0u;   // 血条红（ABGR）
     private const uint kColorXp = 0xFF30D8F0u;   // 经验金
@@ -161,12 +168,21 @@ public sealed class PlayerBehaviour : LemonBehaviour
             // 批③d-2：飘字/血条 = 设置开关门控（GameFlow 设置屏，Settings 档持久）
             if (GameMain.Settings.FxText &&
                 victim.TryGetComponent<Transform2D>(out var tf)) {
-                Fx.Text(m.P0, new Vec2(tf.Pos.X - 4f, tf.Pos.Y - 10f), kFxTextMob);
+                // M7c 批①：暴击 = Crit 糖（中文「暴击 N」黄字 Pop 弹跳 + 随机散布；
+                // 表现层演示——伤害数值结算在引擎侧不动）。锚点 = mob 精灵头顶
+                //（世界 Y 向下 = 负偏移）。轮④ 基线修正后字形整体上移
+                // 2×(bearingY-h/2)×字号 ≈ 24×字号 px，锚点同步下压补偿：
+                // crit 字号 1.3 → +31；常规字号 1 → +24
+                if (kCritRng.NextDouble() < kCritChance)
+                    Fx.Crit($"暴击 {m.P0:0}", new Vec2(tf.Pos.X - 4f, tf.Pos.Y - 63f));
+                else
+                    Fx.Text(m.P0, new Vec2(tf.Pos.X - 4f, tf.Pos.Y - 56f), kFxTextMob);
                 ++_fxTexts;
             }
             if (GameMain.Settings.FxBar &&
                 victim.TryGetComponent<Health>(out var hp)) {
-                Fx.Bar(victim, hp.Cur / hp.Max, kFxBarMob, 24f);
+                // M7c 批①：贴图血条 + 延迟白条（掉血时残条停在旧血量线性收敛）
+                Fx.Bar(victim, hp.Cur / hp.Max, kFxBarMob, 26f, kMobBarSkin);
                 ++_fxBars;
             }
             ++_mobHits;
@@ -177,8 +193,8 @@ public sealed class PlayerBehaviour : LemonBehaviour
             var tf = gameObject.GetComponent<Transform2D>();
             var hp = gameObject.GetComponent<Health>();
             if (GameMain.Settings.FxText) {
-                Fx.Text(m.P0, new Vec2(tf.Pos.X - 4f, tf.Pos.Y - 10f), kFxTextPlayer);
-                ++_fxTexts;
+                Fx.Text(m.P0, new Vec2(tf.Pos.X - 4f, tf.Pos.Y - 204f), kFxTextPlayer);
+                ++_fxTexts; // 玩家精灵 player01 337×346——头顶 ≈ -173（Y 向下），行底贴头顶血条上方；轮④ 基线补偿 +24
             }
             if (GameMain.Settings.FxBar) {
                 Fx.Bar(gameObject, hp.Cur / hp.Max, kFxBarPlayer, 32f); // 每击续命 → 常显

@@ -155,6 +155,19 @@ void EditorApp::RescanAssets() {
     for (uint64_t g : cs.modified)
         if (const AssetEntry* e = db.FindByGuid(g); e && e->type == AssetType::Audio)
             EnqueueAudioBake(*e);
+    // M7c 批①：字体增量 → 后台烤制（音频同款钩位；装载侧 BakeStale 兜缺漏）
+    bool fontChanged = false;
+    for (uint64_t g : cs.added)
+        if (const AssetEntry* e = db.FindByGuid(g); e && e->type == AssetType::Font) {
+            EnqueueFontBake(*e);
+            fontChanged = true;
+        }
+    for (uint64_t g : cs.modified)
+        if (const AssetEntry* e = db.FindByGuid(g); e && e->type == AssetType::Font) {
+            EnqueueFontBake(*e);
+            fontChanged = true;
+        }
+    if (fontChanged) LoadFxFontPage(); // 当前 fxFont 变更 = 同步兜底烤 + 换页
     for (uint64_t g : cs.removed) gpuAssets_.Evict(g); // 幽灵页（号保留；M6 图集回收）
     // 批③b UI 文档/样式热重载（ADR-014 M2 DocumentReloaded 的编辑器侧半边；
     // C# 重灌数据事件归 ③c）。文档名 = 资产 relPath；.rcss 变更 = 逐文档

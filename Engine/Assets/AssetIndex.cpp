@@ -106,6 +106,39 @@ void ReadAudioImporter(const fs::path& assetPath, IndexedEntry& e) {
         e.audioPreload = pre->get<bool>();
 }
 
+/// 读 .meta 的字体 importer 段（M7c 批①；packager 烤制消费——AssetIndex 打开期
+/// 与音频同款一次小 IO）：`charset/size/outline`；坏段 = 默认（ASCII 95 无描边）
+void ReadFontImporter(const fs::path& assetPath, IndexedEntry& e) {
+    e.fontCharset.clear();
+    e.fontPx = 24;
+    e.fontOutlinePx = 0;
+    e.fontOutlineColor = 0xFF202020u;
+    std::ifstream mf(assetPath.string() + ".meta", std::ios::binary);
+    if (!mf) return;
+    std::string text((std::istreambuf_iterator<char>(mf)), std::istreambuf_iterator<char>());
+    const Json doc = Json::parse(text, nullptr, false);
+    if (doc.is_discarded()) return;
+    auto it = doc.find("importer");
+    if (it == doc.end() || !it->is_object()) return;
+    const Json& imp = *it;
+    if (auto cs = imp.find("charset"); cs != imp.end() && cs->is_string())
+        e.fontCharset = cs->get<std::string>();
+    if (auto sz = imp.find("size"); sz != imp.end() && sz->is_number_unsigned()) {
+        const uint64_t v = sz->get<uint64_t>();
+        if (v >= 8 && v <= 128) e.fontPx = (uint16_t)v;
+    }
+    if (auto ol = imp.find("outline"); ol != imp.end() && ol->is_array() && ol->size() == 2) {
+        const Json& px = (*ol)[0];
+        const Json& col = (*ol)[1];
+        if (px.is_number_unsigned()) {
+            const uint64_t v = px.get<uint64_t>();
+            if (v <= 8) e.fontOutlinePx = (uint8_t)v;
+        }
+        if (col.is_string())
+            e.fontOutlineColor = (uint32_t)std::stoull(col.get<std::string>(), nullptr, 16);
+    }
+}
+
 /// 读 .meta 的 guid（无/坏 = 0）——回退扫描的真源
 uint64_t ReadMetaGuid(const fs::path& assetPath) {
     std::ifstream mf(assetPath.string() + ".meta", std::ios::binary);
@@ -224,6 +257,8 @@ bool AssetIndex::LoadFromManifest(const std::string& manifestPath) {
             ReadGridImporter(fs::path(root_) / e.relPath, e);
         if (e.type == AssetType::Audio)
             ReadAudioImporter(fs::path(root_) / e.relPath, e);
+        if (e.type == AssetType::Font) // M7c 批①：packager 烤制消费
+            ReadFontImporter(fs::path(root_) / e.relPath, e);
         out.push_back(std::move(e));
     }
     if (badEntries)
@@ -389,6 +424,7 @@ void AssetIndex::ScanFallback() {
             }
         }
         if (e.type == AssetType::Audio) ReadAudioImporter(file, e);
+        if (e.type == AssetType::Font) ReadFontImporter(file, e); // M7c 批①
         entries_.push_back(std::move(e));
     }
     if (noMeta)
