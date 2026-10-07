@@ -1,0 +1,25 @@
+# Lemon 引擎 C++ 格式化最小集（M7c 批⓪ T4，2026-10-07）
+# 决策：存量不重排（防金回放对拍与 git blame 污染）——本配置只约束新文件与被触碰
+# 文件随手 format；全仓渐进格式化随各批次自然发生（登记观察，不做专项）。
+# 风格 = LLVM 基底微调到贴现状：4 空格缩进 / 列宽 100 / 指针左贴 / case 缩进 /
+# include 顺序保守不重排（存量分组含语义注释）/ 单行短形态全开（if/lambda/case/
+# loop——现存代码的习惯形态，v23 的短函数合并不再覆盖多语句体，属已知边界）。
+# 抽样对拍与残余差异归因见 DevLog 2026-10-07 批⓪ 条目。
+---
+BasedOnStyle: LLVM
+Standard: c++20
+IndentWidth: 4
+ColumnLimit: 100
+AccessModifierOffset: -4
+PointerAlignment: Left
+IndentCaseLabels: true
+SortIncludes: false
+IncludeBlocks: Preserve
+AllowShortFunctionsOnASingleLine: All
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: true
+AllowShortLambdasOnASingleLine: All
+AllowShortCaseLabelsOnASingleLine: true
+AllowShortEnumsOnASingleLine: true
+BreakTemplateDeclarations: Leave
+AlignTrailingComments: false

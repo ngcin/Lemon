@@ -45,7 +45,8 @@
       "name": "win-ci",
       "displayName": "Windows CI (VS2026 generator, Release)",
       "inherits": "win",
-      "generator": "Visual Studio 18 2026"
+      "generator": "Visual Studio 18 2026",
+      "cacheVariables": { "LEMON_COMPILER_CACHE": "OFF" }
     },
     {
       "name": "win-share",

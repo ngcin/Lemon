@@ -1,6 +1,16 @@
 # 引擎纯逻辑单测（无窗口/无 Vulkan，可进 CI 冒烟）
 # M4.4 起：lemon-editor-core（EditorContext/AssetDatabase 等无 ImGui 编辑器逻辑）入测
-add_executable(lemon-tests engine_tests.cpp)
+# M7c 批⓪ T2：单 TU engine_tests.cpp（7,939 行/139 函数）按域拆 tests/engine/ 七 TU +
+# TestMain.cpp；函数体原样搬运，checks 总数不变（34,346 硬门）
+add_executable(lemon-tests
+  engine/TestMain.cpp
+  engine/CoreTests.cpp
+  engine/RendererTests.cpp
+  engine/EcsTests.cpp
+  engine/GameplayTests.cpp
+  engine/AssetsTests.cpp
+  engine/EditorTests.cpp
+  engine/AudioTests.cpp)
 target_link_libraries(lemon-tests PRIVATE lemon-engine)
 # stb 头面（M7a 批⑥）：LAT1 单测播种 PNG 用 stb_image_write（实现符号已在
 # lemon-engine 的 StbImage.cpp 单 TU，此处只补头路径——无第二实现 TU）

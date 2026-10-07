@@ -1,0 +1,17 @@
+# Lemon 工程编辑器基础一致性（M7c 批⓪ T4，2026-10-07）
+# C++ 风格权威在 .clang-format；本文件只管 tab/换行/编码三件事。
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+indent_style = space
+indent_size = 4
+
+[*.{yml,yaml,json}]
+indent_size = 2
+
+[*.md]
+# 文档区的中文长行与硬换行是手排语义，编辑器不做自动干预
+trim_trailing_whitespace = false
