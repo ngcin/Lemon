@@ -13,6 +13,7 @@
 #include "Core/Log.h"
 #include "ECS/Hierarchy.h"
 #include "ECS/Scene.h"
+#include "ECS/SceneSwitcher.h"
 #include "ECS/World.h"
 #include "Physics2D/SpatialHash.h"
 #include "Scripting/ScriptBox.h"
@@ -399,7 +400,7 @@ void DirectorSystem::Tick(World& world, Scene& scene, float dt) {
     }
 
     for (const DeferredSpawn& d : deferred) {
-        Entity spawned = spawn(scene, d.prefabId, d.pos, d.team);
+        Entity spawned = world.SpawnPrefab(d.prefabId, d.pos, d.team);
         if (spawned.IsNull()) { // 工厂不认此 prefab：废止条目（不逐 tick 重试）
             --teamCounts_[d.team & 63]; // 请求段乐观自增的回退
             if (WaveDirector* dw = scene.TryGet<WaveDirector>(d.director))
@@ -488,7 +489,7 @@ void SpawnSystem::Tick(World& world, Scene& scene, float dt) {
             --teamCounts_[d.team & 63];
             continue;
         }
-        Entity e = spawn(scene, d.prefabId, d.pos, d.team);
+        Entity e = world.SpawnPrefab(d.prefabId, d.pos, d.team);
         if (e.IsNull()) { // 工厂不认 prefab：本 Spawner 余量跳过（旧 break 语义）
             failedGroup = d.group;
             --teamCounts_[d.team & 63];
@@ -599,8 +600,8 @@ void AISystem::Tick(World& world, Scene& scene, float dt) {
             const uint32_t bulletTeam = scene.TryGet<Meta>(Scene::FromEntt(ent))
                                             ? scene.Get<Meta>(Scene::FromEntt(ent)).team
                                             : 3u;
-            if (Entity proj = spawn(scene, sh.projectileId, tf.pos + dir * 12.0f,
-                                    bulletTeam);
+            if (Entity proj = world.SpawnPrefab(sh.projectileId, tf.pos + dir * 12.0f,
+                                                bulletTeam);
                 !proj.IsNull()) {
                 // 工厂生成后写入初速（朝向）；工厂只管实体组装，弹道语义在此处
                 if (Velocity* v = scene.TryGet<Velocity>(proj)) {
@@ -1521,6 +1522,10 @@ void World::InstallDefaultSystems() {
     p.AddSystem(std::make_unique<AudioSystem>());
     p.AddSystem(std::make_unique<ScriptEventDispatchSystem>());
     p.AddSystem(std::make_unique<DestroyCommitSystem>()); // Essential 阶段
+    // M7c 批⑥b：换场编排执行壳（Essential，After DestroyCommitSystem）——单帧
+    // 先清后装（SceneSwitcher.h 头注）；不消费 RNG 不占子流，尾插零重排 =
+    // 既有系统 id 不动（金回放零重录）。无 pending = 一次 bool 短路。
+    p.AddSystem(std::make_unique<SceneSwitchSystem>());
     p.ResolveOrder();
 }
 

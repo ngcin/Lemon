@@ -1,14 +1,19 @@
-// Lemon 引擎单测 — SceneTests — 档2 场景管理（ADR-017；M7c 批⑥）
+// Lemon 引擎单测 — SceneTests — 档2 场景管理（ADR-017；M7c 批⑥/⑥b/⑥c）
 // 域（SceneMembership 打标/组清场/DDOL 根树幸存 · World 场景档案 · SceneArchive
-// BuildInto 追加装载与 Load 清空对照 · StateHash 对 membership 不敏感）。
+// BuildInto 追加装载与 Load 清空对照 · StateHash 对 membership 不敏感 · 批⑥b
+// SceneSwitcher 换场编排 + SpawnPrefab 出生打标 · 批⑥c 多次换场/DDOL 轨迹 +
+// 孪生世界确定性轨迹）。
 #include "TestFramework.h"
 
 #include <cstring>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "Components/CoreComponents.h"
 #include "ECS/Hierarchy.h"
 #include "ECS/SceneMembership.h"
+#include "ECS/SceneSwitcher.h"
 #include "ECS/StateHash.h"
 #include "ECS/World.h"
 #include "Serialization/SceneArchive.h"
@@ -170,10 +175,331 @@ void TestWorldSceneRecords() {
 
 } // namespace
 
+// ---- 批⑥b：换场编排（SceneSwitcher）--------------------------------------
+
+namespace {
+
+void s_each_first(Scene& s, uint32_t handle, Entity& out) {
+    out = Entity::Null();
+    s.Each([&](Entity e) {
+        const SceneMembership* m = s.TryGet<SceneMembership>(e);
+        if (out.IsNull() && m && m->scene == handle) out = e;
+    });
+}
+
+const std::string& w_find_name(World& w, uint32_t handle) {
+    static std::string empty;
+    const World::SceneRecord* r = w.FindSceneRecord(handle);
+    return r ? r->name : empty;
+}
+
+/// 编排夹具：建档+装载+打标（宿主 F2 同款初始面），返回场景组句柄
+struct SwitchFixture {
+    World w;
+    Scene& s;
+    uint32_t handle;
+    explicit SwitchFixture(const char* name)
+        : w(), s(w.CreateScene("run")),
+          handle(w.CreateSceneRecord(name, (std::string("Scenes/") + name + ".scene").c_str())) {
+        SceneArchive::BuildInto(s, MakeSceneText(name, "mob", 2));
+        StampSceneMembership(s, handle);
+        w.SetActiveScene(&s);
+        w.SetActiveSceneHandle(handle);
+    }
+};
+
+void TestSceneSwitchFullSemantics() {
+    SwitchFixture fx("Grass");
+    World& w = fx.w;
+    Scene& s = fx.s;
+    // 组内一实体标 DDOL（跨场管理器）
+    Entity ddol = Entity::Null(), victim = Entity::Null();
+    s.Each([&](Entity e) {
+        if (s.Get<SceneMembership>(e).scene == fx.handle && ddol.IsNull()) ddol = e;
+        else if (s.Get<SceneMembership>(e).scene == fx.handle) victim = e;
+    });
+    Expect(MarkDontDestroyOnLoadTree(s, ddol) == 1, "one entity marked ddol");
+
+    w.Switcher().Request({.name = "Volcano", .path = "Scenes/Volcano.scene",
+                          .jsonText = MakeSceneText("Volcano", "lava", 3)});
+    const SceneSwitchReport rep = w.Switcher().Execute(w, s);
+    Expect(rep.status == SceneSwitchStatus::Success, "switch succeeds");
+    Expect(rep.oldHandle == fx.handle && rep.newHandle != fx.handle, "handles reported");
+    Expect(rep.destroyedOldGroup == 1, "non-ddol old member destroyed");
+    Expect(rep.ddolSurvivors == 1, "ddol survivor count");
+    Expect(rep.stampedNew == 3, "new group stamped (3 built)");
+    Expect(!s.Alive(victim), "victim gone");
+    Expect(s.Alive(ddol), "ddol survives with stable handle");
+    Expect(CountSceneGroup(s, fx.handle) == 1, "old group reduced to survivor");
+    Expect(CountSceneGroup(s, rep.newHandle) == 3, "new group fully stamped");
+    Expect(CountSceneGroup(s, kSceneHandleUnassigned) == 0, "zero orphans");
+    Expect(w.ActiveSceneHandle() == rep.newHandle, "active handle switched");
+    const World::SceneRecord* rOld = w.FindSceneRecord(fx.handle);
+    const World::SceneRecord* rNew = w.FindSceneRecord(rep.newHandle);
+    Expect(rOld && !rOld->isLoaded, "old record unloaded");
+    Expect(rNew && rNew->isLoaded && rNew->name == "Volcano", "new record loaded+named");
+    Expect(!w.Switcher().HasPending(), "request consumed");
+}
+
+void TestSceneSwitchAtomicOnBadJson() {
+    SwitchFixture fx("Grass");
+    const uint64_t h0 = ComputeStateHash(fx.s);
+    fx.w.Switcher().Request({.name = "Broken", .path = "Scenes/Broken.scene",
+                             .jsonText = "{ not json"});
+    const SceneSwitchReport rep = fx.w.Switcher().Execute(fx.w, fx.s);
+    Expect(rep.status == SceneSwitchStatus::ParseFailed, "bad doc fails loudly");
+    Expect(rep.newHandle == 0, "no record created on parse failure");
+    Expect(ComputeStateHash(fx.s) == h0, "world bit-identical (atomicity)");
+    Expect(fx.w.ActiveSceneHandle() == fx.handle, "active unchanged");
+    Expect(fx.w.SceneRecordCount() == 1, "no stray records");
+    // 好档随后可用（失败后开关器不留残态）
+    fx.w.Switcher().Request({.name = "Ok", .path = "Scenes/Ok.scene",
+                             .jsonText = MakeSceneText("Ok", "x", 1)});
+    Expect(fx.w.Switcher().Execute(fx.w, fx.s).status == SceneSwitchStatus::Success,
+           "switcher recovers after failure");
+}
+
+void TestSceneSwitchSweepsFxAndSkipsNullAudio() {
+    SwitchFixture fx("Grass");
+    fx.w.Fx().PopupText("stale", 0.0f, 0.0f);
+    fx.w.Fx().Bar(1234, 0.5f);
+    Expect(fx.w.Fx().TextCount() == 1 && fx.w.Fx().BarCount() == 1, "fx seeded");
+    // 无音频后端（AudioSink()==nullptr）：强制清走 no-op 分支不崩
+    fx.w.Switcher().Request({.name = "B", .path = "b.scene",
+                             .jsonText = MakeSceneText("B", "b", 1)});
+    fx.w.Switcher().Execute(fx.w, fx.s);
+    Expect(fx.w.Fx().TextCount() == 0 && fx.w.Fx().BarCount() == 0,
+           "fx fully cleared (non-entity sweep)");
+}
+
+void TestSceneSwitchHookOrdering() {
+    SwitchFixture fx("Grass");
+    Entity ddol = Entity::Null();
+    s_each_first(fx.s, fx.handle, ddol);
+    MarkDontDestroyOnLoadTree(fx.s, ddol);
+    uint32_t sweepAlive = 9999, afterOld = 9999, afterNew = 9999, afterActive = 0;
+    uint32_t sweepSeen = 0;
+    fx.w.Switcher().SetHooks({
+        .sweep = [&] {
+            sweepAlive = fx.s.AliveCount(); // 清场提交后、装载前：只剩 DDOL
+            sweepSeen = fx.w.ActiveSceneHandle();
+        },
+        .afterBuild = [&](Scene&) {
+            afterOld = CountSceneGroup(fx.s, fx.handle);
+            afterNew = CountSceneGroup(fx.s, 0); // 占位：下面换 newHandle 复核
+            afterActive = fx.w.ActiveSceneHandle(); // 档案面已收口（Awake 前置条件）
+        },
+    });
+    fx.w.Switcher().Request({.name = "V", .path = "v.scene",
+                             .jsonText = MakeSceneText("V", "v", 2)});
+    const SceneSwitchReport rep = fx.w.Switcher().Execute(fx.w, fx.s);
+    Expect(rep.status == SceneSwitchStatus::Success, "switch ok");
+    Expect(sweepAlive == 1, "sweep sees post-commit pre-build world (ddol only)");
+    Expect(sweepSeen == fx.handle, "sweep runs before active flip");
+    Expect(afterOld == 1, "afterBuild: old group already torn down");
+    Expect(afterNew == 0 && CountSceneGroup(fx.s, rep.newHandle) == 2,
+           "afterBuild: new group already stamped");
+    Expect(afterActive == rep.newHandle, "afterBuild: active already flipped");
+}
+
+void TestSceneSwitchNoPendingIsNoop() {
+    SwitchFixture fx("Grass");
+    const uint64_t h0 = ComputeStateHash(fx.s);
+    Expect(fx.w.Switcher().Execute(fx.w, fx.s).status == SceneSwitchStatus::NoPending,
+           "idle execute reports NoPending");
+    Expect(ComputeStateHash(fx.s) == h0, "idle execute touches nothing");
+    // last-wins 覆盖：第二次 Request 顶掉第一次（单槽）
+    fx.w.Switcher().Request({.name = "A", .path = "a.scene", .jsonText = MakeSceneText("A", "a", 1)});
+    fx.w.Switcher().Request({.name = "B", .path = "b.scene", .jsonText = MakeSceneText("B", "b", 1)});
+    const SceneSwitchReport rep = fx.w.Switcher().Execute(fx.w, fx.s);
+    Expect(rep.status == SceneSwitchStatus::Success &&
+                w_find_name(fx.w, rep.newHandle) == "B",
+            "last request wins (single slot)");
+}
+
+void TestSceneSwitchViaEssentialPipeline() {
+    // 系统集成面：InstallDefaultSystems 的 World 上 Request → 一次 Step 的 Essential
+    // 段完成换场（SceneSwitchSystem 在 DestroyCommitSystem 之后，F1 形态②落点）
+    World w;
+    w.InstallDefaultSystems();
+    Scene& s = w.CreateScene("run");
+    w.SetActiveScene(&s);
+    const uint32_t h1 = w.CreateSceneRecord("Grass", "g.scene");
+    SceneArchive::BuildInto(s, MakeSceneText("Grass", "mob", 2));
+    StampSceneMembership(s, h1);
+    w.SetActiveSceneHandle(h1);
+    w.Switcher().Request({.name = "V", .path = "v.scene",
+                          .jsonText = MakeSceneText("V", "v", 2)});
+    w.Step(1.0f / 60.0f);
+    Expect(w.ActiveSceneHandle() != h1, "switch executed inside Essential stage");
+    Expect(!w.Switcher().HasPending(), "request consumed by pipeline");
+    Expect(CountSceneGroup(s, w.ActiveSceneHandle()) == 2, "new group live");
+    Expect(CountSceneGroup(s, kSceneHandleUnassigned) == 0, "zero orphans");
+}
+
+void TestSpawnPrefabStampsTree() {
+    World w;
+    Scene& s = w.CreateScene("run");
+    w.SetActiveScene(&s);
+    const uint32_t h1 = w.CreateSceneRecord("Grass");
+    w.SetActiveSceneHandle(h1);
+    // spawn 工厂：root + child 子树（LoadEntityTree 同构——root 返回，child 挂链）
+    w.SetSpawnFn([](Scene& sc, uint32_t, Vec2, uint32_t) {
+        Entity root = sc.Create();
+        sc.Emplace<Transform2D>(root, Transform2D{{0, 0}});
+        Entity child = sc.Create();
+        sc.Emplace<Transform2D>(child, Transform2D{{1, 1}});
+        SceneSetParent(sc, child, root);
+        return root;
+    });
+    Expect(!w.HasSpawnFn() == false, "spawn fn registered"); // 双反演 = 有注册
+    Entity spawned = w.SpawnPrefab(7, Vec2{0, 0}, 1);
+    Expect(!spawned.IsNull(), "spawned");
+    Expect(CountSceneGroup(s, h1) == 2, "spawned subtree stamped to active handle");
+    Expect(CountSceneGroup(s, kSceneHandleUnassigned) == 0, "no untagged spawn residue");
+    // 换场后 active 拨新组——再 spawn 落新组（Instantiate 落点随 active）
+    const uint32_t h2 = w.CreateSceneRecord("Volcano");
+    w.SetActiveSceneHandle(h2);
+    Entity later = w.SpawnPrefab(7, Vec2{0, 0}, 1);
+    Expect(!later.IsNull() && s.Get<SceneMembership>(later).scene == h2,
+           "later spawn stamps new active");
+}
+
+// ---- 批⑥c：回放扩展（多次换场/DDOL 轨迹 + 孪生世界确定性）------------------
+
+void TestSceneMultiSwitchDDOLTrajectory() {
+    // 四跳（Grass→Volcano→Grass 同名重装→Cave）：DDOL 幸存者句柄/flags/来源组
+    // 全程稳定、重装同名场景发新句柄（每载一档，旧句柄不复活）、每跳零孤组、
+    // 档案 isLoaded 逐跳翻转
+    SwitchFixture fx("Grass");
+    World& w = fx.w;
+    Scene& s = fx.s;
+    Entity ddol = Entity::Null();
+    s_each_first(s, fx.handle, ddol);
+    Expect(MarkDontDestroyOnLoadTree(s, ddol) == 1, "manager marked ddol");
+    const Entity ddolSaved = ddol; // 句柄轨迹对照（Entity 按 id 比较）
+
+    struct Hop { const char* name; const char* tag; int count; };
+    const Hop hops[] = {{"Volcano", "lava", 3}, {"Grass", "mob2", 2}, {"Cave", "bat", 4}};
+    uint32_t prev = fx.handle;
+    for (const Hop& hop : hops) {
+        w.Switcher().Request({.name = hop.name,
+                              .path = std::string("Scenes/") + hop.name + ".scene",
+                              .jsonText = MakeSceneText(hop.name, hop.tag, hop.count)});
+        const SceneSwitchReport rep = w.Switcher().Execute(w, s);
+        Expect(rep.status == SceneSwitchStatus::Success, "hop succeeds");
+        Expect(rep.newHandle != prev, "fresh handle per load");
+        // DDOL 挂在初始 Grass 组：清场后该组余 1；其余组无幸存者全清
+        Expect(CountSceneGroup(s, prev) == (prev == fx.handle ? 1u : 0u),
+               "old group cleared (ddol origin keeps survivor)");
+        Expect(CountSceneGroup(s, rep.newHandle) == (uint32_t)hop.count, "new group full");
+        Expect(CountSceneGroup(s, kSceneHandleUnassigned) == 0, "zero orphans every hop");
+        Expect(s.Alive(ddol) && ddol == ddolSaved, "ddol handle stable across hops");
+        const SceneMembership* mm = s.TryGet<SceneMembership>(ddol);
+        Expect(mm && mm->scene == fx.handle &&
+                    (mm->flags & kSceneFlagDontDestroyOnLoad) != 0,
+               "ddol origin scene + flag stable");
+        Expect(w.ActiveSceneHandle() == rep.newHandle, "active follows each hop");
+        const World::SceneRecord* rOld = w.FindSceneRecord(prev);
+        const World::SceneRecord* rNew = w.FindSceneRecord(rep.newHandle);
+        Expect(rOld && !rOld->isLoaded && rNew && rNew->isLoaded, "records flipped per hop");
+        prev = rep.newHandle;
+    }
+    Expect(w.SceneRecordCount() == 4, "one record per load (handles never reused)");
+    Expect(w_find_name(w, prev) == std::string("Cave"), "final scene named");
+}
+
+void TestSceneSwitchDeterministicTrajectory() {
+    // 孪生世界锁步（回放轨迹引擎面）：同初始态 + 同脚本化请求序列（两次换场 +
+    // 初始 DDOL 标记 + 每帧 Fx 灌脏）→ 逐帧 ComputeStateHash 一致 + 场景身份
+    // 轨迹一致 + DDOL 轨迹一致——"同请求序列 ⇒ 同状态轨迹"（C# op 入回放流
+    // 归批⑦，此处证引擎面确定性）
+    const std::string docGrass = MakeSceneText("Grass", "mob", 3);
+    const std::string docVolcano = MakeSceneText("Volcano", "lava", 2);
+
+    struct Twin {
+        World w;
+        Scene* s = nullptr;
+        Entity ddol = Entity::Null();
+        uint32_t origin = 0;
+        std::vector<uint32_t> activeTraj;
+    };
+    auto setup = [&](Twin& t) {
+        t.w.InstallDefaultSystems();
+        t.s = &t.w.CreateScene("run");
+        t.origin = t.w.CreateSceneRecord("Grass", "Scenes/Grass.scene");
+        SceneArchive::BuildInto(*t.s, docGrass);
+        StampSceneMembership(*t.s, t.origin);
+        t.w.SetActiveScene(t.s);
+        t.w.SetActiveSceneHandle(t.origin);
+        s_each_first(*t.s, t.origin, t.ddol);
+        MarkDontDestroyOnLoadTree(*t.s, t.ddol);
+    };
+    Twin a, b;
+    setup(a);
+    setup(b);
+
+    const int kFrames = 20;
+    auto requestHop = [&](World& w, bool toVolcano) {
+        SceneSwitchRequest r;
+        r.name = toVolcano ? "Volcano" : "Grass";
+        r.path = toVolcano ? "Scenes/Volcano.scene" : "Scenes/Grass.scene";
+        r.jsonText = toVolcano ? docVolcano : docGrass;
+        w.Switcher().Request(std::move(r));
+    };
+    int firstHashBad = -1, firstTrajBad = -1;
+    for (int f = 0; f < kFrames; ++f) {
+        if (f == 4) { // Grass → Volcano
+            requestHop(a.w, true);
+            requestHop(b.w, true);
+        }
+        if (f == 12) { // Volcano → Grass（同名重装）
+            requestHop(a.w, false);
+            requestHop(b.w, false);
+        }
+        // 每帧 Fx 灌脏（非实体附着，不入哈希——换场随行清扫的确定性面）
+        a.w.Fx().PopupText("x", 0.0f, 0.0f);
+        b.w.Fx().PopupText("x", 0.0f, 0.0f);
+        a.w.Step(1.0f / 60.0f);
+        b.w.Step(1.0f / 60.0f);
+        a.activeTraj.push_back(a.w.ActiveSceneHandle());
+        b.activeTraj.push_back(b.w.ActiveSceneHandle());
+        if (ComputeStateHash(*a.s) != ComputeStateHash(*b.s) && firstHashBad < 0)
+            firstHashBad = f;
+        if (a.activeTraj.back() != b.activeTraj.back() && firstTrajBad < 0)
+            firstTrajBad = f;
+    }
+    Expect(firstHashBad < 0, "per-frame state hash streams identical");
+    Expect(firstTrajBad < 0, "scene identity trajectory identical");
+    Expect(a.activeTraj.size() == (size_t)kFrames && a.activeTraj[4] != a.origin &&
+                a.activeTraj[12] != a.activeTraj[4],
+           "switches landed on scripted frames (fresh handles each)");
+    Expect(a.s->Alive(a.ddol) && b.s->Alive(b.ddol), "ddol survived both twins");
+    const SceneMembership* ma = a.s->TryGet<SceneMembership>(a.ddol);
+    const SceneMembership* mb = b.s->TryGet<SceneMembership>(b.ddol);
+    Expect(ma && mb && ma->scene == mb->scene && ma->scene == a.origin &&
+                (ma->flags & kSceneFlagDontDestroyOnLoad) != 0,
+           "ddol trajectory identical (origin handle + flag)");
+    Expect(CountSceneGroup(*a.s, kSceneHandleUnassigned) == 0 &&
+                CountSceneGroup(*b.s, kSceneHandleUnassigned) == 0,
+           "zero orphans both twins");
+}
+
+} // namespace
+
 void RunSceneTests() {
     TestSceneMembershipStampAndCount();
     TestSceneGroupTeardownKeepsDDOL();
     TestSceneArchiveBuildIntoAppends();
     TestStateHashIgnoresMembership();
     TestWorldSceneRecords();
+    TestSceneSwitchFullSemantics();
+    TestSceneSwitchAtomicOnBadJson();
+    TestSceneSwitchSweepsFxAndSkipsNullAudio();
+    TestSceneSwitchHookOrdering();
+    TestSceneSwitchNoPendingIsNoop();
+    TestSceneSwitchViaEssentialPipeline();
+    TestSpawnPrefabStampsTree();
+    TestSceneMultiSwitchDDOLTrajectory();
+    TestSceneSwitchDeterministicTrajectory();
 }

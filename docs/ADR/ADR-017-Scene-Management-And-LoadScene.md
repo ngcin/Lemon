@@ -107,7 +107,7 @@ C# 静态成员可经派生类名访问 → 脚本内裸调 `DontDestroyOnLoad(g
 C# 某帧 Update 调 SceneManager.LoadScene("Forest")
   → op 入队（vtable 尾加）→ 当帧照常跑完
 → 下一帧 Essential 段（结构命令应用点，Awake/OnEnable 同段）执行换场：
- ① 旧场实体逐个 OnDestroy（既有销毁通知路径；序 = 逆创建序定死——Unity 不保证序，Lemon 保证 = 确定性）
+ ① 旧场实体逐个 OnDestroy（既有销毁通知路径；序 = 逆创建序定死——Unity 不保证序，Lemon 保证 = 确定性。**2026-10-08 批⑥b 修订**：实现取通知管线的池序——确定序同保（回放两侧同源），"逆创建序"措辞按确定性意图收口，改池序 = 金回放重录红线；落账 [03 分册 §2](../EngineDesign/03-ECS-Runtime.md) 落地注②）
  ② DDOL 标记的根实体连同子树重标签（D5：根树整体幸存）
  ③ 旧场非标记实体两阶段销毁 + 提交；随行清扫：
     tween 随实体自清（既有）· FxChannel 非实体附着物整场清（消灭"常驻实体逐个 KillAll"）

@@ -50,9 +50,11 @@
 #include "Audio/AudioEngine.h"
 #include "Audio/AudioMount.h"
 #include "Audio/Spatial2D.h"
+#include "Components/CoreComponents.h" // Meta（smoke-scene DDOL 定位）
 #include "Core/Log.h"
 #include "Core/Math.h"
 #include "ECS/Scene.h"
+#include "ECS/SceneMembership.h" // MarkDontDestroyOnLoadTree/CountSceneGroup（smoke-scene）
 #include "ECS/World.h"
 #include "Platform/Window.h"
 #include "Renderer/Atlas.h"
@@ -362,21 +364,34 @@ private:
     mutable assets::SpriteEntryView view_; // 单槽 scratch（编辑器侧同口径）
 };
 
+// ---- --smoke-scene 夹具（M7c 批⑥b 换场编排单跳）------------------------
+// 第二场景 = 内嵌最小档（3 实体；cards.rml 声明 showOnStart=1——换场前模板声明
+// 为 0 且 hidden，换场后 sweep 卸旧 + afterBuild 装新声明显式 Show，断言区分度）。
+// guid 取固定段避开模板已用值；DDOL 目标 = Main.scene 的 GameFlow 实体（tag Flow）。
+constexpr const char* kSceneSmokeSceneB = R"({"schemaVersion":2,"name":"SceneB","entities":[
+  {"components":{"Meta":{"guid":4700000000000000001,"layer":0,"prefabId":0,"tag":"","team":0},"Transform2D":{"pos":[64.0,64.0],"rot":0.0,"scale":[1.0,1.0]}}},
+  {"components":{"Meta":{"guid":4700000000000000002,"layer":0,"prefabId":0,"tag":"","team":0},"Transform2D":{"pos":[128.0,128.0],"rot":0.0,"scale":[1.0,1.0]}}},
+  {"components":{"Meta":{"guid":4700000000000000003,"layer":0,"prefabId":0,"tag":"UI_HUD","team":0},"Transform2D":{"pos":[0.0,0.0],"rot":0.0,"scale":[1.0,1.0]},"UIDocument":{"modal":0,"reserved":0,"showOnStart":1,"sourceAssetGuid":9103797948311928834}}}
+]})";
+constexpr uint64_t kSceneSmokeDdolGuid = 10963355455248361612ull;
+
 } // namespace
 
 int main(int argc, char** argv) {
     std::string projectArg, sceneArg;
     int frames = 0;
-    bool smoke = false, validate = false;
+    bool smoke = false, smokeScene = false, validate = false;
     for (int i = 1; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--project") && i + 1 < argc) projectArg = argv[++i];
         else if (!std::strcmp(argv[i], "--scene") && i + 1 < argc) sceneArg = argv[++i];
         else if (!std::strcmp(argv[i], "--frames") && i + 1 < argc) frames = std::atoi(argv[++i]);
         else if (!std::strcmp(argv[i], "--smoke")) smoke = true;
+        else if (!std::strcmp(argv[i], "--smoke-scene")) smokeScene = true;
         else if (!std::strcmp(argv[i], "--validate")) validate = true;
     }
     const std::string exeDir = ExeDir();
-    const bool paced = frames == 0 && !smoke; // 交互 = 墙钟累加；自动化 = 每帧恰一步
+    // 交互 = 墙钟累加；自动化 = 每帧恰一步
+    const bool paced = frames == 0 && !smoke && !smokeScene;
 
     // ---- 项目根与入口场景（--project 缺省 = exe 旁 data/，包形态零参启动）----
     std::string root = projectArg.empty() ? (exeDir + "/data") : projectArg;
@@ -633,6 +648,12 @@ int main(int argc, char** argv) {
         if (st.danglingGuid)
             LEMON_WARN("lemon-game：场景 sprite 引用悬空 %u 处（渲染保留旧号）",
                        st.danglingGuid);
+        // 批⑥b F2：初始人口建档+打标——"零未打标"从第一帧成立（首次 LoadScene 的
+        // 组清场才能收走初始实体；档案名 = "name" 段恢复值 = scene.Name()）
+        const uint32_t entryHandle =
+            world.CreateSceneRecord(scene.Name(), entryScene.c_str());
+        ecs::StampSceneMembership(scene, entryHandle);
+        world.SetActiveSceneHandle(entryHandle);
     }
     hostState.world = &world;
 
@@ -655,41 +676,63 @@ int main(int argc, char** argv) {
     world.SetScriptBackend(&host);
     host.ResetScriptTime();
     host.ResetPlayDomain();
-    { // ScriptBox 槽解析（EditorContext::ResolvePlayScripts 同款）
+    // ScriptBox 槽解析（EditorContext::ResolvePlayScripts 同款；批⑥b 起 lambda 化——
+    // 入口装配与换场 afterBuild 复用同一序列（F3 镜像））
+    auto resolveSceneScripts = [&](ecs::Scene& s) {
         const auto& names = host.BehaviourTypeNames();
         auto typeIdOf = [&](const char* cls) {
             for (size_t i = 0; i < names.size(); ++i)
                 if (names[i] == cls) return (int)i;
             return -1;
         };
-        scene.Each([&](ecs::Entity e) {
-            scripting::ScriptBox* sb = scene.TryGet<scripting::ScriptBox>(e);
+        s.Each([&](ecs::Entity e) {
+            scripting::ScriptBox* sb = s.TryGet<scripting::ScriptBox>(e);
             if (!sb) return;
             for (uint32_t i = 0; i < sb->count; ++i) {
-                scripting::ScriptSlot& s = sb->slots[i];
-                if (s.typeId >= 0) continue;
-                const int id = typeIdOf(s.className);
+                scripting::ScriptSlot& sl = sb->slots[i];
+                if (sl.typeId >= 0) continue;
+                const int id = typeIdOf(sl.className);
                 if (id < 0) {
-                    LEMON_WARN("lemon-game：脚本类型未注册（跳过）'%s'", s.className);
+                    LEMON_WARN("lemon-game：脚本类型未注册（跳过）'%s'", sl.className);
                     continue;
                 }
-                host.ResolveSlotBehaviour(world, scene, e, i, id);
+                host.ResolveSlotBehaviour(world, s, e, i, id);
             }
         });
-    }
+    };
+    resolveSceneScripts(scene);
 
     // ---- UI/音频挂载（通道 A 声明装载 + 烤制/装载注册 + 后端接线）----
     uint32_t mountedUi = 0, mountedAudio = 0;
-    {
+    // 声明装载 lambda 化（换场 afterBuild 复用；ReconcileDocuments 随装载头调用
+    // —— M6b 根因收口的不变量层口径）
+    auto mountSceneUi = [&](ecs::Scene& s) -> uint32_t {
         const IdxUiDocSource uiSrc(index);
-        mountedUi = ui::MountSceneDocuments(ui, scene, uiSrc);
+        const uint32_t n = ui::MountSceneDocuments(ui, s, uiSrc);
         ui::ReconcileDocuments(ui, uiSrc);
-    }
+        return n;
+    };
+    mountedUi = mountSceneUi(scene);
     {
         const IdxAudioSource audioSrc(index);
         mountedAudio = audioMount.MountAll(audioSrc);
     }
     audioMount.WireBackend(world);
+
+    // ---- 换场钩子（批⑥b；SceneSwitcher 编排的宿主件段——引擎件（Fx/Audio.Paused）
+    // 编排直兑不经此。afterBuild = 入口装载同序列（F3：漏此段 = 首帧渲染与脚本全哑）----
+    world.Switcher().SetHooks({
+        .sweep = [&ui] { ui.UnloadDocumentsByOrigin(ui::UiDocOrigin::Scene); },
+        .afterBuild = [&](ecs::Scene& s) {
+            const IdxSpriteRefSource spriteSrc(index);
+            const assets::SpriteRefStats st = assets::ResolveSpriteRefs(s, spriteSrc);
+            if (st.danglingGuid)
+                LEMON_WARN("lemon-game：换场 sprite 引用悬空 %u 处（渲染保留旧号）",
+                           st.danglingGuid);
+            resolveSceneScripts(s);
+            mountSceneUi(s);
+        },
+    });
 
     // ---- 设备丢失重建（resize 触发整设备重建：程序化页 → 资产页 → UI 全量重载，
     // 编辑器 "editor-viewport"→"asset-gpu" 两段式同序）----
@@ -730,6 +773,11 @@ int main(int argc, char** argv) {
     // 机器面端到端。150 定位（盒中心保持指针，Update 建悬停）→151 down→152 up
     float smokePtrX = 0, smokePtrY = 0;
     bool smokeHold = false;
+    // --smoke-scene 换场编排单跳（批⑥b）：frame 80 预置脏态 + Request → 下一帧
+    // Essential 执行 → 换场后收集断言（批文件 §smoke-scene 断言面 1-7）
+    bool switchArmed = false, switchVerified = false, sceneChecksOk = false;
+    uint32_t sceneSmokeOldHandle = 0;
+    ecs::Entity sceneSmokeDdol = ecs::Entity::Null();
     std::vector<SpritePacket> textPackets, fxBarPackets;
     std::chrono::steady_clock::time_point lastFxTime{};
     bool running = true;
@@ -795,7 +843,7 @@ int main(int argc, char** argv) {
         // UI 输入喂入（指针 = 窗口点 → swapchain 像素换算；键盘/鼠标差分出边沿；
         // IME 锚点 = 直渲染画布即窗口 → 像素→点换算）
         {
-            if (smoke && !smokeHold && frame == 150) {
+            if (smoke && !smokeScene && !smokeHold && frame == 150) {
                 float w = 0, h = 0, x = 0, y = 0;
                 if (ui.TryGetElementBox("Assets/UI/main.rml", "btn-start", &w, &h, &x, &y) &&
                     w > 1.0f && h > 1.0f) {
@@ -894,6 +942,51 @@ int main(int argc, char** argv) {
             hudShown = true; // 进局观察位（点击→流程→HUD 显示链）
         if (frame > 200 && !cardsShown && ui.IsDocumentShown("Assets/UI/cards.rml"))
             cardsShown = true; // 升级/死亡动态弹卡观察位（UI.Show 运行时装载链）
+        // --smoke-scene：菜单态预置脏态 + 发起换场（帧尾 Request → 下一帧 Essential
+        // #18 执行 = ADR-017"下一帧装载"时序）
+        if (smokeScene && !switchArmed && frame == 80) {
+            switchArmed = true;
+            sceneSmokeOldHandle = world.ActiveSceneHandle();
+            audio.SetPaused(true);          // D6 强制清的断言源
+            world.Fx().PopupText("stale", 0.0f, 0.0f); // Fx 整场清的断言源
+            scene.Each([&](ecs::Entity e) {
+                if (const ecs::Meta* m = scene.TryGet<ecs::Meta>(e);
+                    m && m->guid == kSceneSmokeDdolGuid)
+                    sceneSmokeDdol = e;
+            });
+            if (!sceneSmokeDdol.IsNull())
+                ecs::MarkDontDestroyOnLoadTree(scene, sceneSmokeDdol);
+            world.Switcher().Request({.name = "SceneB",
+                                      .path = "Scenes/SceneB.scene",
+                                      .jsonText = kSceneSmokeSceneB});
+        }
+        // 换场完成（active 拨动）：收集断言——旧组只剩 DDOL / 新组 3 实体 / 零孤组 /
+        // main.rml 卸载 + cards 显式 Show / 解暂停 / Fx 清 / 幸存者 Alive+位在 /
+        // 档案 isLoaded 翻转
+        if (smokeScene && switchArmed && !switchVerified &&
+            world.ActiveSceneHandle() != sceneSmokeOldHandle) {
+            switchVerified = true;
+            const uint32_t newH = world.ActiveSceneHandle();
+            const uint32_t oldLeft =
+                ecs::CountSceneGroup(scene, sceneSmokeOldHandle);
+            const uint32_t newGroup = ecs::CountSceneGroup(scene, newH);
+            const uint32_t orphan =
+                ecs::CountSceneGroup(scene, ecs::kSceneHandleUnassigned);
+            bool ddolOk = false;
+            if (!sceneSmokeDdol.IsNull() && scene.Alive(sceneSmokeDdol))
+                if (const ecs::SceneMembership* mm =
+                        scene.TryGet<ecs::SceneMembership>(sceneSmokeDdol))
+                    ddolOk = (mm->flags & ecs::kSceneFlagDontDestroyOnLoad) != 0;
+            const ecs::World::SceneRecord* recOld =
+                world.FindSceneRecord(sceneSmokeOldHandle);
+            const ecs::World::SceneRecord* recNew = world.FindSceneRecord(newH);
+            sceneChecksOk = oldLeft == 1 && newGroup == 3 && orphan == 0 &&
+                            !ui.HasDocument("Assets/UI/main.rml") &&
+                            ui.IsDocumentShown("Assets/UI/cards.rml") &&
+                            !audio.IsPaused() && world.Fx().TextCount() == 0 &&
+                            ddolOk && recOld && !recOld->isLoaded && recNew &&
+                            recNew->isLoaded;
+        }
         ++frame;
         if (paced && (frame % 120) == 0 && statFrames > 0 && frameSec > 0) {
             std::printf("[lemon-game] fps=%.1f alive=%u\n",
@@ -927,6 +1020,36 @@ int main(int argc, char** argv) {
             (unsigned long long)world.TickIndex(), mountedUi, mountedAudio, atlasPages,
             host.BatchSystemCount(), ui.ContractErrorCount(), hudShown ? 1 : 0,
             cardsShown ? 1 : 0, ok ? "OK" : "FAIL");
+        std::fflush(stdout);
+        g_host = nullptr;
+        ui.Shutdown();
+        return ok ? 0 : 1;
+    }
+    if (smokeScene) {
+        // RESULT 行（回归口径）：换场编排单跳全断言（发起→执行→终态七面）+ 零 UI
+        // 契约错误 => OK。switchVerified false = 帧预算内未完成换场（红）。
+        const uint32_t newH = world.ActiveSceneHandle();
+        const bool ok = switchArmed && switchVerified && sceneChecksOk &&
+                        ui.ContractErrorCount() == 0;
+        std::printf(
+            "[lemon-game] RESULT scene-smoke: frames=%llu old=%u new=%u "
+            "oldLeft=%u newGroup=%u orphan=%u ddol=%d uiMainGone=%d uiCardsShown=%d "
+            "unpaused=%d fxCleared=%d recOldLoaded=%d recNewLoaded=%d contractErr=%u "
+            "=> %s\n",
+            (unsigned long long)frame, sceneSmokeOldHandle, newH,
+            ecs::CountSceneGroup(scene, sceneSmokeOldHandle),
+            ecs::CountSceneGroup(scene, newH),
+            ecs::CountSceneGroup(scene, ecs::kSceneHandleUnassigned),
+            scene.Alive(sceneSmokeDdol) ? 1 : 0,
+            ui.HasDocument("Assets/UI/main.rml") ? 0 : 1,
+            ui.IsDocumentShown("Assets/UI/cards.rml") ? 1 : 0,
+            audio.IsPaused() ? 0 : 1, world.Fx().TextCount() == 0 ? 1 : 0,
+            world.FindSceneRecord(sceneSmokeOldHandle) &&
+                    world.FindSceneRecord(sceneSmokeOldHandle)->isLoaded
+                ? 1
+                : 0,
+            world.FindSceneRecord(newH) && world.FindSceneRecord(newH)->isLoaded ? 1 : 0,
+            ui.ContractErrorCount(), ok ? "OK" : "FAIL");
         std::fflush(stdout);
         g_host = nullptr;
         ui.Shutdown();

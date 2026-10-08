@@ -90,6 +90,9 @@ public:
     /// 卸载单文档（资产删除路径）；全部卸载（切项目）。
     bool UnloadDocument(const char* name);
     void UnloadAllDocuments();
+    /// 按来源批量卸载（M7c 批⑥b 换场随行清扫）：origin==Scene 的声明装载文档
+    /// 随旧场卸（R10；CSharp/Edit 来源跨场幸存——加载屏/预览语义）。返回卸载数。
+    uint32_t UnloadDocumentsByOrigin(UiDocOrigin origin);
 
     /// 显隐（批③d 前置：modal = 场景声明态写入口——原本置 true 唯一路径是
     /// ApplyOps 的 C# Show op；尾加默认参零破坏既有调用）。show=true 时 Show 后

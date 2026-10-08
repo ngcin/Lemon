@@ -17,6 +17,7 @@
 #include "Assets/SaveStore.h"  // assets::SaveStore（Play 存档三通道；M7a 批③ 下沉件）
 #include "Components/CoreComponents.h"
 #include "Components/RenderComponents.h"
+#include "ECS/SceneMembership.h" // StampSceneMembership（EnterPlay 初始打标，批⑥b F2）
 #include "Core/Guid.h"
 #include "Core/Log.h"
 #include "ECS/ComponentRegistry.h"
@@ -762,6 +763,14 @@ bool EditorContext::EnterPlay() {
         playWorld_.reset();
         playScene_ = nullptr;
         return false;
+    }
+    // M7c 批⑥b F2：初始人口建档+打标——"零未打标"不变量从进 Play 第一帧成立
+    //（首次 LoadScene 的组清场才能收走初始实体；档案名 = 快照 name 段恢复值）
+    {
+        const uint32_t h = playWorld_->CreateSceneRecord(playScene_->Name(),
+                                                         scenePath_.c_str());
+        ecs::StampSceneMembership(*playScene_, h);
+        playWorld_->SetActiveSceneHandle(h);
     }
     // M5 清障②：Play 世界刷怪工厂（Spawner/Shooter 的 prefabId 低 32 位 → prefab
     // 资产实例化；进 Play 时刻缓存——纯运行时 World 无此桥，SpawnSystem 原告警路径

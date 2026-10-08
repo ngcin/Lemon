@@ -5,6 +5,7 @@
 #include <cstring>
 
 #include "ECS/ComponentRegistry.h"
+#include "ECS/SceneMembership.h"
 
 namespace lemon::ecs {
 
@@ -112,6 +113,14 @@ void World::SetAudioBackend(audio::AudioEngine* engine,
 
 uint32_t World::ResolveAudioClip(uint64_t guid) const {
     return audioResolve_ ? audioResolve_(guid, audioResolveCtx_) : 0;
+}
+
+Entity World::SpawnPrefab(uint32_t prefabId, Vec2 pos, uint32_t team) {
+    // 批⑥b 出生打标：工厂出生即子树打 active 句柄（Instantiate 落点，ADR-017 D1）
+    if (!spawnFn_ || !active_) return Entity::Null();
+    Entity e = spawnFn_(*active_, prefabId, pos, team);
+    if (!e.IsNull()) StampTreeMembership(*active_, e, activeSceneHandle_);
+    return e;
 }
 
 void World::Step(float fixedDt) {

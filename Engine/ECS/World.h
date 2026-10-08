@@ -21,6 +21,7 @@
 #include "ECS/Input.h"
 #include "ECS/SaveChannel.h"
 #include "ECS/Scene.h"
+#include "ECS/SceneSwitcher.h"
 #include "ECS/SystemPipeline.h"
 #include "ECS/TableStore.h"
 #include "ECS/TeamTable.h"
@@ -148,6 +149,12 @@ public:
     uint32_t ActiveSceneHandle() const { return activeSceneHandle_; }
     void SetActiveSceneHandle(uint32_t handle) { activeSceneHandle_ = handle; }
 
+    // ---- 换场编排（ADR-017；M7c 批⑥b）----
+    // 请求挂此（宿主/C# op 经 Request）；SceneSwitchSystem（Essential #18）每帧
+    // 消费。hooks（sweep/afterBuild）由宿主装配期注入——World 不拥有 UI/资产源。
+    SceneSwitcher& Switcher() { return switcher_; }
+    const SceneSwitcher& Switcher() const { return switcher_; }
+
     SystemPipeline& Pipeline() { return pipeline_; }
 
     /// 分离力系统访问（2026-09-26 调参下放批：参数场景侧化——引擎默认不动 =
@@ -247,6 +254,11 @@ public:
     void SetEventSink(EventSink sink) { eventSink_ = std::move(sink); }
     const SpawnFn& GetSpawnFn() const { return spawnFn_; }
     const EventSink& GetEventSink() const { return eventSink_; }
+    // ---- 出生打标通道（M7c 批⑥b；Instantiate 落点 = active 场景句柄）----
+    // 系统侧统一入口：工厂出生 + **子树即时打标**——保"零未打标"不变量（裸调
+    // GetSpawnFn 绕过打标 = 下次装载 Stamp 全场收编误入新场组，禁止新调用面）
+    bool HasSpawnFn() const { return (bool)spawnFn_; }
+    Entity SpawnPrefab(uint32_t prefabId, Vec2 pos, uint32_t team);
 
     // ---- 脚本桥后端（#14/#15 消费；宿主注入，非拥有）----
     void SetScriptBackend(IScriptBackend* backend) { scriptBackend_ = backend; }
@@ -270,6 +282,7 @@ private:
     std::vector<SceneRecord> sceneRecords_;        // 档2 场景档案（批⑥；与 scenes_ 正交）
     uint32_t activeSceneHandle_ = 0;               // kSceneHandleUnassigned = 无
     uint32_t nextSceneHandle_ = 1;                 // 发号器（0 保留）
+    SceneSwitcher switcher_;                       // 换场编排（批⑥b；SceneSwitchSystem 消费）
     SystemPipeline pipeline_;
     class SeparationSystem* separation_ = nullptr; // InstallDefaultSystems 填（生命周期同管线）
     RingQueue<EventPacket> events_;

@@ -446,9 +446,10 @@ void TestSystemPipelineOrder() {
     world.InstallDefaultSystems();
     auto& p = world.Pipeline();
 
-    Expect(p.Systems().size() == 20, "20 systems installed（T3d 批② +AnimGraphSystem；A 档 "
-                                     "+TweenSystem；M6c 批② +AudioSystem）");
-    // Essential 阶段只有 DestroyCommit；FixedTick 按表序
+    Expect(p.Systems().size() == 21, "21 systems installed（T3d 批② +AnimGraphSystem；A 档 "
+                                     "+TweenSystem；M6c 批② +AudioSystem；批⑥b +SceneSwitch（Essential 尾插，"
+                                     "不消费 RNG 不占子流））");
+    // Essential 阶段 = DestroyCommit + SceneSwitch（批⑥b 换场编排，After DestroyCommit）；FixedTick 按表序
     // （#9 Pickup = M5 批①；T3d 批② AnimGraph 插在 CSharpBatch 后——图评估读当
     // tick 脚本参数，写段由下一 tick Animator 消费，与脚本直写 Play 同拍；
     // A 档补间 Tween 插在 AnimGraph 后、事件派发前——脚本当 tick 发起即首写、
@@ -473,17 +474,23 @@ void TestSystemPipelineOrder() {
                               "Tween",
                               "Audio",
                               "ScriptEventDispatch"};
-    uint32_t fi = 0;
+    uint32_t fi = 0, essentialSeen = 0;
     for (const auto& s : p.Systems()) {
         if (s->Stage() == SystemStage::Essential) {
-            Expect(std::string_view(s->Name()) == "DestroyCommit", "essential is destroy");
+            // 批⑥b：Essential 段 = DestroyCommit 在前、SceneSwitch 在后（After 依赖）
+            if (essentialSeen == 0)
+                Expect(std::string_view(s->Name()) == "DestroyCommit", "essential[0] destroy");
+            else
+                Expect(std::string_view(s->Name()) == "SceneSwitch", "essential[1] sceneswitch");
+            ++essentialSeen;
         } else {
             Expect(fi < 19 && std::string_view(s->Name()) == expected[fi], "fixedtick order");
             ++fi;
         }
     }
     Expect(fi == 19, "19 fixedtick systems");
-    Expect(p.Profiles().size() == 20, "profiles allocated");
+    Expect(essentialSeen == 2, "2 essential systems");
+    Expect(p.Profiles().size() == 21, "profiles allocated");
 }
 
 void TestSimulationEndToEnd() {

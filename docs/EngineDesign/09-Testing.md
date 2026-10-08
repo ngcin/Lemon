@@ -224,6 +224,14 @@ RESULT 行判读：`sim avg ≤ 8ms`（08 §3 判据）；`alive` 稳定在 n �
 > **先例三第二次应用（M6a 批①，2026-09-24）**：Animator2D 16→28B 尾加换段队列
 > 三字段（FIELD_RT）——三金档零 Animator2D 实例 → m5b2 三档原样 replay
 > mismatches=0（实测落账，零重录先例首个"同推论两次兑现"复证）。
+>
+> **零重录先例四（M7c 批⑥，2026-10-08）**：运行时新机制族"场景分组 + 换场编排"
+> （SceneMembership 不入注册表 + 场景档案/SceneSwitcher World 持有 + 系统 21 尾插
+> 不消费 RNG 子流）→ **跨构建版本三档** mismatches=0（worktree 检出 m7c-b4 构建
+> 录档 → 批⑥ 构建回放；历先例均为同构建现录现放，本例首次跨版本证明——录档侧
+> 旧构建回放侧新构建，覆盖该批全部引擎 delta）。操作性备注：worktree 全新
+> configure 须显式 `CPM_SOURCE_CACHE=~/.cache/Lemon-CPM`，否则 CPM 在线 clone
+> 挂本机代理坑。[DevLog](../DevLog/2026-10-08-m7c-b6c-replay-extension.md)。
 
 ### 6.9 bench-script —— M3 脚本验收场（无渲染，CoreCLR 域线程）
 
@@ -437,10 +445,12 @@ Hierarchy 面板）。回归口径 = 本命令三跑稳定。
   异常禁用 → 对话框复活，帧下限 3000；批② T4 加**数值表**断言 tables=YES；T5 加
   **三档存档**断言——种子 meta.sav（vs.best 载入回显）+ 旧 game.sav（惰性迁移
   链）→ Stop 后 slot_0/meta 落盘 + 迁移内容回读 + 空档 settings 不落文件）/
-  `--final`（终验链）经 `tools/editor-regression.sh` 一键 **20 步**（M5 批⓪ 14 步
+  `--final`（终验链）经 `tools/editor-regression.sh` 一键 **21 步**（M5 批⓪ 14 步
   → M6c 17 → M7a 批④ 18（game-smoke）→ 批⑤ 19（pkg-smoke：lemon-packager 出包 +
   自检 + 包体零参 smoke + fps≥60 数值判）→ 批⑧ 20（bench-survivor 性能基线门禁
-  fps≥76.5 + grep_step 退出码双判 + smoke-drag 两次取优，§9））；**未脚本化**的纯观感路径
+  fps≥76.5 + grep_step 退出码双判 + smoke-drag 两次取优，§9）→ M7c 批⑥b 21
+  （scene-smoke：lemon-game `--smoke-scene` 换场编排单跳七面断言；同批 anim-chain
+  升级 retry_step——sheet 全选帧锚定注入偶发抖动两次取优，§9 口径））；**未脚本化**的纯观感路径
   （Inspector 控件手感、面板排版）仍靠 [Editor-Manual-Test-Guide.md](./Editor-Manual-Test-Guide.md) 真人清单。
 - M2：bench-sim 早期怪群聚拢阶段存在 max ~145ms 单步尖峰（avg 判据不受影响；哈希重建
   并行化是已预留路径，触发 M5 压测 B 再做）；投射物穿透去重用全量 iFrames 策略（M5 细化）；
@@ -465,7 +475,8 @@ Hierarchy 面板）。回归口径 = 本命令三跑稳定。
 > 本机 launchd + GitHub win scheduled）——**2026-10-07 用户改拍板 = 手动档**：
 > launchd 已卸载（模板留档 `Tools/com.lemon.ci-daily.plist` 含恢复配方）、
 > workflow schedule 已撤（dispatch-only）。现行口径：**门禁手动一键** =
-> `Tools/ci-daily.sh`（增量构建 → `editor-regression.sh full` **20 步**（第 20 步
+> `Tools/ci-daily.sh`（增量构建 → `editor-regression.sh full` **21 步**（M7c 批⑥b
+> 起 +scene-smoke 换场编排单跳；末步
 > = bench-survivor 门禁 fps≥76.5 = 基线 85×0.9，§10">10% 回退标红"机器化；
 > 45fps 硬线在 `BenchVerdict` 退出码内）→ 报告 `build/ci-reports/`）+ GitHub
 > win job 手动 dispatch（逻辑面门禁；macOS runner 10× 计费不跑 GPU 面——性能

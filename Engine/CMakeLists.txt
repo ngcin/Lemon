@@ -34,6 +34,7 @@ add_library(lemon-engine STATIC
   ECS/TweenTable.cpp
   ECS/Scene.cpp
   ECS/SceneMembership.cpp
+  ECS/SceneSwitcher.cpp
   ECS/StateHash.cpp
   ECS/SystemPipeline.cpp
   ECS/World.cpp

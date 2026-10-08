@@ -64,6 +64,23 @@ uint32_t MarkDontDestroyOnLoadTree(Scene& s, Entity root) {
     return (uint32_t)tree.size();
 }
 
+uint32_t StampTreeMembership(Scene& s, Entity root, uint32_t sceneHandle) {
+    if (!s.Alive(root)) return 0;
+    std::vector<Entity> tree;
+    CollectTree(s, root, tree);
+    uint32_t n = 0;
+    for (Entity e : tree) {
+        if (SceneMembership* m = s.TryGet<SceneMembership>(e)) {
+            if (m->scene != kSceneHandleUnassigned) continue; // 已指派不动（幂等）
+            m->scene = sceneHandle;
+        } else {
+            s.Emplace<SceneMembership>(e).scene = sceneHandle;
+        }
+        ++n;
+    }
+    return n;
+}
+
 uint32_t CountSceneGroup(Scene& s, uint32_t sceneHandle) {
     uint32_t n = 0;
     s.Each([&](Entity e) {

@@ -12,6 +12,7 @@
 #include "Core/Log.h"
 #include "Core/FileOps.h" // AcpToUtf8：win 侧 ACP 路径过 C++/C# UTF-8 边界前归一
 #include "ECS/ComponentRegistry.h"
+#include "ECS/SceneMembership.h" // 运行时建实体打标（批⑥b"零未打标"不变量）
 #include "Systems/Systems.h" // SeparationSystem 完整定义（调参下放通道）
 
 namespace lemon::scripting {
@@ -150,7 +151,11 @@ uint64_t NativeSpawnSprite(uint32_t spriteId, float x, float y) {
     }
     auto& m = g_scene->Emplace<ecs::Meta>(e);
     std::snprintf(m.tag, sizeof(m.tag), "spawned");
-    MarkBatchStaleIfPoolsMoved(); // D5：三 emplace 可能触池增长（比对定真伪）
+    // 批⑥b：运行时建实体打标 active（Instantiate 落点，ADR-017 D1）——漏标 =
+    // 换场组清场收不走（旧场实体泄漏进新场，档1 RunSweeper 手工清的同类病）
+    if (g_world)
+        g_scene->Emplace<ecs::SceneMembership>(e).scene = g_world->ActiveSceneHandle();
+    MarkBatchStaleIfPoolsMoved(); // D5：四 emplace 可能触池增长（比对定真伪）
     return e.id;
 }
 
@@ -161,6 +166,8 @@ uint64_t NativeInstantiatePrefab(const char* guidHex, float x, float y) {
     // D5：钩子内 LoadEntityTree 任意 emplace（树深度/组件面不可静态知）——返回后
     // 统一比对（比对定真伪，无需枚举树内组件）
     if (e != 0) MarkBatchStaleIfPoolsMoved();
+    // 批⑥b 登记项：钩子注册者（当前无宿主注册，恒 0 失败路径）负责子树打标
+    // active——World::SpawnPrefab 的 StampTreeMembership 同款责任边界（注册时接）
     return e;
 }
 
@@ -955,6 +962,9 @@ void ScriptHost::ApplyStructural(ecs::World& world, ecs::Scene& scene) {
             switch (op.type) {
             case 0: { // Create
                 ecs::Entity e = scene.Create();
+                // 批⑥b：结构命令建实体打标 active（同 NativeSpawnSprite——零未打标
+                // 不变量跨全部运行时建实体路径）
+                scene.Emplace<ecs::SceneMembership>(e).scene = world.ActiveSceneHandle();
                 resolved.emplace_back(op.entity, e);
                 break;
             }

@@ -37,6 +37,12 @@ public:
     /// 后调用方 StampSceneMembership 打标。Load = 本函数 + 清空前奏（行为同旧）。
     static bool BuildInto(Scene& scene, const std::string& jsonText);
 
+    /// 只读预检（M7c 批⑥b 换场原子性）：ParseSceneDoc 同链（解析 + 迁移到当前
+    /// 版本 + 段校验），零构建零副作用。换场编排清场前调用——失败 = 响亮取消，
+    /// 世界逐位不动。成功不保证 BuildInto 必成（实体段构建异常的极端路径仍可能
+    /// 失败，编排侧红字交底）。
+    static bool ValidateParse(const std::string& jsonText);
+
     /// 版本迁移链：把 fromVersion 的文档升到 kSchemaVersion（逐级）。
     /// 每级迁移是一个纯 json→json 变换；无法处理返回 false。
     static bool Migrate(std::string& jsonText, uint32_t fromVersion);

@@ -486,6 +486,13 @@ bool SceneArchive::BuildInto(Scene& scene, const std::string& jsonText) {
     return BuildEntities(scene, doc.at("entities"));
 }
 
+bool SceneArchive::ValidateParse(const std::string& jsonText) {
+    // 批⑥b 换场原子性预检：与 BuildInto 同一条 ParseSceneDoc 链（解析 + 迁移 +
+    // 段校验），丢弃解析结果不构建。失败告警已在 ParseSceneDoc 内（口径同 Load）
+    Json doc;
+    return ParseSceneDoc(jsonText, doc);
+}
+
 bool SceneArchive::Migrate(std::string& jsonText, uint32_t fromVersion) {
     // 迁移链：每级一个 case，纯 json→json 变换后回写 schemaVersion（03 §13；
     // 老档自动升级，风险台账 #7 的 CI 保障）。

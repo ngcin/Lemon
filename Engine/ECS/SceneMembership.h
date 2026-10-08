@@ -53,6 +53,12 @@ uint32_t QueueDestroySceneGroup(Scene& s, uint32_t sceneHandle);
 /// 传根）；引擎层不判亲缘。返回重标签实体数。
 uint32_t MarkDontDestroyOnLoadTree(Scene& s, Entity root);
 
+/// 子树打标（M7c 批⑥b prefab spawn 通道）：root 连同全部后代仅收编未指派实体
+/// （同 StampSceneMembership 判据，域缩到子树）——World::SpawnPrefab 出生即打
+/// active 句柄，保"零未打标"不变量（否则 spawn 实体被下次装载的 Stamp 全场收编
+/// 误入新场组）。返回收编数。
+uint32_t StampTreeMembership(Scene& s, Entity root, uint32_t sceneHandle);
+
 /// 统计（smoke/单测断言面；Scene 查询面无 const 重载，同 ComputeStateHash 口径收
 /// 非 const）。CountSceneGroup 含同组 DDOL 实体；未打标实体计入
 /// kSceneHandleUnassigned 组（编辑态全组）。

@@ -27,6 +27,9 @@ World（进程级唯一，持资产库/JobSystem/桥等全局服务）
      └─ 导演（Director，可多个）
 ```
 
+> **M7c 批⑥ 落地注（ADR-017 D1，2026-10-08）——Scene 语义修订：从执行/数据边界降级为数据分组**。运行时 Play 世界单 registry，实体带 `SceneMembership`（场景句柄 + DDOL 位）组件；场景档案（handle/name/path/isLoaded）住 World。上图"一个游戏状态 = 一个 Scene"在运行时按分组语义解读：系统管线/渲染提取/C# tick 本就全 registry 遍历，DDOL 实体照常 tick/渲染（Unity 同款）；换场 = 帧边界销毁 membership==旧场组（`SceneSwitcher` 单帧先清后装 + 随行清扫，Essential 段 #18）。`Scene` 类（entt 封装）保留，编辑器 edit/play 双 registry 现状不动（编辑态单组 = 不打标）。三条纪律：① **membership 三不入**——不入 ComponentRegistry（故不入序列化与 StateHash，[SceneMembership.h](../../Engine/ECS/SceneMembership.h) 头注 = ScriptBox 同款）；装载/实例化单点打标，漏标孤组 = smoke 零容忍断言面。② **OnDestroy 通知序 = 池序（确定序）**：ADR-017 换场帧协议 ①"逆创建序"措辞按**确定性**意图收口——现状 `NotifyPendingDestroys` 按 View 池序遍历（回放两侧同源确定序）；改遍历序 = 战斗销毁通知序变 → RNG 消费序变 = 金回放重录红线，故沿池序不改（严格逆创建序需单实体通知接口且无消费者，不做；批⑥b 设计定案②）。③ **换场确定性**：同请求序列 ⇒ 同状态轨迹（孪生世界锁步单测钉住，批⑥c）；membership 不入哈希流 → 换场机制零金回放重录（批⑥c 跨版本三档 mismatches=0 终验）；C# LoadScene op 入回放流（场景身份承载）归批⑦。
+
+
 - **实体销毁两阶段**：`Destroy()` 只入销毁队列，`Essential` 阶段统一提交（系统遍历中安全销毁；与触发器/事件队列一致性）。**脚本实体死亡豁免**（批④后修④，2026-09-24）：#10 命中系统 HP 归零时，带 `ScriptBox` 的实体**不自动销毁**——生死处置归脚本（VS 模板玩家死亡→对话框复活即此路径）；此前无条件销毁导致复活后读已毁实体连续报错、行为被异常隔离禁用。无脚本数据实体照旧清场。**销毁通知恰好一次（F-08.2）**：`ScriptBox` 头部实体级 `notified` 位去重（M6a 批⓪ 多槽化后从槽级 flags 升格——多槽实体按实体一次通知全部实例，不逐槽各发）。
 - **Prefab（PrefabLink + PropertyOverride 模型，Prowl2D 已验证方案，ADR-009）**：资产化的实体模板。实例**只存一个链接 + 覆盖列表**（非全量拷贝）：
   - 链接数据挂实例根：`PrefabLink { uint64_t prefabId; SmallVector<PropertyOverride, 8> overrides; }`（非实例实体零开销）；支持嵌套 prefab（模板本身可以是另一实例）；编辑期 Apply / Revert / Break + Inspector 逐字段 override 高亮（见 05 §5）。
@@ -335,6 +338,7 @@ RingQueue<EventPacket> gEvents;          // 系统只入队，帧末 ScriptEvent
 
 - 输入快照 + seeded RNG（每系统独立子流）+ 固定步长 + 稳定排序 ⇒ **逐帧可重放**（调试利器：崩溃帧重放）。
 - v1 只做"开发者重放"（录输入流到文件，`--replay` 启动参数回放），不做联机回放服务。
+- **换场与回放（M7c 批⑥c 落地注，2026-10-08）**：换场机制对哈希流零扰动——membership 不入 StateHash（§2 落地注①），引擎面"同请求序列 ⇒ 同逐帧哈希轨迹"由孪生世界锁步单测钉住（多次换场 + DDOL 幸存者轨迹）；金回放跨版本三档（m7c-b4 录档 → 批⑥ 构建回放）mismatches=0 = 零重录机械证明。C# `LoadScene` op 入回放流（场景身份由 op 记录承载，错图即 op 分歧）归批⑦；async 分帧的激活帧契约见 [ADR-017](../ADR/ADR-017-Scene-Management-And-LoadScene.md) D3。
 
 ## 13. 存档与场景快照
 

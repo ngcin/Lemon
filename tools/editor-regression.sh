@@ -126,7 +126,10 @@ grep_step "smoke-ui (real-person session: shortcuts/undo/scrub/save/play/rename/
 if [ "${MODE}" = "full" ]; then
     grep_step "asset-chain smoke (import/hot-replace/thumbnail)" "editor-smoke PASS" \
         "${EDITOR}" --project "${TMP}/assets" --smoke --frames 240
-    grep_step "anim-chain smoke (grid slice + clip + animator frame mapping; M5-b3)" \
+    # smoke-anim = 注入抖动位（2026-10-08 批⑥b 回归类现：sheet 全选帧锚定注入
+    # 边沿偶失，独立复跑两连绿、与本批改动正交定性非回归）——两次取优机器化
+    # （09 §9 flake 口径，smoke-drag 同款）
+    retry_step "anim-chain smoke (grid slice + clip + animator frame mapping; M5-b3)" \
         "smoke-anim: .* => OK" \
         "${EDITOR}" --project "${TMP}/anim" --smoke-anim --frames 120 --no-reopen
     grep_step "template-chain smoke (wizard copy + build + play menu/run/cards/death/revive/results/restart/pause/settings/tomenu; M5-b4+M6b-b3d2)" \
@@ -144,6 +147,12 @@ if [ "${MODE}" = "full" ]; then
             grep_step "game-smoke (lemon-game standalone runtime: four caches + ui-click-to-run + prefab spawn + direct render + saves; M7a-b4)" \
                 "game-smoke: .* => OK" \
                 "${GAME}" --project "${TMP}/game" --frames 900 --smoke
+            # M7c 批⑥b：换场编排单跳（引擎直调 Request → Essential #18 执行 → 七面
+            # 断言：旧组归零/DDOL 幸存句柄不变/新组打标/零孤组/UI origin=Scene 卸载+
+            # 新声明 Show/Audio.Paused 强制清/Fx 整场清/档案 isLoaded 翻转）
+            grep_step "scene-smoke (engine scene-switch orchestration: group sweep + ddol survivor + stamp + ui origin unload + audio unpaused + fx clear; M7c-b6b)" \
+                "scene-smoke: .* => OK" \
+                "${GAME}" --project "${TMP}/game" --frames 240 --smoke-scene
         else
             echo "  FAIL game-smoke (夹具 Game/ 编译失败：dotnet build ${TMP}/game)"
             fail=$((fail+1))

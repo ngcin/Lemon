@@ -829,6 +829,18 @@ void UiSubsystem::UnloadAllDocuments() {
     impl_->containers.clear();
 }
 
+uint32_t UiSubsystem::UnloadDocumentsByOrigin(UiDocOrigin origin) {
+    if (!impl_) return 0;
+    // 批⑥b 换场随行清扫（R10 兑现）：先收集再卸——UnloadDoc 可能回调进 RmlUi，
+    // 遍历中直改 docs_ 迭代器不安全（UnloadDocument 单发同款路径复用）
+    std::vector<const std::string*> victims;
+    for (const auto& [name, d] : impl_->docs)
+        if (d.origin == (uint8_t)origin) victims.push_back(&name);
+    uint32_t n = 0;
+    for (const std::string* name : victims) n += UnloadDocument(name->c_str()) ? 1 : 0;
+    return n;
+}
+
 bool UiSubsystem::ShowDocument(const char* name, bool show, bool modal) {
     if (!impl_) return false;
     auto it = impl_->docs.find(name);

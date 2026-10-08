@@ -1,6 +1,6 @@
 # 批⑥：LoadScene 引擎核心——SceneMembership + 场景档案 + 换场协议（Single 同步路径）
 
-Status: in-progress（**切片 ⑥a ✅ 机器面 2026-10-08**——membership 数据面 + 场景档案 + BuildInto 拆分 + 单测五件；单测 34,481（+46）/ ctest 4/4 / 回归 full 20/20（zh 态；en 态 19/20 红项 = 登记的批③ i18n 候选池缺陷逐位复现，非本批引入）/ bench fps=90 / 构建零警告，[DevLog](../../DevLog/2026-10-08-m7c-b6a-scene-membership.md)；**⑥b 换场协议编排 + ⑥c StateHash/回放扩展随后小批推进**——用户拍板"不要一次性大批量完成"，每切片独立验收）
+Status: done ✅（**批⑥ 整体收口 2026-10-08**——切片 ⑥a ✅ 机器面（membership 数据面 + 场景档案 + BuildInto 拆分 + 单测五件；单测 34,481（+46）/ ctest 4/4 / 回归 full 20/20（zh 态；en 态 19/20 红项 = 登记的批③ i18n 候选池缺陷逐位复现，非本批引入）/ bench fps=90 / 构建零警告，[DevLog](../../DevLog/2026-10-08-m7c-b6a-scene-membership.md)）；⑥b ✅（[批文件](./2026-10-08-b6b-scene-switch-orchestration.md)）；⑥c ✅（回放扩展 + 金回放跨版本三档零重录终验 + 03 注记，[批文件](./2026-10-08-b6c-replay-extension.md)）——出口判据"金回放零重录（⑥c 用例证明）"已落账）
 
 - 日期：2026-10-08
 - 关联：[ADR-017](../../ADR/ADR-017-Scene-Management-And-LoadScene.md)（D1 单 registry+membership / D3 统一管线 / D6 Audio.Paused 强制清）· [M7c.md](./M7c.md) 批⑥ 行 · [03-ECS-Runtime](../../EngineDesign/03-ECS-Runtime.md) §2（Scene 语义修订注记随本批落）
