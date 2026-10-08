@@ -327,30 +327,34 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
             ImGui::EndPopup();
         } else {
             ImGui::TextUnformatted(ae->FileName().c_str());
-            ImGui::TextDisabled("0/0 = 全曲循环；改动下次进 Play 生效");
+            ImGui::TextDisabled("循环起止都填 0 = 整曲循环；改动重新进入 Play 后生效");
             ImGui::Separator();
             ImGui::DragFloat("循环起点(秒)", &afxLoopStart_, 0.01f, 0.0f, 600.0f, "%.2f");
             ImGui::DragFloat("循环终点(秒)", &afxLoopEnd_, 0.01f, 0.0f, 600.0f, "%.2f");
             if (afxLoopEnd_ < afxLoopStart_) afxLoopEnd_ = afxLoopStart_;
-            ImGui::Checkbox("整载 RAM（关 = >1MiB 走流式）", &afxPreload_);
+            ImGui::Checkbox("一次性读入内存（大文件默认边播边读）", &afxPreload_);
             ImGui::Separator();
-            ImGui::TextDisabled("听感覆写（不勾 = 继承全局默认）");
-            ImGui::Checkbox("覆写 · 重触发节流窗", &afxCdOn_);
+            ImGui::TextDisabled("播放效果（不勾 = 使用全局设置）");
+            ImGui::Checkbox("限制连播间隔（同一音效快速连发时听起来只响一次）",
+                            &afxCdOn_);
             if (afxCdOn_) {
                 ImGui::Indent();
-                ImGui::DragFloat("窗长(秒)", &afxCd_, 0.001f, 0.0f, 4.0f, "%.3f  (0=关)");
+                ImGui::DragFloat("最短间隔(秒)", &afxCd_, 0.001f, 0.0f, 4.0f,
+                                 "%.3f  (0=不限制)");
                 ImGui::Unindent();
             }
-            ImGui::Checkbox("覆写 · 同 clip 并发上限", &afxCapOn_);
+            ImGui::Checkbox("限制同时响的声数（同一音效最多叠几声，1 = 不重叠）",
+                            &afxCapOn_);
             if (afxCapOn_) {
                 ImGui::Indent();
-                ImGui::DragInt("上限", &afxCap_, 1, 1, 64);
+                ImGui::DragInt("最多同时响", &afxCap_, 1, 1, 64);
                 ImGui::Unindent();
             }
-            ImGui::Checkbox("覆写 · 音高微扰", &afxJitOn_);
+            ImGui::Checkbox("音调轻微随机变化（重复播放不显得机械）", &afxJitOn_);
             if (afxJitOn_) {
                 ImGui::Indent();
-                ImGui::DragFloat("幅度(±)", &afxJit_, 0.001f, 0.0f, 0.25f, "%.3f  (0=关)");
+                ImGui::DragFloat("变化幅度(±)", &afxJit_, 0.001f, 0.0f, 0.25f,
+                                 "%.3f  (0=关闭)");
                 ImGui::Unindent();
             }
             if (ImGui::Button("确定", ImVec2(120, 0))) {
@@ -500,7 +504,7 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
                 }
             }
             dims += audioTipText_;
-            dims += "\n双击：试听 / 停止\n右键：音频参数…（循环/预载/听感覆写）";
+            dims += "\n双击：试听 / 停止\n右键：音频参数…（循环、加载方式、播放效果）";
         }
         ImGui::SetTooltip("%s\n%s  guid %s\n%s", e.FileName().c_str(), AssetTypeName(e.type),
                           AssetDatabase::GuidToHex(e.guid).c_str(), dims.c_str());
