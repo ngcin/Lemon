@@ -1269,20 +1269,23 @@ void TestTweenTable() {
 // ---- 批①：FxChannel（飘字池淘汰/上浮淡出、血条覆写/sticky、产包数学）----
 
 void TestVerifyFxChannel() {
-    // ① 飘字环形池：满 256 后最老者淘汰（第 257 条覆写第 1 条槽位）
+    // ① 飘字环形池：满池后最老者淘汰（第 kMaxTexts+1 条覆写第 1 条槽位；容量引
+    // 用常量——提额时本测试自动跟随，M7c 批④ 256→512 实证）
     {
         FxChannel fx;
         char buf[8];
-        for (int i = 0; i < 257; ++i) {
+        const int cap = (int)FxChannel::kMaxTexts;
+        for (int i = 0; i < cap + 1; ++i) {
             std::snprintf(buf, sizeof(buf), "%d", i);
             fx.PopupText(buf, (float)i, 0.0f);
         }
-        Expect(fx.TextCount() == 256, "fx: text pool capped at 256");
-        Expect(std::string(fx.TextAt(0).text) == "1" && std::string(fx.TextAt(255).text) == "256",
+        Expect(fx.TextCount() == FxChannel::kMaxTexts, "fx: text pool capped at kMaxTexts");
+        Expect(std::string(fx.TextAt(0).text) == "1" &&
+                   std::string(fx.TextAt(cap - 1).text) == std::to_string(cap),
                "fx: oldest text evicted, order preserved");
         // 长文本 16 字符截断
         fx.PopupText("01234567890123456789", 0, 0);
-        Expect(std::string(fx.TextAt(255).text) == "012345678901234",
+        Expect(std::string(fx.TextAt(cap - 1).text) == "012345678901234",
                "fx: text truncated to 15 chars");
     }
     // ② Simulate：上浮（前 70% 匀升）/淡出（末 30%）/到期回收
@@ -1457,11 +1460,12 @@ void TestFxPresentationUpgradeMath() {
     {
         FxChannel fx;
         char buf[8];
-        for (int i = 0; i < 257; ++i) {
+        const int cap = (int)FxChannel::kMaxTexts;
+        for (int i = 0; i < cap + 1; ++i) {
             std::snprintf(buf, sizeof(buf), "%d", i);
             fx.PopupTextEx(buf, 0, 0, 0xFFFFFFFFu, 1.5f, 1.2f, 5.0f, FxCurve::Pop);
         }
-        Expect(fx.TextCount() == 256, "fx: ex pool capped same as legacy");
+        Expect(fx.TextCount() == FxChannel::kMaxTexts, "fx: ex pool capped same as legacy");
     }
 }
 

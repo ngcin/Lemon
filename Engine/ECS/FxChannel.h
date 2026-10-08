@@ -66,7 +66,7 @@ struct FxQuad {
 
 class FxChannel {
 public:
-    static constexpr uint32_t kMaxTexts = 256;  // 环形池（满 = 最老者淘汰，03 §10）
+    static constexpr uint32_t kMaxTexts = 512;  // 环形池（满 = 最老者淘汰，03 §10；2026-10-08 M7c 批④ 256→512——满屏跳字容量翻倍，bench 门禁复跑无降）
     static constexpr uint32_t kMaxBars = 128;   // 实体键控槽（满 = 淘汰最旧 age 最大者）
     static constexpr float kTextLife = 0.8f;    // 飘字默认寿命（秒；S3 起可逐条覆盖）
     static constexpr float kTextRise = 24.0f;   // 寿命内总上浮量（世界像素；世界 Y 向下，上浮 = -y）

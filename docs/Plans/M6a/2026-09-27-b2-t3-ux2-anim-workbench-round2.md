@@ -119,7 +119,9 @@ Status: **done**（机器验收全绿；真人验收见 §5）；上一批 = [T3
 ## 8. 遗留
 
 - 精灵表**自动分割**（auto-slice：按透明边界自动切块，Godot Auto Slice）——需
-  CPU 侧像素访问通道，候补。
+  CPU 侧像素访问通道，候补。**2026-10-08 撤销**（用户拍板：规整网格表现有按块数/
+  按像素已覆盖，打包图集应走元数据导入而非像素猜测，不做任意矩形切片；
+  [M7c 批④ 候选池否决注](../M7c/M7c.md)）。
 - AssetBrowser 多选拖多资产批量加帧（payload 单 guid，候补）。
 - 命名深改（如 LoopMode "Once/Loop/PingPong" → Unity 风格 Default/Loop/PingPong）
   未动——现名与运行时档面/Inspector 一致，改则三处联动，价值低。
