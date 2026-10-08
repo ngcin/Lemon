@@ -74,10 +74,10 @@ void TestSceneGroupTeardownKeepsDDOL() {
     // other 改判 h2（覆写需要先抹掉：直接改组件字段——测试内构造，非装载路径）
     s.Get<SceneMembership>(other).scene = h2;
 
-    Expect(MarkDontDestroyOnLoadTree(s, root) == 2, "ddol retags whole subtree (root+child)");
-    Expect(CountDontDestroyOnLoad(s) == 2, "ddol count");
+    Expect(MarkDontDestroyOnLoad(s, root) == 1, "ddol marks root only (batch7 D1 root-bit)");
+    Expect(CountDontDestroyOnLoad(s) == 1, "ddol root count (lineage via ancestry)");
 
-    // 组1 清场：只带走非 DDOL 的 lone；root/child 幸存（Unity"根树整体幸存"语义）
+    // 组1 清场：只带走非 DDOL 系的 lone；root（本位）与 child（祖先链）幸存
     Expect(QueueDestroySceneGroup(s, h1) == 1, "only non-ddol member queued");
     s.CommitDestroys();
     Expect(!s.Alive(lone), "lone destroyed after commit");
@@ -90,7 +90,57 @@ void TestSceneGroupTeardownKeepsDDOL() {
     s.CommitDestroys();
     Expect(!s.Alive(other), "h2 destroyed");
     Expect(QueueDestroySceneGroup(s, h1) == 0, "repeat teardown of survivors is no-op");
-    Expect(CountDontDestroyOnLoad(s) == 2, "ddol persists across group teardowns");
+    Expect(CountDontDestroyOnLoad(s) == 1, "ddol persists across group teardowns");
+}
+
+// 批⑦ D1 根位式语义：后挂子实体随根幸存（Unity 对齐）、移出 DDOL 树随新归属清场
+void TestDdolRootBitLineageSemantics() {
+    World w;
+    Scene& s = w.CreateScene("ddol-lineage");
+    const uint32_t h1 = w.CreateSceneRecord("A");
+    Entity root = s.Create();
+    s.Emplace<Transform2D>(root, Transform2D{{0, 0}});
+    Entity early = s.Create(); // 标记前已在树内
+    s.Emplace<Transform2D>(early, Transform2D{{1, 1}});
+    Expect(SceneSetParent(s, early, root), "early child attached");
+    StampSceneMembership(s, h1);
+    Expect(MarkDontDestroyOnLoad(s, root) == 1, "root marked (single bit)");
+    // 后挂：标记之后 spawn + attach 到 DDOL 根下（打 active = h1，模拟 Instantiate 落点）
+    Entity late = s.Create();
+    s.Emplace<Transform2D>(late, Transform2D{{2, 2}});
+    s.Emplace<SceneMembership>(late).scene = h1;
+    Expect(SceneSetParent(s, late, root), "late child attached after marking");
+    Expect(CollectDontDestroyOnLoadLineage(s).size() == 3, "lineage = root+early+late");
+
+    // 清场：后挂 late 幸存（Unity"随根幸存"——⑥c review 前置④ 的裁决面）
+    Expect(QueueDestroySceneGroup(s, h1) == 0, "nothing queued (all ddol lineage)");
+    // 移出：late 摘根成普通根实体 → 再清场被收（Unity：DDOL 不跟人走）
+    Expect(SceneDetach(s, late), "late detached out of ddol tree");
+    Expect(QueueDestroySceneGroup(s, h1) == 1, "moved-out child queued");
+    s.CommitDestroys();
+    Expect(!s.Alive(late) && s.Alive(root) && s.Alive(early),
+           "moved-out dies, ddol root tree survives");
+}
+
+// 批⑦ D2「除 DDOL 系外全清」+ 未指派自愈报告（组 0 泄漏的 WARN 面）
+void TestClearAllExceptDdolLineageReportsUnassigned() {
+    World w;
+    Scene& s = w.CreateScene("clear-all");
+    const uint32_t h1 = w.CreateSceneRecord("A");
+    Entity ddol = s.Create();
+    Entity victim = s.Create();
+    StampSceneMembership(s, h1); // ddol + victim → h1
+    MarkDontDestroyOnLoad(s, ddol);
+    Entity leak = s.Create(); // 未打标（不变量破坏模拟——组 0 泄漏）
+    Expect(CountSceneGroup(s, kSceneHandleUnassigned) == 1, "leak sits in group 0");
+
+    const SceneClearReport rep = QueueDestroyAllExceptDdolLineage(s);
+    Expect(rep.queued == 2, "victim + unassigned leak both queued");
+    Expect(rep.unassignedCollected == 1, "unassigned collection reported (WARN face)");
+    s.CommitDestroys();
+    Expect(!s.Alive(victim) && !s.Alive(leak), "victim + leak cleared");
+    Expect(s.Alive(ddol), "ddol lineage survives");
+    Expect(CountSceneGroup(s, kSceneHandleUnassigned) == 0, "group 0 self-healed");
 }
 
 void TestSceneArchiveBuildIntoAppends() {
@@ -110,7 +160,7 @@ void TestSceneArchiveBuildIntoAppends() {
     s.Each([&](Entity e) {
         if (s.Get<SceneMembership>(e).scene == hA && ddol.IsNull()) ddol = e;
     });
-    Expect(MarkDontDestroyOnLoadTree(s, ddol) == 1, "one A entity marked ddol");
+    Expect(MarkDontDestroyOnLoad(s, ddol) == 1, "one A entity marked ddol");
 
     // 二装 B：不清空——A 实体（含 DDOL）在场共存，B 新实体追加
     Expect(SceneArchive::BuildInto(s, textB), "build B ok");
@@ -144,7 +194,7 @@ void TestStateHashIgnoresMembership() {
     }
     const uint64_t h0 = ComputeStateHash(s);
     StampSceneMembership(s, w.CreateSceneRecord("Grass"));
-    MarkDontDestroyOnLoadTree(s, [&] {
+    MarkDontDestroyOnLoad(s, [&] {
         Entity first = Entity::Null();
         s.Each([&](Entity e) {
             if (first.IsNull()) first = e;
@@ -218,7 +268,7 @@ void TestSceneSwitchFullSemantics() {
         if (s.Get<SceneMembership>(e).scene == fx.handle && ddol.IsNull()) ddol = e;
         else if (s.Get<SceneMembership>(e).scene == fx.handle) victim = e;
     });
-    Expect(MarkDontDestroyOnLoadTree(s, ddol) == 1, "one entity marked ddol");
+    Expect(MarkDontDestroyOnLoad(s, ddol) == 1, "one entity marked ddol");
 
     w.Switcher().Request({.name = "Volcano", .path = "Scenes/Volcano.scene",
                           .jsonText = MakeSceneText("Volcano", "lava", 3)});
@@ -276,7 +326,7 @@ void TestSceneSwitchHookOrdering() {
     SwitchFixture fx("Grass");
     Entity ddol = Entity::Null();
     s_each_first(fx.s, fx.handle, ddol);
-    MarkDontDestroyOnLoadTree(fx.s, ddol);
+    MarkDontDestroyOnLoad(fx.s, ddol);
     uint32_t sweepAlive = 9999, afterOld = 9999, afterNew = 9999, afterActive = 0;
     uint32_t sweepSeen = 0;
     fx.w.Switcher().SetHooks({
@@ -300,6 +350,53 @@ void TestSceneSwitchHookOrdering() {
     Expect(afterNew == 0 && CountSceneGroup(fx.s, rep.newHandle) == 2,
            "afterBuild: new group already stamped");
     Expect(afterActive == rep.newHandle, "afterBuild: active already flipped");
+}
+
+// 批⑦ D3：换场事件同步直推——协议⑤ 序 Unloaded → Loaded → ActiveChanged（载荷
+// 句柄随 kind），ScriptHost 之外的后端零波及（默认空实现）
+void TestSceneSwitchEventOrdering() {
+    struct RecordingBackend final : public IScriptBackend {
+        std::vector<uint8_t> kinds;
+        std::vector<std::pair<uint32_t, uint32_t>> handles;
+        void TickBatch(World&, Scene&, float) override {}
+        void PullPendingEvents(World&) override {}
+        void DispatchEvents(World&, Scene&, const EventPacket*, uint32_t) override {}
+        void ApplyStructural(World&, Scene&) override {}
+        void NotifyPendingDestroys(World&, Scene&) override {}
+        void SceneEventNotify(World&, Scene&, SceneEventKind kind, uint32_t oldH,
+                              uint32_t newH, uint8_t mode) override {
+            kinds.push_back((uint8_t)kind);
+            handles.emplace_back(oldH, newH);
+            Expect(mode == 0, "single mode passthrough");
+        }
+    };
+    SwitchFixture fx("Grass");
+    RecordingBackend backend;
+    fx.w.SetScriptBackend(&backend);
+    fx.w.Switcher().Request({.name = "V", .path = "v.scene",
+                             .jsonText = MakeSceneText("V", "v", 2)});
+    const SceneSwitchReport rep = fx.w.Switcher().Execute(fx.w, fx.s);
+    Expect(rep.status == SceneSwitchStatus::Success, "switch ok");
+    Expect(backend.kinds.size() == 3, "three events pushed");
+    Expect(backend.kinds.size() == 3 &&
+               backend.kinds[0] == (uint8_t)SceneEventKind::Unloaded &&
+               backend.kinds[1] == (uint8_t)SceneEventKind::Loaded &&
+               backend.kinds[2] == (uint8_t)SceneEventKind::ActiveChanged,
+           "protocol-5 order: unloaded -> loaded -> activeChanged");
+    Expect(backend.handles.size() == 3 &&
+               backend.handles[0].first == fx.handle &&
+               backend.handles[0].second == 0 &&
+               backend.handles[1] == std::make_pair(fx.handle, rep.newHandle) &&
+               backend.handles[2] == std::make_pair(fx.handle, rep.newHandle),
+           "event payloads carry old/new handles");
+    // 无换场不推（NoPending 短路零事件）
+    const size_t before = backend.kinds.size();
+    fx.w.Switcher().Execute(fx.w, fx.s);
+    Expect(backend.kinds.size() == before, "idle execute pushes no events");
+    // 解析失败不推（原子性 = 事件面也原子）
+    fx.w.Switcher().Request({.name = "Bad", .path = "bad.scene", .jsonText = "{ nope"});
+    fx.w.Switcher().Execute(fx.w, fx.s);
+    Expect(backend.kinds.size() == before, "parse failure pushes no events");
 }
 
 void TestSceneSwitchNoPendingIsNoop() {
@@ -376,7 +473,7 @@ void TestSceneMultiSwitchDDOLTrajectory() {
     Scene& s = fx.s;
     Entity ddol = Entity::Null();
     s_each_first(s, fx.handle, ddol);
-    Expect(MarkDontDestroyOnLoadTree(s, ddol) == 1, "manager marked ddol");
+    Expect(MarkDontDestroyOnLoad(s, ddol) == 1, "manager marked ddol");
     const Entity ddolSaved = ddol; // 句柄轨迹对照（Entity 按 id 比较）
 
     struct Hop { const char* name; const char* tag; int count; };
@@ -433,7 +530,7 @@ void TestSceneSwitchDeterministicTrajectory() {
         t.w.SetActiveScene(t.s);
         t.w.SetActiveSceneHandle(t.origin);
         s_each_first(*t.s, t.origin, t.ddol);
-        MarkDontDestroyOnLoadTree(*t.s, t.ddol);
+        MarkDontDestroyOnLoad(*t.s, t.ddol);
     };
     Twin a, b;
     setup(a);
@@ -493,10 +590,13 @@ void RunSceneTests() {
     TestSceneArchiveBuildIntoAppends();
     TestStateHashIgnoresMembership();
     TestWorldSceneRecords();
+    TestDdolRootBitLineageSemantics();       // 批⑦ D1
+    TestClearAllExceptDdolLineageReportsUnassigned(); // 批⑦ D2
     TestSceneSwitchFullSemantics();
     TestSceneSwitchAtomicOnBadJson();
     TestSceneSwitchSweepsFxAndSkipsNullAudio();
     TestSceneSwitchHookOrdering();
+    TestSceneSwitchEventOrdering();          // 批⑦ D3
     TestSceneSwitchNoPendingIsNoop();
     TestSceneSwitchViaEssentialPipeline();
     TestSpawnPrefabStampsTree();

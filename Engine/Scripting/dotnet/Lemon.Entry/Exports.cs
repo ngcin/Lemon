@@ -132,6 +132,21 @@ internal static unsafe class Exports
         Lemon.Behaviours.ClearInstances();
         Lemon.Events.PlayReset();
         Lemon.UI.PlayReset(); // 批③c：UI 待发/计数随局清（订阅表保留，跨局存活）
+        Lemon.SceneManager.PlayReset(); // 批⑦：句柄记忆化随局清（新 playWorld 句柄重发）
+    }
+
+    /// <summary>换场事件同步直推（M7c 批⑦ D3 / ADR-017 协议⑤）：换场 Essential
+    /// 窗口内由 ScriptHost::SceneEventNotify 调用（事件序 Unloaded→Loaded→
+    /// ActiveChanged，sceneLoaded 先于新场脚本同帧 Start/Update）。kind 与
+    /// ecs::SceneEventKind 一致；异常已拦（保进程纪律）。</summary>
+    [UnmanagedCallersOnly]
+    public static void lemon_scene_event(byte kind, uint oldHandle, uint newHandle, byte mode)
+    {
+        try {
+            Lemon.SceneManager.OnNativeSceneEvent(kind, oldHandle, newHandle, mode);
+        } catch (Exception e) {
+            Console.Error.WriteLine("[lemon] scene_event 异常（已拦，保进程）：" + e.Message);
+        }
     }
 
     // ---- M3-3 档② 批量系统 ------------------------------------------------------

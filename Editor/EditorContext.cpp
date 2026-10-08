@@ -765,10 +765,12 @@ bool EditorContext::EnterPlay() {
         return false;
     }
     // M7c 批⑥b F2：初始人口建档+打标——"零未打标"不变量从进 Play 第一帧成立
-    //（首次 LoadScene 的组清场才能收走初始实体；档案名 = 快照 name 段恢复值）
+    //（首次 LoadScene 的组清场才能收走初始实体；档案名 = 快照 name 段恢复值）。
+    // 批⑦：isLoaded=true——入口场景即已装载（C# sceneCount/GetSceneAt 查询面）
     {
         const uint32_t h = playWorld_->CreateSceneRecord(playScene_->Name(),
                                                          scenePath_.c_str());
+        if (ecs::World::SceneRecord* r = playWorld_->FindSceneRecord(h)) r->isLoaded = true;
         ecs::StampSceneMembership(*playScene_, h);
         playWorld_->SetActiveSceneHandle(h);
     }

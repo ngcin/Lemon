@@ -34,6 +34,7 @@ static ::lemon::ui::UiSubsystem* s_gameUiForHooks = nullptr;
 #include "Components/CoreComponents.h"
 #include "Components/RenderComponents.h"
 #include "ECS/Hierarchy.h"
+#include "ECS/SceneMembership.h" // 批⑦：HookInstantiate 子树打标 active
 #include "Core/Log.h"
 #include "EditorContext.h"
 #include "Panels/BuiltInPanels.h"
@@ -61,8 +62,12 @@ uint32_t HookSpriteOf(const char* hex) {
 }
 uint64_t HookInstantiate(const char* hex, float x, float y) {
     if (!g_app) return 0;
-    ecs::Entity e = g_app->Ctx().InstantiatePrefabAsset(AssetDatabase::HexToGuid(hex),
-                                                        Vec2{x, y});
+    EditorContext& ctx = g_app->Ctx();
+    ecs::Entity e = ctx.InstantiatePrefabAsset(AssetDatabase::HexToGuid(hex), Vec2{x, y});
+    if (!e.IsNull())
+        // 批⑦ 前置②兑现：子树打标 active（Instantiate 落点 = active 场景；C# 侧
+        // Instantiate.Prefab 仅 Play 中可达 → ActiveScene/ActiveWorld = play 侧）
+        ecs::StampTreeMembership(ctx.ActiveScene(), e, ctx.ActiveWorld().ActiveSceneHandle());
     return e.IsNull() ? 0 : e.id;
 }
 // M5 批④：C# Save.Flush → 编辑器域落盘（项目 .lemon/saves/；无项目 = no-op）；

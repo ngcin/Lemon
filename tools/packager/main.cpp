@@ -745,9 +745,9 @@ int main(int argc, char** argv) {
                data / "Fonts" / "NotoSansSC-Regular.otf");
     CopyFileTo(fs::path(LEMON_ENGINE_FONT_DIR) / "OFL.txt", data / "Fonts" / "OFL.txt"); // OFL 随包义务
 #endif
-    std::printf("[lemon-packager] data/：直拷 + Game.dll + 烤制 %u + 图集 %u/%u（页/精灵）"
-                "+ manifest.pkg.json + 字体\n",
-                baked, atlasStats.pages, atlasStats.sprites);
+    std::printf("[lemon-packager] data/：直拷 + Game.dll + 烤制 %u + 字体 %u + 图集 %u/%u"
+                "（页/精灵）+ manifest.pkg.json\n",
+                baked, fonts, atlasStats.pages, atlasStats.sprites);
     if (g_errors) return 1;
 
     // ---- 6. 自检（依赖闭环 + 关键件 + 清单对账；mac=otool/rpath，win=PE import）----

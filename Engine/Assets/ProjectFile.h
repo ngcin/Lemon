@@ -30,4 +30,12 @@ ProjectFile LoadProjectFile(const std::string& projectRoot);
 /// 多场景/零场景且未声明 → 空串（红字响亮归调用方——运行时无法猜入口）。
 std::string ResolveEntryScene(const std::string& projectRoot, const ProjectFile& pf);
 
+/// 场景寻址（M7c 批⑦，ADR-017 D4：SceneManager.LoadScene 的文件系统侧）：
+/// nameOrPath 空 = ResolveEntryScene（入口回退链）；非空按序——
+/// ① 项目相对路径精确命中（"Scenes/Forest.scene"；绝对路径/越根 = 拒绝）
+/// → ② 唯一文件名 stem 命中（"Forest"，Unity 式便捷）→ 零/多命中/缺失 = 空串
+///（红字响亮归调用方；无 build index 清单——ADR D4 砍单）。
+std::string ResolveScene(const std::string& projectRoot, const ProjectFile& pf,
+                         const std::string& nameOrPath);
+
 } // namespace lemon::assets

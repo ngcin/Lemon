@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "ECS/Scene.h"
+#include "ECS/SceneSwitcher.h" // SceneSwitchRequest（SceneSourceHooks 载荷，批⑦）
 #include "ECS/World.h"
 #include "Scripting/CoreCLRHost.h"
 #include "Scripting/ScriptBox.h"
@@ -37,6 +38,17 @@ struct BatchSystemFrame {
 };
 static_assert(sizeof(BatchBlock) == 24);
 static_assert(sizeof(BatchSystemFrame) == 48); // stale 尾加后按 8 对齐（C# 逐字节镜像同规则）
+
+/// 场景档案快照（批⑦ Scene 查询通道载荷；与 Lemon.SDK/NativeApi.cs SceneInfoC
+/// 逐字节一致——两侧同步改）
+struct SceneInfoC {
+    uint32_t handle;
+    uint8_t isLoaded;
+    uint32_t rootCount; // 组内根实体数（CountSceneRoots——O(N) 低频查询面）
+    char name[64];      // NUL 结尾（档案名）
+    char path[256];     // NUL 结尾（项目相对路径）
+};
+static_assert(sizeof(SceneInfoC) == 332, "SceneInfoC 布局钉（C# Sequential 同构）");
 
 /// native 函数表（低频语法糖通道；与 Lemon.SDK/NativeApi.cs 逐字节一致。注册走
 /// lemon_api_register2 尺寸握手——宿主传 sizeof(NativeApiVtable)，SDK 侧 min 拷贝 +
@@ -144,6 +156,24 @@ struct NativeApiVtable {
                     const char* bgGuidHex, const char* fgGuidHex, uint32_t lagColor,
                     float height, float anchorDy); // bg/fg guid hex → spriteId（解析失败 0 =
                                                    // 白精灵路径）；anchorDy = 头顶锚定修正
+    // ---- M7c 批⑦（SDK 门面：SceneManager → World/Switcher/SceneRecord；表尾追加
+    // 同上约定。**首个结构性 vtable 通道**——LoadScene 改世界状态，回放保障 = C#
+    // 确定性执行 + StateHash 哈希流捕获后果（ADR-017/b6 查② 口径，op 不显式入流）；
+    // 基准场零调用 = 零漂移。查询通道（sceneCount/InfoAt/InfoByHandle/Active/
+    // SetActive）只读档案面；markDontDestroyOnLoad 只置位（三者均不入哈希流）----
+    int32_t (*sceneLoadRequest)(const char* nameOrPath, uint8_t mode); // 1=已入队
+                                                                        //（下一帧 Essential
+                                                                        // 执行 = Unity 下帧
+                                                                        // 装载语义）；0=失败
+                                                                        //（寻址红字在先）
+    uint32_t (*sceneCount)();                        // isLoaded 档案数（DDOL 不建模伪档案）
+    int32_t (*sceneInfoAt)(uint32_t index, SceneInfoC* out);            // 1/-1（isLoaded 序）
+    int32_t (*sceneInfoByHandle)(uint32_t handle, SceneInfoC* out);     // 1/-1
+    uint32_t (*activeSceneHandle)();                  // 0 = 无活动档案
+    int32_t (*setActiveScene)(uint32_t handle);       // v1：仅当前 active 合法（Single
+                                                      // 唯一装载），他值 = WARN + 0
+    int32_t (*markDontDestroyOnLoad)(uint64_t entity); // C++ 找根（非根 WARN 作用于
+                                                       // 根树，D5）+ 根位标记（D1）
 };
 
 /// 编辑器资产钩子（M4.4：编辑器宿主装配期经 SetEditorAssetHooks 注入；
@@ -177,6 +207,17 @@ struct UiHooks {
     uint32_t (*drainEvents)(ui::UiEventC* dst, uint32_t cap);
 };
 void SetUiHooks(const UiHooks& hooks);
+
+/// 场景源钩子（M7c 批⑦，ADR-017 D4）：SceneManager.LoadScene 的寻址方（路径 >
+/// 唯一 stem > false 响亮失败）——引擎层不碰 IO，宿主注入（lemon-game = AssetIndex
+/// + 文件系统；编辑器 = AssetDatabase；script-tests = 内存夹具）。进程级单份，
+/// 装配期一次（EditorAssetHooks 同款纪律）；未注入 = LoadScene 红字 + 0。
+struct SceneSourceHooks {
+    /// 寻址并填充请求（name/path/jsonText；jsonText 含 ValidateParse 同款迁移链
+    /// ——宿主读原文即可）。返回 false = 未命中/不唯一（宿主负责红字交底）。
+    bool (*resolveScene)(const char* nameOrPath, ecs::SceneSwitchRequest& out);
+};
+void SetSceneSourceHooks(const SceneSourceHooks& hooks);
 
 /// 结构命令（与 Lemon.SDK/SceneOps.cs SceneOp 一致，16B）
 struct SceneOpC {
@@ -262,6 +303,12 @@ public:
     /// CommitDestroys 前遍历待销毁队列：带 ScriptBox 且未通知过的实体补发
     /// OnDestroy（F-08.2——C++ 系统销毁与脚本命令销毁统一在此汇合，恰好一次）
     void NotifyPendingDestroys(ecs::World& world, ecs::Scene& scene) override;
+    /// 换场事件同步直推（M7c 批⑦ D3）：换场 Essential 窗口内经 lemon_scene_event
+    /// 导出分发到 C# SceneManager 事件。NativeApiWindow 包裹——事件订阅方回调内
+    /// 可调 native（GetActiveScene 等，Awake 窗口同款纪律）。旧 Entry 无导出 =
+    /// 挂空安全（事件静默不达，scriptsDetachFn_ 同款口径）。
+    void SceneEventNotify(ecs::World& world, ecs::Scene& scene, ecs::SceneEventKind kind,
+                          uint32_t oldHandle, uint32_t newHandle, uint8_t mode) override;
 
 private:
     struct BatchSys {
@@ -295,6 +342,8 @@ private:
     // ---- 批③c（旧 Entry 程序集缺两导出 = null 挂空安全，既定纪律）----
     int (*uiOpsPullFn_)(ui::UiOpC*, int, char*, int, int*) = nullptr; // n; *arenaBytes
     void (*uiEventsDispatchFn_)(const ui::UiEventC*, int) = nullptr;
+    // ---- 批⑦（旧 Entry 无 lemon_scene_event = null 挂空安全，同上纪律）----
+    void (*sceneEventFn_)(uint8_t, uint32_t, uint32_t, uint8_t) = nullptr;
     int (*behavioursListFn_)(char*, int) = nullptr; // 惰性解析一次（BehaviourTypeNames 用）
     mutable unsigned long long (*gcAllocFn_)() = nullptr; // 惰性解析一次（GetExport 每调
     // 一次会在托管侧分配——M3-7 GC 验收实测坑）

@@ -493,6 +493,17 @@ bool SceneArchive::ValidateParse(const std::string& jsonText) {
     return ParseSceneDoc(jsonText, doc);
 }
 
+bool SceneArchive::SceneDocName(const std::string& jsonText, std::string& out) {
+    // 批⑦：宿主 resolveScene 钩子填 SceneSwitchRequest.name 用（与 BuildInto 同链
+    // 解析 + 迁移；档案名 = doc "name" 段，缺省回落空串 = 调用方自定回退名）
+    Json doc;
+    if (!ParseSceneDoc(jsonText, doc)) return false;
+    out.clear();
+    if (doc.contains("name") && doc.at("name").is_string())
+        out = doc.at("name").get<std::string>();
+    return true;
+}
+
 bool SceneArchive::Migrate(std::string& jsonText, uint32_t fromVersion) {
     // 迁移链：每级一个 case，纯 json→json 变换后回写 schemaVersion（03 §13；
     // 老档自动升级，风险台账 #7 的 CI 保障）。

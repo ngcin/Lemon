@@ -62,6 +62,28 @@ public unsafe struct NativeApi
     public delegate* unmanaged<byte> AudioPausedGet;                          // review 2026-10-02 #71：暂停态读（引擎态直读；表尾追加，旧宿主 = null 判空降级）
     public delegate* unmanaged<byte*, float, float, uint, float, float, float, byte, void> FxPopupEx; // M7c 批①：飘字动效全参（scale/life/driftX/curve）
     public delegate* unmanaged<ulong, float, uint, float, byte*, byte*, uint, float, float, void> FxBarEx;   // M7c 批①：贴图血条（bg/fg guid + 延迟条 + 高度 + 锚点修正）
+    // ---- M7c 批⑦（SceneManager 门面；表尾追加同上约定。**首个结构性通道**——
+    // LoadScene 改世界状态，回放保障 = 确定性执行 + 哈希流捕获（ADR-017/b6 查②）；
+    // 查询通道只读档案面，均不入 StateHash，基准场零调用零漂移 ----
+    public delegate* unmanaged<byte*, byte, int> SceneLoadRequest;             // 1=已入队（下一帧装载）；0=失败（寻址红字在先）
+    public delegate* unmanaged<uint> SceneCount;                               // isLoaded 档案数
+    public delegate* unmanaged<uint, SceneInfoC*, int> SceneInfoAt;            // 1/-1（isLoaded 序）
+    public delegate* unmanaged<uint, SceneInfoC*, int> SceneInfoByHandle;      // 1/-1
+    public delegate* unmanaged<uint> ActiveSceneHandle;                        // 0 = 无活动档案
+    public delegate* unmanaged<uint, int> SetActiveScene;                      // v1：仅当前 active 合法
+    public delegate* unmanaged<ulong, int> MarkDontDestroyOnLoad;              // C++ 找根（非根 WARN）+ 根位标记
+}
+
+/// <summary>场景档案快照（与 C++ lemon::scripting::SceneInfoC 逐字节一致；
+/// sizeof = 332，两侧同步改）。</summary>
+[StructLayout(LayoutKind.Sequential)]
+public unsafe struct SceneInfoC
+{
+    public uint Handle;
+    public byte IsLoaded;
+    public uint RootCount;
+    public fixed byte Name[64];
+    public fixed byte Path[256];
 }
 
 internal static unsafe class Native
@@ -423,4 +445,46 @@ internal static unsafe class Native
     {
         if (Api.SetXpCurveK != null) Api.SetXpCurveK(k);
     }
+
+    // ---- M7c 批⑦（SceneManager；旧宿主未注册时安全降级：请求拒 / 查询回无效）----
+
+    internal static int SceneLoadRequest(string nameOrPath, byte mode)
+    {
+        if (Api.SceneLoadRequest == null || string.IsNullOrEmpty(nameOrPath)) return 0;
+        byte* p = stackalloc byte[300];
+        CopyUtf8(nameOrPath, p, 299);
+        return Api.SceneLoadRequest(p, mode);
+    }
+
+    internal static uint SceneCount() => Api.SceneCount != null ? Api.SceneCount() : 0;
+
+    /// <summary>查询失败/旧宿主 = false（out 参数零初始化）。</summary>
+    internal static bool SceneInfoAt(uint index, out SceneInfoC info)
+    {
+        info = default;
+        if (Api.SceneInfoAt == null) return false;
+        SceneInfoC tmp = default;
+        if (Api.SceneInfoAt(index, &tmp) != 1) return false;
+        info = tmp;
+        return true;
+    }
+
+    internal static bool SceneInfoByHandle(uint handle, out SceneInfoC info)
+    {
+        info = default;
+        if (Api.SceneInfoByHandle == null) return false;
+        SceneInfoC tmp = default;
+        if (Api.SceneInfoByHandle(handle, &tmp) != 1) return false;
+        info = tmp;
+        return true;
+    }
+
+    internal static uint ActiveSceneHandle() =>
+        Api.ActiveSceneHandle != null ? Api.ActiveSceneHandle() : 0;
+
+    internal static int SetActiveScene(uint handle) =>
+        Api.SetActiveScene != null ? Api.SetActiveScene(handle) : 0;
+
+    internal static int MarkDontDestroyOnLoad(ulong entity) =>
+        Api.MarkDontDestroyOnLoad != null ? Api.MarkDontDestroyOnLoad(entity) : 0;
 }

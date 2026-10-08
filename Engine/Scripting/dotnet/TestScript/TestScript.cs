@@ -62,6 +62,18 @@ public static class GameMain
         // script-tests TestFxSdk 消费：新参数全开调用后 ComputeStateHash 跨帧
         // 逐位不变——"表现层永不入回放"的机械反例；引擎侧对拍 Fx 通道计数）
         Lemon.Behaviours.Register<FxProbeBehaviour>();
+        // M7c 批⑦：SceneManager 全 API 面（typeId 20，表尾注册同上约定——
+        // script-tests TestSceneSdk 消费：四跳（含同名重装）+ 事件序/时序 +
+        // DDOL 幸存 + Additive/坏名红字拒 + Scene 查询面）
+        Lemon.Behaviours.Register<SceneProbeBehaviour>();
+        // 批⑦：换场三事件订阅（Configure 期静态订阅，跨局存活）——事件序记录
+        // "U:<name>:<valid>:<loaded>" / "L:<name>:<path>:<mode>" / "A:<old>><new>"
+        Lemon.SceneManager.sceneUnloaded += st => SceneLog.Add(
+            "U:" + st.name + ":" + (st.isValid ? 1 : 0) + ":" + (st.isLoaded ? 1 : 0));
+        Lemon.SceneManager.sceneLoaded += (st, m) => SceneLog.Add(
+            "L:" + st.name + ":" + st.path + ":" + m);
+        Lemon.SceneManager.activeSceneChanged += (o, n) => SceneLog.Add(
+            "A:" + o.name + ">" + n.name);
         // 批③c 静态订阅（Configure 期一次，跨局存活）：UI 事件计数经 RtUi 回读
         // （编辑器 --smoke-uirml --script 断言链）；DocumentReloaded → Refill
         // （M2 契约：热重载后 C# 重灌——不灌则屏幕空回夹具初值）
@@ -115,10 +127,13 @@ public static class GameMain
     internal static void UiDedupProbe()
     {
         Lemon.UI.SetText(UiDoc, "body", "dedupA");
-        Lemon.UI.SetText(UiDoc, "body", "dedupA"); // 同值 → 应跳
+        Lemon.UI.SetText(UiDoc, "body", "dedupA"); // 同值 → 跳
         Lemon.UI.SetText(UiDoc, "body", "dedupB"); // 异值 → 应过
         Lemon.UI.Apply();
     }
+
+    // ---- 批⑦：SceneManager 探针态（静态——Configure 订阅不持实例）----
+    internal static readonly List<string> SceneLog = new();
 }
 
 /// <summary>M4.4：Instantiate.Spawn + Assets.SpriteOf（GUID→导入 sprite）刷怪验收。
@@ -777,6 +792,90 @@ public sealed class FxProbeBehaviour : Lemon.LemonBehaviour
             Mark(1701);
         } else if (fc == 2) {
             gameObject.Destroy();
+        }
+    }
+}
+
+/// <summary>M7c 批⑦：SceneManager 全链探针（typeId 20；script-tests TestSceneSdk
+/// 消费）。帧分段：1 初始查询面 / 2 自标 DDOL / 3 路径式 LoadScene / 4 首跳断言
+///（事件序 + 时序 = 事件先于本帧 Update 可见）+ stem 式二跳 / 5 二跳断言 + 同名
+/// 重装 / 6 重装断言（新句柄）+ 坏名红字拒 / 7 拒后不变 + Additive 红字拒 / 8 拒后
+/// 不变 + 四跳 / 9 终态（事件 12 条全序 + DDOL 幸存四跳）。Mark = 断言全过才推。</summary>
+public sealed class SceneProbeBehaviour : Lemon.LemonBehaviour
+{
+    private int _handleA; // 首跳句柄缓存（同名重装 = 新句柄断言面）
+
+    private void Mark(ushort id)
+        => Lemon.Events.Push(Lemon.Interop.GameEvent.Custom, id, default, default);
+
+    private static string LogAt(int i) => i < GameMain.SceneLog.Count ? GameMain.SceneLog[i] : "";
+
+    protected override void Update()
+    {
+        var fc = Lemon.Time.FrameCount;
+        var log = GameMain.SceneLog;
+        if (fc == 1) {
+            log.Clear(); // 进程内多测试共域——本测试起点清零
+            var act = Lemon.SceneManager.GetActiveScene();
+            bool ok = Lemon.SceneManager.sceneCount == 1 && act.isValid && act.name == "Main" &&
+                      act.path == "Scenes/Main.scene" && act.isLoaded &&
+                      Lemon.SceneManager.GetSceneByName("Main").isValid &&
+                      !Lemon.SceneManager.GetSceneByName("Nope").isValid &&
+                      !Lemon.SceneManager.GetSceneByPath("Scenes/Nope.scene").isValid &&
+                      Lemon.SceneManager.GetSceneAt(0).isValid &&
+                      !Lemon.SceneManager.GetSceneAt(1).isValid;
+            if (ok) Mark(1801);
+        } else if (fc == 2) {
+            Lemon.LemonBehaviour.DontDestroyOnLoad(gameObject); // D7 静态落点 + 根位标记
+            Mark(1802);
+        } else if (fc == 3) {
+            Lemon.SceneManager.LoadScene("Scenes/Grass.scene"); // D4 ① 路径式
+            Mark(1803);
+        } else if (fc == 4) {
+            // 首跳已执行（协议⑤：Unloaded → Loaded → ActiveChanged 三条在本帧
+            // Essential 内推毕——Update 此刻可见 = 时序断言本体）
+            var act = Lemon.SceneManager.GetActiveScene();
+            _handleA = act.Handle;
+            bool ok = log.Count == 3 && LogAt(0) == "U:Main:1:1" &&
+                      LogAt(1) == "L:Grass:Scenes/Grass.scene:Single" &&
+                      LogAt(2) == "A:Main>Grass" &&
+                      Lemon.SceneManager.sceneCount == 1 && act.name == "Grass";
+            if (ok) Mark(1804);
+            Lemon.SceneManager.LoadScene("Volcano"); // D4 ② 唯一 stem 式
+        } else if (fc == 5) {
+            var act = Lemon.SceneManager.GetActiveScene();
+            bool ok = log.Count == 6 && LogAt(3) == "U:Grass:1:1" &&
+                      LogAt(4) == "L:Volcano:Scenes/Volcano.scene:Single" &&
+                      LogAt(5) == "A:Grass>Volcano" && act.name == "Volcano" &&
+                      act.Handle != _handleA; // 每载一档新句柄
+            if (ok) Mark(1805);
+            Lemon.SceneManager.LoadScene("Grass"); // 同名重装
+        } else if (fc == 6) {
+            var act = Lemon.SceneManager.GetActiveScene();
+            bool ok = log.Count == 9 && LogAt(8) == "A:Volcano>Grass" &&
+                      act.name == "Grass" && act.Handle != _handleA; // 重装不发旧句柄
+            if (ok) Mark(1806);
+            Lemon.SceneManager.LoadScene("Nowhere"); // 响亮失败：不应入队
+        } else if (fc == 7) {
+            bool ok = log.Count == 9 &&
+                      Lemon.SceneManager.GetActiveScene().name == "Grass"; // 世界不动
+            if (ok) Mark(1807);
+            Lemon.SceneManager.LoadScene("Cave", Lemon.LoadSceneMode.Additive); // 红字拒
+        } else if (fc == 8) {
+            bool ok = log.Count == 9 &&
+                      Lemon.SceneManager.GetActiveScene().name == "Grass"; // 仍不动
+            if (ok) Mark(1808);
+            Lemon.SceneManager.LoadScene("Cave"); // 四跳
+        } else if (fc == 9) {
+            var act = Lemon.SceneManager.GetActiveScene();
+            bool ok = log.Count == 12 && LogAt(9) == "U:Grass:1:1" &&
+                      LogAt(10) == "L:Cave:Scenes/Cave.scene:Single" &&
+                      LogAt(11) == "A:Grass>Cave" && act.name == "Cave" &&
+                      Lemon.SceneManager.sceneCount == 1 &&
+                      Lemon.SceneManager.GetSceneAt(0).name == "Cave" &&
+                      Lemon.SceneManager.GetSceneByName("Cave").rootCount >= 1;
+            // DDOL 自身跨四跳存活：Update 仍在跑 + gameObject 句柄非零
+            if (ok && gameObject.Entity.Id != 0) Mark(1809);
         }
     }
 }

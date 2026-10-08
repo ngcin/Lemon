@@ -9,6 +9,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
+#include <string>
 #include <vector>
 
 // strtok_r 是 POSIX 接口；MSVC 的等价物是 strtok_s（签名一致：str/delim/&ctx）
@@ -27,6 +29,7 @@
 #include "ECS/ComponentRegistry.h"
 #include "ECS/ControllerTable.h" // T3d：ControllerDef/AnimParamKind（AnimGraph 探针）
 #include "ECS/Events.h"
+#include "ECS/SceneMembership.h" // 批⑦：TestSceneSdk 打标/DDOL 系/孤组断言
 #include "ECS/StateHash.h"
 #include "ECS/World.h"
 #include "Scripting/CoreCLRHost.h"
@@ -334,7 +337,7 @@ void TestDomainManager() {
         auto listFn = (int (*)(char*, int))GetExport("lemon_behaviours_list");
         char buf[4096];
         int n = listFn ? listFn(buf, (int)sizeof buf) : -1;
-        Expect(n == 20, "behaviours list after hot reload (+M11/M15/F-08.2/T3/b1/b2/T3c/T3d/A档tween/T5存档档/b3c UI/M6c b2 audio/M7c b1 fx probes)");
+        Expect(n == 21, "behaviours list after hot reload (+M11/M15/F-08.2/T3/b1/b2/T3c/T3d/A档tween/T5存档档/b3c UI/M6c b2 audio/M7c b1 fx/M7c b7 scene probes)");
         // M4.6 回归（用户实测闪退根因）：相对路径进 dm_reload 曾抛 ArgumentException
         // 逃逸 UnmanagedCallersOnly → coreclr abort。拦截层必须转 0 返回且进程存活
         // （本断言能跑到 = 进程没死）。换装失败后旧域已弃——再换一次真路径恢复。
@@ -701,8 +704,101 @@ void TestFxSdk() {
     Expect(ComputeStateHash(s) == h0, "scene back to empty after destroy (fx)");
 }
 
+// M7c 批⑦：SceneManager 全链（LoadScene 路径/stem 式、四跳含同名重装、三事件
+// 序/时序、DontDestroyOnLoad 幸存、Additive/坏名红字拒、Scene 查询面）。探针 =
+// SceneProbeBehaviour（typeId 20），Mark 18xx；事件序断言在 C# 侧（log 全序对拍）。
+void TestSceneSdk() {
+    using namespace lemon::ecs;
+    auto opsSubmit = (void (*)(unsigned char, unsigned char, uint64_t))GetExport("lemon_ops_submit");
+    auto timeResetFn = (void (*)())GetExport("lemon_time_reset");
+    Expect(opsSubmit && timeResetFn, "ops/time exports resolved (scene)");
+    timeResetFn(); // SceneProbe 按 FrameCount 分段
+
+    // 内存场景源（SetSceneSourceHooks 宿主实现：stem 与 "Scenes/<stem>.scene" 双键）
+    static const std::map<std::string, std::string> kSceneDocs = {
+        {"Main", R"({"schemaVersion":2,"name":"Main","entities":[{"components":{"Transform2D":{"pos":[1.0,2.0],"rot":0.0,"scale":[1.0,1.0]}}}]})"},
+        {"Grass", R"({"schemaVersion":2,"name":"Grass","entities":[{"components":{"Transform2D":{"pos":[10.0,20.0],"rot":0.0,"scale":[1.0,1.0]}}}]})"},
+        {"Volcano", R"({"schemaVersion":2,"name":"Volcano","entities":[{"components":{"Transform2D":{"pos":[30.0,40.0],"rot":0.0,"scale":[1.0,1.0]}}}]})"},
+        {"Cave", R"({"schemaVersion":2,"name":"Cave","entities":[{"components":{"Transform2D":{"pos":[50.0,60.0],"rot":0.0,"scale":[1.0,1.0]}}},{"components":{"Transform2D":{"pos":[70.0,80.0],"rot":0.0,"scale":[1.0,1.0]}}}]})"},
+    };
+    lemon::scripting::SetSceneSourceHooks(
+        {[](const char* nameOrPath, lemon::ecs::SceneSwitchRequest& out) -> bool {
+            std::string key = nameOrPath ? nameOrPath : "";
+            std::string stem = key;
+            if (key.rfind("Scenes/", 0) == 0 && key.size() > 7 &&
+                key.substr(key.size() - 6) == ".scene")
+                stem = key.substr(7, key.size() - 7 - 6);
+            const auto it = kSceneDocs.find(stem);
+            if (it == kSceneDocs.end()) return false;
+            out.name = it->first;
+            out.path = "Scenes/" + it->first + ".scene";
+            out.jsonText = it->second;
+            out.mode = 0;
+            return true;
+        }});
+
+    WorldDesc d;
+    d.threadCount = 1;
+    World w(d);
+    Scene& s = w.CreateScene("SceneT");
+    w.SetActiveScene(&s);
+    w.SetScriptBackend(&g_sh);
+    w.Pipeline().AddSystem(std::make_unique<DestroyCommitSystem>());
+    w.Pipeline().AddSystem(std::make_unique<SceneSwitchSystem>()); // Essential（After DestroyCommit）
+    w.Pipeline().AddSystem(std::make_unique<CSharpBatchSystem>());
+    w.Pipeline().AddSystem(std::make_unique<ScriptEventDispatchSystem>());
+    w.Pipeline().ResolveOrder();
+
+    // F2：初始建档 + 打标（零未打标从第一帧成立；isLoaded=true——宿主同款）
+    const uint32_t hMain = w.CreateSceneRecord("Main", "Scenes/Main.scene");
+    if (lemon::ecs::World::SceneRecord* r = w.FindSceneRecord(hMain)) r->isLoaded = true;
+    StampSceneMembership(s, hMain);
+    w.SetActiveSceneHandle(hMain);
+
+    int mark = 0;
+    w.SetEventSink([&](World&, const EventPacket& p) {
+        if (p.type == GameEvent::Custom && p.user >= 1800 && p.user < 1820)
+            mark = (int)p.user - 1800;
+    });
+    opsSubmit(0, 0, 0x800000000000C001ull);                  // Create（ApplyStructural 打 active 标）
+    opsSubmit(2, 0 /*Transform2D*/, 0x800000000000C001ull);
+    opsSubmit(4, 20 /*SceneProbeBehaviour*/, 0x800000000000C001ull);
+
+    w.Step(0.25f); // 帧1：初始查询面
+    Expect(mark == 1, "scene: initial query face ok");
+    w.Step(0.25f); // 帧2：自标 DDOL（根位）
+    Expect(mark == 2, "scene: ddol marked");
+    w.Step(0.25f); // 帧3：路径式请求入队
+    Expect(mark == 3, "scene: load requested (path form)");
+    w.Step(0.25f); // 帧4：Essential 换场（Grass）+ 探针断言事件三连
+    Expect(mark == 4, "scene: hop1 events ordered+timed, queries ok");
+    const uint32_t hGrass1 = w.ActiveSceneHandle();
+    Expect(hGrass1 != hMain, "scene: hop1 active handle");
+    w.Step(0.25f); // 帧5：Volcano
+    Expect(mark == 5, "scene: hop2 ok (stem form, fresh handle)");
+    w.Step(0.25f); // 帧6：Grass 同名重装 + 坏名拒
+    Expect(mark == 6, "scene: reload ok (fresh handle), bad name rejected");
+    w.Step(0.25f); // 帧7：坏名拒后世界不动 + Additive 拒
+    Expect(mark == 7, "scene: bad name left world intact");
+    w.Step(0.25f); // 帧8：Additive 拒后世界不动 + Cave 请求
+    Expect(mark == 8, "scene: additive rejected, world intact");
+    w.Step(0.25f); // 帧9：终态（12 事件全序 + DDOL 跨四跳 + 查询面）
+    Expect(mark == 9, "scene: final state + full event log + ddol survivor");
+    // 引擎面对拍：四跳后 active = Cave 新句柄、DDOL 系幸存 1（探针实体）、零孤组、
+    // 档案 5 份（Main + Grass + Volcano + Grass + Cave——每载一档）
+    Expect(w.ActiveSceneHandle() != hGrass1 && w.ActiveSceneHandle() != hMain,
+           "scene: engine active handle progressed");
+    Expect(w.SceneRecordCount() == 5, "scene: one record per load (handles never reused)");
+    Expect(CountSceneGroup(s, lemon::ecs::kSceneHandleUnassigned) == 0, "scene: zero orphans");
+    const std::vector<Entity> ddol = CollectDontDestroyOnLoadLineage(s);
+    bool probeSurvived = ddol.size() == 1;
+    if (probeSurvived) // 唯一 DDOL 幸存者 = 带脚本盒的探针实体（句柄值不写死）
+        probeSurvived = s.Alive(ddol[0]) && s.TryGet<lemon::scripting::ScriptBox>(ddol[0]) != nullptr;
+    Expect(probeSurvived, "scene: probe entity is the lone ddol survivor (root-bit)");
+}
+
 // M5 批①：Time.Scale（native 表往返 + 缩放 dt 链到 Time.DeltaTime）与
-// Lemon.Ui.Set（World.RtUi 定长槽，C++ 侧读回断言）
+// Lemon.Ui.Set（World RtUi 定长槽，C++ 侧读回断言）
 void TestTimeScaleAndUiChannel() {
     using namespace lemon::ecs;
     auto opsSubmit = (void (*)(unsigned char, unsigned char, uint64_t))GetExport("lemon_ops_submit");
@@ -1959,6 +2055,7 @@ int main() {
     TestUiSdk();        // M6b 批③c：Lemon.UI 线格式对拍 + 事件反向直灌
     TestAudioSdk();     // M6c 批②：Lemon.Audio 全 API 面 + 哈希免疫反例
     TestFxSdk();        // M7c 批①：Lemon.Fx 表现升级面 + 哈希免疫反例
+    TestSceneSdk();     // M7c 批⑦：SceneManager 全链（四跳/事件序/DDOL/红字拒）
 
     // M4.6 探针（编辑器切项目场景）：同进程二次 ScriptHost 生命周期。CoreCLR 运行时
     // 进程单例——第二次 Initialize 的真实行为必须钉板（成功/失败都合法，崩 = 缺陷）。

@@ -23,8 +23,10 @@
 #include <thread>
 #include "Assets/AssetDatabase.h"
 #include "Assets/FontBake.h" // M7c 批①：字体离线烘焙（后台 worker 消费）
-#include "Assets/ProjectFile.h" // M7c 批①：LoadProjectFile（fxFont 装载）
+#include "Assets/ProjectFile.h" // M7c 批①：LoadProjectFile（fxFont 装载；批⑦ ResolveScene）
 #include "Assets/ProjectWizard.h"
+#include "Assets/SpriteRefs.h" // 批⑦：换场 afterBuild 的 play 世界 guid 归一
+#include "Serialization/SceneArchive.h" // 批⑦：HookResolveScene 读档名
 #include "Interaction/ViewportRenderer.h"
 #include "Localization/Localization.h"
 #include "Tooling/ThumbCache.h"
@@ -37,6 +39,41 @@
 #include "App/RecentProjects.h"
 
 namespace lemon::editor {
+
+namespace {
+// 批⑦：SceneManager.LoadScene 的编辑器侧寻址（SceneSourceHooks 宿主实现）——
+// project.lemon 每次调用现读（换场低频；与 fxFont 装载同款 ad hoc 口径），
+// ResolveScene 同一引擎链（路径 > 唯一 stem > false 响亮）
+EditorApp* s_sceneSrcApp = nullptr;
+
+bool HookResolveScene(const char* nameOrPath, ecs::SceneSwitchRequest& out) {
+    EditorApp* app = s_sceneSrcApp;
+    if (!app || !nameOrPath || !*nameOrPath) return false;
+    const std::string root = app->Ctx().Assets().ProjectRoot();
+    const assets::ProjectFile pf = assets::LoadProjectFile(root);
+    const std::string rel = assets::ResolveScene(root, pf, nameOrPath);
+    if (rel.empty()) {
+        LEMON_ERROR("SceneManager.LoadScene：场景不可解析（路径/唯一名未命中或不唯一）"
+                    "'%s'",
+                    nameOrPath);
+        return false;
+    }
+    std::ifstream f(std::filesystem::path(root) / rel, std::ios::binary);
+    if (!f) {
+        LEMON_ERROR("SceneManager.LoadScene：场景文件不可读：%s", rel.c_str());
+        return false;
+    }
+    std::string json((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    if (!ecs::SceneArchive::SceneDocName(json, out.name)) {
+        LEMON_ERROR("SceneManager.LoadScene：场景档解析失败：%s", rel.c_str());
+        return false;
+    }
+    if (out.name.empty()) out.name = std::filesystem::path(rel).stem().string();
+    out.path = rel;
+    out.jsonText = std::move(json);
+    return true;
+}
+} // namespace
 
 // ------------------------------------------------ 项目管线（M4.5）----
 bool EditorApp::OpenProjectPipeline(const std::string& projectRoot) {
@@ -229,6 +266,28 @@ bool EditorApp::EnterPlayProgrammatic() {
     MountPlayAudio();        // M6c 竖切批：烤制/装载音频资产（guid→clip；无资产 no-op）
     WirePlayAudioBackend();  // M6c 批②：命令表提交引擎 + guid 解析
     LoadFxFontPage();        // M7c 批①：Fx 字体页兜底装载（worker 未烤完时同步补）
+    // 批⑦ 前置①兑现：编辑器 Play 世界换场钩子装配（缺则编辑器内 LoadScene =
+    // UI origin=Scene 文档不卸 + 新场脚本全哑——sweep/afterBuild 与 lemon-game
+    // GameEntry.cpp 同序列）。捕获 this：EditorApp 与 playWorld 同生命周期，
+    // ExitPlay 整弃 playWorld（Switcher 随之亡）→ 每次 EnterPlay 重装配
+    s_sceneSrcApp = this;
+    scripting::SetSceneSourceHooks({HookResolveScene});
+    ctx_.ActiveWorld().Switcher().SetHooks({
+        .sweep = [this] {
+            if (gameUi_) gameUi_->UnloadDocumentsByOrigin(::lemon::ui::UiDocOrigin::Scene);
+        },
+        .afterBuild = [this](ecs::Scene& s) {
+            const assets::SpriteRefStats st = assets::ResolveSpriteRefs(s, ctx_.Assets());
+            if (st.danglingGuid)
+                LEMON_WARN("编辑器换场：sprite 引用悬空 %u 处（渲染保留旧号）",
+                           st.danglingGuid);
+            ctx_.ResolvePlayScripts(); // 单 registry：playScene_ 即 s（全组扫描）
+            if (gameUi_) {
+                MountSceneUiDocuments(); // ActiveScene() = playScene_ = s
+                ReconcileUiDocuments();
+            }
+        },
+    });
     return true;
 }
 

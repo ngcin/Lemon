@@ -50,17 +50,12 @@ ProjectFile LoadProjectFile(const std::string& projectRoot) {
     return ParseProjectFile(text);
 }
 
-std::string ResolveEntryScene(const std::string& projectRoot, const ProjectFile& pf) {
+namespace {
+
+/// 项目内 .scene 全量收集（Scenes/ 惯例落位 + Assets/ 内嵌合法；ResolveEntryScene
+/// 唯一性回退与 ResolveScene stem 寻址共用）
+void CollectSceneFiles(const std::string& projectRoot, std::vector<std::string>& out) {
     std::error_code ec;
-    if (!pf.entryScene.empty()) {
-        if (fs::is_regular_file(fs::path(projectRoot) / pf.entryScene, ec))
-            return pf.entryScene;
-        // 声明悬空不静默回退（声明 = 作者意图，错路径要响亮可见）；
-        // 继续唯一 .scene 探测并在悬空时双报由调用方红字，此处返回空
-        return std::string();
-    }
-    // 未声明 → 唯一 .scene 回退：扫 Scenes/（惯例落位）与 Assets/（内嵌合法）
-    std::vector<std::string> scenes;
     for (const char* tree : {"Scenes", "Assets"}) {
         const fs::path top = fs::path(projectRoot) / tree;
         if (!fs::is_directory(top, ec)) continue;
@@ -79,12 +74,45 @@ std::string ResolveEntryScene(const std::string& projectRoot, const ProjectFile&
             if (ext != ".scene") continue;
             std::error_code ec2;
             const std::string rel = fs::relative(de.path(), projectRoot, ec2).generic_string();
-            if (!ec2) scenes.push_back(rel);
+            if (!ec2) out.push_back(rel);
         }
     }
-    std::sort(scenes.begin(), scenes.end());
+    std::sort(out.begin(), out.end());
+}
+
+} // namespace
+
+std::string ResolveEntryScene(const std::string& projectRoot, const ProjectFile& pf) {
+    std::error_code ec;
+    if (!pf.entryScene.empty()) {
+        if (fs::is_regular_file(fs::path(projectRoot) / pf.entryScene, ec))
+            return pf.entryScene;
+        // 声明悬空不静默回退（声明 = 作者意图，错路径要响亮可见）；
+        // 继续唯一 .scene 探测并在悬空时双报由调用方红字，此处返回空
+        return std::string();
+    }
+    // 未声明 → 唯一 .scene 回退
+    std::vector<std::string> scenes;
+    CollectSceneFiles(projectRoot, scenes);
     if (scenes.size() == 1) return scenes[0];
     return std::string(); // 零/多场景且未声明 = 调用方红字（无法猜入口）
+}
+
+std::string ResolveScene(const std::string& projectRoot, const ProjectFile& pf,
+                         const std::string& nameOrPath) {
+    if (nameOrPath.empty()) return ResolveEntryScene(projectRoot, pf);
+    const fs::path p(nameOrPath);
+    if (p.is_absolute()) return std::string(); // 项目相对寻址红线（越根 = 拒绝）
+    std::error_code ec;
+    // ① 路径精确命中（"Scenes/Forest.scene" / "Assets/UI/Main.scene"）
+    if (fs::is_regular_file(fs::path(projectRoot) / p, ec)) return p.generic_string();
+    // ② 唯一 stem 命中（"Forest"——全库唯一者；零/多 = 响亮失败）
+    std::vector<std::string> scenes;
+    CollectSceneFiles(projectRoot, scenes);
+    std::vector<std::string> hits;
+    for (const std::string& rel : scenes)
+        if (fs::path(rel).stem() == p) hits.push_back(rel);
+    return hits.size() == 1 ? hits[0] : std::string();
 }
 
 } // namespace lemon::assets

@@ -12,7 +12,8 @@
 #include "Core/Log.h"
 #include "Core/FileOps.h" // AcpToUtf8：win 侧 ACP 路径过 C++/C# UTF-8 边界前归一
 #include "ECS/ComponentRegistry.h"
-#include "ECS/SceneMembership.h" // 运行时建实体打标（批⑥b"零未打标"不变量）
+#include "ECS/Hierarchy.h" // DontDestroyOnLoad 找根 parent 链上行（批⑦）
+#include "ECS/SceneMembership.h" // 运行时建实体打标/根位 DDOL/组根计数（批⑥b/批⑦）
 #include "Systems/Systems.h" // SeparationSystem 完整定义（调参下放通道）
 
 namespace lemon::scripting {
@@ -166,8 +167,9 @@ uint64_t NativeInstantiatePrefab(const char* guidHex, float x, float y) {
     // D5：钩子内 LoadEntityTree 任意 emplace（树深度/组件面不可静态知）——返回后
     // 统一比对（比对定真伪，无需枚举树内组件）
     if (e != 0) MarkBatchStaleIfPoolsMoved();
-    // 批⑥b 登记项：钩子注册者（当前无宿主注册，恒 0 失败路径）负责子树打标
-    // active——World::SpawnPrefab 的 StampTreeMembership 同款责任边界（注册时接）
+    // 批⑥b 登记项、批⑦ 兑现：子树打标 active = 钩子注册者责任（lemon-game 与
+    // 编辑器两注册处均已落地）——World::SpawnPrefab 的 StampTreeMembership 同款
+    // 责任边界（批⑥b review 时"无宿主注册"的措辞已过时，两宿主一直在册）
     return e;
 }
 
@@ -450,6 +452,111 @@ void NativeSetXpCurveK(float k) {
     if (g_world) g_world->SetXpCurveK(k);
 }
 
+// ---- M7c 批⑦（SceneManager 门面通道；g_world/g_scene 域线程窗口约定同上）----
+// 场景源钩子（进程级单份，装配期注入——lemon-game/编辑器/script-tests 各自注册
+// 寻址实现，引擎层不碰 IO，EditorAssetHooks 同款纪律）
+SceneSourceHooks g_sceneSource{nullptr};
+bool g_sceneSourceWarned = false; // 未注入的红字去重
+
+int32_t NativeSceneLoadRequest(const char* nameOrPath, uint8_t mode) {
+    if (mode != 0) { // LoadSceneMode.Additive（C# 侧先拦为第一道，此处兜底）
+        LEMON_ERROR("SceneManager.LoadScene：LoadSceneMode.Additive 未实现"
+                    "（ADR-017 D2 预留）");
+        return 0;
+    }
+    if (!g_world) return 0;
+    if (!nameOrPath || !*nameOrPath) {
+        LEMON_ERROR("SceneManager.LoadScene：场景名为空");
+        return 0;
+    }
+    if (!g_sceneSource.resolveScene) {
+        if (!g_sceneSourceWarned) {
+            g_sceneSourceWarned = true;
+            LEMON_ERROR("SceneManager.LoadScene：宿主未注册场景源钩子"
+                        "（SetSceneSourceHooks）——换场不可用");
+        }
+        return 0;
+    }
+    ecs::SceneSwitchRequest req;
+    req.mode = mode;
+    if (!g_sceneSource.resolveScene(nameOrPath, req)) return 0; // 宿主已红字交底
+    g_world->Switcher().Request(std::move(req)); // 当帧照常跑完，下一帧 Essential
+                                                 // 执行（Unity 下帧装载语义）
+    return 1;
+}
+
+void FillSceneInfo(const ecs::World::SceneRecord& r, SceneInfoC* out) {
+    std::memset(out, 0, sizeof(*out));
+    out->handle = r.handle;
+    out->isLoaded = r.isLoaded ? 1 : 0;
+    std::snprintf(out->name, sizeof(out->name), "%s", r.name.c_str());
+    std::snprintf(out->path, sizeof(out->path), "%s", r.path.c_str());
+    out->rootCount = g_scene ? ecs::CountSceneRoots(*g_scene, r.handle) : 0;
+}
+
+uint32_t NativeSceneCount() {
+    if (!g_world) return 0;
+    uint32_t n = 0;
+    for (uint32_t i = 0; i < g_world->SceneRecordCount(); ++i)
+        if (g_world->SceneRecordAt(i)->isLoaded) ++n;
+    return n;
+}
+
+int32_t NativeSceneInfoAt(uint32_t index, SceneInfoC* out) {
+    if (!g_world || !out) return -1;
+    uint32_t seen = 0;
+    for (uint32_t i = 0; i < g_world->SceneRecordCount(); ++i) {
+        const ecs::World::SceneRecord* r = g_world->SceneRecordAt(i);
+        if (!r->isLoaded) continue; // 档案只增不删——计数/迭代均按装载态过滤
+        if (seen++ == index) {
+            FillSceneInfo(*r, out);
+            return 1;
+        }
+    }
+    return -1;
+}
+
+int32_t NativeSceneInfoByHandle(uint32_t handle, SceneInfoC* out) {
+    if (!g_world || !out || handle == 0) return -1;
+    const ecs::World::SceneRecord* r = g_world->FindSceneRecord(handle);
+    if (!r) return -1;
+    FillSceneInfo(*r, out);
+    return 1;
+}
+
+uint32_t NativeActiveSceneHandle() { return g_world ? g_world->ActiveSceneHandle() : 0; }
+
+int32_t NativeSetActiveScene(uint32_t handle) {
+    if (!g_world) return 0;
+    if (handle != g_world->ActiveSceneHandle()) {
+        LEMON_WARN("SceneManager.SetActiveScene：v1 仅接受当前活动场景（Single 唯一"
+                   "装载，Additive 归 ADR-017 D2 预留）——句柄 %u 被拒",
+                   handle);
+        return 0;
+    }
+    return 1;
+}
+
+int32_t NativeMarkDontDestroyOnLoad(uint64_t e) {
+    if (!g_scene || !g_world) return 0;
+    const ecs::Entity ent{e};
+    if (!g_scene->Alive(ent)) return 0;
+    // D5：仅根生效——非根调用 WARN 后作用于根树（Unity 兼容；根 = parent 链上行
+    // 尽头，深度护栏同 IsDontDestroyOnLoadLineage）
+    ecs::Entity root = ent;
+    for (int depth = 0;; ++depth) {
+        const ecs::Hierarchy* h = g_scene->TryGet<ecs::Hierarchy>(root);
+        if (!h || h->parent.IsNull() || !g_scene->Alive(h->parent)) break;
+        root = h->parent;
+        if (depth > (int)ecs::kMaxHierarchyDepth + 1) break;
+    }
+    if (root != ent)
+        LEMON_WARN("DontDestroyOnLoad：非根实体（ADR-017 D5）——标记作用于根树"
+                   "（实体 #%llu → 根 #%llu）",
+                   (unsigned long long)ent.id, (unsigned long long)root.id);
+    return (int32_t)ecs::MarkDontDestroyOnLoad(*g_scene, root); // D1 根位式
+}
+
 const NativeApiVtable kNativeApi{NativeIsAlive,
                                  NativeHas,
                                  NativeRead,
@@ -498,7 +605,14 @@ const NativeApiVtable kNativeApi{NativeIsAlive,
                                  NativeAudioSetPaused,
                                  NativeAudioPausedGet,
                                  NativeFxPopupEx,
-                                 NativeFxBarEx};
+                                 NativeFxBarEx,
+                                 NativeSceneLoadRequest,
+                                 NativeSceneCount,
+                                 NativeSceneInfoAt,
+                                 NativeSceneInfoByHandle,
+                                 NativeActiveSceneHandle,
+                                 NativeSetActiveScene,
+                                 NativeMarkDontDestroyOnLoad};
 } // namespace
 
 void SetScriptIoHooks(const ScriptIoHooks& hooks) { g_scriptIo = hooks; }
@@ -509,6 +623,9 @@ void ResetBatchStaleMarkCount() { g_batchStaleMarks = 0; }
 // 批③c：UI 桥钩子（进程级单份，装配期一次；同 g_editorAssets 形态）
 static UiHooks g_uiHooks;
 void SetUiHooks(const UiHooks& hooks) { g_uiHooks = hooks; }
+
+// 批⑦：场景源钩子（同上形态；g_sceneSource 在上方匿名命名空间）
+void SetSceneSourceHooks(const SceneSourceHooks& hooks) { g_sceneSource = hooks; }
 
 namespace {
 
@@ -593,6 +710,9 @@ bool ScriptHost::Initialize(const char* dotnetRoot, const char* runtimeConfigPat
         (int (*)(ui::UiOpC*, int, char*, int, int*))host_.GetExport(kType, "lemon_ui_ops_pull");
     uiEventsDispatchFn_ = (void (*)(const ui::UiEventC*, int))host_.GetExport(
         kType, "lemon_ui_events_dispatch");
+    // 批⑦（旧 Entry 缺 = null 挂空：换场事件静默不达，非必需闸）
+    sceneEventFn_ = (void (*)(uint8_t, uint32_t, uint32_t, uint8_t))host_.GetExport(
+        kType, "lemon_scene_event");
     // native 表注册（2026-09-29 复审 4b）：优先尺寸握手版——宿主表字节数随表传入，
     // SDK 侧 min 拷贝 + 尾零，"新 SDK 配旧宿主"不再越界读宿主 const 表尾部（原整拷
     // 下 !=null 守卫反会去调 .rodata 相邻字节拼出的垃圾指针）。旧 Entry 无
@@ -1072,6 +1192,18 @@ void ScriptHost::DispatchEvents(ecs::World& world, ecs::Scene& scene,
     }
     if (!eventsDispatchFn_ || !events || count == 0) return;
     eventsDispatchFn_(events, (int)count);
+}
+
+void ScriptHost::SceneEventNotify(ecs::World& world, ecs::Scene& scene,
+                                  ecs::SceneEventKind kind, uint32_t oldHandle,
+                                  uint32_t newHandle, uint8_t mode) {
+    // 批⑦ D3：换场 Essential 窗口内同步直推（SceneSwitcher::Execute 调用）——
+    // NativeApiWindow 包裹 = 事件订阅方回调内 native 查询可用（GetActiveScene 等，
+    // DispatchEvents 同款纪律）；回调内再 LoadScene = 单槽 last-wins 等下一帧
+    //（Switcher::Request 入口取走，重入安全）
+    if (!sceneEventFn_) return;
+    NativeApiWindow win(&world, &scene);
+    sceneEventFn_((uint8_t)kind, oldHandle, newHandle, mode);
 }
 
 } // namespace lemon::scripting

@@ -167,4 +167,17 @@ public abstract class LemonBehaviour
         foreach (var (type, handler) in _subscriptions) Events.Unsubscribe(type, handler);
         _subscriptions.Clear();
     }
+
+    // ---- 批⑦（ADR-017 D5/D7）：跨场景幸存标记 ------------------------------
+
+    /// <summary>标记跨场景幸存（Unity 手感：派生类内裸调 DontDestroyOnLoad(gameObject)；
+    /// D7 静态落点）。仅根生效：非根 = 引擎 WARN 后作用于根树（根树整体幸存，Unity
+    /// 兼容）；DDOL 位只落根一点（批⑦ D1 根位式）——后挂子实体随根幸存、移出 DDOL
+    /// 树随新归属清场。重复管理器防重 = 游戏侧 if (instance == null) 惯例，引擎不造
+    /// 单例基类。</summary>
+    public static void DontDestroyOnLoad(GameObject go)
+    {
+        if (go.Entity.Id == 0) return; // GameObject 为 struct：句柄零 = 无效
+        Native.MarkDontDestroyOnLoad(go.Entity.Id);
+    }
 }

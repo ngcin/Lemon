@@ -25,6 +25,8 @@ struct SceneSwitchRequest {
     std::string name;     // 档案名（.scene "name" 段）
     std::string path;     // 项目相对路径（档案寻址键）
     std::string jsonText; // 场景 JSON（ValidateParse 内含迁移链）
+    uint8_t mode = 0;     // LoadSceneMode（C# 镜像：0=Single；1=Additive 预留——
+                          // vtable 侧红字拒，此处不达非 0 值）
 };
 
 /// 宿主回调面（引擎件清扫编排直兑；宿主件与资产解析经钩子注入——
@@ -46,8 +48,10 @@ enum class SceneSwitchStatus : uint8_t {
 /// 执行结果（smoke/单测断言面；批⑦ sceneLoaded/sceneUnloaded 事件族的数据源）
 struct SceneSwitchReport {
     SceneSwitchStatus status = SceneSwitchStatus::NoPending;
-    uint32_t destroyedOldGroup = 0; // 旧组清场入队数（协议 ①③）
-    uint32_t ddolSurvivors = 0;     // 换场后 DDOL 计数（幸存者语义见 SceneMembership.h）
+    uint32_t destroyedOldGroup = 0; // 清场入队总数（批⑦ D2 起为"除 DDOL 系外全清"
+                                    // 的口径——名义旧组，含自愈收编的未指派实体）
+    uint32_t ddolSurvivors = 0;     // 换场后 DDOL 系幸存者总数（含后挂子实体；多跳
+                                    // 累积，语义见 CollectDontDestroyOnLoadLineage）
     uint32_t stampedNew = 0;        // 新组打标收编数（零孤组不变量下 = 新建实体数）
     uint32_t oldHandle = 0;
     uint32_t newHandle = 0;         // ValidateParse 失败 = 0（未建档）；BuildInto

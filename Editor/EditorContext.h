@@ -164,12 +164,14 @@ public:
     // ---- C# native 钩子入参形态（EditorApp 装进 SetEditorAssetHooks；M4.4 #8）----
     /// GUID hex（C# Assets.SpriteOf 参数）→ spriteId（0 = 无/悬空）
     uint32_t SpriteIdOfGuidHex(const char* hex) const;
+    /// Play 世界 ScriptBox.className → typeId → AttachBehaviour（EnterPlay 装配；
+    /// 批⑦ 起 Play 换场 afterBuild 钩子复用——单 registry，playScene_ 即目标场景）
+    void ResolvePlayScripts();
 
 private:
     void BackfillGuids(); // 打开旧档（无 guid 字段）时补齐
     /// M6a 批⓪ T2：spriteGuid → spriteId 归一 + 存量回填（装载/恢复/Undo/Prefab 落地）
     SpriteRefStats ResolveSpriteRefs();
-    void ResolvePlayScripts(); // EnterPlay：ScriptBox.className → typeId → AttachBehaviour
     std::string AutosavePathFor(const std::string& sceneStem) const; // .lemon/autosave/<stem>.scene
     // M5 批③：EnterPlay 建 clip 表（.anim JSON → (sheet guid, cell) 解析为 spriteId
     // 入 playWorld_->Clips()；进 Play 时刻快照——Play 中改 .anim 不生效）

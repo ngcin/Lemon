@@ -43,6 +43,11 @@ public:
     /// 失败，编排侧红字交底）。
     static bool ValidateParse(const std::string& jsonText);
 
+    /// 读档名（M7c 批⑦）：同 ParseSceneDoc 链（解析 + 迁移）零构建；out = doc
+    /// "name" 段（缺省清空）。宿主 resolveScene 钩子填 SceneSwitchRequest.name 用。
+    /// 解析失败返回 false（告警已在内）。
+    static bool SceneDocName(const std::string& jsonText, std::string& out);
+
     /// 版本迁移链：把 fromVersion 的文档升到 kSchemaVersion（逐级）。
     /// 每级迁移是一个纯 json→json 变换；无法处理返回 false。
     static bool Migrate(std::string& jsonText, uint32_t fromVersion);

@@ -89,6 +89,15 @@ struct IScriptBackend {
     /// 销毁提交前补通知（2026-09-24 审查 F-08.2）：C++ 系统路径入队的销毁在此
     /// 触发脚本 OnDestroy——此前只有脚本命令路径通知，托管实例/订阅残留到换域。
     virtual void NotifyPendingDestroys(World& world, Scene& scene) = 0;     // CommitDestroys 前调用
+    /// 换场事件同步直推（M7c 批⑦ D3 / ADR-017 协议⑤）：换场 Essential 窗口内
+    /// 按 Unloaded → Loaded → ActiveChanged 序调用——sceneLoaded 必须先于新场脚本
+    /// 同帧 Start/Update（帧末 #16 事件队列晚于当帧 Update，承载不了此时序，故
+    /// 不入 EventPacket）。**非纯虚**：默认空实现，测试/Null 后端零波及。
+    virtual void SceneEventNotify(World& world, Scene& scene, SceneEventKind kind,
+                                  uint32_t oldHandle, uint32_t newHandle,
+                                  uint8_t mode) {
+        (void)world; (void)scene; (void)kind; (void)oldHandle; (void)newHandle; (void)mode;
+    }
 };
 
 struct WorldDesc {

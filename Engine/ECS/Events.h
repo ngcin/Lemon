@@ -30,6 +30,15 @@ enum class GameEvent : uint16_t {
     TweenFinished,
 };
 
+/// 换场事件族（M7c 批⑦ D3 / ADR-017 协议⑤）：不进 EventPacket 队列——帧末 #16
+/// 派发晚于当帧 Update，满足不了"sceneLoaded 先于新场脚本同帧 Start/Update"的
+/// 时序契约；走 IScriptBackend::SceneEventNotify 换场 Essential 窗口内同步直推。
+enum class SceneEventKind : uint8_t {
+    Unloaded = 0,    // sceneUnloaded：载荷 = old（随行清扫收口后）
+    Loaded,          // sceneLoaded：载荷 = new（Awake/OnEnable 后、Start 前；mode 透传）
+    ActiveChanged,   // activeSceneChanged：载荷 = old → new（收口）
+};
+
 struct EventPacket {
     GameEvent type = GameEvent::Spawn;
     uint16_t user = 0;          // Custom 事件的资产注册 id / 命中部位等

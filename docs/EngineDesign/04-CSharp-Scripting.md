@@ -184,6 +184,22 @@ public readonly struct Transform               // 视图结构：逐属性访问
 > **注册序**（`GameMain.Configure` 内 `Register<T>` 顺序；`[ExecutionOrder]` 桶间
 > 排序，同 Order 按注册序），槽序只影响 Inspector 展示与序列化键序。
 
+> **SceneManager 门面（M7c 批⑦ 已落地 2026-10-08；[ADR-017](../ADR/ADR-017-Scene-Management-And-LoadScene.md) C# API 面）**：
+> `Lemon.SceneManager`（flat 命名，D8）+ `Scene` readonly struct + `LoadSceneMode` 枚举
+> + `LemonBehaviour.DontDestroyOnLoad(GameObject)` 静态（D7）。`LoadScene(nameOrPath)`
+> 寻址 = 项目相对路径 > 唯一文件名 stem > 红字响亮失败（D4，无 build index 清单）；
+> 当帧照常跑完、下一帧 Essential 换场（Unity 下帧装载语义）。三事件
+> `sceneUnloaded → sceneLoaded → activeSceneChanged` 换场帧内同步直推（D3——
+> `IScriptBackend::SceneEventNotify`，非帧末 #16 队列），**sceneLoaded 先于新场脚本
+> 同帧 Start/Update**（协议⑤ 时序契约，script-tests TestSceneSdk 断言面）。DDOL =
+> 根位式（D1 批⑦ 修订）：位只落根、清场判据祖先链——后挂子实体随根幸存、移出随新
+> 归属清场（Unity 全对齐）。v1 口径：Single 唯一装载（Additive = 红字，D2 预留）；
+> `sceneCount` = isLoaded 档案数（DDOL 不建模伪场景——Unity 差异）；`SetActiveScene`
+> 仅当前 active 合法；`LoadSceneAsync` 归批⑧。桥面 = vtable 尾加 7 槽（49→56，全部
+> 低频；LoadScene 为首个结构性通道——回放保障 = C# 确定性执行 + 哈希流捕获，op 不
+> 显式入流，b6 查② 口径）。已知敞口：UI 点击触发的换场不可回放（鼠标位不入
+> InputState，既有敞口；批⑨ svr-test 迁移时处理）。
+
 ### 3.1 协程替代：async/await + C++ 定时器（ADR-009 基调——表面像 Unity，机器走 C++）
 
 - Unity `StartCoroutine/WaitForSeconds` → C# `async/await` + **Lemon 主线程同步上下文**（Prowl2D `Tasks/MainThreadContext` 思想）：
