@@ -1,6 +1,6 @@
 # M6c 批② —— 2D 声源 + C# 正式化：AudioChannel 命令表 + vtable 六新槽 + AudioSystem + AudioSource id 31 + BGM 引擎侧单槽 + D4 交叉淡出
 
-Status: done（2026-09-30 当日代码面收口。**D5–D8 用户拍板均按建议**（"按建议开工"）；三档重录现录现放 **mismatches=0**（sim st/mt + script）；engine-tests **33661**（+52）+ script-tests **1771**（+12，behaviours 19）+ ctest 3/3；smoke 抽检五链全绿（basic/script-chain/template/uirml/smoke-audio）。**真人听感两项待用户**（①暂停挂起/恢复续响 ②死亡重开 BGM 不叠曲 + 淡出听感）。[DevLog](../../DevLog/2026-09-30-m6c-b2-source-and-csharp-api.md)）
+Status: done（2026-09-30 当日代码面收口。**D5–D8 用户拍板均按建议**（"按建议开工"）；三档重录现录现放 **mismatches=0**（sim st/mt + script）；engine-tests **33661**（+52）+ script-tests **1771**（+12，behaviours 19）+ ctest 3/3；smoke 抽检五链全绿（basic/script-chain/template/uirml/smoke-audio）。**真人听感两项 ✅ 2026-10-07 随 M7a 批⑧ V3 同场过**（[验收记录](../../DevLog/2026-10-07-acceptance-m7a-b8-v1-v3.md)）。[DevLog](../../DevLog/2026-09-30-m6c-b2-source-and-csharp-api.md)）
 
 > 设计基准 [ADR-015](../../ADR/ADR-015-Audio-System-And-Baked-Format.md)（M3/M4/M5/M6 已拍板项不变）；本文件定稿实现口径。两处 ADR 勘误已回注（M3 字段序 24B / M6 槽数，见 ADR 修订注记）。
 
@@ -93,7 +93,7 @@ void     (*audioSetPaused)(int32_t on); // D5；若改自动 TimeScale 方案则
 | T6 | 编辑器接线 + svr-test 一行 | `EditorAppScripts.cpp`（`ResolveAudioClipThunk` + TryEnterPlay 注入 backend + `AudioClipOfGuid`）+ `EditorApp.cpp`（HookAudio* 四函数退役 + 主循环 Play 分支每帧推监听器 gameCam+gameRT 半宽）+ svr-test `GameFlow.SetPaused` 加 `Audio.Paused = on` | ✅ |
 | T7 | 单测 | engine-tests：TestAudioFadeEnvelope + TestAudioSpatialMath + TestAudioChannelCommands + TestAudioSourceLifecycle（playOnStart 起/实体亡停/换片重绑/零 ECS 写断言）；script-tests：**TestAudioSdk**（AudioProbeBehaviour typeId 18 + behaviours 19：Play/PlayAt 非零、坏 guid 0、Stop 真值序、MasterVolume 次帧往返、BGM 槽对拍、**ComputeStateHash 跨帧逐位不变反例**、StopAll 清场）+ 测试宿主静音引擎 + resolver 装配 | ✅ |
 | T8 | 金回放三档重录 | T1–T5 齐落（批内此后零哈希面改动）→ bench-sim `--threads 1 --record` 18000 帧现录 → **st/mt(threads 4) 双档 replay mismatches=0**（终态 alive=8249/created=16003/destroyed=7754 双档一致）+ bench-script record/replay **回放 PASS mismatches=0** | ✅ |
-| T9 | 真人听感两项（D8-A） | ①暂停挂起/恢复续响（Esc 往返）②死亡重开 BGM 不叠曲 + 换曲交叉淡出顺带听感（svr-test 即席）；空间化听感归批④ | **待用户** |
+| T9 | 真人听感两项（D8-A） | ①暂停挂起/恢复续响（Esc 往返）②死亡重开 BGM 不叠曲 + 换曲交叉淡出顺带听感（svr-test 即席）；空间化听感归批④ | **✅ 2026-10-07（M7a 批⑧ V3 同场过）** |
 
 预估 3–4 天 → 实际当日代码面收口。
 

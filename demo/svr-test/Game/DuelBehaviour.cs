@@ -15,6 +15,8 @@ using Lemon.Interop;
 /// 表现帧，T3d 批③的语义演示。伤害/胜负数据落存档键 duel.*（无头验收出口）。
 /// M7c 批①：Fx 表现升级验收演示场——暴击中文 Pop 弹跳黄字 + 贴图血条 +
 /// 受击延迟白条三项全接（字体 = project.lemon fxFont 烘焙页，中文「暴击」可显）。
+/// 元素飘字实装（2026-10-07）：每击随机出招（物/魔/火/水/雷/毒），飘字
+/// 颜色/动效/伤害系数随型（kDmgTypes 表）；暴击与元素正交组合。
 /// 调参：改 consts 后热重载 → Stop/Play 重播。</summary>
 public sealed class DuelBehaviour : LemonBehaviour
 {
@@ -27,6 +29,26 @@ public sealed class DuelBehaviour : LemonBehaviour
     // + 延迟白条 + 25% 暴击率（数值层演示——伤害 ×1.5 与表现同源判定）
     private const double kCritChance = 0.25;
     private static readonly System.Random s_rng = new();
+
+    /// <summary>伤害类型表（2026-10-07 元素飘字实装）：每击随机出招，飘字
+    /// 颜色/动效/前缀随型变化。色值 RGBA 序（0xAABBGGRR 从高位读）；伤害系数
+    /// 制造可感差异（雷快而轻、毒慢而拖）；暴击与元素正交——同型色 + Pop 弹跳
+    /// + 1.3× 字号。词表依赖：火水雷毒物魔 已入字体 charset（缺字会回退内置
+    /// 5×7 + 红字提示，改 .meta 补词自动重烘）。</summary>
+    private sealed class DmgFx
+    {
+        public uint Color; public string Tag = ""; public float Mul, Scale, Life, Drift;
+    }
+
+    private static readonly DmgFx[] kDmgTypes =
+    {
+        new() { Color = 0xFFFFFFFFu, Tag = "物", Mul = 1.00f, Scale = 2.0f, Life = 0.8f },           // 白·物理
+        new() { Color = 0xFFFF5AB2u, Tag = "魔", Mul = 1.10f, Scale = 2.2f, Life = 1.0f },           // 紫·魔法
+        new() { Color = 0xFF3C5AFFu, Tag = "火", Mul = 1.15f, Scale = 2.2f, Life = 0.8f },           // 红·火
+        new() { Color = 0xFFFFA046u, Tag = "水", Mul = 1.00f, Scale = 2.2f, Life = 0.8f },           // 蓝·水
+        new() { Color = 0xFF50EBFFu, Tag = "雷", Mul = 0.85f, Scale = 2.0f, Life = 0.5f },           // 黄·雷（短促）
+        new() { Color = 0xFF64D278u, Tag = "毒", Mul = 0.70f, Scale = 1.7f, Life = 1.4f, Drift = 10f }, // 绿·毒（慢散漂）
+    };
 
     /// <summary>每型 Fx 常数（走查轮④：头顶自动锚定按整帧高计，帧内透明边距会把
     /// 条/字悬空抬离可见头顶——按 Idle_000 alpha 包围盒实测下压）。可见头顶 =
@@ -121,9 +143,11 @@ public sealed class DuelBehaviour : LemonBehaviour
             !foe.TryGetComponent<Transform2D>(out var ot)) return;
         float dx = ot.Pos.X - me.Pos.X, dy = ot.Pos.Y - me.Pos.Y;
         if (dx * dx + dy * dy > (kAttackRange + 60f) * (kAttackRange + 60f)) return; // 打点时对手已走远
-        // M7c 批①：暴击判定数值层同源（×1.5 伤害 + Crit 糖表现——同一随机源）
+        // 暴击 × 元素双随机（数值层同源：同一随机源定伤，表现层零额外判定——
+        // 伤害 = 基伤 × 类型系数 × 暴击 1.5）
         bool crit = s_rng.NextDouble() < kCritChance;
-        float dmg = crit ? kDamage * 1.5f : kDamage;
+        DmgFx dt = kDmgTypes[s_rng.Next(kDmgTypes.Length)];
+        float dmg = kDamage * dt.Mul * (crit ? 1.5f : 1f);
         fh.Cur -= dmg;
         foe.SetComponent(fh);
         Anim.Trigger(foe, fh.Cur <= 0f ? "death" : "hit");
@@ -132,20 +156,18 @@ public sealed class DuelBehaviour : LemonBehaviour
         Tween.Kill<SpriteRenderer>(foe, "colorRGBA");
         _flashHandle = Tween.Color(foe, 0xFF6060FFu, 0.06f);
         _flashFoe = _foe;
-        // M7c 批① 飘字：暴击 = 中文「暴击 N」黄字 Pop 弹跳 + 随机水平散布（Crit 糖
-        // 现为真黄字 0xFF4AD2FF——RGBA 序，轮④ 修正）；常规 = 暖红伤害字。
-        // 锚点 = 对手可见头顶上方的行顶（世界 Y 向下 = 负偏移；行底贴对手血条
-        // 上方：头顶 - 2 - 条高 - 行高 48×字号，字号 ×2.5/×2.0 对齐本场景美术
-        // 比例）。对手档案查静态名册（无档案 = 兜底自身型）
+        // 飘字（元素版）：类型色/动效/前缀随型；暴击正交叠加 = 同型色 + Pop 弹跳
+        // + 1.3× 字号 + 随机散布（Crit 糖语义手搓展开——糖是固定黄，这里要保型色）。
+        // 锚点 = 对手可见头顶上方的行顶（Y 向下负偏移；行底贴对手血条上方：
+        // 头顶 - 2 - 条高 - 行高 48×字号）。对手档案查静态名册（无档案 = 兜底自身型）
         FxProfile fp = s_fx.GetValueOrDefault(_foe, Mine);
         float barTop = fp.HeadDy - 2f - fp.BarH;
-        if (crit)
-            Fx.Crit($"暴击 {dmg:0}",
-                    new Vec2(ot.Pos.X, ot.Pos.Y + barTop - 48f * 2.5f), 2.5f);
-        else
-            Fx.Text(dmg.ToString("0"),
-                    new Vec2(ot.Pos.X, ot.Pos.Y + barTop - 48f * 2.0f),
-                    0xFF5050FFu, new FxStyle(2.0f));
+        float scale = dt.Scale * (crit ? 1.3f : 1f);
+        FxStyle st = crit
+            ? new FxStyle(scale, 1.0f, (float)((s_rng.NextDouble() - 0.5) * 60), FxCurve.Pop)
+            : new FxStyle(dt.Scale, dt.Life, dt.Drift);
+        Fx.Text((crit ? "暴击 " : "") + dt.Tag + " " + dmg.ToString("0"),
+                new Vec2(ot.Pos.X, ot.Pos.Y + barTop - 48f * scale), dt.Color, st);
         // 贴图血条 + 延迟白条（对手型皮肤含帧边距 anchorDy 下压；受击刷新续命；
         // 每帧常显在 Update 节流段）
         Fx.Bar(foe, fh.Cur / fh.Max, 0xFF30B0F0u, fp.BarW, fp.Skin);

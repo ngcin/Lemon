@@ -17,6 +17,7 @@
 #include "Assets/AssetTypes.h"    // M7a 批②：类型域单源（编辑器/运行时两侧共用）
 #include "Assets/FontBake.h"      // M7c 批①：FontBakeParams（AssetEntry::FontBake 打包）
 #include "Assets/SpriteRefs.h"    // M7a 批②：SpriteRefSource（guid 归一查询面）
+#include "Audio/AudioEngine.h"    // M7c 批②：audio::ClipFx（SetAudioImporter 参数面）
 #include "Core/FileOps.h"         // M7a 批③：WriteFileAtomic 实现单源（下方同名转发）
 
 namespace lemon::editor {
@@ -61,6 +62,11 @@ struct AssetEntry {
     float audioLoopStart = 0.0f; // 秒；烤制期换算帧写 LBA1 头（0/0 = 全曲循环）
     float audioLoopEnd = 0.0f;
     bool audioPreload = false;   // true = 整载 RAM（批①b 流式落地前的显式覆盖位）
+    // 听感覆写三件（M7c 批②，preload 同款透传；哨兵 = 继承全局——引擎 SanitizeFx
+    // 域：retrigger [0,4]s / voiceCap [1,64] / pitchJitter [0,0.25]）
+    float audioRetriggerCd = -1.0f; // <0 = 继承；0 = 该 clip 关节流
+    int32_t audioVoiceCap = 0;      // 0 = 继承；1 = 此声永不叠发
+    float audioPitchJitter = -1.0f; // <0 = 继承；0 = 该 clip 关微扰
 
     // ---- 字体 importer（M7c 批①：.meta importer 段；每次重扫重读，变更经
     // paramsHash 头对比触发增量重烘——见 FontBake）----
@@ -166,6 +172,12 @@ public:
     /// Rescan()（连号块分配 / frames 增大烧号）。false = 非 sprite / 写盘失败。
     bool SetGridSlice(AssetEntry& e, uint32_t cellW, uint32_t cellH, uint32_t cols,
                       uint32_t rows);
+    /// 配置/更新音频 importer 段（M7c 批②：SetGridSlice 同款读改写原子——loop/
+    /// preload/fx 三件一并落，guid/type/hash 保原值）。fx 哨兵值（浮点 <0 /
+    /// voiceCap 0）= 键不写（继承全局）。生效 = 调用方随后 Rescan()（#8 同款
+    /// modified 语义）+ 下次进 Play。false = 非 audio / 写盘失败。
+    bool SetAudioImporter(AssetEntry& e, float loopStart, float loopEnd, bool preload,
+                          const audio::ClipFx& fx);
     /// 删除（文件 + .meta；条目转墓碑）。undo 层面由调用方抓场景快照。
     bool Remove(AssetEntry& e);
     /// 导入外部文件（复制进 Assets/ 下 relDest）；返回新条目（失败 nullptr）。

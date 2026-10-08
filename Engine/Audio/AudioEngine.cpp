@@ -44,6 +44,18 @@ void PanGains(float pan, float& outL, float& outR) {
     outR = std::sin(theta);
 }
 
+// per-clip 覆写域归一（M7c 批②）：NaN/负浮点落继承哨兵；voiceCap 钳 [0, 池上限]；
+// 上界常量单源（kFxRetriggerMaxSec/kFxPitchJitterMax——meta 两侧解析同引）
+ClipFx SanitizeFx(ClipFx fx) {
+    if (!(fx.retriggerCdSec >= 0.0f)) fx.retriggerCdSec = -1.0f;
+    if (fx.retriggerCdSec > kFxRetriggerMaxSec) fx.retriggerCdSec = kFxRetriggerMaxSec;
+    if (fx.voiceCap < 0) fx.voiceCap = 0;
+    if (fx.voiceCap > kMaxVoices) fx.voiceCap = kMaxVoices;
+    if (!(fx.pitchJitter >= 0.0f)) fx.pitchJitter = -1.0f;
+    if (fx.pitchJitter > kFxPitchJitterMax) fx.pitchJitter = kFxPitchJitterMax;
+    return fx;
+}
+
 } // namespace
 
 struct AudioEngine::Impl {
@@ -54,6 +66,7 @@ struct AudioEngine::Impl {
         uint16_t channels = 1;
         uint32_t loopStart = 0;
         uint32_t loopEnd = 0; // 0 = 尾
+        ClipFx fx;            // 听感覆写（哨兵 = 继承全局；M7c 批②）
         uint64_t lastStartFrame = UINT64_MAX; // 重触发节流锚（混音帧域；MAX=从未播）
     };
 
@@ -233,9 +246,14 @@ struct AudioEngine::Impl {
         // 节流窗内的新请求丢弃（返回 0——机枪效应治密度；循环声部豁免：BGM/环境
         // 声的重触发语义是"重启"非"叠发"）。窗锚 = 上次**被接受**的起播。
         const bool oneshot = !(p.loop && c.loopEnd > c.loopStart);
-        if (oneshot && retriggerCdFrames_ > 0 &&
+        // per-clip 覆写（M7c 批②）：clip 声明 ≥0 的窗口优先（0 = 该 clip 关节流），
+        // 哨兵 <0 回退全局值（Mixer/默认）
+        const uint32_t cdFrames = c.fx.retriggerCdSec >= 0.0f
+                                      ? uint32_t(c.fx.retriggerCdSec * kMixSampleRate)
+                                      : retriggerCdFrames_;
+        if (oneshot && cdFrames > 0 &&
             c.lastStartFrame != UINT64_MAX &&
-            mixFrames_ - c.lastStartFrame < retriggerCdFrames_)
+            mixFrames_ - c.lastStartFrame < cdFrames)
             return 0;
         int slot = -1;
         for (int i = 0; i < kMaxVoices; ++i) {
@@ -283,7 +301,9 @@ struct AudioEngine::Impl {
                     victim = &o;
                 }
             }
-            if (live >= kMaxVoicesPerClip && victim) {
+            // per-clip 覆写（M7c 批②）：clip 声明 >0 的上限优先（=1 即此声永不叠发）
+            const int cap = c.fx.voiceCap > 0 ? c.fx.voiceCap : kMaxVoicesPerClip;
+            if (live >= cap && victim) {
                 victim->fadeFrom = victim->EffectiveVolume(); // 从当前可闻音量起释放
                 victim->fadeTo = 0.0f;
                 victim->fadeElapsed = 0.0f;
@@ -309,13 +329,15 @@ struct AudioEngine::Impl {
         v.stream = std::move(feed);
         v.rate = 1.0f;
         v.frac = 0.0f;
-        if (pitchJitter_ > 0.0f && !v.loop && !v.stream && group != Group::Bgm) {
+        // per-clip 覆写（M7c 批②）：clip 声明 ≥0 的幅度优先（0 = 该 clip 关微扰）
+        const float jitter = c.fx.pitchJitter >= 0.0f ? c.fx.pitchJitter : pitchJitter_;
+        if (jitter > 0.0f && !v.loop && !v.stream && group != Group::Bgm) {
             // 音高微扰：同素材连发去相干（拍频/梳状叠加的根治项）。±range 均匀；
             // 序列固定种子可复现。BGM 组不扰（乐律精确的音乐性一次性素材）
             // review 2026-10-02 #3：24 位随机值（(2^32-1)>>8 = 2^24-1）除以 2^23-1
             // 曾使 u∈[0,2]（扰动区间 −range..+3range 整体偏尖）——除数对齐满幅
             const float u = float(Xorshift() >> 8) / 16777215.0f; // [0,1]
-            v.rate = 1.0f + (u * 2.0f - 1.0f) * pitchJitter_;
+            v.rate = 1.0f + (u * 2.0f - 1.0f) * jitter;
         }
         if (v.stream) { // 流式：loop 语义落位；填充队列由调用方在 mtx 外挂（#4）
             v.stream->loop = v.loop;
@@ -595,13 +617,15 @@ uint32_t AudioEngine::RegisterClip(const ClipData& data) {
     c.channels = data.channels;
     c.loopStart = std::min(data.loopStart, data.frameCount);
     c.loopEnd = data.loopEnd ? std::min(data.loopEnd, data.frameCount) : data.frameCount;
+    c.fx = SanitizeFx(data.fx);
     std::lock_guard<std::mutex> lk(impl_->mtx);
     impl_->clips.push_back(std::move(c));
     return static_cast<uint32_t>(impl_->clips.size());
 }
 
 uint32_t AudioEngine::RegisterClip(std::vector<int16_t>&& pcm, uint16_t channels,
-                                   uint32_t frameCount, uint32_t loopStart, uint32_t loopEnd) {
+                                   uint32_t frameCount, uint32_t loopStart, uint32_t loopEnd,
+                                   const ClipFx& fx) {
     if (pcm.empty() || frameCount == 0 || (channels != 1 && channels != 2) ||
         pcm.size() != size_t(frameCount) * channels)
         return 0;
@@ -612,11 +636,12 @@ uint32_t AudioEngine::RegisterClip(std::vector<int16_t>&& pcm, uint16_t channels
     c.channels = channels;
     c.loopStart = std::min(loopStart, frameCount);
     c.loopEnd = loopEnd ? std::min(loopEnd, frameCount) : frameCount;
+    c.fx = SanitizeFx(fx);
     impl_->clips.push_back(std::move(c));
     return static_cast<uint32_t>(impl_->clips.size());
 }
 
-uint32_t AudioEngine::RegisterStreamClip(const char* path) {
+uint32_t AudioEngine::RegisterStreamClip(const char* path, const ClipFx& fx) {
     if (!path || !path[0])
         return 0;
     BakedClipInfo info;
@@ -629,6 +654,7 @@ uint32_t AudioEngine::RegisterStreamClip(const char* path) {
     c.channels = info.channels;
     c.loopStart = std::min(info.loopStart, info.frameCount);
     c.loopEnd = info.loopEnd ? std::min(info.loopEnd, info.frameCount) : info.frameCount;
+    c.fx = SanitizeFx(fx);
     impl_->clips.push_back(std::move(c));
     return static_cast<uint32_t>(impl_->clips.size());
 }

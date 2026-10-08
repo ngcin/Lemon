@@ -13,12 +13,26 @@ namespace lemon::audio {
 inline constexpr int kMixSampleRate = 48000; // ADR-015 M2：全引擎音频域恒定
 inline constexpr int kMixChannels = 2;
 inline constexpr int kMaxVoices = 64;        // 声部池上限；满时偷最旧一次性声部
-inline constexpr int kMaxVoicesPerClip = 4;  // 同 clip 并发上限；重触发超限偷最老（5ms 释放）
+inline constexpr int kMaxVoicesPerClip = 4;  // 同 clip 并发上限**默认值**；重触发超限偷
+                                              // 最老（5ms 释放）——per-clip 可覆写（M7c 批②）
 inline constexpr uint32_t kStreamThresholdBytes = 1u << 20; // >1MiB 走流式（批①b 消费：
                                                             // 装载侧分流判据，audioPreload 覆盖）
 
 enum class Group : uint8_t { Bgm = 0, Sfx, Ui, Count };
 inline constexpr int kGroupCount = static_cast<int>(Group::Count);
+
+// per-clip 听感覆写（M7c 批②，ADR-015 M4 追记）：.meta importer 声明，preload
+// 同款透传（AudioItem → 注册期入 Clip，运行时读 .meta——不冻结进 .baked 头）。
+// 哨兵语义：浮点 <0 / voiceCap 0 = 继承全局（Mixer/内置默认）；浮点显式 0 =
+// 该 clip 关闭该项。域上界单源（review 2026-10-08：引擎 SanitizeFx 与编辑器/
+// 运行时两侧 meta 解析的钳域同引本常量，不再三处魔数）：
+inline constexpr float kFxRetriggerMaxSec = 4.0f;
+inline constexpr float kFxPitchJitterMax = 0.25f;
+struct ClipFx {
+    float retriggerCdSec = -1.0f; // 同 clip 重触发节流窗覆写（秒）
+    int32_t voiceCap = 0;         // 同 clip 并发上限覆写（1..kMaxVoices 有效；=1 即永不叠发）
+    float pitchJitter = -1.0f;    // 音高微扰幅度覆写（±比例）
+};
 
 // 已解码 PCM 声源（批⓪ 测试直灌；批① 起 = .baked 装载产物。契约：48k 交错 PCM16）
 struct ClipData {
@@ -27,6 +41,7 @@ struct ClipData {
     uint16_t channels = 1;      // 1 | 2
     uint32_t loopStart = 0;     // 帧（loop 时游标回卷点）
     uint32_t loopEnd = 0;       // 帧；0 = 尾（== frameCount）
+    ClipFx fx;                  // 听感覆写（哨兵 = 继承；M7c 批②）
 };
 
 struct PlayParams {
@@ -57,11 +72,11 @@ public:
     uint32_t RegisterClip(const ClipData& data);
     /// 移动重载（批①：装载 vector 直迁——21MB BGM 免双拷贝瞬时翻峰）
     uint32_t RegisterClip(std::vector<int16_t>&& pcm, uint16_t channels, uint32_t frameCount,
-                          uint32_t loopStart, uint32_t loopEnd);
+                          uint32_t loopStart, uint32_t loopEnd, const ClipFx& fx = {});
     /// 流式注册（批①b，ADR-015 M2）：长 clip 免整载——文件保持 .baked 原样，
     /// 声部起播时开载荷句柄 + 256KiB SPSC 环（设备模式专用线程填充；起播主线程
     /// open + 头解析 + 预填环，保首回调零欠载）。返回 clipId，0 = 头校验失败。
-    uint32_t RegisterStreamClip(const char* path);
+    uint32_t RegisterStreamClip(const char* path, const ClipFx& fx = {});
     void UnregisterClip(uint32_t clipId); // 引用中的声部当场终止
     void ResetClips();                    // 全清 + 停声（EnterPlay 重装前调——注册表只增不减，防跨局累积）
 
@@ -88,13 +103,14 @@ public:
     // ---- 同 clip 重触发治理（听感验收 2026-10-01：pickup 密集"放鞭炮"——机枪效应）----
     /// 重触发节流：同 clip 非循环播放在距上次起播 cooldownSec 内的新请求被丢弃
     /// （返回 0）。时钟 = 混音帧域（设备/静音同径）。默认 0.045s（≈22Hz 上限）；
-    /// 0 = 关闭。业界 throttle 同构；per-资产覆写归 meta（批③）。
+    /// 0 = 关闭。业界 throttle 同构；per-clip 覆写 = ClipFx.retriggerCdSec（M7c 批②）。
     void SetRetriggerCooldown(float cooldownSec);
     float RetriggerCooldown() const;
     /// 音高微扰：Sfx/Ui 组非循环整载声部起播时随机 ±range（1-tap 线性插值，非
     /// 采样率转换重采样器——ADR-015 M2"零重采样"按性能口径不变；BGM 组/循环/
     /// 流式不扰保乐律精确）。去同素材连发的相干叠加/拍频。默认 0.02；0 = 关闭。
     /// 微扰序列固定种子（表现层装饰，不入状态哈希/金回放）。
+    /// per-clip 覆写 = ClipFx.pitchJitter（M7c 批②）。
     void SetPitchJitter(float range);
     float PitchJitter() const;
 

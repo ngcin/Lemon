@@ -542,6 +542,97 @@ void TestGridSliceConfig() {
         Expect(false, "clip entry found");
     fs::remove_all(root, ec);
 }
+
+// ---- M7c 批②：SetAudioImporter（.meta importer 写入 → Rescan 读回；哨兵 = 键缺省）----
+void TestAudioImporterConfig() {
+    namespace fs = std::filesystem;
+    using lemon::editor::AssetDatabase;
+    using lemon::editor::AssetEntry;
+
+    const fs::path root = fs::temp_directory_path() /
+                          ("lemon-test-afx-" + std::to_string(lemon::CurrentProcessId()));
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    AssetDatabase db;
+    Expect(db.OpenProject(root.string(), 100), "open project for audio fx");
+    {
+        std::ofstream f(root / "Assets" / "hit.wav", std::ios::binary);
+        f << "wav";
+    }
+    db.Rescan();
+    const AssetEntry* e = db.FindByPath("Assets/hit.wav");
+    Expect(e && e->audioRetriggerCd < 0.0f && e->audioVoiceCap == 0 &&
+               e->audioPitchJitter < 0.0f,
+           "fx sentinels (inherit) by default");
+
+    // 覆写写入：meta 落盘（三键序列化）→ Rescan 读回同值（pitchJitter 0 = 显式关）
+    AssetEntry* m = db.FindByGuid(e->guid);
+    lemon::audio::ClipFx fx;
+    fx.retriggerCdSec = 0.15f;
+    fx.voiceCap = 2;
+    fx.pitchJitter = 0.0f;
+    Expect(db.SetAudioImporter(*m, 1.5f, 10.0f, true, fx), "set audio importer writes meta");
+    {
+        std::ifstream mf(root / "Assets" / "hit.wav.meta", std::ios::binary);
+        const std::string text((std::istreambuf_iterator<char>(mf)),
+                               std::istreambuf_iterator<char>());
+        Expect(text.find("\"retrigger\"") != std::string::npos &&
+                   text.find("\"voiceCap\"") != std::string::npos &&
+                   text.find("\"pitchJitter\"") != std::string::npos,
+               "fx keys serialized");
+    }
+    db.Rescan();
+    e = db.FindByPath("Assets/hit.wav");
+    Expect(e && e->audioLoopStart == 1.5f && e->audioLoopEnd == 10.0f && e->audioPreload &&
+               e->audioRetriggerCd == 0.15f && e->audioVoiceCap == 2 &&
+               e->audioPitchJitter == 0.0f,
+           "rescan picks up fx overrides");
+
+    // 哨兵回写 = 键缺省（继承；与"显式 0"可区分——pitchJitter 0 此前读过为 0）
+    m = db.FindByGuid(e->guid);
+    const lemon::audio::ClipFx inherit; // 全哨兵
+    Expect(db.SetAudioImporter(*m, 0.0f, 0.0f, false, inherit), "rewrite with sentinels");
+    {
+        std::ifstream mf(root / "Assets" / "hit.wav.meta", std::ios::binary);
+        const std::string text((std::istreambuf_iterator<char>(mf)),
+                               std::istreambuf_iterator<char>());
+        Expect(text.find("\"retrigger\"") == std::string::npos &&
+                   text.find("\"voiceCap\"") == std::string::npos &&
+                   text.find("\"pitchJitter\"") == std::string::npos,
+               "sentinels drop fx keys");
+    }
+    db.Rescan();
+    e = db.FindByPath("Assets/hit.wav");
+    Expect(e && e->audioRetriggerCd < 0.0f && e->audioVoiceCap == 0 &&
+               e->audioPitchJitter < 0.0f,
+           "sentinel readback inherits");
+
+    // 域外值（手改 meta）→ 宽容拒绝回继承（与 loop 段同款不红字口径）
+    {
+        std::ofstream f(root / "Assets" / "hit.wav.meta", std::ios::trunc);
+        f << "{\"guid\":\"" << lemon::assets::GuidToHex(e->guid)
+          << "\",\"type\":\"audio\",\"importer\":{\"retrigger\":99.0,\"voiceCap\":999,"
+             "\"pitchJitter\":-0.5}}";
+    }
+    db.Rescan();
+    e = db.FindByPath("Assets/hit.wav");
+    Expect(e && e->audioRetriggerCd < 0.0f && e->audioVoiceCap == 0 &&
+               e->audioPitchJitter < 0.0f,
+           "out-of-domain values rejected to inherit");
+
+    // 非 audio 拒绝
+    {
+        std::ofstream f(root / "Assets" / "x.png", std::ios::binary);
+        f << "png";
+    }
+    db.Rescan();
+    if (const AssetEntry* c = db.FindByPath("Assets/x.png"))
+        Expect(!db.SetAudioImporter(*db.FindByGuid(c->guid), 0, 0, false, {}),
+               "non-audio rejected");
+    else
+        Expect(false, "png entry found");
+    fs::remove_all(root, ec);
+}
 #endif // LEMON_EDITOR_CORE
 
 #ifdef LEMON_EDITOR_CORE
@@ -831,7 +922,8 @@ void TestAssetIndexConsistency() {
     {
         std::ofstream f(root / "Assets" / "hit.wav.meta", std::ios::trunc);
         f << "{\"guid\":\"" << lemon::assets::GuidToHex(hitGuid)
-          << "\",\"type\":\"audio\",\"importer\":{\"loop\":[1.5,10.0],\"preload\":true}}";
+          << "\",\"type\":\"audio\",\"importer\":{\"loop\":[1.5,10.0],\"preload\":true,"
+            "\"retrigger\":0.12,\"voiceCap\":2,\"pitchJitter\":0.05}}";
     }
 
     // 编辑器建账（发号 + manifest 落盘；base=100 与 TestSpriteGuidResolve 同款）
@@ -876,6 +968,10 @@ void TestAssetIndexConsistency() {
         Expect(hit && hit->audioLoopStart == 1.5f && hit->audioLoopEnd == 10.0f &&
                    hit->audioPreload,
                "fast-path: audio importer fields from .meta");
+        // M7c 批②：fx 三键同源读入（AudioMount → ClipFx 的运行时路）
+        Expect(hit && hit->audioRetriggerCd == 0.12f && hit->audioVoiceCap == 2 &&
+                   hit->audioPitchJitter == 0.05f,
+               "fast-path: audio fx overrides from .meta");
         // generic 自愈：旧账期音频被记 "generic"（AssetTypeName 漏分支产物）——
         // 快路径按扩展名重派（否则 AudioMount 漏装全部音频）
         {
@@ -914,6 +1010,10 @@ void TestAssetIndexConsistency() {
         Expect(hit2 && hit2->type == AssetType::Audio && hit2->audioLoopStart == 1.5f &&
                    hit2->audioLoopEnd == 10.0f && hit2->audioPreload,
                "fallback: audio importer fields from .meta");
+        // M7c 批②：fx 三键同值（单源）
+        Expect(hit2 && hit2->audioRetriggerCd == 0.12f && hit2->audioVoiceCap == 2 &&
+                   hit2->audioPitchJitter == 0.05f,
+               "fallback: audio fx overrides from .meta");
     }
     // 路径序派生号：hero(路径序首 sprite)=100、sheet 本体=101 + 块 102..105
     const lemon::assets::IndexedEntry* hero2 = idx2.FindByPath("Assets/hero.png");
@@ -1560,6 +1660,7 @@ void RunAssetsTests() {
 #endif
 #ifdef LEMON_EDITOR_CORE
     TestGridSliceConfig();
+    TestAudioImporterConfig();
 #endif
 #ifdef LEMON_EDITOR_CORE
     TestAssetPathContainment();

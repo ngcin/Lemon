@@ -1162,6 +1162,98 @@ void TestAudioSourceLifecycle() {
            "audio system never writes component");
 }
 
+void TestAudioPerClipFxOverrides() {
+    // M7c 批②：per-clip 听感覆写——ClipFx 声明优先（浮点 0 = 显式关），哨兵回退
+    // 全局。三面：节流窗（覆写更长压过全局 / 0 = 关 / 无覆写继承）/ 并发上限
+    //（cap=1 第二发偷第一发；无覆写仍 kMaxVoicesPerClip）/ 微扰（覆写 0 回整数
+    // 位精确路径 = 两连播逐位相同；无覆写继承全局相异）
+    audio::AudioEngine eng;
+    Expect(eng.Init({.forceSilent = true}), "silent init");
+    eng.SetRetriggerCooldown(0.05f); // 全局 50ms = 2400 帧（显式，不依赖默认漂移）
+    std::vector<int16_t> ramp(48000);
+    for (uint32_t i = 0; i < 48000; ++i) ramp[i] = int16_t(i % 32768); // 非常数 PCM：微扰可观测
+    std::vector<int16_t> rampCopy = ramp;
+
+    audio::ClipFx fxWide;  fxWide.retriggerCdSec = 0.1f; // 覆写 100ms（压过全局 50ms）
+    audio::ClipFx fxOff;   fxOff.retriggerCdSec = 0.0f;  // 显式关（与"继承"可区分）
+    const uint32_t wide = eng.RegisterClip(std::move(rampCopy), 1, 48000, 0, 0, fxWide);
+    const uint32_t off = eng.RegisterClip(std::vector<int16_t>(48000, 9000), 1, 48000, 0, 0,
+                                          fxOff);
+    const uint32_t plain = eng.RegisterClip(std::move(ramp), 1, 48000, 0, 0); // 无覆写 = 继承
+    Expect(wide && off && plain, "fx clips registered");
+
+    // ---- 节流窗：全局窗过、覆写窗未过仍丢（覆写压过全局的证据位）----
+    Expect(eng.Play(wide, {}) != 0, "wide: first accepted");
+    eng.AdvanceSilentFrames(2400); // 恰过全局 50ms
+    Expect(eng.Play(wide, {}) == 0, "wide: global window passed, override still drops");
+    eng.AdvanceSilentFrames(2400); // 恰过覆写 100ms（锚 = 上次被接受的起播）
+    Expect(eng.Play(wide, {}) != 0, "wide: past override window accepted");
+    eng.StopAll();
+    eng.Tick();
+
+    // fx 0 = 该 clip 关节流（同帧连发两响都过）；无覆写 clip 继承全局（第二响丢）
+    Expect(eng.Play(off, {}) != 0 && eng.Play(off, {}) != 0, "fx retrigger=0 disables throttle");
+    Expect(eng.Play(plain, {}) != 0, "plain: first accepted");
+    Expect(eng.Play(plain, {}) == 0, "plain: inherits global window");
+    eng.StopAll();
+    eng.Tick();
+
+    // ---- 并发上限：cap=1 第二发偷第一发（释放复用 D4 包络，5ms 后亡）----
+    audio::ClipFx fxSolo;
+    fxSolo.voiceCap = 1;
+    const uint32_t solo = eng.RegisterClip(std::vector<int16_t>(48000, 7000), 1, 48000, 0, 0,
+                                           fxSolo);
+    eng.SetRetriggerCooldown(0); // cap 断言需同 clip 连发（节流让路，TestAudioVoiceCapSteal 同款）
+    const uint32_t s1 = eng.Play(solo, {.loop = true});
+    const uint32_t s2 = eng.Play(solo, {.loop = true});
+    Expect(s1 != 0 && s2 != 0, "solo cap=1: over-cap accepted via steal");
+    Expect(eng.ActiveVoiceCount() == 2, "stolen occupies slot during release");
+    eng.AdvanceSilentFrames(480); // 10ms > 5ms 释放
+    Expect(!eng.VoiceAlive(s1) && eng.VoiceAlive(s2), "cap=1: oldest dies, newcomer survives");
+    // 无覆写 clip 仍默认 kMaxVoicesPerClip 个共存（继承证据位）
+    eng.StopAll();
+    eng.Tick();
+    uint32_t ids[audio::kMaxVoicesPerClip] = {};
+    bool ok = true;
+    for (int k = 0; k < audio::kMaxVoicesPerClip; ++k) {
+        ids[k] = eng.Play(plain, {.loop = true});
+        ok = ok && ids[k] != 0;
+    }
+    for (int k = 0; k < audio::kMaxVoicesPerClip; ++k) ok = ok && eng.VoiceAlive(ids[k]);
+    Expect(ok, "no-override clip coexists up to kMaxVoicesPerClip");
+
+    // ---- 微扰：全局 0.05 + 覆写 0 → 整数路径两连播逐位相同；无覆写继承相异 ----
+    eng.StopAll();
+    eng.Tick();
+    eng.SetPitchJitter(0.05f);
+    audio::ClipFx fxNoJit;
+    fxNoJit.pitchJitter = 0.0f;
+    std::vector<int16_t> ramp2(48000);
+    for (uint32_t i = 0; i < 48000; ++i) ramp2[i] = int16_t(i % 32768);
+    const uint32_t noJit = eng.RegisterClip(std::move(ramp2), 1, 48000, 0, 0, fxNoJit);
+    std::vector<float> cap1(480 * 2), cap2(480 * 2);
+    Expect(eng.Play(noJit, {}) != 0, "noJit play 1");
+    eng.MixOffline(cap1.data(), 480);
+    eng.AdvanceSilentFrames(48000);
+    eng.Tick();
+    Expect(eng.Play(noJit, {}) != 0, "noJit play 2");
+    eng.MixOffline(cap2.data(), 480);
+    bool equal = true;
+    for (int i = 0; i < 480 * 2; ++i) equal = equal && cap1[i] == cap2[i];
+    Expect(equal, "fx jitter=0 forces bit-exact integer path");
+    eng.StopAll();
+    eng.Tick();
+    Expect(eng.Play(plain, {}) != 0, "plain jitter play 1");
+    eng.MixOffline(cap1.data(), 480);
+    eng.AdvanceSilentFrames(48000);
+    eng.Tick();
+    Expect(eng.Play(plain, {}) != 0, "plain jitter play 2");
+    eng.MixOffline(cap2.data(), 480);
+    bool differ = false;
+    for (int i = 0; i < 480 * 2; ++i) differ = differ || std::fabs(cap1[i] - cap2[i]) > 1e-6f;
+    Expect(differ, "no-override clip inherits global jitter");
+}
+
 } // namespace
 
 void RunAudioTests() {
@@ -1176,6 +1268,7 @@ void RunAudioTests() {
     TestAudioMasterLimiter();
     TestAudioVoiceCapSteal();
     TestAudioRetriggerThrottlePitchJitter();
+    TestAudioPerClipFxOverrides();
     TestAudioFadeEnvelope();
     TestAudioSpatialMath();
     TestAudioChannelCommands();

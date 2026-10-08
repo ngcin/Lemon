@@ -80,7 +80,7 @@ bool AudioMount::EnsureLoaded(const AudioItem& item, const std::string& projectR
     BakedClipInfo info;
     if (!PeekBakedClip(dst.c_str(), info)) return false;
     if (info.payloadBytes > kStreamThresholdBytes && !item.preload) {
-        const uint32_t streamId = audio_.RegisterStreamClip(dst.c_str());
+        const uint32_t streamId = audio_.RegisterStreamClip(dst.c_str(), item.fx);
         if (streamId == 0) return false;
         clipIds_[item.guid] = streamId;
         if (outStreamed) *outStreamed = true;
@@ -90,7 +90,7 @@ bool AudioMount::EnsureLoaded(const AudioItem& item, const std::string& projectR
     if (!LoadBakedClip(dst.c_str(), pcm, info)) return false;
     const uint32_t clipId = audio_.RegisterClip(std::move(pcm), info.channels,
                                                 info.frameCount, info.loopStart,
-                                                info.loopEnd);
+                                                info.loopEnd, item.fx);
     if (clipId == 0) return false;
     clipIds_[item.guid] = clipId;
     return true;

@@ -40,6 +40,10 @@ struct IndexedEntry {
     // 的网格声明同款口径）
     float audioLoopStart = 0.0f, audioLoopEnd = 0.0f; // 秒；0/0 = 全曲循环
     bool audioPreload = false;                         // 显式整载（默认 >1MiB 流式）
+    // 听感覆写三件（M7c 批②，preload 同款注册期消费；哨兵 = 继承全局）
+    float audioRetriggerCd = -1.0f; // <0 = 继承；0 = 该 clip 关节流
+    int32_t audioVoiceCap = 0;      // 0 = 继承；1 = 此声永不叠发
+    float audioPitchJitter = -1.0f; // <0 = 继承；0 = 该 clip 关微扰
     // 字体 importer 段（M7c 批①；packager 烤制消费——paramsHash 冻结在 .baked 头）
     uint16_t fontPx = 24;
     uint8_t fontOutlinePx = 0;

@@ -313,6 +313,70 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
         }
         ImGui::EndPopup();
     }
+
+    // 音频参数模态（M7c 批②）：loop/preload + 听感覆写三件——覆写勾选关 = 继承
+    // 全局（Audio Mixer 试验台/内置默认）。提交 = SetAudioImporter（读改写原子）
+    // + 主动 Rescan（#8 同款 modified 语义 → 后台重烤）；生效 = 下次进 Play
+    //（clip 注册期消费，当前局快照不变——表资产同口径）
+    if (audioFxGuid_) ImGui::OpenPopup("音频参数");
+    if (ImGui::BeginPopupModal("音频参数", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        const AssetEntry* ae = ctx.Assets().FindByGuid(audioFxGuid_);
+        if (!ae || ae->missing || ae->type != AssetType::Audio) { // 条目被删/类型漂移
+            audioFxGuid_ = 0;
+            ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        } else {
+            ImGui::TextUnformatted(ae->FileName().c_str());
+            ImGui::TextDisabled("0/0 = 全曲循环；改动下次进 Play 生效");
+            ImGui::Separator();
+            ImGui::DragFloat("循环起点(秒)", &afxLoopStart_, 0.01f, 0.0f, 600.0f, "%.2f");
+            ImGui::DragFloat("循环终点(秒)", &afxLoopEnd_, 0.01f, 0.0f, 600.0f, "%.2f");
+            if (afxLoopEnd_ < afxLoopStart_) afxLoopEnd_ = afxLoopStart_;
+            ImGui::Checkbox("整载 RAM（关 = >1MiB 走流式）", &afxPreload_);
+            ImGui::Separator();
+            ImGui::TextDisabled("听感覆写（不勾 = 继承全局默认）");
+            ImGui::Checkbox("覆写 · 重触发节流窗", &afxCdOn_);
+            if (afxCdOn_) {
+                ImGui::Indent();
+                ImGui::DragFloat("窗长(秒)", &afxCd_, 0.001f, 0.0f, 4.0f, "%.3f  (0=关)");
+                ImGui::Unindent();
+            }
+            ImGui::Checkbox("覆写 · 同 clip 并发上限", &afxCapOn_);
+            if (afxCapOn_) {
+                ImGui::Indent();
+                ImGui::DragInt("上限", &afxCap_, 1, 1, 64);
+                ImGui::Unindent();
+            }
+            ImGui::Checkbox("覆写 · 音高微扰", &afxJitOn_);
+            if (afxJitOn_) {
+                ImGui::Indent();
+                ImGui::DragFloat("幅度(±)", &afxJit_, 0.001f, 0.0f, 0.25f, "%.3f  (0=关)");
+                ImGui::Unindent();
+            }
+            if (ImGui::Button("确定", ImVec2(120, 0))) {
+                audio::ClipFx fx;
+                fx.retriggerCdSec = afxCdOn_ ? afxCd_ : -1.0f;
+                fx.voiceCap = afxCapOn_ ? afxCap_ : 0;
+                fx.pitchJitter = afxJitOn_ ? afxJit_ : -1.0f;
+                if (AssetEntry* target = ctx.Assets().FindByGuid(audioFxGuid_)) {
+                    if (ctx.Assets().SetAudioImporter(*target, afxLoopStart_, afxLoopEnd_,
+                                                      afxPreload_, fx))
+                        app.RescanAssets();
+                    else
+                        LEMON_WARN("音频参数写入失败（见红字）：%s", target->relPath.c_str());
+                }
+                audioFxGuid_ = 0;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("取消", ImVec2(120, 0)) ||
+                ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+                audioFxGuid_ = 0;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+    }
     ImGui::End();
 
     // 浮动表格编辑器（主面板窗口作用域之外；按需工具窗）
@@ -373,6 +437,18 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
         }
         if (ImGui::MenuItem("复制 GUID"))
             ImGui::SetClipboardText(AssetDatabase::GuidToHex(e.guid).c_str());
+        if (e.type == AssetType::Audio && ImGui::MenuItem("音频参数…")) { // M7c 批②
+            audioFxGuid_ = e.guid;
+            afxLoopStart_ = e.audioLoopStart;
+            afxLoopEnd_ = e.audioLoopEnd;
+            afxPreload_ = e.audioPreload;
+            afxCdOn_ = e.audioRetriggerCd >= 0.0f;
+            afxCd_ = afxCdOn_ ? e.audioRetriggerCd : 0.045f;
+            afxCapOn_ = e.audioVoiceCap > 0;
+            afxCap_ = afxCapOn_ ? e.audioVoiceCap : 4;
+            afxJitOn_ = e.audioPitchJitter >= 0.0f;
+            afxJit_ = afxJitOn_ ? e.audioPitchJitter : 0.02f;
+        }
         ImGui::Separator();
         if (ImGui::MenuItem("删除")) {
             if (AssetEntry* target = ctx.Assets().FindByGuid(e.guid))
@@ -424,7 +500,7 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
                 }
             }
             dims += audioTipText_;
-            dims += "\n双击：试听 / 停止";
+            dims += "\n双击：试听 / 停止\n右键：音频参数…（循环/预载/听感覆写）";
         }
         ImGui::SetTooltip("%s\n%s  guid %s\n%s", e.FileName().c_str(), AssetTypeName(e.type),
                           AssetDatabase::GuidToHex(e.guid).c_str(), dims.c_str());

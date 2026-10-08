@@ -324,6 +324,9 @@ public:
             item.loopStart = e.audioLoopStart;
             item.loopEnd = e.audioLoopEnd;
             item.preload = e.audioPreload;
+            item.fx.retriggerCdSec = e.audioRetriggerCd;
+            item.fx.voiceCap = e.audioVoiceCap;
+            item.fx.pitchJitter = e.audioPitchJitter;
             fn(item);
         }
     }

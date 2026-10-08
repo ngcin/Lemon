@@ -1,6 +1,6 @@
 # M7c 实施计划 —— 引擎与编辑器功能段（2026-10-07 规划：M7b 发行侧后移，引擎优先）
 
-Status: in-progress（**批⓪ ✅ 2026-10-07**——四件全落、回归 full 20/20，[DevLog](../../DevLog/2026-10-07-m7c-b0-engineering-hygiene.md)；**批① ✅ 2026-10-07 机器面**——Fx 表现升级五子项全落（TTF 烘焙器/贴图血条+延迟条/飘字动效/SDK vtable 49/svr-test 实装），单测 34,402、ctest 4/4，[批文件](./2026-10-07-b1-fx-presentation-upgrade.md)、[DevLog](../../DevLog/2026-10-07-m7c-b1-fx-presentation-upgrade.md)，真人走查待用户；批② 起随 svr-test 需求滚动登记）
+Status: in-progress（**批⓪ ✅ 2026-10-07**——四件全落、回归 full 20/20，[DevLog](../../DevLog/2026-10-07-m7c-b0-engineering-hygiene.md)；**批① ✅ 2026-10-07 机器面**——Fx 表现升级五子项全落（TTF 烘焙器/贴图血条+延迟条/飘字动效/SDK vtable 49/svr-test 实装），单测 34,402、ctest 4/4，[批文件](./2026-10-07-b1-fx-presentation-upgrade.md)、[DevLog](../../DevLog/2026-10-07-m7c-b1-fx-presentation-upgrade.md)，真人走查 2026-10-07 过——飘字/延迟条正常，贴图血条为占位图形态、正式素材落地后复验观感；**批② ✅ 2026-10-07 机器面**——per-资产音频参数全链落地（ClipFx 覆写回退链/meta 三键双源解析/SetAudioImporter 写器/浏览器右键参数弹窗），单测 34,435、ctest 4/4、回归 full 20/20 首跑全绿、bench fps=85，[批文件](./2026-10-07-b2-per-asset-audio-fx.md)、[DevLog](../../DevLog/2026-10-07-m7c-b2-per-asset-audio-fx.md)，真人听感待用户；批③ 起随 svr-test 需求滚动登记）
 
 > 总览页惯例（M6b/M6c/M7a 同款）：每批一个文件（落 `Plans/M7c/`），开工前分解到文件/行级，完工后批文件内勾销；事件流水与实测数字记 [DevLog](../../DevLog/)。本页只做拆解与验收映射，设计定形物（如需）另落 ADR。
 >
@@ -25,7 +25,7 @@ Status: in-progress（**批⓪ ✅ 2026-10-07**——四件全落、回归 full 
 | 7 | `SpritePacket`（Renderable.h:54）无逐实例 UV；子矩形靠切片静态注册 | 批① S2 开工首查项：贴图血条比例裁剪需渲染侧通道（方案 A/B 见批文件） |
 | 8 | FreeType VER-2-14-3 已是 CPM 三平台依赖（RmlUi 消费）；Noto Sans SC 已随引擎（`Engine/Ui/Fonts/`） | 批① S1 地基现成——烘焙器只差工具本身 |
 | 9 | 基线（M7a 批⑧ 出口）：回归 full 20 步 / ctest 4/4 / 单测 34,346 / script-tests ~1,780 / bench-survivor 门禁 fps≥76.5（基线 85×0.9）/ vtable 47 槽 / 组件 id 至 31 / 系统 20 | 全段零降级对表基线；批① 桥面尾加 vtable 47→N |
-| 10 | 待用户尾巴（不受本段影响）：M4.8 零文档走查 / svr-test 真人总成 V1–V3 / W5 真机 GPU | 本段不新增用户验收债（批① 真人走查除外） |
+| 10 | 待用户尾巴（2026-10-07 二更）：批① 血条正式素材观感复验 / W5 真机 GPU（用户再后移，不设期）/ M4.8 走查其余 UX 优化待细化——M4.8 走查、svr-test V1–V3、批① 真人走查均已同日过 | 本段不新增用户验收债 |
 
 ## 2. 批次表
 
@@ -33,7 +33,8 @@ Status: in-progress（**批⓪ ✅ 2026-10-07**——四件全落、回归 full 
 |---|---|---|---|---|
 | ⓪ ✅ | [2026-10-07-b0-engineering-hygiene.md](./2026-10-07-b0-engineering-hygiene.md) | 工程卫生四件：AGENTS.md 瘦身（50KB 巨段 → 指针化）/ 测试拆文件（139 函数按域拆 TU）/ ccache+sccache 接入六 preset / .clang-format 最小集 | 0.5–1 天（实际 1 日） | AGENTS.md <150 行且待用户清单保留；checks 34,346 不变；回归 full 20/20；干净重建时间对比数字入 DevLog |
 | ① ✅ | [2026-10-07-b1-fx-presentation-upgrade.md](./2026-10-07-b1-fx-presentation-upgrade.md) | Fx 表现升级：TTF→位图图集离线烘焙器（中文字形/描边）+ 贴图血条+延迟条（UV 裁剪）+ 飘字动效参数化（scale/life/漂移/曲线）+ `Lemon.Fx` 重载 | 3.5–5 天（实际 1 日） | svr-test 暴击中文弹跳黄字/贴图血条/延迟条真人走查过；hash 反例单测；bench-survivor 门禁不降 |
-| ②+ | （滚动登记，开工落文件） | 候选池：动画 auto-slice（T3-UX2 遗留）/ per-资产音频参数（M6c 登记项）/ LoadScene 档2 / 手柄输入（随 Steam 目标确认，与 M7b 联动）/ 飘字池提额（若一局满屏跳字触顶） | — | 每批开工前本表登记一行 + 批文件落位 |
+| ② ✅ | [2026-10-07-b2-per-asset-audio-fx.md](./2026-10-07-b2-per-asset-audio-fx.md) | per-资产音频参数（M6c 缓议登记项启用）：听感覆写三件（重触发节流窗/同 clip 并发上限/音高微扰幅度）meta 覆写 + 引擎回退链 + 浏览器右键参数弹窗 | 1 日（实际当日） | 单测覆写回退链 + meta roundtrip 全绿（**34,435**）；ctest 4/4；回归 full **20/20 首跑**；bench 门禁 fps=85；svr-test 真人听感对比过（Mixer 全局面不变）——**机器面 ✅，真人听感待用户** |
+| ③+ | （滚动登记，开工落文件） | 候选池：动画 auto-slice（T3-UX2 遗留）/ LoadScene 档2 / 手柄输入（随 Steam 目标确认，与 M7b 联动）/ 飘字池提额（若一局满屏跳字触顶）/ **编辑器资产引用拖放**（M4.8 走查反馈 2026-10-07：下拉选在资产多时难寻 → Unity 式拖放置入 + 其余走查优化待细化补登；用户拍板后置，功能优先） | — | 每批开工前本表登记一行 + 批文件落位 |
 
 ## 3. 段内排序与全局位次
 

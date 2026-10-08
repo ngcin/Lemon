@@ -28,6 +28,7 @@ struct AudioItem {
     std::string srcAbs;                       // 源文件绝对路径
     float loopStart = 0.0f, loopEnd = 0.0f;   // .meta importer 段（0/0 = 全曲循环）
     bool preload = false;                     // 显式整载（默认 >1MiB 走流式）
+    ClipFx fx;                                // 听感覆写（哨兵 = 继承；M7c 批②）
 };
 
 /// 音频资产源（SpriteRefSource 同款纪律：编辑器 AssetDatabase / 运行时 AssetIndex
@@ -67,8 +68,9 @@ public:
     /// 烤制产物路径（.lemon/baked/audio/<guidHex>.baked；目录由调用方保证存在）
     static std::string BakedPath(const std::string& projectRoot, uint64_t guid);
     /// 缺烤/源新于产物（mtime；后台线程与装载兜底共用同一判定）。.meta（importer
-    /// 段：loop/preload）新于产物同样算 stale——loop 冻结在 .baked 头里，不重烤
-    /// 则热改永不生效于已烤 clip（review 2026-10-02 #8）
+    /// 段：loop/preload + M7c 批② fx 三键）新于产物同样算 stale——loop 冻结在
+    /// .baked 头里，不重烤则热改永不生效于已烤 clip（review 2026-10-02 #8；
+    /// fx 注册期消费本无需重烤，随段重烤无害）
     static bool BakeStale(const std::string& src, const std::string& dst);
 
 private:

@@ -185,6 +185,14 @@ private:
     uint64_t renamingGuid_ = 0;   // 0 = 无重命名进行中
     std::string renameBuf_;
 
+    // ---- 音频参数模态（M7c 批②：loop/preload + 听感覆写三件 → SetAudioImporter）----
+    uint64_t audioFxGuid_ = 0;   // 0 = 无编辑进行中
+    float afxLoopStart_ = 0.0f, afxLoopEnd_ = 0.0f;
+    bool afxPreload_ = false;
+    bool afxCdOn_ = false, afxCapOn_ = false, afxJitOn_ = false; // 覆写启用位（关 = 继承全局）
+    float afxCd_ = 0.045f, afxJit_ = 0.02f;
+    int afxCap_ = 4;
+
     // ---- .tab 表格区（M6a 批② T1 / ADR-012 D1）----
     uint64_t selectedGuid_ = 0;  // 单击选中（表格区只在选中 Table 条目时长出）
     bool tableOpen_ = true;      // CollapsingHeader 开合（空间预留用上一帧值）

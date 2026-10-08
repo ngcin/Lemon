@@ -9,6 +9,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "Audio/AudioEngine.h" // M7c 批②：kMaxVoices（voiceCap 钳域与引擎/编辑器同源）
 #include "Core/Log.h"
 
 namespace lemon::assets {
@@ -86,6 +87,9 @@ void ReadGridImporter(const fs::path& assetPath, IndexedEntry& e) {
 void ReadAudioImporter(const fs::path& assetPath, IndexedEntry& e) {
     e.audioLoopStart = e.audioLoopEnd = 0.0f;
     e.audioPreload = false;
+    e.audioRetriggerCd = -1.0f;
+    e.audioVoiceCap = 0;
+    e.audioPitchJitter = -1.0f;
     std::ifstream mf(assetPath.string() + ".meta", std::ios::binary);
     if (!mf) return;
     std::string text((std::istreambuf_iterator<char>(mf)), std::istreambuf_iterator<char>());
@@ -104,6 +108,20 @@ void ReadAudioImporter(const fs::path& assetPath, IndexedEntry& e) {
     }
     if (auto pre = imp.find("preload"); pre != imp.end() && pre->is_boolean())
         e.audioPreload = pre->get<bool>();
+    // 听感覆写三件（M7c 批②）：域上界单源（kFxRetriggerMaxSec/kFxPitchJitterMax/
+    // kMaxVoices——引擎 SanitizeFx 与编辑器 ParseAudioImporter 同引）；坏值 = 继承
+    if (auto cd = imp.find("retrigger"); cd != imp.end() && cd->is_number()) {
+        const double v = cd->get<double>();
+        if (v >= 0.0 && v <= audio::kFxRetriggerMaxSec) e.audioRetriggerCd = (float)v;
+    }
+    if (auto cap = imp.find("voiceCap"); cap != imp.end() && cap->is_number_unsigned()) {
+        const uint64_t v = cap->get<uint64_t>();
+        if (v >= 1 && v <= audio::kMaxVoices) e.audioVoiceCap = (int32_t)v;
+    }
+    if (auto pj = imp.find("pitchJitter"); pj != imp.end() && pj->is_number()) {
+        const double v = pj->get<double>();
+        if (v >= 0.0 && v <= audio::kFxPitchJitterMax) e.audioPitchJitter = (float)v;
+    }
 }
 
 /// 读 .meta 的字体 importer 段（M7c 批①；packager 烤制消费——AssetIndex 打开期

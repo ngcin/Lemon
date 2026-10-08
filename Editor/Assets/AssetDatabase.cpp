@@ -137,6 +137,9 @@ uint64_t AssetDatabase::HashFile(const std::string& absPath) {
 static void ParseAudioImporter(const Json& doc, AssetEntry& e) {
     e.audioLoopStart = e.audioLoopEnd = 0.0f;
     e.audioPreload = false;
+    e.audioRetriggerCd = -1.0f;
+    e.audioVoiceCap = 0;
+    e.audioPitchJitter = -1.0f;
     auto it = doc.find("importer");
     if (it == doc.end() || !it->is_object()) return;
     const Json& imp = *it;
@@ -153,6 +156,20 @@ static void ParseAudioImporter(const Json& doc, AssetEntry& e) {
     }
     if (auto pre = imp.find("preload"); pre != imp.end() && pre->is_boolean())
         e.audioPreload = pre->get<bool>();
+    // 听感覆写三件（M7c 批②）：域上界单源（kFxRetriggerMaxSec/kFxPitchJitterMax/
+    // kMaxVoices——引擎 SanitizeFx 同引）；坏值 = 继承（宽容，不红字——与 loop 同款）
+    if (auto cd = imp.find("retrigger"); cd != imp.end() && cd->is_number()) {
+        const double v = cd->get<double>();
+        if (v >= 0.0 && v <= audio::kFxRetriggerMaxSec) e.audioRetriggerCd = (float)v;
+    }
+    if (auto cap = imp.find("voiceCap"); cap != imp.end() && cap->is_number_unsigned()) {
+        const uint64_t v = cap->get<uint64_t>();
+        if (v >= 1 && v <= audio::kMaxVoices) e.audioVoiceCap = (int32_t)v;
+    }
+    if (auto pj = imp.find("pitchJitter"); pj != imp.end() && pj->is_number()) {
+        const double v = pj->get<double>();
+        if (v >= 0.0 && v <= audio::kFxPitchJitterMax) e.audioPitchJitter = (float)v;
+    }
 }
 
 // 字体 importer 段（M7c 批①）：`"charset":"词表…" + "size":24 + "outline":[1,"ff202020"]`。
@@ -659,10 +676,14 @@ void AssetDatabase::Rescan() {
             } else if (e.type == AssetType::Audio &&
                        (prev.audioLoopStart != e.audioLoopStart ||
                         prev.audioLoopEnd != e.audioLoopEnd ||
-                        prev.audioPreload != e.audioPreload)) {
+                        prev.audioPreload != e.audioPreload ||
+                        prev.audioRetriggerCd != e.audioRetriggerCd ||
+                        prev.audioVoiceCap != e.audioVoiceCap ||
+                        prev.audioPitchJitter != e.audioPitchJitter)) {
                 // review 2026-10-02 #8：音频 .meta importer 段热改也算 modified——
                 // loop 冻结在 .baked 头里，源 hash 不变时此前不触发重烤，热改
-                // 永不生效（与 06 §2.1「热改 meta 即生效（下次烤制消费）」对齐）
+                // 永不生效（与 06 §2.1「热改 meta 即生效（下次烤制消费）」对齐）；
+                // M7c 批②：fx 三件同分支（注册期消费，重进 Play 生效）
                 lastChange_.modified.push_back(e.guid);
             } else if (e.type == AssetType::Font &&
                        (prev.fontPx != e.fontPx || prev.fontOutlinePx != e.fontOutlinePx ||
@@ -896,6 +917,41 @@ bool AssetDatabase::SetGridSlice(AssetEntry& e, uint32_t cellW, uint32_t cellH,
     e.cellH = (uint16_t)cellH;
     e.gridCols = (uint16_t)cols;
     e.gridRows = (uint16_t)rows;
+    return true;
+}
+
+bool AssetDatabase::SetAudioImporter(AssetEntry& e, float loopStart, float loopEnd,
+                                     bool preload, const audio::ClipFx& fx) {
+    // M7c 批②：音频 importer 段写入（SetGridSlice 同款读改写原子——guid/type/
+    // hash/importedAt 保原值，只动 importer 键）。fx 哨兵值 = 键不写（继承全局，
+    // 老项目零迁移）；生效 = 调用方随后 Rescan()（#8 同款 modified 语义）+ 下次
+    // 进 Play（clip 注册期消费）。内存 entry 同步刷新供 UI 即时反馈。
+    if (e.type != AssetType::Audio || e.missing) return false;
+    const std::string metaPath = AbsolutePath(e) + ".meta";
+    Json doc = Json::object();
+    if (std::ifstream mf(metaPath, std::ios::binary); mf) {
+        std::string text((std::istreambuf_iterator<char>(mf)), std::istreambuf_iterator<char>());
+        const Json r = Json::parse(text, nullptr, false);
+        if (!r.is_discarded()) doc = r;
+    }
+    doc["guid"] = GuidToHex(e.guid);
+    doc["type"] = AssetTypeName(e.type);
+    if (!doc.contains("hash")) doc["hash"] = e.hash;
+    if (!doc.contains("importedAt")) doc["importedAt"] = (uint64_t)std::time(nullptr);
+    Json imp = Json::object();
+    imp["loop"] = Json::array({loopStart, loopEnd});
+    imp["preload"] = preload;
+    if (fx.retriggerCdSec >= 0.0f) imp["retrigger"] = fx.retriggerCdSec;
+    if (fx.voiceCap > 0) imp["voiceCap"] = fx.voiceCap;
+    if (fx.pitchJitter >= 0.0f) imp["pitchJitter"] = fx.pitchJitter;
+    doc["importer"] = std::move(imp);
+    if (!WriteFileAtomic(metaPath, doc.dump(2) + "\n")) return false;
+    e.audioLoopStart = loopStart;
+    e.audioLoopEnd = loopEnd;
+    e.audioPreload = preload;
+    e.audioRetriggerCd = fx.retriggerCdSec >= 0.0f ? fx.retriggerCdSec : -1.0f;
+    e.audioVoiceCap = fx.voiceCap > 0 ? fx.voiceCap : 0;
+    e.audioPitchJitter = fx.pitchJitter >= 0.0f ? fx.pitchJitter : -1.0f;
     return true;
 }
 
