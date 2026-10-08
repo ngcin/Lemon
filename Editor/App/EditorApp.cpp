@@ -23,9 +23,11 @@ static ::lemon::ui::UiSubsystem* s_gameUiForHooks = nullptr;
 #include <SDL3/SDL.h>
 
 #include "App/ImGuiBackend.h"
+#include "App/EditorSettings.h"
 #include "Assets/AssetDatabase.h"
 #include "Assets/SaveStore.h" // HookSaveFlush → 引擎 SaveStore（M7a 批③）
 #include "Interaction/ViewportRenderer.h"
+#include "Localization/Localization.h"
 #include "Templates/VsTemplateGen.h"
 #include "App/RecentProjects.h"
 #include "App/EditorAppSmoke.h"
@@ -125,6 +127,13 @@ int EditorApp::Run(const EditorLaunch& launch) {
         return 2;
     }
     const auto tStart = std::chrono::steady_clock::now();
+
+    // M7c 批③ i18n：翻译表装载 + 语言偏好（editor-settings.json；缺省 zh-CN。
+    // 装载失败不阻断——tr 回退链兜底显示 key/en）
+#ifdef LEMON_EDITOR_STRINGS_DIR
+    loc::LoadStrings(LEMON_EDITOR_STRINGS_DIR);
+    loc::SetLanguage(LoadEditorSettings().language);
+#endif
 
     SetLogSink(&EditorLogRing::SinkThunk, &log_);
     LEMON_LOG("lemon-editor starting (validate=%s smoke=%s frames=%d)",
@@ -754,7 +763,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
             const std::string& root = ctx_.Assets().ProjectRoot();
             const std::string title =
                 ctx_.SceneName() + (ctx_.dirty ? " ●" : "") + " — " +
-                (root.empty() ? std::string("未打开项目")
+                (root.empty() ? std::string(loc::tr("status.title_no_project"))
                               : std::filesystem::path(root).filename().string()) +
                 " — Lemon";
             if (title != curTitle_) {

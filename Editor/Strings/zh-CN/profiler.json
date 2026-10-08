@@ -1,0 +1,19 @@
+{
+  "prof.plot_overlay_fmt": "平均 {0}ms  最大 {1}ms",
+  "prof.timing_gpu_fmt": "GPU {0} ms   CPU(fps) {1}",
+  "prof.timing_cpu_fmt": "CPU(fps) {0}",
+
+  "prof.col_system": "系统",
+  "prof.col_last": "上次",
+  "prof.col_max": "峰值",
+  "prof.col_runs": "次数",
+
+  "prof.gc_per_frame_fmt": "C# GC 分配/帧：{0} B",
+  "prof.gc_hot": "  ⚠ 热路径分配（红字口径 04 §5）",
+  "prof.gc_zero": "（零分配 ✔）",
+  "prof.gc_no_host": "GC：无脚本宿主（--script / 项目 Game/）",
+  "prof.hot_reload_fmt": "热重载：{0} 次｜旧域未回收 {1} 次（~{2} KB，ADR-010 A 线已知限制）",
+
+  "prof.reset_peaks": "重置峰值",
+  "prof.gpu_col": "GPU 列"
+}

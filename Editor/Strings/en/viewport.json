@@ -1,0 +1,12 @@
+{
+  "vp.aspect_free": "Free",
+  "vp.aspect_tooltip": "Game view aspect ratio (letterbox)",
+  "vp.aspect_label": "Aspect",
+
+  "vp.status_fmt": "zoom {0}x  center ({1}, {2})  visible {3}",
+  "vp.offscreen_hint": "Selected object is off-screen — press F to focus",
+
+  "vp.input_routed": "Input routed to Play World (WASD/Space; dialogs = click or number keys)",
+  "vp.click_to_focus": "Click to focus, then keyboard/mouse go to the game",
+  "vp.cards_hint": "Click or press a number key to choose (dialogs = 1)"
+}

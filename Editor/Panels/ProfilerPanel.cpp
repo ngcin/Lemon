@@ -1,11 +1,14 @@
 // Lemon 编辑器 — Profiler 面板（M4.md §2.2）
 // 数据源与 --stats/F3 同源：SystemPipeline::Profiles + RHI LastFrameTiming +
 // ScriptHost::GcAllocated（M4.3 脚本域接入后显示；GC 红字口径 = 每帧托管分配 > 0）。
+#include <cstdio>
 #include <cstring>
+#include <string>
 
 #include "App/EditorApp.h"
 #include "ECS/SystemPipeline.h"
 #include "EditorContext.h"
+#include "Localization/Localization.h"
 #include "Panels/BuiltInPanels.h"
 #include "Renderer/RHI.h"
 #include "Scripting/ScriptHost.h"
@@ -15,8 +18,11 @@
 namespace lemon::editor {
 
 void ProfilerPanel::OnGui(EditorApp& app) {
+    using lemon::editor::loc::tr;
     bool winOpen = true;
-    if (!ImGui::Begin(Name(), &winOpen, ImGuiWindowFlags_NoCollapse)) {
+    // 标题 = 本地化显示名 + ###稳定 ID（窗口身份/停靠/ini 持久化不随语言变）
+    const std::string title = std::string(tr("panel.profiler")) + "###" + Name();
+    if (!ImGui::Begin(title.c_str(), &winOpen, ImGuiWindowFlags_NoCollapse)) {
         ImGui::End();
         if (!winOpen) app.ClosePanel(Name()); // × 关闭（T3b-8）
         return;
@@ -30,19 +36,29 @@ void ProfilerPanel::OnGui(EditorApp& app) {
     if (frameMs_.size() > 2) {
         float sum = 0, mx = 0;
         for (float v : frameMs_) { sum += v; mx = std::max(mx, v); }
-        char overlay[64];
-        std::snprintf(overlay, sizeof(overlay), "avg %.2fms  max %.2fms", sum / frameMs_.size(), mx);
-        ImGui::PlotLines("##frames", frameMs_.data(), (int)frameMs_.size(), 0, overlay, 0.0f,
-                         mx * 1.3f + 1.0f, ImVec2(-1, 60));
+        char avgBuf[16], maxBuf[16];
+        std::snprintf(avgBuf, sizeof(avgBuf), "%.2f", sum / frameMs_.size());
+        std::snprintf(maxBuf, sizeof(maxBuf), "%.2f", mx);
+        const std::string overlay =
+            loc::trFmt("prof.plot_overlay_fmt", {avgBuf, maxBuf});
+        ImGui::PlotLines("##frames", frameMs_.data(), (int)frameMs_.size(), 0,
+                         overlay.c_str(), 0.0f, mx * 1.3f + 1.0f, ImVec2(-1, 60));
     }
 
     // GPU 时间戳（EnableTimestamps 于启动开启）
     const rhi::FrameTiming gpu = app.Device().LastFrameTiming();
-    if (showGpu_) // #92：原死控件（只写不读）——接线 = 门控 GPU 时间行
-        ImGui::Text("GPU %.2f ms   CPU(fps) %.0f", gpu.valid ? gpu.gpuMs : -1.0f,
-                    ImGui::GetIO().Framerate);
-    else
-        ImGui::Text("CPU(fps) %.0f", ImGui::GetIO().Framerate);
+    {
+        char fpsBuf[16];
+        std::snprintf(fpsBuf, sizeof(fpsBuf), "%.0f", ImGui::GetIO().Framerate);
+        if (showGpu_) { // #92：原死控件（只写不读）——接线 = 门控 GPU 时间行
+            char gpuBuf[16];
+            std::snprintf(gpuBuf, sizeof(gpuBuf), "%.2f", gpu.valid ? gpu.gpuMs : -1.0f);
+            ImGui::TextUnformatted(
+                loc::trFmt("prof.timing_gpu_fmt", {gpuBuf, fpsBuf}).c_str());
+        } else {
+            ImGui::TextUnformatted(loc::trFmt("prof.timing_cpu_fmt", {fpsBuf}).c_str());
+        }
+    }
 
     ImGui::Separator();
     // 系统表（与 --stats 同一数据源；执行序 = 注册序）
@@ -51,10 +67,10 @@ void ProfilerPanel::OnGui(EditorApp& app) {
     if (ImGui::BeginTable("sys", 4,
                           ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders |
                               ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableSetupColumn("system");
-        ImGui::TableSetupColumn("last", ImGuiTableColumnFlags_WidthFixed, 70);
-        ImGui::TableSetupColumn("max", ImGuiTableColumnFlags_WidthFixed, 70);
-        ImGui::TableSetupColumn("runs", ImGuiTableColumnFlags_WidthFixed, 80);
+        ImGui::TableSetupColumn(tr("prof.col_system"));
+        ImGui::TableSetupColumn(tr("prof.col_last"), ImGuiTableColumnFlags_WidthFixed, 70);
+        ImGui::TableSetupColumn(tr("prof.col_max"), ImGuiTableColumnFlags_WidthFixed, 70);
+        ImGui::TableSetupColumn(tr("prof.col_runs"), ImGuiTableColumnFlags_WidthFixed, 80);
         ImGui::TableHeadersRow();
         // ActiveWorld：Play 中 = Play World（真正在 Step 的世界），否则 = 编辑世界
         // （BUG-2：读 World() 恒为不 Step 的编辑世界，Play 时系统表恒空）
@@ -80,8 +96,10 @@ void ProfilerPanel::OnGui(EditorApp& app) {
         if (gcPrev_ != 0) { // 首帧只立基线不显示
             const int64_t perFrame = gcNow > gcPrev_ ? (int64_t)(gcNow - gcPrev_) : 0;
             if (perFrame > 0) ImGui::PushStyleColor(ImGuiCol_Text, theme::kTextError);
-            ImGui::Text("C# GC 分配/帧：%lld B%s", (long long)perFrame,
-                        perFrame > 0 ? "  ⚠ 热路径分配（红字口径 04 §5）" : "（零分配 ✔）");
+            ImGui::TextUnformatted(
+                (loc::trFmt("prof.gc_per_frame_fmt", {std::to_string((long long)perFrame)}) +
+                 (perFrame > 0 ? tr("prof.gc_hot") : tr("prof.gc_zero")))
+                    .c_str());
             if (perFrame > 0) ImGui::PopStyleColor();
         }
         gcPrev_ = gcNow;
@@ -89,15 +107,18 @@ void ProfilerPanel::OnGui(EditorApp& app) {
         const int reloads = ctx.Scripts()->HotReloadCount();
         const int leaks = ctx.Scripts()->HotReloadLeakCount();
         if (leaks > 0) ImGui::PushStyleColor(ImGuiCol_Text, theme::kTextError);
-        ImGui::Text("热重载：%d 次｜旧域未回收 %d 次（~%d KB，ADR-010 A 线已知限制）", reloads,
-                    leaks, leaks * 100);
+        ImGui::TextUnformatted(
+            loc::trFmt("prof.hot_reload_fmt",
+                       {std::to_string(reloads), std::to_string(leaks),
+                        std::to_string(leaks * 100)})
+                .c_str());
         if (leaks > 0) ImGui::PopStyleColor();
     } else {
-        ImGui::TextDisabled("GC：无脚本宿主（--script / 项目 Game/）");
+        ImGui::TextDisabled("%s", tr("prof.gc_no_host"));
     }
-    if (ImGui::Button("Reset Peaks")) ctx.ActiveWorld().Pipeline().ResetProfiles();
+    if (ImGui::Button(tr("prof.reset_peaks"))) ctx.ActiveWorld().Pipeline().ResetProfiles();
     ImGui::SameLine();
-    ImGui::Checkbox("GPU 列", &showGpu_);
+    ImGui::Checkbox(tr("prof.gpu_col"), &showGpu_);
     ImGui::End();
 }
 

@@ -18,6 +18,7 @@
 #include "Tooling/TestHooks.h"
 #include "Tooling/Theme.h"
 #include "EditorContext.h"
+#include "Localization/Localization.h"
 #include "Panels/BuiltInPanels.h"
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -93,6 +94,7 @@ void HierarchyPanel::CommitRename(EditorApp& app, ecs::Entity e, bool apply) {
 }
 
 void HierarchyPanel::OnGui(EditorApp& app) {
+    using lemon::editor::loc::tr;
     const auto probeT0 = std::chrono::steady_clock::now();
     const auto probeAccum = [&]() {
         if (g_hierProbeOn) {
@@ -102,8 +104,10 @@ void HierarchyPanel::OnGui(EditorApp& app) {
             ++g_hierProbe.frames;
         }
     };
+    // 窗口标题本地化；### 后段（=Name()）保窗口身份/停靠/ini 不随语言变
+    const std::string title = std::string(tr("panel.hierarchy")) + "###" + Name();
     bool winOpen = true;
-    if (!ImGui::Begin(Name(), &winOpen,
+    if (!ImGui::Begin(title.c_str(), &winOpen,
                       ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar)) {
         ImGui::End();
         if (!winOpen) app.ClosePanel(Name()); // × 关闭（T3b-8）
@@ -124,37 +128,38 @@ void HierarchyPanel::OnGui(EditorApp& app) {
 
     // 工具行：搜索 + 创建
     ImGui::PushItemWidth(ImGui::GetContentRegionAvail().x - 118);
-    ImGui::InputTextWithHint("##search", "搜索实体名…", &filter_);
+    ImGui::InputTextWithHint("##search", tr("hier.search_hint"), &filter_);
     ImGui::PopItemWidth();
     ImGui::SameLine();
-    if (ImGui::Button("+ 创建")) ImGui::OpenPopup("create_entity");
+    if (ImGui::Button(tr("hier.create"))) ImGui::OpenPopup("create_entity");
     if (ImGui::BeginPopup("create_entity")) {
-        if (ImGui::MenuItem("空实体 (Empty)")) {
+        if (ImGui::MenuItem(tr("hier.create_empty"))) {
             const std::string before = ctx.SnapshotSceneJson();
             ecs::Entity ne = ctx.CreateEntity("Empty");
             ctx.Select(ne, false);
             if (!ctx.Playing()) ctx.PushStructuralUndo("创建实体", before);
         }
-        if (ImGui::MenuItem("精灵 (Sprite)")) {
+        if (ImGui::MenuItem(tr("hier.create_sprite"))) {
             const std::string before = ctx.SnapshotSceneJson();
             ecs::Entity ne = ctx.CreateSpriteEntity("Sprite");
             ctx.Select(ne, false);
             if (!ctx.Playing()) ctx.PushStructuralUndo("创建实体", before);
         }
-        if (ImGui::MenuItem("UI 文档 (UI Document)")) // 批③d 前置 T4
+        if (ImGui::MenuItem(tr("hier.create_ui_doc"))) // 批③d 前置 T4
             uiDocPickOpen_ = true; // 先选 .rml 再建实体（取消 = 不建）
         ImGui::EndPopup();
     }
 
     // 批③d 前置 T4：UI Document 创建弹窗——列项目内 .rml 资产，选中即建实体挂
     // UIDocument（guid 真源）；取消/空列表 = 不建实体（防"空 UI 实体"堆积）。
+    // 弹窗 ID = 本地化标题（OpenPopup/BeginPopupModal 同帧同字符串共用）
+    const char* uiPickId = tr("hier.ui_pick_title");
     if (uiDocPickOpen_) {
         uiDocPickOpen_ = false;
-        ImGui::OpenPopup("选择 UI 文档");
+        ImGui::OpenPopup(uiPickId);
     }
-    if (ImGui::BeginPopupModal("选择 UI 文档", nullptr,
-                               ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextUnformatted("选择要挂载的 .rml 文档资产：");
+    if (ImGui::BeginPopupModal(uiPickId, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted(tr("hier.ui_pick_body"));
         ImGui::Separator();
         bool any = false;
         for (const auto& en : ctx.Assets().Entries()) {
@@ -174,9 +179,9 @@ void HierarchyPanel::OnGui(EditorApp& app) {
             }
         }
         if (!any)
-            ImGui::TextDisabled("项目内没有 .rml 资产——先在 Assets/UI/ 放入文档");
+            ImGui::TextDisabled("%s", tr("hier.ui_pick_empty"));
         ImGui::Separator();
-        if (ImGui::Button("取消")) ImGui::CloseCurrentPopup();
+        if (ImGui::Button(tr("common.cancel"))) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
 
@@ -223,19 +228,19 @@ void HierarchyPanel::OnGui(EditorApp& app) {
     if (ImGui::BeginPopupContextWindow("hierarchy_bg", ImGuiPopupFlags_NoOpenOverItems)) {
         // C1：空区创建进 Undo（对齐"+ 创建"弹窗三行快照写法——此前漏推，
         // 创建后 Ctrl+Z 报"栈空"）
-        if (ImGui::MenuItem("创建空实体")) {
+        if (ImGui::MenuItem(tr("hier.ctx_create_empty"))) {
             const std::string before = ctx.SnapshotSceneJson();
             ecs::Entity ne = ctx.CreateEntity("Empty");
             ctx.Select(ne, false);
             if (!ctx.Playing()) ctx.PushStructuralUndo("创建实体", before);
         }
-        if (ImGui::MenuItem("创建精灵")) {
+        if (ImGui::MenuItem(tr("hier.ctx_create_sprite"))) {
             const std::string before = ctx.SnapshotSceneJson();
             ecs::Entity ne = ctx.CreateSpriteEntity("Sprite");
             ctx.Select(ne, false);
             if (!ctx.Playing()) ctx.PushStructuralUndo("创建实体", before);
         }
-        if (ImGui::MenuItem("创建 UI 文档")) // 批③d 前置 T4（空区右键同 "+ 创建"）
+        if (ImGui::MenuItem(tr("hier.ctx_create_ui_doc"))) // 批③d 前置 T4（空区右键同 "+ 创建"）
             uiDocPickOpen_ = true;
         ImGui::EndPopup();
     }
@@ -245,17 +250,28 @@ void HierarchyPanel::OnGui(EditorApp& app) {
         ImGui::IsMouseReleased(ImGuiMouseButton_Left) &&
         ImGui::GetIO().MouseDragMaxDistanceSqr[0] < 9.0f)
         ctx.ClearSelection();
-    if (ImGui::BeginDragDropTarget()) { // 拖到空白 = 摘根
-        if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("LemonEntity")) {
-            ecs::Entity dropped{};
-            std::memcpy(&dropped, p->Data, sizeof(dropped));
-            const std::string before = ctx.SnapshotSceneJson();
-            if (SceneSetParent(scene, dropped, ecs::Entity::Null())) {
-                ctx.dirty = true;
-                if (!ctx.Playing()) ctx.PushStructuralUndo("摘根", before);
+    // 空白区显式拖放目标（Dummy 占满剩余区）：窗口级 BeginDragDropTarget 实际
+    // 测的是 LastItemData（= 最后一行树节点）——树不满一屏时拖到真空白处无
+    // 任何 target，子节点拖不出来（单根场景实抓）。Dummy 以 id=0 提交
+    //（ItemAdd(bb, 0)）：HoveredRect 照置 → BeginDragDropTarget 走
+    // GetIDFromRectangle 回退命中空白区；HoveredId 只记 id≠0 的 item，
+    // 故 IsAnyItemHovered 不受影响（C2 点空白清选 / NoOpenOverItems 空区
+    // 右键菜单照旧）。仍放在 C2 之后：防御性顺序，语义零耦合。
+    const ImVec2 blank = ImGui::GetContentRegionAvail();
+    if (blank.y > 0.0f) {
+        ImGui::Dummy(blank);
+        if (ImGui::BeginDragDropTarget()) { // 拖到空白 = 摘根
+            if (const ImGuiPayload* p = ImGui::AcceptDragDropPayload("LemonEntity")) {
+                ecs::Entity dropped{};
+                std::memcpy(&dropped, p->Data, sizeof(dropped));
+                const std::string before = ctx.SnapshotSceneJson();
+                if (SceneSetParent(scene, dropped, ecs::Entity::Null())) {
+                    ctx.dirty = true;
+                    if (!ctx.Playing()) ctx.PushStructuralUndo("脱离父级", before);
+                }
             }
+            ImGui::EndDragDropTarget();
         }
-        ImGui::EndDragDropTarget();
     }
     ImGui::EndChild();
     ImGui::End();
@@ -412,9 +428,10 @@ bool HierarchyPanel::DrawNodeRow(EditorApp& app, ecs::Entity e) {
     // AssetBrowser DrawItem 同样靠 PushID 保唯一，本面板此前漏）
     ImGui::PushID((const void*)(uintptr_t)e.id);
     if (ImGui::BeginPopupContextItem("node_ctx")) {
+        using lemon::editor::loc::tr;
         ctx.Select(e, false);
-        if (ImGui::MenuItem("重命名 (F2)")) StartRename(scene, e);
-        if (ImGui::MenuItem("复制 (Ctrl+D)")) {
+        if (ImGui::MenuItem(tr("hier.rename_f2"))) StartRename(scene, e);
+        if (ImGui::MenuItem(tr("hier.duplicate_ctrl_d"))) {
             // C1 同类：右键"复制"此前漏推结构轨（Ctrl+D 键路有——不对称）
             const std::string before = ctx.SnapshotSceneJson();
             ecs::Entity copy = ctx.DuplicateEntity(e);
@@ -423,20 +440,20 @@ bool HierarchyPanel::DrawNodeRow(EditorApp& app, ecs::Entity e) {
                 if (!ctx.Playing()) ctx.PushStructuralUndo("复制实体", before);
             }
         }
-        if (ImGui::MenuItem("摘根 (Detach)")) {
+        if (ImGui::MenuItem(tr("hier.detach"))) {
             const std::string before = ctx.SnapshotSceneJson();
             if (SceneDetach(scene, e)) {
                 ctx.dirty = true;
-                if (!ctx.Playing()) ctx.PushStructuralUndo("摘根", before);
+                if (!ctx.Playing()) ctx.PushStructuralUndo("脱离父级", before);
             }
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("Prefab 化（导出 + 回链）", nullptr, false, !ctx.Playing())) {
+        if (ImGui::MenuItem(tr("hier.make_prefab"), nullptr, false, !ctx.Playing())) {
             const std::string before = ctx.SnapshotSceneJson();
             if (ctx.MakePrefabFrom(e)) ctx.PushStructuralUndo("Prefab 化", before);
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("删除 (Del)")) {
+        if (ImGui::MenuItem(tr("hier.delete_del"))) {
             const std::string before = ctx.SnapshotSceneJson();
             ctx.DestroyEntityTree(e);
             if (!ctx.Playing()) ctx.PushStructuralUndo("删除实体", before);
@@ -453,12 +470,19 @@ void HierarchyPanel::DrawNode(EditorApp& app, ecs::Entity e, bool /*hasHierarchy
     EditorContext& ctx = app.Ctx();
     ecs::Scene& scene = ctx.ActiveScene();
 
+    // TreePop 配对依据 = TreeNodeEx 提交时"有孩子"，不能事后重查：行内拖放会
+    // 当场改父子（摘走独子 → 已 push 却不 pop；拖入叶子 → 未 push 却 pop），
+    // 两者都触发 ImGui "Missing TreePop()" 栈断言（missingTresPop.scene 实抓）
+    const ecs::Hierarchy* h0 = scene.TryGet<ecs::Hierarchy>(e);
+    const bool hadChildren =
+        h0 && !h0->firstChild.IsNull() && scene.Alive(h0->firstChild);
+
     const bool nodeOpen = DrawNodeRow(app, e);
     const ecs::Hierarchy* h = scene.TryGet<ecs::Hierarchy>(e);
     const ecs::Entity first = h && !h->firstChild.IsNull() && scene.Alive(h->firstChild)
                                   ? h->firstChild
                                   : ecs::Entity::Null();
-    if (nodeOpen && !first.IsNull()) {
+    if (nodeOpen && hadChildren) {
         for (ecs::Entity c = first; !c.IsNull();) {
             const ecs::Hierarchy* ch = scene.TryGet<ecs::Hierarchy>(c);
             ecs::Entity next = ch && !ch->next.IsNull() && scene.Alive(ch->next) ? ch->next

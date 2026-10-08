@@ -1,0 +1,18 @@
+{
+  "hier.search_hint": "搜索实体名…",
+  "hier.create": "+ 创建",
+  "hier.create_empty": "空实体 (Empty)",
+  "hier.create_sprite": "精灵 (Sprite)",
+  "hier.create_ui_doc": "UI 文档 (UI Document)",
+  "hier.ui_pick_title": "选择 UI 文档",
+  "hier.ui_pick_body": "选择要挂载的 .rml 文档资产：",
+  "hier.ui_pick_empty": "项目内没有 .rml 资产——先在 Assets/UI/ 放入文档",
+  "hier.ctx_create_empty": "创建空实体",
+  "hier.ctx_create_sprite": "创建精灵",
+  "hier.ctx_create_ui_doc": "创建 UI 文档",
+  "hier.rename_f2": "重命名 (F2)",
+  "hier.duplicate_ctrl_d": "复制 (Ctrl+D)",
+  "hier.detach": "脱离父级 (Detach)",
+  "hier.make_prefab": "Prefab 化（导出 + 回链）",
+  "hier.delete_del": "删除 (Del)"
+}

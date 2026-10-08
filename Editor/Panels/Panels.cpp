@@ -1,12 +1,14 @@
 // Lemon 编辑器 — 面板注册中心（编译期注册表唯一登记点；新增面板在此追加）
 #include <cstdio>
 #include <memory>
+#include <string>
 
 #include "imgui.h"
 
 #include "App/EditorApp.h"
 #include "Core/Log.h"
 #include "EditorContext.h"
+#include "Localization/Localization.h"
 #include "Panels/BuiltInPanels.h"
 #include "Panels/Panel.h"
 #include "Tooling/TestHooks.h"
@@ -22,8 +24,11 @@ class ConsolePanel final : public IEditorPanel {
 public:
     const char* Name() const override { return "Console"; }
     void OnGui(EditorApp& app) override {
+        using lemon::editor::loc::tr;
         bool winOpen = true;
-        if (!ImGui::Begin(Name(), &winOpen, ImGuiWindowFlags_NoCollapse)) {
+        // 标题 = 本地化显示名 + ###稳定 ID（窗口身份/停靠/ini 持久化不随语言变）
+        const std::string title = std::string(tr("panel.console")) + "###" + Name();
+        if (!ImGui::Begin(title.c_str(), &winOpen, ImGuiWindowFlags_NoCollapse)) {
             ImGui::End();
             if (!winOpen) app.ClosePanel(Name()); // × 关闭（T3b-8）
             return;
@@ -35,19 +40,20 @@ public:
         for (const auto& l : snap) ++n[(int)l.level];
         const uint32_t nWarn = n[(int)LogLevel::Warn], nErr = n[(int)LogLevel::Error];
 
-        if (ImGui::Button("Clear")) app.Log().Clear();
+        if (ImGui::Button(tr("console.clear"))) app.Log().Clear();
         ImGui::SameLine();
-        CountedFilter("Info", (int)LogLevel::Info, n[(int)LogLevel::Info], theme::kTextDim);
+        CountedFilter(tr("console.level_info"), (int)LogLevel::Info, n[(int)LogLevel::Info],
+                      theme::kTextDim);
         ImGui::SameLine();
-        CountedFilter("Warn", (int)LogLevel::Warn, nWarn,
+        CountedFilter(tr("console.level_warn"), (int)LogLevel::Warn, nWarn,
                       nWarn ? theme::kTextWarn : theme::kTextDim);
         ImGui::SameLine();
-        CountedFilter("Error", (int)LogLevel::Error, nErr,
+        CountedFilter(tr("console.level_error"), (int)LogLevel::Error, nErr,
                       nErr ? theme::kTextError : theme::kTextDim);
         ImGui::SameLine();
-        ImGui::Checkbox("Auto-scroll", &autoScroll_);
+        ImGui::Checkbox(tr("console.auto_scroll"), &autoScroll_);
         ImGui::SameLine();
-        ImGui::Checkbox("Collapse", &collapse_); // M4.7d：连续重复行折叠 ×N
+        ImGui::Checkbox(tr("console.collapse"), &collapse_); // M4.7d：连续重复行折叠 ×N
         testhooks::Stash("console.collapse", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
         ImGui::Separator();
 
@@ -87,7 +93,7 @@ public:
         // 右键复制（J 段手测建议）：无行选择机制，"按当前过滤复制全部"覆盖贴
         // 报错/贴日志主场景；"最近一条"取最后一条可见行
         if (ImGui::BeginPopupContextWindow("console_ctx")) {
-            if (ImGui::MenuItem("复制全部（按过滤）")) {
+            if (ImGui::MenuItem(tr("console.copy_all"))) {
                 std::string all;
                 for (const auto& l : snap)
                     if (filter_ & (1u << (int)l.level)) {
@@ -96,7 +102,7 @@ public:
                     }
                 ImGui::SetClipboardText(all.c_str());
             }
-            if (ImGui::MenuItem("复制最近一条")) {
+            if (ImGui::MenuItem(tr("console.copy_last"))) {
                 for (auto it = snap.rbegin(); it != snap.rend(); ++it)
                     if (filter_ & (1u << (int)it->level)) {
                         ImGui::SetClipboardText(it->text.c_str());

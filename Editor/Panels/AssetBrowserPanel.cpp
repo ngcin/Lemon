@@ -18,6 +18,7 @@
 #include "Core/Log.h"
 #include "EditorContext.h"
 #include "Interaction/ViewportRenderer.h"
+#include "Localization/Localization.h"
 #include "Panels/BuiltInPanels.h"
 #include "Tooling/TestHooks.h"
 #include "Tooling/Theme.h"
@@ -64,8 +65,11 @@ const char* StrIStr(const char* hay, const char* needle) {
 } // namespace
 
 void AssetBrowserPanel::OnGui(EditorApp& app) {
+    using lemon::editor::loc::tr;
     bool winOpen = true;
-    if (!ImGui::Begin(Name(), &winOpen, ImGuiWindowFlags_NoCollapse)) {
+    // ### 后段钉窗口身份：标题随语言切换，停靠/ini 持久化不漂移
+    const std::string title = std::string(tr("panel.assets")) + "###" + Name();
+    if (!ImGui::Begin(title.c_str(), &winOpen, ImGuiWindowFlags_NoCollapse)) {
         ImGui::End();
         if (!winOpen) app.ClosePanel(Name()); // × 关闭（T3b-8）
         return;
@@ -80,7 +84,7 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
     // 语义约定：currentDir_ = ""（根）或 "Assets/相对路径"——与 Directories()/
     // EntriesInDir 的前缀同源（扫描根 = 项目根，v1 曾写 "sub" 风格 → 进子目录
     // 列表恒空，smoke-ui 真人链路抓到）。
-    ImGui::TextLink("Assets");
+    ImGui::TextLink(tr("assets.crumb_root"));
     testhooks::Stash("crumbAssets", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
     if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) currentDir_.clear();
     {
@@ -112,22 +116,27 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
     }
     ImGui::SameLine();
     ImGui::PushItemWidth(160);
-    ImGui::InputTextWithHint("##filter", "搜索资产…", &filter_);
+    ImGui::InputTextWithHint("##filter", tr("assets.search_hint"), &filter_);
     ImGui::PopItemWidth();
     ImGui::SameLine();
-    if (ImGui::Button("重扫")) app.RescanAssets();
+    if (ImGui::Button(tr("assets.rescan"))) app.RescanAssets();
     ImGui::SameLine();
-    ImGui::TextDisabled("%u 资产 / 体检红字 %u", db.SpriteAssetCount(), db.HealthIssues());
+    ImGui::TextDisabled("%s", loc::trFmt("assets.stat_fmt",
+                                         {std::to_string(db.SpriteAssetCount()),
+                                          std::to_string(db.HealthIssues())})
+                                .c_str());
     ImGui::Separator();
 
     // 类型过滤（T3b-9）："找资产靠过滤/搜索，不靠目录纪律"（约定不强制配套）。
     // 状态先取快照：按钮点击当帧改 typeFilter_，前后两次判定会失衡 →
     // 只有 Pop 没有配对 Push（"PopStyleColor too many times" 实测报错）
     {
-        static const char* kLabels[11] = {"全部", "图",   "动画", "集",
-                                          "Prefab", "表", "脚本", "状态机",
-                                          "UI 文档", "UI 样式",
-                                          "音频"}; // 批③b 加末两位；批① 加音频
+        const char* kLabels[11] = {tr("assets.filter.all"),    tr("assets.filter.sprite"),
+                                   tr("assets.filter.clip"),   tr("assets.filter.set"),
+                                   tr("assets.filter.prefab"), tr("assets.filter.table"),
+                                   tr("assets.filter.script"), tr("assets.filter.controller"),
+                                   tr("assets.filter.rml"),    tr("assets.filter.rcss"),
+                                   tr("assets.filter.audio")}; // 批③b 加末两位；批① 加音频
         for (int i = 0; i < 11; ++i) {
             if (i) ImGui::SameLine();
             const bool on = typeFilter_ == i;
@@ -199,11 +208,12 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
             else
                 ImGui::Button("/", size);
             const bool iconHover = ImGui::IsItemHovered();
-            if (iconHover) ImGui::SetTooltip("文件夹（单击进入）\n%s", d.c_str());
+            if (iconHover)
+                ImGui::SetTooltip("%s", loc::trFmt("assets.folder_tip_fmt", {d}).c_str());
             // 右键：动画创建入口（T3-UX7 精简：集入口已删——集都从 Animations 下
             // 空白区右键建，用户实测定论；文件夹右键只留"从此文件夹创建动画"）
             if (ImGui::BeginPopupContextItem("folder_ctx")) {
-                if (ImGui::MenuItem("从此文件夹创建动画…"))
+                if (ImGui::MenuItem(tr("assets.ctx.create_anim_from_folder")))
                     app.OpenAnimationCreateFromFolder(d);
                 ImGui::EndPopup();
             }
@@ -266,9 +276,9 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
     // 向导随之退役）。NoOpenOverItems 同 HierarchyPanel（右键资产条目时禁开本
     // 菜单——与 asset_ctx 同帧双触发会被本菜单盖掉，条目右键永远只见"导入"）
     if (ImGui::BeginPopupContextWindow("assets_bg", ImGuiPopupFlags_NoOpenOverItems)) {
-        if (ImGui::MenuItem("导入文件…")) app.MenuImportAsset();
+        if (ImGui::MenuItem(tr("menu.import_file"))) app.MenuImportAsset();
         ImGui::Separator();
-        if (ImGui::MenuItem("新建动画集…")) app.OpenAnimationCreateSet(entryDir);
+        if (ImGui::MenuItem(tr("assets.ctx.new_anim_set"))) app.OpenAnimationCreateSet(entryDir);
         ImGui::EndPopup();
     }
     // 拖 prefab 进空区 = 实例化到编辑相机中心
@@ -295,18 +305,19 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
         DrawTableArea(app, *tableSel);
 
     // 重命名模态（InputText 走 IME；提交 = db.Rename → .meta 随行 → 引用不断）
-    if (renamingGuid_) ImGui::OpenPopup("重命名资产");
-    if (ImGui::BeginPopupModal("重命名资产", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextUnformatted("新路径（相对 Assets/；.meta 随行 → 场景引用不断）");
+    const char* renameId = tr("assets.rename.title"); // OpenPopup/BeginPopupModal 同帧同串
+    if (renamingGuid_) ImGui::OpenPopup(renameId);
+    if (ImGui::BeginPopupModal(renameId, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted(tr("assets.rename.hint"));
         ImGui::InputText("##newpath", &renameBuf_);
-        if (ImGui::Button("确定", ImVec2(120, 0)) || ImGui::IsKeyPressed(ImGuiKey_Enter, false)) {
+        if (ImGui::Button(tr("common.ok"), ImVec2(120, 0)) || ImGui::IsKeyPressed(ImGuiKey_Enter, false)) {
             if (AssetEntry* target = ctx.Assets().FindByGuid(renamingGuid_))
                 ctx.Assets().Rename(*target, renameBuf_);
             renamingGuid_ = 0;
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("取消", ImVec2(120, 0)) ||
+        if (ImGui::Button(tr("common.cancel"), ImVec2(120, 0)) ||
             ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
             renamingGuid_ = 0;
             ImGui::CloseCurrentPopup();
@@ -318,8 +329,9 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
     // 全局（Audio Mixer 试验台/内置默认）。提交 = SetAudioImporter（读改写原子）
     // + 主动 Rescan（#8 同款 modified 语义 → 后台重烤）；生效 = 下次进 Play
     //（clip 注册期消费，当前局快照不变——表资产同口径）
-    if (audioFxGuid_) ImGui::OpenPopup("音频参数");
-    if (ImGui::BeginPopupModal("音频参数", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    const char* audioId = tr("assets.audio.title"); // OpenPopup/BeginPopupModal 同帧同串
+    if (audioFxGuid_) ImGui::OpenPopup(audioId);
+    if (ImGui::BeginPopupModal(audioId, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         const AssetEntry* ae = ctx.Assets().FindByGuid(audioFxGuid_);
         if (!ae || ae->missing || ae->type != AssetType::Audio) { // 条目被删/类型漂移
             audioFxGuid_ = 0;
@@ -327,37 +339,37 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
             ImGui::EndPopup();
         } else {
             ImGui::TextUnformatted(ae->FileName().c_str());
-            ImGui::TextDisabled("循环起止都填 0 = 整曲循环；改动重新进入 Play 后生效");
+            ImGui::TextDisabled("%s", tr("assets.audio.loop_hint"));
             ImGui::Separator();
-            ImGui::DragFloat("循环起点(秒)", &afxLoopStart_, 0.01f, 0.0f, 600.0f, "%.2f");
-            ImGui::DragFloat("循环终点(秒)", &afxLoopEnd_, 0.01f, 0.0f, 600.0f, "%.2f");
+            ImGui::DragFloat(tr("assets.audio.loop_start"), &afxLoopStart_, 0.01f, 0.0f, 600.0f,
+                             "%.2f");
+            ImGui::DragFloat(tr("assets.audio.loop_end"), &afxLoopEnd_, 0.01f, 0.0f, 600.0f,
+                             "%.2f");
             if (afxLoopEnd_ < afxLoopStart_) afxLoopEnd_ = afxLoopStart_;
-            ImGui::Checkbox("一次性读入内存（大文件默认边播边读）", &afxPreload_);
+            ImGui::Checkbox(tr("assets.audio.preload"), &afxPreload_);
             ImGui::Separator();
-            ImGui::TextDisabled("播放效果（不勾 = 使用全局设置）");
-            ImGui::Checkbox("限制连播间隔（同一音效快速连发时听起来只响一次）",
-                            &afxCdOn_);
+            ImGui::TextDisabled("%s", tr("assets.audio.fx_header"));
+            ImGui::Checkbox(tr("assets.audio.retrigger"), &afxCdOn_);
             if (afxCdOn_) {
                 ImGui::Indent();
-                ImGui::DragFloat("最短间隔(秒)", &afxCd_, 0.001f, 0.0f, 4.0f,
-                                 "%.3f  (0=不限制)");
+                ImGui::DragFloat(tr("assets.audio.min_interval"), &afxCd_, 0.001f, 0.0f, 4.0f,
+                                 tr("assets.audio.min_interval_fmt"));
                 ImGui::Unindent();
             }
-            ImGui::Checkbox("限制同时响的声数（同一音效最多叠几声，1 = 不重叠）",
-                            &afxCapOn_);
+            ImGui::Checkbox(tr("assets.audio.voice_cap"), &afxCapOn_);
             if (afxCapOn_) {
                 ImGui::Indent();
-                ImGui::DragInt("最多同时响", &afxCap_, 1, 1, 64);
+                ImGui::DragInt(tr("assets.audio.max_voices"), &afxCap_, 1, 1, 64);
                 ImGui::Unindent();
             }
-            ImGui::Checkbox("音调轻微随机变化（重复播放不显得机械）", &afxJitOn_);
+            ImGui::Checkbox(tr("assets.audio.pitch_jitter"), &afxJitOn_);
             if (afxJitOn_) {
                 ImGui::Indent();
-                ImGui::DragFloat("变化幅度(±)", &afxJit_, 0.001f, 0.0f, 0.25f,
-                                 "%.3f  (0=关闭)");
+                ImGui::DragFloat(tr("assets.audio.jitter_range"), &afxJit_, 0.001f, 0.0f, 0.25f,
+                                 tr("assets.audio.jitter_range_fmt"));
                 ImGui::Unindent();
             }
-            if (ImGui::Button("确定", ImVec2(120, 0))) {
+            if (ImGui::Button(tr("common.ok"), ImVec2(120, 0))) {
                 audio::ClipFx fx;
                 fx.retriggerCdSec = afxCdOn_ ? afxCd_ : -1.0f;
                 fx.voiceCap = afxCapOn_ ? afxCap_ : 0;
@@ -373,7 +385,7 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
                 ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
-            if (ImGui::Button("取消", ImVec2(120, 0)) ||
+            if (ImGui::Button(tr("common.cancel"), ImVec2(120, 0)) ||
                 ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
                 audioFxGuid_ = 0;
                 ImGui::CloseCurrentPopup();
@@ -388,6 +400,7 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
 }
 
 void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
+    using lemon::editor::loc::tr;
     EditorContext& ctx = app.Ctx();
     const bool isSprite = e.type == AssetType::Sprite;
 
@@ -435,13 +448,13 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
     // 右键菜单绑缩略图（72×72 大目标）：绑在下方 12 字符文件名上时几乎点不中——
     // NoOpenOverItems 修复后右键缩略图不再弹空白菜单，成了"无菜单"（G4–G6 手测）
     if (ImGui::BeginPopupContextItem("asset_ctx")) {
-        if (ImGui::MenuItem("重命名…")) {
+        if (ImGui::MenuItem(tr("common.rename"))) {
             renamingGuid_ = e.guid;
             renameBuf_ = e.relPath;
         }
-        if (ImGui::MenuItem("复制 GUID"))
+        if (ImGui::MenuItem(tr("assets.ctx.copy_guid")))
             ImGui::SetClipboardText(AssetDatabase::GuidToHex(e.guid).c_str());
-        if (e.type == AssetType::Audio && ImGui::MenuItem("音频参数…")) { // M7c 批②
+        if (e.type == AssetType::Audio && ImGui::MenuItem(tr("assets.ctx.audio_params"))) { // M7c 批②
             audioFxGuid_ = e.guid;
             afxLoopStart_ = e.audioLoopStart;
             afxLoopEnd_ = e.audioLoopEnd;
@@ -454,7 +467,7 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
             afxJit_ = afxJitOn_ ? e.audioPitchJitter : 0.02f;
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("删除")) {
+        if (ImGui::MenuItem(tr("common.delete"))) {
             if (AssetEntry* target = ctx.Assets().FindByGuid(e.guid))
                 ctx.Assets().Remove(*target);
         }
@@ -465,14 +478,16 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
     if (hovered) {
         uint32_t w = 0, h = 0;
         const bool imported = app.AssetGpu().PageInfo(e.guid, w, h);
-        std::string dims = isSprite && imported
-                               ? "已导入 " + std::to_string(w) + "x" + std::to_string(h)
-                               : (isSprite ? "未导入" : AssetTypeName(e.type));
-        if (e.type == AssetType::Table) dims += "\n双击：放大编辑";
-        if (e.type == AssetType::Clip)  dims += "\n双击：动画编辑"; // M6a 批② T3
-        if (e.type == AssetType::AnimSet) dims += "\n双击：动画工作台"; // M6a 批② T3c
-        if (e.type == AssetType::Rml) dims += "\n双击：装载到游戏 UI（Play 中显示）"; // 批③b
-        if (e.type == AssetType::Rcss) dims += "\n经文档 <link> 引用；改动热重载生效"; // 批③b
+        std::string dims =
+            isSprite && imported
+                ? loc::trFmt("assets.tip.imported_fmt", {std::to_string(w), std::to_string(h)})
+                : (isSprite ? std::string(tr("assets.tip.not_imported"))
+                            : std::string(AssetTypeName(e.type)));
+        if (e.type == AssetType::Table) dims += tr("assets.tip.dbl_table");
+        if (e.type == AssetType::Clip)  dims += tr("assets.tip.dbl_clip"); // M6a 批② T3
+        if (e.type == AssetType::AnimSet) dims += tr("assets.tip.dbl_set"); // M6a 批② T3c
+        if (e.type == AssetType::Rml) dims += tr("assets.tip.dbl_rml"); // 批③b
+        if (e.type == AssetType::Rcss) dims += tr("assets.tip.rcss"); // 批③b
         if (e.type == AssetType::Audio) { // 批①：烤制状态（Peek .baked 头）+ 试听
             // review 2026-10-02 #25：悬停期不再每帧 Peek（fopen/fread + 头坏时每帧
             // 重复红字）——guid+源hash+.baked mtime 三键缓存，仅变更时重读一次
@@ -495,16 +510,17 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
                 audioTipBakedWrite_ = bakedWrite;
                 audio::BakedClipInfo bi;
                 if (bakedWrite >= 0 && audio::PeekBakedClip(baked.c_str(), bi)) {
-                    char dur[48];
-                    std::snprintf(dur, sizeof(dur), "已烤 %uch / %.1fs / 48kHz", bi.channels,
+                    char ch[8], sec[24]; // 实参先格式化（整数 to_string 口径、浮点 %.1f）
+                    std::snprintf(ch, sizeof(ch), "%u", bi.channels);
+                    std::snprintf(sec, sizeof(sec), "%.1f",
                                   float(bi.frameCount) / audio::kMixSampleRate);
-                    audioTipText_ = std::string("\n") + dur;
+                    audioTipText_ = "\n" + loc::trFmt("assets.audio.baked_fmt", {ch, sec});
                 } else {
-                    audioTipText_ = "\n未烤（进 Play / 试听时现烤）";
+                    audioTipText_ = std::string("\n") + tr("assets.audio.not_baked");
                 }
             }
             dims += audioTipText_;
-            dims += "\n双击：试听 / 停止\n右键：音频参数…（循环、加载方式、播放效果）";
+            dims += tr("assets.audio.tip_actions");
         }
         ImGui::SetTooltip("%s\n%s  guid %s\n%s", e.FileName().c_str(), AssetTypeName(e.type),
                           AssetDatabase::GuidToHex(e.guid).c_str(), dims.c_str());
@@ -561,6 +577,7 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
 }
 
 void AssetBrowserPanel::RenderTableGrid(EditorApp& app, const AssetEntry& e) {
+    using lemon::editor::loc::tr;
     // 内嵌区/浮动窗共用的表格渲染（M6a 批② T1）。缓存按 guid+hash 键（两处
     // 同时显示不同表时交替重读，小文件可接受）；写回 = WriteFileAtomic + 主动
     // Rescan（FileWatcher 防抖已修 F-15，同帧主动扫描去重）；EnterPlay 快照语义
@@ -574,17 +591,19 @@ void AssetBrowserPanel::RenderTableGrid(EditorApp& app, const AssetEntry& e) {
         table_ = assets::ParseTableJson(text);
     }
     if (!table_.ok) {
-        ImGui::TextColored(theme::kTextError, "表解析失败：%s", table_.error.c_str());
+        ImGui::TextColored(theme::kTextError, "%s",
+                           loc::trFmt("assets.table.parse_error_fmt", {table_.error}).c_str());
         return;
     }
 
     const int rows = (int)table_.rows.size();
     const int cols = (int)table_.Cols();
-    ImGui::TextDisabled("%s：%d 行 × %d 列（首行 = 列头）· 双击单元格编辑，Enter 提交 · "
-                        "改动 Enter Play 后生效",
-                        e.FileName().c_str(), rows, cols);
+    ImGui::TextDisabled("%s", loc::trFmt("assets.table.summary_fmt",
+                                         {e.FileName(), std::to_string(rows),
+                                          std::to_string(cols)})
+                                .c_str());
     if (app.Ctx().Playing())
-        ImGui::TextDisabled("Play 进行中：当前局的表快照不变，改动下一局生效");
+        ImGui::TextDisabled("%s", tr("assets.table.playing_hint"));
     if (!tableError_.empty())
         ImGui::TextColored(theme::kTextError, "%s", tableError_.c_str());
     // #38：红字持久到下次提交成功（tryCommit 成功分支才 clear）——原渲染后当帧
@@ -630,7 +649,7 @@ void AssetBrowserPanel::RenderTableGrid(EditorApp& app, const AssetEntry& e) {
         assets::TableData chk = assets::NormalizeTable(table_.rows); // 单格长度上限在此裁决
         if (!chk.ok) {
             *editCell = prev;
-            tableError_ = "提交被拒：" + chk.error;
+            tableError_ = loc::trFmt("assets.table.rejected_fmt", {chk.error});
         } else {
             const std::filesystem::path p(app.Ctx().Assets().AbsolutePath(e));
             const std::string json = assets::TableToJson(p.stem().string(), chk.rows);
@@ -641,7 +660,7 @@ void AssetBrowserPanel::RenderTableGrid(EditorApp& app, const AssetEntry& e) {
                 committed = true;
             } else {
                 *editCell = prev;
-                tableError_ = "写盘失败（磁盘满/权限？）：" + p.string();
+                tableError_ = loc::trFmt("assets.table.write_fail_fmt", {p.string()});
             }
         }
         editRow_ = editCol_ = -1;
@@ -684,15 +703,17 @@ void AssetBrowserPanel::RenderTableGrid(EditorApp& app, const AssetEntry& e) {
 }
 
 void AssetBrowserPanel::DrawTableArea(EditorApp& app, const AssetEntry& e) {
+    using lemon::editor::loc::tr;
     // .tab 内嵌表格区（M6a 批② T1 / ADR-012 D1）：快速预览 + 单格微调。可操作
     // 面不足时「放大编辑」/双击资产开浮动窗（不加新面板，05 §3 面板集冻结不破）。
-    if (!ImGui::CollapsingHeader("表格视图", ImGuiTreeNodeFlags_DefaultOpen)) {
+    if (!ImGui::CollapsingHeader(tr("assets.table.view_header"),
+                                 ImGuiTreeNodeFlags_DefaultOpen)) {
         tableOpen_ = false;
         return;
     }
     tableOpen_ = true;
     ImGui::SameLine();
-    if (ImGui::SmallButton("放大编辑")) {
+    if (ImGui::SmallButton(tr("assets.table.enlarge"))) {
         tableWinOpen_ = true;
         tableWinGuid_ = e.guid;
     }
@@ -701,6 +722,7 @@ void AssetBrowserPanel::DrawTableArea(EditorApp& app, const AssetEntry& e) {
 }
 
 void AssetBrowserPanel::DrawTableEditorWindow(EditorApp& app) {
+    using lemon::editor::loc::tr;
     // 浮动放大编辑器（T1 反馈批）：双击 .tab /「放大编辑」打开。按需工具窗
     //（不进面板注册表/DockBuilder）；NoSavedSettings = 不落 imgui.ini（冒烟
     // ini 漂移面不扩）。标题 ### 钉 ID——切换目标表窗口不重建。
@@ -713,11 +735,10 @@ void AssetBrowserPanel::DrawTableEditorWindow(EditorApp& app) {
     ImGui::SetNextWindowSize(ImVec2(1040.0f, 560.0f), ImGuiCond_Appearing);
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing,
                             ImVec2(0.5f, 0.5f));
-    char title[96];
-    std::snprintf(title, sizeof(title), "%s — 表格编辑器###TableEditor",
-                  e->FileName().c_str());
-    if (!ImGui::Begin(title, &tableWinOpen_, ImGuiWindowFlags_NoSavedSettings |
-                                               ImGuiWindowFlags_NoScrollbar)) {
+    const std::string title =
+        loc::trFmt("assets.table.editor_title_fmt", {e->FileName()}) + "###TableEditor";
+    if (!ImGui::Begin(title.c_str(), &tableWinOpen_, ImGuiWindowFlags_NoSavedSettings |
+                                                        ImGuiWindowFlags_NoScrollbar)) {
         ImGui::End();
         return;
     }

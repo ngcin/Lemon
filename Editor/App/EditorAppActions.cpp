@@ -14,6 +14,7 @@
 #include "Core/Log.h"
 #include "Core/FileOps.h" // Utf8ToAcp：SDL drop 路径（UTF-8）过 win fs（ACP）前归一
 #include "EditorContext.h"
+#include "Localization/Localization.h"
 #include "Panels/BuiltInPanels.h"
 #include "Ui/UiSubsystem.h" // 批③a（ADR-014）：游戏 UI 层（RmlUi）
 #include "Serialization/SceneArchive.h"
@@ -30,7 +31,7 @@ void EditorApp::MenuNewScene() {
 void EditorApp::MenuOpenScene() {
     if (ctx_.dirty && !ConfirmUnsaved(PendingSceneOp::OpenScene)) return;
     pickerMode_ = PickerMode::Open;
-    picker_.Open("打开场景", PickerStartDir(), "", ".scene");
+    picker_.Open(loc::tr("picker.open_scene"), PickerStartDir(), "", ".scene");
 }
 
 // 场景选择器起始目录：当前场景父目录 → 项目 Scenes/ → 项目根 → CWD（无项目）。
@@ -72,7 +73,7 @@ void EditorApp::MenuSaveScene() {
 
 void EditorApp::MenuSaveSceneAs() {
     pickerMode_ = PickerMode::Save;
-    picker_.Open("另存场景", PickerStartDir(), ctx_.SceneName(), ".scene");
+    picker_.Open(loc::tr("picker.save_scene_as"), PickerStartDir(), ctx_.SceneName(), ".scene");
 }
 
 bool EditorApp::ConfirmUnsaved(PendingSceneOp after) {
@@ -91,7 +92,7 @@ void EditorApp::MenuImportAsset() {
         return;
     }
     pickerMode_ = PickerMode::Import;
-    picker_.Open("导入资产", ctx_.Assets().AssetsRoot(), "", ""); // 任意扩展名
+    picker_.Open(loc::tr("picker.import_asset"), ctx_.Assets().AssetsRoot(), "", ""); // 任意扩展名
 }
 
 void EditorApp::MenuOpenProject() {
@@ -111,7 +112,7 @@ void EditorApp::MenuOpenProject() {
         else start = fs::current_path(ec).string();
     }
     pickerMode_ = PickerMode::OpenProject;
-    picker_.OpenDir("打开项目（选择项目目录）", start); // M4.6 §4-2：选目录而非 project.lemon
+    picker_.OpenDir(loc::tr("picker.open_project_title"), start); // M4.6 §4-2：选目录而非 project.lemon
 }
 
 bool EditorApp::OpenProjectInSession(const std::string& root) {

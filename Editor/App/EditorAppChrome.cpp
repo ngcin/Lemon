@@ -11,9 +11,11 @@
 #include <sstream>
 #include <vector>
 
+#include "App/EditorSettings.h"
 #include "App/ImGuiBackend.h"
 #include "Assets/AssetDatabase.h"
 #include "Assets/ProjectWizard.h"
+#include "Localization/Localization.h"
 #include "Tooling/Icons.h"
 #include "Tooling/Theme.h"
 #include "Components/CoreComponents.h"
@@ -28,6 +30,22 @@
 #include "App/RecentProjects.h"
 
 namespace lemon::editor {
+
+namespace {
+// 面板显示名 key（panel.<小写名>；en 表兜底 = 原英文名——Name() 本身即英文）
+std::string PanelTitleKey(const char* panelName) {
+    std::string key = "panel.";
+    for (const char* p = panelName; *p; ++p)
+        key.push_back(*p >= 'A' && *p <= 'Z' ? static_cast<char>(*p - 'A' + 'a') : *p);
+    return key;
+}
+// trFmt 实参用的定点数 → 字符串（%.1f/%.0f 语义，替代 std::to_string 的 6 位小数）
+std::string Fixed(double v, int decimals) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.*f", decimals, v);
+    return buf;
+}
+} // namespace
 
 void EditorApp::SetupDefaultLayout() {
     // Unity 式默认布局（§2.1 线框）：左 Hierarchy 20% / 右 Inspector 25% /
@@ -61,12 +79,13 @@ void EditorApp::SetupDefaultLayout() {
 }
 
 void EditorApp::BuildMenuBar() {
+    using loc::tr;
     if (!ImGui::BeginMenuBar()) return;
-    if (ImGui::BeginMenu("File")) {
-        if (ImGui::MenuItem("新建场景", nullptr, false, !playing_)) MenuNewScene();
-        if (ImGui::MenuItem("打开场景...", "Ctrl+O", false, !playing_)) MenuOpenScene();
+    if (ImGui::BeginMenu(tr("menu.file"))) {
+        if (ImGui::MenuItem(tr("menu.new_scene"), nullptr, false, !playing_)) MenuNewScene();
+        if (ImGui::MenuItem(tr("menu.open_scene"), "Ctrl+O", false, !playing_)) MenuOpenScene();
         // M4.8-b：最近场景子菜单（文件名 + 当前标记；tooltip 全路径）
-        if (ImGui::BeginMenu("最近场景", !ctx_.RecentScenes().empty() && !playing_)) {
+        if (ImGui::BeginMenu(tr("menu.recent_scenes"), !ctx_.RecentScenes().empty() && !playing_)) {
             namespace fsr = std::filesystem;
             const std::vector<std::string>& recents = ctx_.RecentScenes();
             for (size_t i = 0; i < recents.size(); ++i) {
@@ -76,7 +95,7 @@ void EditorApp::BuildMenuBar() {
                 const bool usable = fsr::is_regular_file(p, ec); // 文件被删 → 灰显可辨
                 const bool cur = p == ctx_.ScenePath();
                 const std::string label =
-                    fsr::path(p).filename().string() + (cur ? "（当前）" : "");
+                    fsr::path(p).filename().string() + (cur ? tr("menu.current_suffix") : "");
                 if (ImGui::MenuItem(label.c_str(), nullptr, cur, usable && !cur))
                     MenuOpenRecentScene(p); // 按值收，切断对 recents 元素的引用
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", p.c_str());
@@ -85,16 +104,18 @@ void EditorApp::BuildMenuBar() {
             ImGui::EndMenu();
         }
         ImGui::Separator();
-        char saveLabel[96];
-        std::snprintf(saveLabel, sizeof(saveLabel), "保存场景 %s", ctx_.ScenePath().empty() ? "" : "(Ctrl+S)");
-        if (ImGui::MenuItem(saveLabel, ctx_.ScenePath().empty() ? nullptr : "Ctrl+S", false,
-                            !playing_))
+        const std::string saveLabel = loc::trFmt(
+            "menu.save_scene_fmt",
+            {ctx_.ScenePath().empty() ? std::string_view("")
+                                      : std::string_view(tr("menu.save_scene_shortcut"))});
+        if (ImGui::MenuItem(saveLabel.c_str(), ctx_.ScenePath().empty() ? nullptr : "Ctrl+S",
+                            false, !playing_))
             MenuSaveScene();
-        if (ImGui::MenuItem("另存为...", nullptr, false, !playing_)) MenuSaveSceneAs();
+        if (ImGui::MenuItem(tr("menu.save_as"), nullptr, false, !playing_)) MenuSaveSceneAs();
         ImGui::Separator();
-        if (ImGui::MenuItem("新建项目...", nullptr, false, !ctx_.Playing())) MenuNewProject();
-        if (ImGui::MenuItem("打开项目...", nullptr, false, !ctx_.Playing())) MenuOpenProject();
-        if (ImGui::BeginMenu("最近打开", !recentProjects_.empty() && !ctx_.Playing())) {
+        if (ImGui::MenuItem(tr("menu.new_project"), nullptr, false, !ctx_.Playing())) MenuNewProject();
+        if (ImGui::MenuItem(tr("menu.open_project"), nullptr, false, !ctx_.Playing())) MenuOpenProject();
+        if (ImGui::BeginMenu(tr("menu.recent_projects"), !recentProjects_.empty() && !ctx_.Playing())) {
             namespace fsr = std::filesystem;
             for (const std::string& p : recentProjects_) {
                 ImGui::PushID(p.c_str());
@@ -109,57 +130,58 @@ void EditorApp::BuildMenuBar() {
                 ImGui::PopID();
             }
             ImGui::Separator();
-            if (ImGui::MenuItem("清除列表")) {
+            if (ImGui::MenuItem(tr("menu.clear_list"))) {
                 recentProjects_.clear();
                 SaveRecentProjects(recentProjects_);
             }
             ImGui::EndMenu();
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("退出", nullptr, false, true)) RequestExit();
+        if (ImGui::MenuItem(tr("menu.exit"), nullptr, false, true)) RequestExit();
         ImGui::EndMenu();
     }
-    if (ImGui::BeginMenu("Edit")) {
+    if (ImGui::BeginMenu(tr("menu.edit"))) {
         // M4.6 §4-8：接线真实可用性（快捷键 M4.2 起已通；Play 中禁用同快捷键）
-        if (ImGui::MenuItem("Undo", "Ctrl+Z", false, !ctx_.Playing() && ctx_.Undo().CanUndo()))
+        if (ImGui::MenuItem(tr("menu.undo"), "Ctrl+Z", false, !ctx_.Playing() && ctx_.Undo().CanUndo()))
             ctx_.Undo().Undo();
-        if (ImGui::MenuItem("Redo", "Ctrl+Y", false, !ctx_.Playing() && ctx_.Undo().CanRedo()))
+        if (ImGui::MenuItem(tr("menu.redo"), "Ctrl+Y", false, !ctx_.Playing() && ctx_.Undo().CanRedo()))
             ctx_.Undo().Redo();
         ImGui::EndMenu();
     }
-    if (ImGui::BeginMenu("Assets")) {
-        if (ImGui::MenuItem("导入文件...", nullptr, false, true)) MenuImportAsset();
-        if (ImGui::MenuItem("重扫资产库", nullptr, false, true)) RescanAssets();
-        if (ImGui::MenuItem("清理孤儿 .meta…", nullptr, false, true)) MenuSweepOrphanMetas();
+    if (ImGui::BeginMenu(tr("menu.assets"))) {
+        if (ImGui::MenuItem(tr("menu.import_file"), nullptr, false, true)) MenuImportAsset();
+        if (ImGui::MenuItem(tr("menu.rescan_assets"), nullptr, false, true)) RescanAssets();
+        if (ImGui::MenuItem(tr("menu.sweep_orphan_metas"), nullptr, false, true)) MenuSweepOrphanMetas();
         ImGui::Separator();
         { // 新建脚本（M4.6 §5-4）：模板 .cs → Game/ + 注册行 → 热重载排队
             std::string csproj, dll;
             const bool can =
                 !ctx_.Assets().ProjectRoot().empty() && FindGameProject(csproj, dll);
-            if (ImGui::MenuItem("新建脚本...", nullptr, false, can)) newScriptOpen_ = true;
+            if (ImGui::MenuItem(tr("menu.new_script"), nullptr, false, can)) newScriptOpen_ = true;
             if (!can && ImGui::IsItemHovered())
-                ImGui::SetTooltip("需要已打开项目且 Game/ 有脚本工程");
+                ImGui::SetTooltip("%s", tr("menu.new_script_tooltip"));
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("重新编译脚本（热重载）", nullptr, false, host_ != nullptr))
+        if (ImGui::MenuItem(tr("menu.rebuild_scripts"), nullptr, false, host_ != nullptr))
             MenuRebuildScripts();
         ImGui::Separator();
-        ImGui::TextDisabled("项目：%s", ctx_.Assets().ProjectRoot().c_str());
-        ImGui::TextDisabled("资产 %u（sprite %u）｜体检红字 %u",
-                            (uint32_t)ctx_.Assets().Entries().size(),
-                            ctx_.Assets().SpriteAssetCount(), ctx_.Assets().HealthIssues());
+        ImGui::TextDisabled("%s", loc::trFmt("menu.project_fmt", {ctx_.Assets().ProjectRoot()}).c_str());
+        ImGui::TextDisabled("%s", loc::trFmt("menu.assets_stat_fmt", {
+            std::to_string((uint32_t)ctx_.Assets().Entries().size()),
+            std::to_string(ctx_.Assets().SpriteAssetCount()),
+            std::to_string(ctx_.Assets().HealthIssues())}).c_str());
         ImGui::EndMenu();
     }
-    if (ImGui::BeginMenu("GameObject")) {
+    if (ImGui::BeginMenu(tr("menu.gameobject"))) {
         // C1：创建三入口（+创建/空区右键/本菜单）都进结构轨——此前本菜单与
         // 空区右键漏推快照，创建后 Ctrl+Z 报"栈空"
-        if (ImGui::MenuItem("创建空实体")) {
+        if (ImGui::MenuItem(tr("menu.create_empty"))) {
             const std::string before = ctx_.SnapshotSceneJson();
             ecs::Entity ne = ctx_.CreateEntity("Empty");
             ctx_.Select(ne, false);
             if (!ctx_.Playing()) ctx_.PushStructuralUndo("创建实体", before);
         }
-        if (ImGui::MenuItem("创建精灵")) {
+        if (ImGui::MenuItem(tr("menu.create_sprite"))) {
             const std::string before = ctx_.SnapshotSceneJson();
             ecs::Entity ne = ctx_.CreateSpriteEntity("Sprite");
             ctx_.Select(ne, false);
@@ -167,22 +189,43 @@ void EditorApp::BuildMenuBar() {
         }
         ImGui::EndMenu();
     }
-    if (ImGui::BeginMenu("Window")) {
-        for (auto& e : panels_.Entries()) ImGui::MenuItem(e.panel->Name(), nullptr, &e.open);
+    if (ImGui::BeginMenu(tr("menu.window"))) {
+        // 面板标题 = 本地化显示名 + ###稳定 ID（窗口身份/布局持久化/dock 匹配
+        // 都锚定 ### 后段，切语言只换显示不改窗口身份）
+        for (auto& e : panels_.Entries()) {
+            const std::string title = std::string(tr(PanelTitleKey(e.panel->Name()).c_str())) +
+                                      "###" + e.panel->Name();
+            ImGui::MenuItem(title.c_str(), nullptr, &e.open);
+        }
         ImGui::Separator();
         // M6c 批③：Audio Mixer 按需工具窗（不进面板注册表——05 §3 冻结旁路形态）
-        ImGui::MenuItem("Audio Mixer", nullptr, &audioMixerOpen_);
-        ImGui::MenuItem("Dear ImGui Demo", nullptr, &launchCopy_.demoWindow);
+        ImGui::MenuItem(tr("menu.audio_mixer"), nullptr, &audioMixerOpen_);
+        ImGui::MenuItem(tr("menu.imgui_demo"), nullptr, &launchCopy_.demoWindow);
+        ImGui::Separator();
+        // 语言子菜单（i18n）：即时生效（ImGui 每帧重取文案），选择即持久化
+        if (ImGui::BeginMenu(tr("menu.language"))) {
+            for (const std::string& lang : loc::AvailableLanguages()) {
+                if (ImGui::MenuItem(loc::LanguageDisplayName(lang), nullptr,
+                                    lang == loc::CurrentLanguage())) {
+                    loc::SetLanguage(lang);
+                    EditorSettings s = LoadEditorSettings();
+                    s.language = lang;
+                    SaveEditorSettings(s);
+                }
+            }
+            ImGui::EndMenu();
+        }
         ImGui::EndMenu();
     }
-    if (ImGui::BeginMenu("Help")) {
-        ImGui::MenuItem("About", nullptr, &aboutOpen_);
+    if (ImGui::BeginMenu(tr("menu.help"))) {
+        ImGui::MenuItem(tr("menu.about"), nullptr, &aboutOpen_);
         ImGui::EndMenu();
     }
     ImGui::EndMenuBar();
 }
 
 void EditorApp::BuildToolbar() {
+    using loc::tr;
     // M4.7a/b 三段式图标工具栏：左 = Q/W/E/R + 网格显示/吸附｜中 = Play/Pause/单步
     // （居中）｜右 = 预留（Layout 下拉 M5）。图标 = 形状页（零新依赖），居中按按钮实宽精算。
     const bool playing = ctx_.Playing();
@@ -190,26 +233,26 @@ void EditorApp::BuildToolbar() {
     const float avail = ImGui::GetContentRegionAvail().x;
 
     // ---- 左段：Q 选择/W 移动/E 旋转/R 缩放 工具组 + 网格吸附（图标 toggle）----
-    struct ToolBtn { IconKind icon; const char* id; const char* tip; EditTool tool; };
+    struct ToolBtn { IconKind icon; const char* id; const char* tipKey; EditTool tool; };
     static const ToolBtn kTools[] = {
-        {IconKind::Cursor, "##toolSelect", "选择（Q）：8 向手柄调整大小 / 拖动移动", EditTool::Select},
-        {IconKind::Move, "##toolMove", "移动 (W)", EditTool::Move},
-        {IconKind::Rotate, "##toolRotate", "旋转 (E)", EditTool::Rotate},
-        {IconKind::Scale, "##toolScale", "四角缩放 (R)", EditTool::Scale}};
+        {IconKind::Cursor, "##toolSelect", "tool.select", EditTool::Select},
+        {IconKind::Move, "##toolMove", "tool.move", EditTool::Move},
+        {IconKind::Rotate, "##toolRotate", "tool.rotate", EditTool::Rotate},
+        {IconKind::Scale, "##toolScale", "tool.scale", EditTool::Scale}};
     for (const auto& t : kTools) {
         if (ui::IconButton(*this, t.icon, t.id, t.tool == tool_)) tool_ = t.tool;
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", t.tip);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr(t.tipKey));
         ImGui::SameLine();
     }
     // 网格显示（纯视觉）与拖拽吸附（独立开关，默认关）——Godot/Unity 语义
     if (ui::IconButton(*this, IconKind::Grid, "##gridVisible", gridVisible_))
         gridVisible_ = !gridVisible_;
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("网格显示");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("tool.grid"));
     ImGui::SameLine();
     if (ui::IconButton(*this, IconKind::Magnet, "##snap", snapEnabled_))
         snapEnabled_ = !snapEnabled_;
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("拖拽吸附（平移 8px / 旋转 15° / 缩放 0.25 档；按住 Ctrl 拖拽临时取反）");
+        ImGui::SetTooltip("%s", tr("tool.snap"));
     ImGui::SameLine();
 
     // ---- 中段：Play/Pause/单步（水平居中 ±2px）----
@@ -236,7 +279,8 @@ void EditorApp::BuildToolbar() {
         }
     }
     ImGui::PopStyleColor(3);
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", playing ? "Stop（恢复编辑场景）" : "Play（进入沙盒）");
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("%s", playing ? tr("tool.stop") : tr("tool.play"));
     ImGui::SameLine();
     ImGui::BeginDisabled(!playing);
     if (ui::IconButton(*this, IconKind::Pause, "##pause", paused_)) {
@@ -250,10 +294,10 @@ void EditorApp::BuildToolbar() {
             audio_.SetPaused(ctx_.ActiveWorld().Audio().pausedStaged());
     }
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("%s", "暂停/继续（仅 Play 态；音频同步挂起）");
+        ImGui::SetTooltip("%s", tr("tool.pause"));
     ImGui::SameLine();
     if (ui::IconButton(*this, IconKind::Step, "##step", false)) singleStep_ = true;
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "单步一帧（仅 Play 态；音频保持挂起）");
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("tool.step"));
     ImGui::EndDisabled();
 
     // ---- 右段：Layout 下拉（M4.7d；右对齐；窄工具栏时让位不与中段重叠）----
@@ -278,12 +322,14 @@ static bool ValidLayoutName(const std::string& name) {
 }
 
 void EditorApp::BuildLayoutDropdown() {
+    using loc::tr;
     const std::vector<std::string> names = ListSavedLayouts();
-    const char* preview = activeLayout_.empty() ? "布局：默认" : activeLayout_.c_str();
+    const std::string preview =
+        activeLayout_.empty() ? tr("layout.default_preview") : activeLayout_;
     ImGui::SetNextItemWidth(150.0f);
-    if (ImGui::BeginCombo("##layout", preview)) {
+    if (ImGui::BeginCombo("##layout", preview.c_str())) {
         testhooks::Stash("layout.comboOpen", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
-        if (ImGui::Selectable("默认布局", activeLayout_.empty())) {
+        if (ImGui::Selectable(tr("layout.default"), activeLayout_.empty())) {
             activeLayout_.clear();
             forceDefaultLayout_ = true; // 下帧 SetupDefaultLayout（帧内 DockBuilder 点）
         }
@@ -295,19 +341,16 @@ void EditorApp::BuildLayoutDropdown() {
                 pendingLayout_ = n; // 下帧 LoadLayoutIni
             }
         ImGui::Separator();
-        if (ImGui::Selectable("保存当前布局…")) {
+        if (ImGui::Selectable(tr("layout.save_current"))) {
             layoutNameBuf_ = activeLayout_;
             layoutSaveOpen_ = true;
         }
         testhooks::Stash("layout.item.save", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
         if (!activeLayout_.empty()) {
-            char buf[96];
-            std::snprintf(buf, sizeof(buf), "更新 \xe2\x80\x9c%s\xe2\x80\x9d",
-                          activeLayout_.c_str());
-            if (ImGui::Selectable(buf)) SaveLayoutIni(activeLayout_);
-            std::snprintf(buf, sizeof(buf), "删除 \xe2\x80\x9c%s\xe2\x80\x9d",
-                          activeLayout_.c_str());
-            if (ImGui::Selectable(buf)) {
+            const std::string updateLabel = loc::trFmt("layout.update_fmt", {activeLayout_});
+            if (ImGui::Selectable(updateLabel.c_str())) SaveLayoutIni(activeLayout_);
+            const std::string deleteLabel = loc::trFmt("layout.delete_fmt", {activeLayout_});
+            if (ImGui::Selectable(deleteLabel.c_str())) {
                 if (ValidLayoutName(activeLayout_)) { // #78：删除原语同款防线
                     std::error_code ec;
                     std::filesystem::remove(".lemon/editor/layouts/" + activeLayout_ + ".ini", ec);
@@ -322,21 +365,23 @@ void EditorApp::BuildLayoutDropdown() {
         testhooks::Stash("layout.combo", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
     }
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("%s", "命名布局（保存/切换/删除；默认 = 内置七面板）");
+        ImGui::SetTooltip("%s", tr("layout.tooltip"));
 
-    // 保存命名模态（OpenPopup 需在组合框外的稳定 ID 栈位调用）
+    // 保存命名模态（OpenPopup 需在组合框外的稳定 ID 栈位调用；popup ID 也走
+    // tr——OpenPopup/BeginPopupModal 同帧同 key，切语言不打架）
+    const char* savePopupId = tr("layout.save_title");
     if (layoutSaveOpen_) {
         layoutSaveOpen_ = false;
-        ImGui::OpenPopup("保存布局");
+        ImGui::OpenPopup(savePopupId);
     }
-    if (ImGui::BeginPopupModal("保存布局", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextUnformatted("布局名：");
+    if (ImGui::BeginPopupModal(savePopupId, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted(tr("layout.name_label"));
         ImGui::SameLine();
         ImGui::SetNextItemWidth(180);
         ImGui::InputText("##name", &layoutNameBuf_);
         testhooks::Stash("layout.nameInput", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
         ImGui::BeginDisabled(layoutNameBuf_.empty());
-        if (ImGui::Button("保存", ImVec2(100, 0)) ||
+        if (ImGui::Button(tr("common.save"), ImVec2(100, 0)) ||
             (ImGui::IsKeyPressed(ImGuiKey_Enter, false) && !layoutNameBuf_.empty())) {
             if (SaveLayoutIni(layoutNameBuf_)) {
                 activeLayout_ = layoutNameBuf_;
@@ -346,7 +391,7 @@ void EditorApp::BuildLayoutDropdown() {
         ImGui::EndDisabled();
         testhooks::Stash("layout.saveBtn", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
         ImGui::SameLine();
-        if (ImGui::Button("取消", ImVec2(100, 0)) ||
+        if (ImGui::Button(tr("common.cancel"), ImVec2(100, 0)) ||
             ImGui::IsKeyPressed(ImGuiKey_Escape, false))
             ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
@@ -393,38 +438,44 @@ std::vector<std::string> EditorApp::ListSavedLayouts() const {
 }
 
 void EditorApp::BuildStatusBar() {
+    using loc::tr;
     int pw = 0, ph = 0;
     window_->GetPixelSize(pw, ph);
     ImGui::Text("%s%s", ctx_.SceneName().c_str(), ctx_.dirty ? " ●" : "");
     ImGui::SameLine();
-    ImGui::TextDisabled("| DPI %.1fx | %dx%d px | %.0f fps | 选中 %zu | 资产 %u | 中文渲染正常",
-                        ui_->DisplayScale(), pw, ph, ImGui::GetIO().Framerate,
-                        ctx_.Selection().size(), ctx_.Assets().SpriteAssetCount());
+    ImGui::TextDisabled("%s", loc::trFmt("status.info_fmt", {
+        Fixed(ui_->DisplayScale(), 1),
+        std::to_string(pw), std::to_string(ph),
+        Fixed(ImGui::GetIO().Framerate, 0),
+        std::to_string(ctx_.Selection().size()),
+        std::to_string(ctx_.Assets().SpriteAssetCount())}).c_str());
     if (playing_) {
         ImGui::SameLine();
         ImGui::PushStyleColor(ImGuiCol_Text, theme::kAccent);
-        ImGui::TextUnformatted("| \xe2\x96\xb6 PLAY"); // ▶
+        ImGui::TextUnformatted(tr("status.play")); // ▶
         ImGui::PopStyleColor();
     }
     if (ctx_.Assets().ProjectRoot().empty()) { // M4.6 §4-1：无项目显式可见
         ImGui::SameLine();
         ImGui::PushStyleColor(ImGuiCol_Text, theme::kTextError);
-        ImGui::TextUnformatted("| 未打开项目（文件 → 新建/打开项目）");
+        ImGui::TextUnformatted(tr("status.no_project"));
         ImGui::PopStyleColor();
     }
     // 编译状态（M4.6 §5-5）：排队中橙字（构建阻塞期间屏幕留此帧）；完成后回显耗时
     if (compileQueued_) {
         ImGui::SameLine();
         ImGui::PushStyleColor(ImGuiCol_Text, theme::kTextWarn);
-        ImGui::TextUnformatted("| 编译中…（dotnet build）");
+        ImGui::TextUnformatted(tr("status.compiling"));
         ImGui::PopStyleColor();
     } else if (lastBuildMs_ >= 0.0) {
         ImGui::SameLine();
-        ImGui::TextDisabled("| 上次编译 %.0fms", lastBuildMs_);
+        ImGui::TextDisabled("%s", loc::trFmt("status.last_build_fmt",
+                                             {Fixed(lastBuildMs_, 0)}).c_str());
     }
 }
 
 void EditorApp::BuildNoProjectCard() {
+    using loc::tr;
     // 无项目引导（M4.6 §4-1，最小横幅形态——决议 R1）：中央卡两按钮直达
     // 新建/打开；有项目/向导开着不出现。用户不再需要知道 --project 的存在。
     // 可关闭（M4.7 修复：卡悬停区会截走其下 Scene 视口的点击/拖拽——视口中心
@@ -437,23 +488,25 @@ void EditorApp::BuildNoProjectCard() {
                             ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(400, 0), ImGuiCond_Always);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
+    // 标题显示随语言，窗口身份锚 ##noproject（切语言卡片位置/开关态不丢）
+    const std::string title = std::string(tr("card.no_project")) + "##noproject";
     const bool open = ImGui::Begin(
-        "未打开项目##noproject", nullptr,
+        title.c_str(), nullptr,
         ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
             ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar);
     if (open) {
         ImGui::Dummy(ImVec2(0, 6));
-        ImGui::TextUnformatted("  尚未打开项目");
+        ImGui::TextUnformatted(tr("card.title"));
         ImGui::SameLine();
         if (ImGui::SmallButton("×##dismiss")) noProjectCardDismissed_ = true;
-        ImGui::TextDisabled("  导入资产、脚本编译、场景保存都需要项目目录。");
+        ImGui::TextDisabled("%s", tr("card.hint"));
         ImGui::Dummy(ImVec2(0, 8));
-        if (ImGui::Button("新建项目…", ImVec2(-1, 0))) MenuNewProject();
-        if (ImGui::Button("打开项目…", ImVec2(-1, 0))) MenuOpenProject();
+        if (ImGui::Button(tr("menu.new_project"), ImVec2(-1, 0))) MenuNewProject();
+        if (ImGui::Button(tr("menu.open_project"), ImVec2(-1, 0))) MenuOpenProject();
         ImGui::Dummy(ImVec2(0, 4));
         if (!recentProjects_.empty()) {
-            ImGui::TextDisabled("  最近：");
+            ImGui::TextDisabled("%s", tr("card.recent"));
             namespace fsr = std::filesystem;
             for (const std::string& p : recentProjects_) {
                 ImGui::PushID(p.c_str());
@@ -605,7 +658,7 @@ void EditorApp::BuildUI() {
         if (playing_) { // Play 亮蓝横幅（§2.4；沙盒 M4.3 生效；M4.7a 旧橙改主题蓝）
             ImGui::SameLine();
             ImGui::PushStyleColor(ImGuiCol_Text, theme::kAccent);
-            ImGui::TextUnformatted("PLAY MODE — 编辑落 Play World，Stop 即丢；GameView 聚焦时键鼠进游戏");
+            ImGui::TextUnformatted(loc::tr("banner.play_mode"));
             ImGui::PopStyleColor();
         }
     }
@@ -646,10 +699,11 @@ void EditorApp::BuildUI() {
 
     if (launchCopy_.demoWindow) ImGui::ShowDemoWindow(&launchCopy_.demoWindow);
     if (aboutOpen_) {
-        if (ImGui::Begin("About Lemon Editor", &aboutOpen_, ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::Text("Lemon Editor — M4（ImGui %s / docking）", IMGUI_VERSION);
-            ImGui::TextUnformatted("纯 2D 高性能游戏引擎：C++20 + Vulkan + C# 脚本");
-            ImGui::TextUnformatted("规划：docs/Plans/M4/M4.md");
+        const std::string aboutTitle = std::string(loc::tr("about.title")) + "###AboutLemon";
+        if (ImGui::Begin(aboutTitle.c_str(), &aboutOpen_, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("%s", loc::trFmt("about.line1_fmt", {IMGUI_VERSION}).c_str());
+            ImGui::TextUnformatted(loc::tr("about.line2"));
+            ImGui::TextUnformatted(loc::tr("about.line3"));
         }
         ImGui::End();
     }
@@ -660,8 +714,10 @@ void EditorApp::BuildUI() {
 // = 两轮听感热修（2026-10-01）参数的全局调参台——per-资产覆写缓议（批文件裁定），
 // 真实调参需求出现时以微批启。无持久化：设置屏音量档归批④（Settings 档）。
 void EditorApp::DrawAudioMixerWindow() {
+    using loc::tr;
     if (!audioMixerOpen_) return;
-    if (!ImGui::Begin("Audio Mixer", &audioMixerOpen_, ImGuiWindowFlags_AlwaysAutoResize)) {
+    const std::string title = std::string(tr("audio.title")) + "###AudioMixer";
+    if (!ImGui::Begin(title.c_str(), &audioMixerOpen_, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::End();
         return;
     }
@@ -671,33 +727,34 @@ void EditorApp::DrawAudioMixerWindow() {
     // 状态行：设备/降级 + 声部占用（试听与 Play 世界同引擎——单实例单真相）
     if (audio_.silent()) {
         ImGui::PushStyleColor(ImGuiCol_Text, theme::kTextWarn);
-        ImGui::TextUnformatted("静音模式（无设备/LEMON_AUDIO=off 降级，逻辑声部照常记账）");
+        ImGui::TextUnformatted(tr("audio.silent"));
         ImGui::PopStyleColor();
     } else {
-        ImGui::TextUnformatted("设备输出正常");
+        ImGui::TextUnformatted(tr("audio.ok"));
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("声部 %d/%d", audio_.ActiveVoiceCount(), ag::kMaxVoices);
+    ImGui::TextDisabled("%s", loc::trFmt("audio.voices_fmt", {
+        std::to_string(audio_.ActiveVoiceCount()), std::to_string(ag::kMaxVoices)}).c_str());
 
     float v = audio_.MasterVolume();
-    if (ImGui::SliderFloat("Master", &v, 0.0f, 1.0f, "%.2f")) audio_.SetMasterVolume(v);
+    if (ImGui::SliderFloat(tr("audio.master"), &v, 0.0f, 1.0f, "%.2f")) audio_.SetMasterVolume(v);
     for (int i = 0; i < ag::kGroupCount; ++i) {
         const ag::Group g = static_cast<ag::Group>(i);
         float gv = audio_.GroupVolume(g);
         if (ImGui::SliderFloat(kGroupNames[i], &gv, 0.0f, 1.0f, "%.2f"))
             audio_.SetGroupVolume(g, gv);
     }
-    if (ImGui::Button("全部停止")) audio_.StopAll(); // 试听/残留声部急停（Play 世界同引擎）
+    if (ImGui::Button(tr("audio.stop_all"))) audio_.StopAll(); // 试听/残留声部急停（Play 世界同引擎）
     ImGui::SameLine();
-    ImGui::TextDisabled("Edit 试听与 Play 共用本引擎");
+    ImGui::TextDisabled("%s", tr("audio.shared_hint"));
 
     ImGui::Separator();
-    ImGui::TextUnformatted("重触发治理（全局默认；per-资产缓议）");
+    ImGui::TextUnformatted(tr("audio.retrigger"));
     float cd = audio_.RetriggerCooldown();
-    if (ImGui::SliderFloat("同 clip 节流", &cd, 0.0f, 0.2f, "%.3fs"))
+    if (ImGui::SliderFloat(tr("audio.cooldown"), &cd, 0.0f, 0.2f, "%.3fs"))
         audio_.SetRetriggerCooldown(cd);
     float pj = audio_.PitchJitter();
-    if (ImGui::SliderFloat("音高微扰", &pj, 0.0f, 0.1f, "%.3f")) audio_.SetPitchJitter(pj);
+    if (ImGui::SliderFloat(tr("audio.jitter"), &pj, 0.0f, 0.1f, "%.3f")) audio_.SetPitchJitter(pj);
     ImGui::End();
 }
 
@@ -705,38 +762,41 @@ void EditorApp::DrawAudioMixerWindow() {
 // 留了什么为什么留。不盲清被引用项——那是"只恢复源文件"场景的复链钩子，
 // 引用面判据见 AssetDatabase::SweepOrphanMetas。
 void EditorApp::DrawOrphanSweepReportWindow() {
+    using loc::tr;
     if (!orphanSweepReportOpen_) return;
-    if (!ImGui::Begin("孤儿 .meta 清理报告", &orphanSweepReportOpen_,
+    const std::string title = std::string(tr("sweep.title")) + "###OrphanSweep";
+    if (!ImGui::Begin(title.c_str(), &orphanSweepReportOpen_,
                       ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::End();
         return;
     }
-    ImGui::Text("已清理（源已删且零引用）：%u",
-                (uint32_t)orphanSweepResult_.cleaned.size());
+    ImGui::Text("%s", loc::trFmt("sweep.cleaned_fmt",
+        {std::to_string((uint32_t)orphanSweepResult_.cleaned.size())}).c_str());
     for (const std::string& p : orphanSweepResult_.cleaned) ImGui::BulletText("%s", p.c_str());
     ImGui::Separator();
     if (orphanSweepResult_.keptReferenced.empty()) {
-        ImGui::TextDisabled("无被引用残留");
+        ImGui::TextDisabled("%s", tr("sweep.none_kept"));
     } else {
         ImGui::PushStyleColor(ImGuiCol_Text, theme::kTextWarn);
-        ImGui::Text("保留（guid 仍被引用——恢复源文件即可复链，确弃请先清引用）：%u",
-                    (uint32_t)orphanSweepResult_.keptReferenced.size());
+        ImGui::Text("%s", loc::trFmt("sweep.kept_fmt",
+            {std::to_string((uint32_t)orphanSweepResult_.keptReferenced.size())}).c_str());
         ImGui::PopStyleColor();
         for (const std::string& p : orphanSweepResult_.keptReferenced)
             ImGui::BulletText("%s", p.c_str());
     }
     ImGui::Separator();
-    if (ImGui::Button("关闭")) orphanSweepReportOpen_ = false;
+    if (ImGui::Button(tr("common.close"))) orphanSweepReportOpen_ = false;
     ImGui::End();
 }
 
 void EditorApp::BuildPickersAndModals() {
+    using loc::tr;
     // 快捷目录（M4.6 §5-7）：Home + 当前项目根（打开期间每帧刷新——切项目后随动）
     if (picker_.IsOpen()) {
         std::vector<std::pair<std::string, std::string>> qd;
         if (const char* home = std::getenv("HOME")) qd.push_back({"Home", home});
         const std::string& root = ctx_.Assets().ProjectRoot();
-        if (!root.empty()) qd.push_back({"项目", root});
+        if (!root.empty()) qd.push_back({tr("picker.project_quick"), root});
         picker_.SetQuickDirs(std::move(qd));
     }
     // 文件选择器（打开/另存/导入共用；动作一次性返回）
@@ -772,15 +832,16 @@ void EditorApp::BuildPickersAndModals() {
     }
 
     // 退出确认（dirty 场景）：保存 / 丢弃 / 取消
+    const char* unsavedId = tr("modal.unsaved_title");
     if (quitConfirmOpen_) {
-        ImGui::OpenPopup("未保存更改");
+        ImGui::OpenPopup(unsavedId);
         quitConfirmOpen_ = false;
         quitConfirmArmed_ = true;
-    }    if (ImGui::BeginPopupModal("未保存更改", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    }    if (ImGui::BeginPopupModal(unsavedId, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         // SceneOp（打开/新建场景、切项目前的脏确认）与退出分流：前者保存/丢弃后续做
         // 挂起操作（M4.2 欠账——此前按钮硬编码"并退出"，选了就把整个编辑器关了）
         const bool exiting = confirmContext_ == ConfirmContext::Exit;
-        ImGui::Text("场景 %s 有未保存更改。", ctx_.SceneName().c_str());
+        ImGui::Text("%s", loc::trFmt("modal.unsaved_body_fmt", {ctx_.SceneName()}).c_str());
         ImGui::Separator();
         auto runPending = [&]() {
             const PendingSceneOp op = pendingSceneOp_;
@@ -797,7 +858,7 @@ void EditorApp::BuildPickersAndModals() {
                 default: break;
             }
         };
-        if (ImGui::Button(exiting ? "保存并退出" : "保存", ImVec2(140, 0))) {
+        if (ImGui::Button(exiting ? tr("modal.save_exit") : tr("common.save"), ImVec2(140, 0))) {
             if (ctx_.ScenePath().empty()) {
                 // 无路径：走另存为；完成后由用户重触发（与退出路径同款简化环）
                 ImGui::CloseCurrentPopup();
@@ -816,7 +877,7 @@ void EditorApp::BuildPickersAndModals() {
             }
         }
         ImGui::SameLine();
-        if (ImGui::Button(exiting ? "丢弃并退出" : "丢弃", ImVec2(140, 0))) {
+        if (ImGui::Button(exiting ? tr("modal.discard_exit") : tr("modal.discard"), ImVec2(140, 0))) {
             ctx_.dirty = false; // 丢弃 = 放弃未存改动（盘档不动）
             ImGui::CloseCurrentPopup();
             quitConfirmArmed_ = false;
@@ -824,7 +885,7 @@ void EditorApp::BuildPickersAndModals() {
             else runPending();
         }
         ImGui::SameLine();
-        if (ImGui::Button("取消", ImVec2(140, 0))) {
+        if (ImGui::Button(tr("common.cancel"), ImVec2(140, 0))) {
             ImGui::CloseCurrentPopup();
             quitConfirmArmed_ = false;
             pendingSceneOp_ = PendingSceneOp::None;
@@ -837,17 +898,15 @@ void EditorApp::BuildPickersAndModals() {
 
     // Play 阻断（2026-09-22）：Game/ 编译失败（宿主未装配）时阻止进 Play——
     // 对齐 Unity/Godot。修错保存 → watcher 自动首装即解除；模态内亦可一键重试。
+    const char* playBlockedId = tr("modal.script_not_ready_title");
     if (playBlockedOpen_) {
-        ImGui::OpenPopup("脚本未就绪");
+        ImGui::OpenPopup(playBlockedId);
         playBlockedOpen_ = false;
     }
-    if (ImGui::BeginPopupModal("脚本未就绪", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextUnformatted(
-            "Game/ 脚本编译失败，已阻止进入 Play。\n"
-            "（防止\"游戏在跑但脚本没生效\"的隐性 bug）\n"
-            "错误详情见 Console 红字；修复保存后将自动重新编译装配。");
+    if (ImGui::BeginPopupModal(playBlockedId, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted(tr("modal.script_not_ready_body"));
         ImGui::Separator();
-        if (ImGui::Button("重新编译并进入 Play", ImVec2(210, 0))) {
+        if (ImGui::Button(tr("modal.rebuild_and_play"), ImVec2(210, 0))) {
             ImGui::CloseCurrentPopup();
             if (TryHotReloadScripts("Play 阻断重试")) {
                 // review 2026-10-02 #9：统一走 TryEnterPlay——此前直调 ctx_.EnterPlay
@@ -860,29 +919,28 @@ void EditorApp::BuildPickersAndModals() {
             }
         }
         ImGui::SameLine();
-        if (ImGui::Button("取消", ImVec2(120, 0))) ImGui::CloseCurrentPopup();
+        if (ImGui::Button(tr("common.cancel"), ImVec2(120, 0))) ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
 
     // M4.5 新建项目向导（blank/vs-survivor 模板；06 §1 布局 + §7 模板）
-    if (wizOpen_) ImGui::OpenPopup("新建项目");
-    if (ImGui::BeginPopupModal("新建项目", &wizOpen_, ImGuiWindowFlags_AlwaysAutoResize)) {
+    const char* wizId = tr("modal.new_project_title");
+    if (wizOpen_) ImGui::OpenPopup(wizId);
+    if (ImGui::BeginPopupModal(wizId, &wizOpen_, ImGuiWindowFlags_AlwaysAutoResize)) {
         static int wizTemplate = 0; // 0 blank / 1 vs-survivor（M5 批④模板整合）
-        const char* wizTemplates[] = {"blank（空场景起步）", "vs-survivor（幸存者完整玩法）"};
+        const char* wizTemplates[] = {tr("wizard.tpl_blank"), tr("wizard.tpl_vs")};
         ImGui::SetNextItemWidth(320);
-        ImGui::Combo("模板", &wizTemplate, wizTemplates, 2);
+        ImGui::Combo(tr("wizard.template_label"), &wizTemplate, wizTemplates, 2);
         if (wizTemplate == 0)
-            ImGui::TextUnformatted("blank：Assets/Scenes/Prefabs/Game/Data + 种子资产 +\n"
-                                   "可编译脚本工程（零配置直接 Play）");
+            ImGui::TextUnformatted(tr("wizard.tpl_blank_desc"));
         else
-            ImGui::TextDisabled("%s", "vs-survivor：玩家/波次导演/三选一/HUD/存档全套\n"
-                                      "（yami 素材随行，MIT——见模板 README）");
+            ImGui::TextDisabled("%s", tr("wizard.tpl_vs_desc"));
         ImGui::SetNextItemWidth(320);
-        ImGui::InputText("项目名", wizName_, sizeof(wizName_));
+        ImGui::InputText(tr("wizard.name_label"), wizName_, sizeof(wizName_));
         ImGui::SetNextItemWidth(320);
-        ImGui::InputText("父目录（绝对路径）", wizParent_, sizeof(wizParent_));
+        ImGui::InputText(tr("wizard.parent_label"), wizParent_, sizeof(wizParent_));
         ImGui::SameLine();
-        if (ImGui::Button("浏览…")) { // M4.6 §4-3：目录选择器（零手敲路径）
+        if (ImGui::Button(tr("common.browse"))) { // M4.6 §4-3：目录选择器（零手敲路径）
             std::error_code ec;
             std::string start =
                 wizParent_[0] && std::filesystem::is_directory(wizParent_, ec)
@@ -891,11 +949,11 @@ void EditorApp::BuildPickersAndModals() {
             pickerMode_ = PickerMode::WizardDir;
             wizOpen_ = false; // 模态不叠加：关向导开选择器，选定即回填重开
             ImGui::CloseCurrentPopup();
-            picker_.OpenDir("选择父目录", start);
+            picker_.OpenDir(tr("wizard.pick_parent_title"), start);
         }
         ImGui::Separator();
         ImGui::BeginDisabled(!wizName_[0] || !wizParent_[0]);
-        if (ImGui::Button("创建并打开", ImVec2(160, 0))) {
+        if (ImGui::Button(tr("wizard.create_and_open"), ImVec2(160, 0))) {
             ProjectDesc d;
             d.parentDir = wizParent_;
             d.name = wizName_;
@@ -920,7 +978,7 @@ void EditorApp::BuildPickersAndModals() {
         }
         ImGui::EndDisabled();
         ImGui::SameLine();
-        if (ImGui::Button("取消", ImVec2(120, 0))) {
+        if (ImGui::Button(tr("common.cancel"), ImVec2(120, 0))) {
             wizOpen_ = false;
             ImGui::CloseCurrentPopup();
         }
@@ -929,14 +987,14 @@ void EditorApp::BuildPickersAndModals() {
 
     // 新建脚本（M4.6 §5-4）：类名 → 模板 .cs 落 Game/ + GameMain 注册行 → 热重载排队
     // → watcher 自动接手（新类型编译后即可挂到实体）
-    if (newScriptOpen_) ImGui::OpenPopup("新建脚本");
-    if (ImGui::BeginPopupModal("新建脚本", &newScriptOpen_, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextUnformatted("模板 .cs 落 Game/，并在 GameMain.cs 自动注册；\n"
-                               "创建后自动热重载，新类型立即可挂到实体。");
+    const char* newScriptId = tr("modal.new_script_title");
+    if (newScriptOpen_) ImGui::OpenPopup(newScriptId);
+    if (ImGui::BeginPopupModal(newScriptId, &newScriptOpen_, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted(tr("modal.new_script_body"));
         ImGui::SetNextItemWidth(280);
-        ImGui::InputText("类名", newScriptName_, sizeof(newScriptName_));
+        ImGui::InputText(tr("modal.class_name_label"), newScriptName_, sizeof(newScriptName_));
         ImGui::BeginDisabled(!newScriptName_[0]);
-        if (ImGui::Button("创建并编译", ImVec2(160, 0))) {
+        if (ImGui::Button(tr("modal.create_and_compile"), ImVec2(160, 0))) {
             const std::string gameDir = ctx_.Assets().ProjectRoot() + "/Game";
             if (ProjectWizard::AddBehaviourScript(gameDir, newScriptName_)) {
                 LEMON_LOG("新脚本已建：Game/%s.cs（注册行已插，热重载排队）", newScriptName_);
@@ -950,7 +1008,7 @@ void EditorApp::BuildPickersAndModals() {
         }
         ImGui::EndDisabled();
         ImGui::SameLine();
-        if (ImGui::Button("取消", ImVec2(120, 0))) {
+        if (ImGui::Button(tr("common.cancel"), ImVec2(120, 0))) {
             newScriptOpen_ = false;
             ImGui::CloseCurrentPopup();
         }

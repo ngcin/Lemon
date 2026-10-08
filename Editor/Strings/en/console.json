@@ -1,0 +1,13 @@
+{
+  "console.clear": "Clear",
+
+  "console.level_info": "Info",
+  "console.level_warn": "Warn",
+  "console.level_error": "Error",
+
+  "console.auto_scroll": "Auto-scroll",
+  "console.collapse": "Collapse",
+
+  "console.copy_all": "Copy All (respect filters)",
+  "console.copy_last": "Copy Last Entry"
+}

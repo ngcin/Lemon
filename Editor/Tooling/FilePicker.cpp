@@ -5,6 +5,7 @@
 #include <cstdio>
 
 #include "Core/Log.h"
+#include "Localization/Localization.h"
 #include "Tooling/ThumbCache.h"
 #include "Tooling/TestHooks.h"
 #include "Tooling/Theme.h"
@@ -79,6 +80,7 @@ void FilePicker::Refresh() {
 }
 
 PickerResult FilePicker::Draw() {
+    using lemon::editor::loc::tr;
     if (!open_) return {};
     // 模态化（M4.6 §4-6）：选择器开着主 UI 不可点（先选后改背后场景的竞态修复）
     if (opening_) {
@@ -93,7 +95,7 @@ PickerResult FilePicker::Draw() {
     }
 
     // 路径行：父目录 + 当前路径（目录模式加"选择此目录/新建目录"）
-    if (ImGui::Button("↑ 上级")) {
+    if (ImGui::Button(tr("fp.up"))) {
         auto parent = dir_.parent_path();
         if (parent != dir_) {
             dir_ = parent;
@@ -103,12 +105,12 @@ PickerResult FilePicker::Draw() {
     }
     ImGui::SameLine();
     if (dirMode_) {
-        if (ImGui::Button("选择此目录")) {
+        if (ImGui::Button(tr("fp.select_this_dir"))) {
             out = {PickerAction::Open, dir_.string()};
             open_ = false;
         }
         ImGui::SameLine();
-        if (ImGui::Button("＋ 新建目录")) {
+        if (ImGui::Button(tr("fp.new_folder"))) {
             // 就地建 NewFolder（重名自动加序号）并进入——向导选父目录时顺手归类
             for (int i = 1;; ++i) {
                 const std::string nm = i == 1 ? "NewFolder" : "NewFolder" + std::to_string(i);
@@ -151,11 +153,11 @@ PickerResult FilePicker::Draw() {
             if (active) ImGui::PopStyleColor();
             ImGui::SameLine();
         };
-        toggle("列表", View::List);
-        toggle("缩略图", View::Icons);
+        toggle(tr("fp.view_list"), View::List);
+        toggle(tr("fp.view_thumbs"), View::Icons);
     }
     ImGui::SetNextItemWidth(-1);
-    if (ImGui::InputTextWithHint("##path", "路径（绝对，回车直达）", &pathInput_,
+    if (ImGui::InputTextWithHint("##path", tr("fp.path_hint"), &pathInput_,
                                  ImGuiInputTextFlags_EnterReturnsTrue)) {
         std::error_code ecp;
         std::filesystem::path p(pathInput_);
@@ -175,7 +177,7 @@ PickerResult FilePicker::Draw() {
         }
     }
     if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("输入绝对路径后回车：目录 = 进入；文件 = 选中并填入文件名");
+        ImGui::SetTooltip("%s", tr("fp.path_tooltip"));
 
     // Ctrl/Cmd+A 全选文件（T3-UX4 系统式选择语义；路径输入框聚焦时让位文本编辑。
     // mac 侧编辑器把 Ctrl 和弦映射为 Cmd（ImGuiBackend 约定）→ 双修饰都认）
@@ -207,7 +209,7 @@ PickerResult FilePicker::Draw() {
         if (firstFrame_) ImGui::SetKeyboardFocusHere();
         ImGui::InputText("##name", &fileName_);
         ImGui::SameLine();
-        if (ImGui::Button("确认") && !fileName_.empty()) {
+        if (ImGui::Button(tr("common.confirm")) && !fileName_.empty()) {
             std::string name = fileName_;
             if (!requireExt_.empty() && std::filesystem::path(name).extension().string() != requireExt_)
                 name += requireExt_;
@@ -218,16 +220,18 @@ PickerResult FilePicker::Draw() {
         ImGui::SameLine();
     }
     if (multi_) {
-        ImGui::TextDisabled("已选 %zu 项（Shift 连选 · Ctrl 加选 · Ctrl+A 全选 · 双击确认）",
-                            multiSel_.size());
+        ImGui::TextDisabled(
+            "%s",
+            lemon::editor::loc::trFmt("fp.selected_fmt", {std::to_string(multiSel_.size())})
+                .c_str());
         ImGui::SameLine();
         ImGui::BeginDisabled(multiSel_.empty());
-        if (ImGui::Button("打开")) ConfirmMulti(out);
+        if (ImGui::Button(tr("fp.open"))) ConfirmMulti(out);
         testhooks::Stash("picker.open", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
         ImGui::EndDisabled();
         ImGui::SameLine();
     }
-    if (ImGui::Button("取消")) {
+    if (ImGui::Button(tr("common.cancel"))) {
         out = {PickerAction::Cancel, ""};
         open_ = false;
     }
@@ -296,6 +300,8 @@ void FilePicker::NavigateTo(const std::filesystem::path& sub) {
 }
 
 void FilePicker::DrawListEntries(PickerResult& out) {
+    using lemon::editor::loc::tr;
+    const std::string dirPrefix = tr("fp.dir_prefix"); // 目录条目前缀（列表视图）
     for (size_t i = 0; i < entries_.size(); ++i) {
         const Entry& e = entries_[i];
         ImGuiSelectableFlags flags = ImGuiSelectableFlags_AllowDoubleClick;
@@ -303,8 +309,7 @@ void FilePicker::DrawListEntries(PickerResult& out) {
         if (multi_) {
             const bool inSel = std::find(multiSel_.begin(), multiSel_.end(), full) !=
                                multiSel_.end();
-            if (ImGui::Selectable(e.isDir ? (std::string("[D] ") + e.name).c_str()
-                                          : e.name.c_str(),
+            if (ImGui::Selectable(e.isDir ? (dirPrefix + e.name).c_str() : e.name.c_str(),
                                   inSel, flags)) {
                 if (e.isDir) {
                     // 单击仅高亮；双击进入（T3-UX4：网格误点不清选集——列表同口径）
@@ -318,8 +323,7 @@ void FilePicker::DrawListEntries(PickerResult& out) {
             continue;
         }
         const bool wasSel = selected_ == full;
-        if (ImGui::Selectable(e.isDir ? (std::string("[D] ") + e.name).c_str()
-                                      : e.name.c_str(),
+        if (ImGui::Selectable(e.isDir ? (dirPrefix + e.name).c_str() : e.name.c_str(),
                               wasSel, flags)) {
             selected_ = full;
             if (ImGui::IsMouseDoubleClicked(0)) {
@@ -334,6 +338,7 @@ void FilePicker::DrawListEntries(PickerResult& out) {
 }
 
 void FilePicker::DrawIconEntries(PickerResult& out) {
+    using lemon::editor::loc::tr;
     // 缩略图网格（参考 Godot 文件对话框）：等宽瓦片按可用宽折行；瓦片 =
     // 隐形按钮（点击/双击走真实管线）+ drawlist 手绘（底板/图/名/选中描边）。
     const float tileW = 104.0f;
@@ -395,9 +400,10 @@ void FilePicker::DrawIconEntries(PickerResult& out) {
         int iw = 0, ih = 0;
         if (e.isDir) {
             dl->AddRectFilled(ib0, ib1, ImGui::GetColorU32(ImGuiCol_Tab, 0.4f), 4.0f);
-            const ImVec2 ts = ImGui::CalcTextSize("目录");
+            const char* dirLabel = tr("fp.dir_tile");
+            const ImVec2 ts = ImGui::CalcTextSize(dirLabel);
             dl->AddText(ImVec2((ib0.x + ib1.x - ts.x) * 0.5f, (ib0.y + ib1.y - ts.y) * 0.5f),
-                        ImGui::GetColorU32(ImGuiCol_Text, 0.65f), "目录");
+                        ImGui::GetColorU32(ImGuiCol_Text, 0.65f), dirLabel);
         } else if (void* tex = thumbcache::Get(full.string(), &iw, &ih); tex) {
             const float s = std::min((ib1.x - ib0.x) / (float)iw,
                                      (ib1.y - ib0.y) / (float)ih);

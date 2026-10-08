@@ -1,0 +1,13 @@
+{
+  "console.clear": "清除",
+
+  "console.level_info": "信息",
+  "console.level_warn": "警告",
+  "console.level_error": "错误",
+
+  "console.auto_scroll": "自动滚动",
+  "console.collapse": "折叠",
+
+  "console.copy_all": "复制全部（按过滤）",
+  "console.copy_last": "复制最近一条"
+}

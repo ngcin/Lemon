@@ -1,0 +1,17 @@
+{
+  "fp.up": "↑ 上级",
+  "fp.select_this_dir": "选择此目录",
+  "fp.new_folder": "＋ 新建目录",
+
+  "fp.view_list": "列表",
+  "fp.view_thumbs": "缩略图",
+
+  "fp.path_hint": "路径（绝对，回车直达）",
+  "fp.path_tooltip": "输入绝对路径后回车：目录 = 进入；文件 = 选中并填入文件名",
+
+  "fp.selected_fmt": "已选 {0} 项（Shift 连选 · Ctrl 加选 · Ctrl+A 全选 · 双击确认）",
+  "fp.open": "打开",
+
+  "fp.dir_prefix": "[目录] ",
+  "fp.dir_tile": "目录"
+}

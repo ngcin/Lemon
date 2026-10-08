@@ -1,0 +1,19 @@
+{
+  "prof.plot_overlay_fmt": "avg {0}ms  max {1}ms",
+  "prof.timing_gpu_fmt": "GPU {0} ms   CPU(fps) {1}",
+  "prof.timing_cpu_fmt": "CPU(fps) {0}",
+
+  "prof.col_system": "system",
+  "prof.col_last": "last",
+  "prof.col_max": "max",
+  "prof.col_runs": "runs",
+
+  "prof.gc_per_frame_fmt": "C# GC alloc/frame: {0} B",
+  "prof.gc_hot": "  ⚠ hot-path allocation (red threshold, 04 §5)",
+  "prof.gc_zero": " (zero alloc ✔)",
+  "prof.gc_no_host": "GC: no script host (--script / project Game/)",
+  "prof.hot_reload_fmt": "Hot reloads: {0} | old domains not collected: {1} (about {2} KB, ADR-010 line A known limitation)",
+
+  "prof.reset_peaks": "Reset Peaks",
+  "prof.gpu_col": "GPU column"
+}

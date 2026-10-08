@@ -1,0 +1,17 @@
+{
+  "fp.up": "↑ Parent",
+  "fp.select_this_dir": "Select This Folder",
+  "fp.new_folder": "＋ New Folder",
+
+  "fp.view_list": "List",
+  "fp.view_thumbs": "Thumbnails",
+
+  "fp.path_hint": "Path (absolute, press Enter to jump)",
+  "fp.path_tooltip": "Type an absolute path and press Enter: a directory is entered; a file is selected and fills the name field",
+
+  "fp.selected_fmt": "{0} selected (Shift range · Ctrl toggle · Ctrl+A all · double-click to confirm)",
+  "fp.open": "Open",
+
+  "fp.dir_prefix": "[D] ",
+  "fp.dir_tile": "Folder"
+}

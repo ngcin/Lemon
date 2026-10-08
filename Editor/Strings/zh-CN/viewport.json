@@ -1,0 +1,12 @@
+{
+  "vp.aspect_free": "自由",
+  "vp.aspect_tooltip": "游戏视野宽高比（letterbox）",
+  "vp.aspect_label": "宽高比",
+
+  "vp.status_fmt": "缩放 {0}x  中心 ({1}, {2})  可见 {3}",
+  "vp.offscreen_hint": "选中对象在视野外 —— 按 F 聚焦",
+
+  "vp.input_routed": "输入已路由至 Play World（WASD/空格；对话框=点击或数字键）",
+  "vp.click_to_focus": "点击聚焦后键鼠进游戏",
+  "vp.cards_hint": "点击或按数字键选择（对话框 = 1）"
+}

@@ -5,6 +5,7 @@
 // Gizmo 拖拽 = Transform 直写 + dirty；Undo 属性轨 M4.3 接入（拖拽合并）。
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 
 #include "App/EditorApp.h"
@@ -14,6 +15,7 @@
 #include "ECS/Hierarchy.h"
 #include "EditorContext.h"
 #include "Interaction/ViewportRenderer.h"
+#include "Localization/Localization.h"
 #include "Panels/BuiltInPanels.h"
 #include "imgui.h"
 #include "imgui_internal.h" // GImGui（smoke-drag 诊断：ActiveId 归属）
@@ -95,8 +97,11 @@ void PushOverlayRectSnapped(ViewportRenderer& vr, const Camera2D& cam, uint32_t 
 
 // -------------------------------------------------------------- SceneView --
 void SceneViewPanel::OnGui(EditorApp& app) {
+    using lemon::editor::loc::tr;
     bool winOpen = true;
-    if (!ImGui::Begin("Scene", &winOpen,
+    // 标题 = 本地化显示名 + ###稳定 ID（窗口身份/停靠/ini 持久化不随语言变）
+    const std::string title = std::string(tr("panel.scene")) + "###" + Name();
+    if (!ImGui::Begin(title.c_str(), &winOpen,
                       ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar |
                           ImGuiWindowFlags_NoScrollWithMouse)) {
         ImGui::End();
@@ -352,10 +357,18 @@ void SceneViewPanel::OnGui(EditorApp& app) {
     }
     // 视口角标
     ImGui::SetCursorPos(ImVec2(6, 6));
-    ImGui::TextDisabled("zoom %.2fx  center (%.0f, %.0f)  visible %u", cam.zoom, cam.center.x,
-                        cam.center.y, vr.LastSceneVisible());
+    {
+        char zoomBuf[16], cxBuf[16], cyBuf[16];
+        std::snprintf(zoomBuf, sizeof(zoomBuf), "%.2f", cam.zoom);
+        std::snprintf(cxBuf, sizeof(cxBuf), "%.0f", cam.center.x);
+        std::snprintf(cyBuf, sizeof(cyBuf), "%.0f", cam.center.y);
+        ImGui::TextDisabled("%s",
+                            loc::trFmt("vp.status_fmt", {zoomBuf, cxBuf, cyBuf,
+                                       std::to_string(vr.LastSceneVisible())})
+                                .c_str());
+    }
     if (vr.LastSceneVisible() == 0 && !ctx.Primary().IsNull())
-        ImGui::TextDisabled("选中对象在视野外 —— 按 F 聚焦");
+        ImGui::TextDisabled("%s", tr("vp.offscreen_hint"));
 
     ImGui::EndChild();
     ImGui::End();
@@ -761,8 +774,11 @@ void SceneViewPanel::DrawGizmoHandles(EditorApp& app, ViewportRenderer& vr, ecs:
 
 // -------------------------------------------------------------- GameView --
 void GameViewPanel::OnGui(EditorApp& app) {
+    using lemon::editor::loc::tr;
     bool winOpen = true;
-    if (!ImGui::Begin("Game", &winOpen,
+    // 标题 = 本地化显示名 + ###稳定 ID（窗口身份/停靠/ini 持久化不随语言变）
+    const std::string title = std::string(tr("panel.game")) + "###" + Name();
+    if (!ImGui::Begin(title.c_str(), &winOpen,
                       ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar |
                           ImGuiWindowFlags_NoScrollWithMouse)) {
         ImGui::End();
@@ -772,12 +788,12 @@ void GameViewPanel::OnGui(EditorApp& app) {
     if (!winOpen) app.ClosePanel("Game");
     ViewportRenderer& vr = app.Viewport();
     // M4.7c：Aspect 下拉（Free/16:9/4:3/1:1）——替代固定 16:9 letterbox
-    static const char* kAspects[] = {"Free", "16:9", "4:3", "1:1"};
+    const char* aspects[] = {tr("vp.aspect_free"), "16:9", "4:3", "1:1"};
     ImGui::SetNextItemWidth(88.0f);
-    ImGui::Combo("##aspect", &aspectIdx_, kAspects, 4);
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", "游戏视野宽高比（letterbox）");
+    ImGui::Combo("##aspect", &aspectIdx_, aspects, 4);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("vp.aspect_tooltip"));
     ImGui::SameLine();
-    ImGui::TextDisabled("Aspect");
+    ImGui::TextDisabled("%s", tr("vp.aspect_label"));
     ImGui::BeginChild("gv", ImVec2(0, 0), ImGuiChildFlags_None,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     const ImVec2 avail = ImGui::GetContentRegionAvail();
@@ -814,8 +830,8 @@ void GameViewPanel::OnGui(EditorApp& app) {
         if (app.Ctx().Playing()) {
             ImGui::SetCursorPos(ImVec2(6, 6));
             ImGui::TextDisabled("%s", ImGui::IsWindowFocused() && ImGui::IsWindowHovered()
-                                         ? "输入已路由至 Play World（WASD/空格；对话框=点击或数字键）"
-                                         : "点击聚焦后键鼠进游戏");
+                                         ? tr("vp.input_routed")
+                                         : tr("vp.click_to_focus"));
             // M5 批①：Game RT UI 通道——C# Lemon.Ui.Set 写 World.RtUi 定长槽，
             // Play 时叠画在游戏画面左上角（M8 完整 HUD 前的最小形态；frac≥0 附进度条）
             // M5 批④：color 非 0 时文本与进度条着色（ABGR；模板血条/经验/计时惯例色）
@@ -865,7 +881,7 @@ void GameViewPanel::OnGui(EditorApp& app) {
                     anyBtn = true;
                 }
                 ImGui::Spacing();
-                ImGui::TextDisabled("%s", "点击或按数字键选择（对话框 = 1）");
+                ImGui::TextDisabled("%s", tr("vp.cards_hint"));
                 // 数字键选择（Game 面板或卡片窗任一聚焦即生效；模拟已冻结无输入冲突；
                 // 空槽键位无效——单按钮对话框按 2/3 不写越界 pick）
                 if (gvFocus || ImGui::IsWindowFocused())

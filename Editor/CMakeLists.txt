@@ -69,8 +69,10 @@ add_executable(lemon-editor
   App/EditorAppFinal.cpp
   App/EditorAppUiBridge.cpp
   App/EditorAppScriptReload.cpp
+  App/EditorSettings.cpp
   App/RecentProjects.cpp
   App/ImGuiBackend.cpp
+  Localization/Localization.cpp
   Panels/Panels.cpp
   Panels/AnimationPanel.cpp
   Panels/AssetBrowserPanel.cpp
@@ -101,6 +103,10 @@ endif()
 # M5 批④：模板项目源根（向导 vs-survivor 分支 / --gen-vs-template / --smoke-template）
 target_compile_definitions(lemon-editor PRIVATE
   LEMON_TEMPLATE_DIR="${CMAKE_SOURCE_DIR}/Templates")
+
+# M7c 批③：编辑器 UI 文案翻译源（Strings/<lang>/*.json；启动扫描装载，改动免编译）
+target_compile_definitions(lemon-editor PRIVATE
+  LEMON_EDITOR_STRINGS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Strings")
 
 # M6a 批③b（ADR-014）：引擎 UI 正字随仓库（Noto Sans SC，OFL——Engine/Ui/Fonts；
 # EditorApp 经此宏装载为 RmlUi fallback 字体；打包 runtime 的字体分发形态归 M8）

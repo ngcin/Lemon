@@ -1,0 +1,10 @@
+{
+  "panel.hierarchy": "层级",
+  "panel.inspector": "检查器",
+  "panel.scene": "场景",
+  "panel.game": "游戏",
+  "panel.assets": "资源",
+  "panel.console": "控制台",
+  "panel.animation": "动画",
+  "panel.profiler": "性能分析器"
+}

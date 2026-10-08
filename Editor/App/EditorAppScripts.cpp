@@ -26,6 +26,7 @@
 #include "Assets/ProjectFile.h" // M7c 批①：LoadProjectFile（fxFont 装载）
 #include "Assets/ProjectWizard.h"
 #include "Interaction/ViewportRenderer.h"
+#include "Localization/Localization.h"
 #include "Tooling/ThumbCache.h"
 #include "Core/Log.h"
 #include "EditorContext.h"
@@ -479,14 +480,13 @@ void EditorApp::MenuNewProject() { wizOpen_ = true; }
 
 void EditorApp::DrawRecoveryModal() {
     if (recoveryPath_.empty()) return;
-    if (!ImGui::IsPopupOpen("崩溃恢复") && !recoveryAnswered_) ImGui::OpenPopup("崩溃恢复");
-    if (!ImGui::BeginPopupModal("崩溃恢复", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
-    ImGui::Text("检测到较新的自动备份：\n%s", recoveryPath_.c_str());
-    ImGui::TextUnformatted(
-        "（上次会话可能未正常保存。恢复 = 打开备份内容并保持未保存状态；\n"
-        "忽略 = 本次不处理，下次启动仍会提示；忽略并删除 = 丢弃备份，不再提示）");
+    const char* id = loc::tr("recovery.title");
+    if (!ImGui::IsPopupOpen(id) && !recoveryAnswered_) ImGui::OpenPopup(id);
+    if (!ImGui::BeginPopupModal(id, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    ImGui::Text("%s", loc::trFmt("recovery.body_fmt", {recoveryPath_}).c_str());
+    ImGui::TextUnformatted(loc::tr("recovery.hint"));
     ImGui::Separator();
-    if (ImGui::Button("恢复", ImVec2(120, 0))) {
+    if (ImGui::Button(loc::tr("recovery.restore"), ImVec2(120, 0))) {
         if (ctx_.OpenSceneRecovery(recoveryPath_))
             LEMON_LOG("崩溃恢复：已载入备份（Ctrl+S 落盘）");
         else
@@ -495,12 +495,12 @@ void EditorApp::DrawRecoveryModal() {
         ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
-    if (ImGui::Button("忽略", ImVec2(120, 0))) { // 只关本会话弹窗，文件保留（热修④）
+    if (ImGui::Button(loc::tr("recovery.ignore"), ImVec2(120, 0))) { // 只关本会话弹窗，文件保留（热修④）
         recoveryPath_.clear();
         ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
-    if (ImGui::Button("忽略并删除", ImVec2(120, 0))) { // 丢弃备份——否则 untitled 永弹
+    if (ImGui::Button(loc::tr("recovery.ignore_delete"), ImVec2(120, 0))) { // 丢弃备份——否则 untitled 永弹
         if (!ctx_.DiscardAutosave(recoveryPath_))
             LEMON_WARN("丢弃自动备份失败（文件已在/权限？）——下次启动可能仍会提示");
         recoveryPath_.clear();

@@ -1,0 +1,10 @@
+{
+  "panel.hierarchy": "Hierarchy",
+  "panel.inspector": "Inspector",
+  "panel.scene": "Scene",
+  "panel.game": "Game",
+  "panel.assets": "Assets",
+  "panel.console": "Console",
+  "panel.animation": "Animation",
+  "panel.profiler": "Profiler"
+}

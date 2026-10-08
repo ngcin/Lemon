@@ -1,0 +1,18 @@
+{
+  "hier.search_hint": "Search entity names...",
+  "hier.create": "+ Create",
+  "hier.create_empty": "Empty Entity",
+  "hier.create_sprite": "Sprite Entity",
+  "hier.create_ui_doc": "UI Document",
+  "hier.ui_pick_title": "Choose UI Document",
+  "hier.ui_pick_body": "Pick the .rml document asset to attach:",
+  "hier.ui_pick_empty": "No .rml assets in the project — put one under Assets/UI/ first",
+  "hier.ctx_create_empty": "Create Empty Entity",
+  "hier.ctx_create_sprite": "Create Sprite",
+  "hier.ctx_create_ui_doc": "Create UI Document",
+  "hier.rename_f2": "Rename (F2)",
+  "hier.duplicate_ctrl_d": "Duplicate (Ctrl+D)",
+  "hier.detach": "Detach From Parent",
+  "hier.make_prefab": "Make Prefab (export + link back)",
+  "hier.delete_del": "Delete (Del)"
+}

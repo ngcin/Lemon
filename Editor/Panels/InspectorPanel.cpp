@@ -16,6 +16,7 @@
 #include "Core/Log.h"
 #include "ECS/ComponentRegistry.h"
 #include "EditorContext.h"
+#include "Localization/Localization.h"
 #include "Panels/BuiltInPanels.h"
 #include "Scripting/ScriptBox.h"
 #include "Tooling/TestHooks.h"
@@ -40,6 +41,19 @@ const ecs::FieldEditorMeta& EdOf(const ComponentMeta& meta, uint16_t i) {
 bool ProtectedComponent(const char* name) {
     return std::strcmp(name, "Transform2D") == 0 || std::strcmp(name, "Meta") == 0 ||
            std::strcmp(name, "DestroyQueueTag") == 0;
+}
+
+/// 反射显示名映射（i18n 批4 §B）：组件/字段名来自 ComponentRegistry（英文注册名
+/// = 序列化键，绝不能动），仅显示层本地化——key = "display.<Comp>" /
+/// "display.<Comp>.<field>"（Editor/Strings/<lang>/display.json，中文术语与
+/// Unity/Godot 官方简中对齐）。loc::tr 缺 key 返回 key 原文（带 "display." 前缀，
+/// 不能直接显示）→ 命中判定：返回串与 key 相同（未命中）则回退原始反射名。
+/// 未登记名每个进程只 WARN 一条（tr 内去重），界面仍显示英文原名，天然兜底。
+const char* DisplayName(const char* comp, const char* field = nullptr) {
+    const std::string key = field ? "display." + std::string(comp) + "." + field
+                                  : "display." + std::string(comp);
+    const char* t = loc::tr(key.c_str());
+    return std::strcmp(t, key.c_str()) == 0 ? (field ? field : comp) : t;
 }
 
 /// Team 下拉名（TeamTable 无名表——M4.4 teams.json 资产化后换真名）。
@@ -170,6 +184,8 @@ bool DrawEnumControl(const FieldMeta& f, const FieldEditorMeta& ed, uint8_t* p) 
 /// 赋值同时置 flags.enabled——「指定了图片 = 要显示」（也救旧档 flags=0 的禁用实例；
 /// 2026-09-21：默认禁用 + 提取静默跳过曾使 Add Component 路径完全不显示）。
 bool DrawSpriteSlot(EditorApp& app, uint8_t* p, ecs::SpriteRenderer& sr) {
+    using lemon::editor::loc::tr;
+    using lemon::editor::loc::trFmt;
     EditorContext& ctx = app.Ctx();
     AssetDatabase& db = ctx.Assets();
     uint32_t& id = *(uint32_t*)p;
@@ -190,9 +206,10 @@ bool DrawSpriteSlot(EditorApp& app, uint8_t* p, ecs::SpriteRenderer& sr) {
         std::snprintf(label, sizeof(label), "%s%s", entry->missing ? "⚠ " : "",
                       entry->FileName().c_str());
     else if (id != 0)
-        std::snprintf(label, sizeof(label), "内置 #%u", id);
+        std::snprintf(label, sizeof(label), "%s",
+                      trFmt("insp.sprite_builtin_fmt", {std::to_string(id)}).c_str());
     else
-        std::snprintf(label, sizeof(label), "(无)");
+        std::snprintf(label, sizeof(label), "%s", tr("insp.none"));
     ImGui::SetNextItemWidth(-1);
     if (ImGui::BeginCombo("##v", label)) {
         for (const auto& e : db.Entries()) {
@@ -226,7 +243,7 @@ bool DrawSpriteSlot(EditorApp& app, uint8_t* p, ecs::SpriteRenderer& sr) {
         ImGui::EndDragDropTarget();
     }
     if (ImGui::BeginPopupContextItem("slot_ctx")) {
-        if (ImGui::MenuItem("清空引用")) {
+        if (ImGui::MenuItem(tr("insp.clear_ref"))) {
             id = 0;
             sr.spriteGuid = 0; // M6a 批⓪ T2：双清（防残留 guid 在下轮装载复活旧引用）
             ctx.dirty = true;
@@ -240,6 +257,8 @@ bool DrawSpriteSlot(EditorApp& app, uint8_t* p, ecs::SpriteRenderer& sr) {
 /// （Animator2D.clipId；映射约定同 prefabId）。下拉全列 / AssetBrowser 拖入（kind 4）/
 /// 右键清空。写入就地完成（combo 尾置 → 属性轨由 Deactivated 捕获）。
 bool DrawClipSlot(EditorApp& app, uint8_t* p) {
+    using lemon::editor::loc::tr;
+    using lemon::editor::loc::trFmt;
     EditorContext& ctx = app.Ctx();
     AssetDatabase& db = ctx.Assets();
     uint32_t& id = *(uint32_t*)p;
@@ -249,10 +268,13 @@ bool DrawClipSlot(EditorApp& app, uint8_t* p) {
     if (entry)
         std::snprintf(label, sizeof(label), "%s%s", entry->missing ? "⚠ " : "",
                       entry->relPath.c_str());
-    else if (id != 0)
-        std::snprintf(label, sizeof(label), "悬空 clip %08x", id);
-    else
-        std::snprintf(label, sizeof(label), "(无 clip · M2 纯计时)");
+    else if (id != 0) {
+        char hex[16];
+        std::snprintf(hex, sizeof(hex), "%08x", id);
+        std::snprintf(label, sizeof(label), "%s",
+                      trFmt("insp.clip_dangling_fmt", {hex}).c_str());
+    } else
+        std::snprintf(label, sizeof(label), "%s", tr("insp.clip_none"));
     ImGui::SetNextItemWidth(-1);
     if (ImGui::BeginCombo("##clipv", label)) {
         for (const auto& e : db.Entries()) {
@@ -279,9 +301,9 @@ bool DrawClipSlot(EditorApp& app, uint8_t* p) {
         ImGui::EndDragDropTarget();
     }
     if (ImGui::BeginPopupContextItem("clip_ctx")) {
-        if (ImGui::MenuItem("在动画工作台打开") && entry)
+        if (ImGui::MenuItem(tr("insp.open_in_anim")) && entry)
             app.OpenAnimationEditor(entry->guid); // T3c：归属集解析在 EditorApp 汇聚
-        if (ImGui::MenuItem("清空引用")) {
+        if (ImGui::MenuItem(tr("insp.clear_ref"))) {
             id = 0;
             ctx.dirty = true;
         }
@@ -296,6 +318,7 @@ bool DrawClipSlot(EditorApp& app, uint8_t* p) {
 /// 写入就地完成（combo 尾置 → 属性轨由 Deactivated 捕获，DrawClipSlot 同款）。
 bool DrawGuidSlot(EditorApp& app, uint8_t* p, AssetType type, uint8_t dragKind,
                   const char* noneLabel) {
+    using lemon::editor::loc::trFmt;
     EditorContext& ctx = app.Ctx();
     AssetDatabase& db = ctx.Assets();
     uint64_t& guid = *(uint64_t*)p;
@@ -305,9 +328,12 @@ bool DrawGuidSlot(EditorApp& app, uint8_t* p, AssetType type, uint8_t dragKind,
     if (entry)
         std::snprintf(label, sizeof(label), "%s%s", entry->missing ? "⚠ " : "",
                       entry->relPath.c_str());
-    else if (guid != 0)
-        std::snprintf(label, sizeof(label), "悬空 %016llx", (unsigned long long)guid);
-    else
+    else if (guid != 0) {
+        char hex[24];
+        std::snprintf(hex, sizeof(hex), "%016llx", (unsigned long long)guid);
+        std::snprintf(label, sizeof(label), "%s",
+                      trFmt("insp.guid_dangling_fmt", {hex}).c_str());
+    } else
         std::snprintf(label, sizeof(label), "%s", noneLabel);
     ImGui::SetNextItemWidth(-1);
     if (ImGui::BeginCombo("##guidv", label)) {
@@ -335,7 +361,7 @@ bool DrawGuidSlot(EditorApp& app, uint8_t* p, AssetType type, uint8_t dragKind,
         ImGui::EndDragDropTarget();
     }
     if (ImGui::BeginPopupContextItem("guid_ctx")) {
-        if (ImGui::MenuItem("清空引用")) {
+        if (ImGui::MenuItem(loc::tr("insp.clear_ref"))) {
             guid = 0;
             ctx.dirty = true;
         }
@@ -410,6 +436,8 @@ bool ResetIconButton(float size) {
 enum class FieldResult { Unchanged, Edited, ResetToDefault };
 FieldResult DrawField(EditorApp& app, const ecs::ComponentMeta& meta, ecs::Entity e,
                       uint64_t guid, const FieldMeta& f, const FieldEditorMeta& ed, void* comp) {
+    using lemon::editor::loc::tr;
+    using lemon::editor::loc::trFmt;
     EditorContext& ctx = app.Ctx();
     uint8_t* p = (uint8_t*)comp + f.offset;
     const char* compName = meta.name;
@@ -418,7 +446,7 @@ FieldResult DrawField(EditorApp& app, const ecs::ComponentMeta& meta, ecs::Entit
     ImGui::PushID(f.name);
     ImGui::TableNextRow();
     ImGui::TableNextColumn();
-    ImGui::TextUnformatted(f.name);
+    ImGui::TextUnformatted(DisplayName(compName, f.name)); // 显示名本地化（ID 用 PushID 原名）
     if (ed.tooltip && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", ed.tooltip);
     // label-scrub（M4.7d）：数值字段的名字可拖（hover 下划线 + 双向箭头光标）；
     // dx 由下方数值分支消费，Shift = 浮点 ×0.1 微调。开始/结束沿经
@@ -488,7 +516,8 @@ FieldResult DrawField(EditorApp& app, const ecs::ComponentMeta& meta, ecs::Entit
                 resetDone = true;
             }
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("%s.%s 恢复默认值", meta.name, f.name);
+                ImGui::SetTooltip("%s", trFmt("insp.reset_field_tip_fmt", {meta.name, f.name})
+                                            .c_str());
         }
     }
     ImGui::TableNextColumn();
@@ -497,7 +526,7 @@ FieldResult DrawField(EditorApp& app, const ecs::ComponentMeta& meta, ecs::Entit
     bool changed = false;
 
     if (ecs::HasHint(ed.hints, FieldHint::Hide)) {
-        ImGui::TextDisabled("(internal)");
+        ImGui::TextDisabled("%s", tr("insp.internal"));
     } else if (ecs::HasHint(ed.hints, FieldHint::AssetRef) && f.type == FieldType::UInt32) {
         // AssetRef 槽当前仅 SpriteRenderer.spriteId（ED_ASSET 全目录唯一）→ 可取整组件
         // 写入就地完成（combo 尾置 → 属性轨由 Deactivated 捕获）
@@ -505,16 +534,16 @@ FieldResult DrawField(EditorApp& app, const ecs::ComponentMeta& meta, ecs::Entit
     } else if (ecs::HasHint(ed.hints, FieldHint::ClipRef) && f.type == FieldType::UInt32) {
         DrawClipSlot(app, p); // M5 批③：Animator2D.clipId（写入就地完成）
     } else if (ecs::HasHint(ed.hints, FieldHint::AnimSetRef) && f.type == FieldType::UInt64) {
-        DrawGuidSlot(app, p, AssetType::AnimSet, 6, "(无集 · 按名回退当前段所属集)");
+        DrawGuidSlot(app, p, AssetType::AnimSet, 6, tr("insp.animset_none"));
     } else if (ecs::HasHint(ed.hints, FieldHint::ControllerRef) && f.type == FieldType::UInt64) {
-        DrawGuidSlot(app, p, AssetType::Controller, 7, "(无状态机 · 仅集绑定)");
+        DrawGuidSlot(app, p, AssetType::Controller, 7, tr("insp.controller_none"));
     } else if (ecs::HasHint(ed.hints, FieldHint::RmlRef) && f.type == FieldType::UInt64) {
         // 批③d 前置：UIDocument.sourceAssetGuid（0 = 未挂，进 Play 不装载该屏）
-        DrawGuidSlot(app, p, AssetType::Rml, 8, "(未挂 .rml · 进 Play 不装载)");
+        DrawGuidSlot(app, p, AssetType::Rml, 8, tr("insp.rml_none"));
     } else if (ecs::HasHint(ed.hints, FieldHint::AudioRef) && f.type == FieldType::UInt64) {
         // M6c 批③：AudioSource.clipGuid（0 = 无片静默；AudioSystem 红字告警面在
         // 悬空 guid ≠ 0 时——无片是有意的合法态）
-        DrawGuidSlot(app, p, AssetType::Audio, 10, "(无片 · 静默)");
+        DrawGuidSlot(app, p, AssetType::Audio, 10, tr("insp.audio_none"));
     } else if (ecs::HasHint(ed.hints, FieldHint::Enum)) {
         changed = DrawEnumControl(f, ed, p);
     } else if (ecs::HasHint(ed.hints, FieldHint::ColorHex) && f.type == FieldType::UInt32) {
@@ -630,9 +659,9 @@ FieldResult DrawField(EditorApp& app, const ecs::ComponentMeta& meta, ecs::Entit
             }
             case FieldType::EntityRef: {
                 uint64_t ref = *(uint64_t*)p;
-                ImGui::Text("%s%llu", ref ? "" : "(null) ", (unsigned long long)ref);
+                ImGui::Text("%s%llu", ref ? "" : tr("insp.null_ref"), (unsigned long long)ref);
                 if (ref && ImGui::BeginPopupContextItem("ref_ctx")) {
-                    if (ImGui::MenuItem("选中该实体")) {
+                    if (ImGui::MenuItem(tr("insp.select_entity"))) {
                         ecs::Entity found{};
                         ctx.ActiveScene().Each([&](ecs::Entity en) {
                             if ((en.id & 0xFFFFFFFFull) == (ref & 0xFFFFFFFFull)) found = en;
@@ -684,8 +713,12 @@ FieldResult DrawField(EditorApp& app, const ecs::ComponentMeta& meta, ecs::Entit
 } // namespace
 
 void InspectorPanel::OnGui(EditorApp& app) {
+    using lemon::editor::loc::tr;
+    using lemon::editor::loc::trFmt;
+    // 窗口标题本地化；### 后段（=Name()）保窗口身份/停靠/ini 不随语言变
+    const std::string title = std::string(tr("panel.inspector")) + "###" + Name();
     bool winOpen = true;
-    if (!ImGui::Begin(Name(), &winOpen, ImGuiWindowFlags_NoCollapse)) {
+    if (!ImGui::Begin(title.c_str(), &winOpen, ImGuiWindowFlags_NoCollapse)) {
         ImGui::End();
         if (!winOpen) app.ClosePanel(Name()); // × 关闭（T3b-8；Window 菜单可重开）
         return;
@@ -696,14 +729,14 @@ void InspectorPanel::OnGui(EditorApp& app) {
     // 编辑态改 → Play 验证（波次表/数值全是编辑态可改的字段）
     if (ctx.Playing()) {
         ImGui::PushStyleColor(ImGuiCol_Text, theme::kTextWarn);
-        ImGui::TextUnformatted("▶ Play 模式：改动随 Stop 丢弃（ADR-011）");
+        ImGui::TextUnformatted(tr("insp.play_banner"));
         ImGui::PopStyleColor();
         ImGui::Separator();
     }
     ctx.PruneSelection();
     ecs::Entity e = ctx.Primary();
     if (e.IsNull()) {
-        ImGui::TextDisabled("未选中实体（在 Hierarchy 点击选择）");
+        ImGui::TextDisabled("%s", tr("insp.no_selection"));
         ImGui::End();
         return;
     }
@@ -728,14 +761,17 @@ void InspectorPanel::OnGui(EditorApp& app) {
         if (m->prefabId) {
             const AssetEntry* pf = ctx.Assets().FindByGuid(m->prefabId);
             ImGui::PushStyleColor(ImGuiCol_Text, theme::kTextWarn);
-            ImGui::Text("Prefab 实例：%s", pf ? pf->FileName().c_str() : "⚠ 源资产缺失");
+            ImGui::Text("%s", trFmt("insp.prefab_instance_fmt",
+                                    {pf ? std::string_view(pf->FileName().c_str())
+                                        : std::string_view(tr("insp.prefab_source_missing"))})
+                                  .c_str());
             ImGui::PopStyleColor();
-            if (ImGui::Button("Apply")) { // 实例写回源（含子树）
+            if (ImGui::Button(tr("insp.prefab_apply"))) { // 实例写回源（含子树）
                 ctx.ApplyPrefabInstance(e);
                 ctx.dirty = true;
             }
             ImGui::SameLine();
-            if (ImGui::Button("Revert")) { // 整体回到源资产态（destroy + 重建）
+            if (ImGui::Button(tr("insp.prefab_revert"))) { // 整体回到源资产态（destroy + 重建）
                 const std::string before = ctx.SnapshotSceneJson();
                 const bool ok = ctx.RevertPrefabInstance(e);
                 if (!ok) LEMON_WARN("Revert 失败（源资产缺失？）");
@@ -746,7 +782,7 @@ void InspectorPanel::OnGui(EditorApp& app) {
                 return;
             }
             ImGui::SameLine();
-            if (ImGui::Button("Break")) { // 断链成普通实体
+            if (ImGui::Button(tr("insp.prefab_break"))) { // 断链成普通实体
                 const std::string before = ctx.SnapshotSceneJson();
                 ctx.BreakPrefabInstance(e);
                 if (!ctx.Playing()) ctx.PushStructuralUndo("Prefab Break", before);
@@ -767,22 +803,24 @@ void InspectorPanel::OnGui(EditorApp& app) {
     // 每槽一 combo + 移除；同类型唯一——已挂类型菜单置灰）----
     scripting::ScriptBox* sb = ctx.ActiveScene().TryGet<scripting::ScriptBox>(e);
     if (sb) {
-        if (ImGui::CollapsingHeader("Script", ImGuiTreeNodeFlags_DefaultOpen)) {
+        // 标题本地化 + ### 后缀保 header ID 不随语言变（展开态不丢）
+        const std::string scriptHeader = std::string(tr("insp.script")) + "###Script";
+        if (ImGui::CollapsingHeader(scriptHeader.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
             const auto& names = ctx.ScriptTypeNames();
             for (uint32_t i = 0; i < sb->count; ++i) {
                 scripting::ScriptSlot& s = sb->slots[i];
                 ImGui::PushID((int)i);
                 char cur[40];
-                std::snprintf(cur, sizeof(cur), "%s%s", s.className[0] ? "" : "(未选) ",
-                              s.className);
+                std::snprintf(cur, sizeof(cur), "%s%s",
+                              s.className[0] ? "" : tr("insp.script_none"), s.className);
                 ImGui::SetNextItemWidth(-52);
                 if (ImGui::BeginCombo("##script", cur)) {
                     for (const std::string& n : names) {
                         const bool taken = scripting::FindSlot(*sb, n.c_str()) >= 0 &&
                                            n != s.className;
                         char item[72];
-                        std::snprintf(item, sizeof(item), "%s%s", taken ? "已挂 " : "",
-                                      n.c_str());
+                        std::snprintf(item, sizeof(item), "%s%s",
+                                      taken ? tr("insp.script_attached") : "", n.c_str());
                         if (!ImGui::Selectable(item, n == s.className,
                                                taken ? ImGuiSelectableFlags_Disabled : 0))
                             continue;
@@ -807,13 +845,19 @@ void InspectorPanel::OnGui(EditorApp& app) {
                     ImGui::EndCombo();
                 }
                 if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("脚本类型（C# Behaviours 注册表；热重载 M4.5）\n"
-                                      "资产 guid %s\ntypeId %d  %s",
-                                      s.scriptGuid
-                                          ? AssetDatabase::GuidToHex(s.scriptGuid).c_str()
-                                          : "(无 .cs 资产关联)",
-                                      s.typeId,
-                                      s.typeId >= 0 ? "已解析" : "未解析（Play 时按名装配）");
+                    ImGui::SetTooltip("%s",
+                                      trFmt("insp.script_tooltip",
+                                            {s.scriptGuid ? AssetDatabase::GuidToHex(
+                                                                s.scriptGuid)
+                                                                .c_str()
+                                                          : std::string_view(
+                                                                tr("insp.script_no_asset")),
+                                             std::to_string(s.typeId),
+                                             s.typeId >= 0
+                                                 ? std::string_view(tr("insp.script_resolved"))
+                                                 : std::string_view(
+                                                       tr("insp.script_unresolved"))})
+                                          .c_str());
                 ImGui::SameLine();
                 if (ImGui::SmallButton("×")) {
                     const std::string before = ctx.SnapshotSceneJson();
@@ -830,21 +874,24 @@ void InspectorPanel::OnGui(EditorApp& app) {
                         ctx.ActiveScene().Get<scripting::ScriptBox>(e).count <
                             scripting::kMaxScriptsPerEntity;
     if (!canAdd) ImGui::BeginDisabled();
-    if (ImGui::Button("Add Script")) ImGui::OpenPopup("add_script");
+    if (ImGui::Button(tr("insp.add_script"))) ImGui::OpenPopup("add_script");
     if (!canAdd) ImGui::EndDisabled();
     if (canAdd && ImGui::IsItemHovered())
-        ImGui::SetTooltip("挂 LemonBehaviour（每实体 ≤ %u，同类型唯一）",
-                          scripting::kMaxScriptsPerEntity);
+        ImGui::SetTooltip("%s",
+                          trFmt("insp.add_script_tooltip_fmt",
+                                {std::to_string(scripting::kMaxScriptsPerEntity)})
+                              .c_str());
     if (ImGui::BeginPopup("add_script")) {
         const auto& names = ctx.ScriptTypeNames();
-        if (names.empty()) ImGui::TextDisabled("（无脚本宿主：--script <dll> 或项目 Game/）");
+        if (names.empty()) ImGui::TextDisabled("%s", tr("insp.no_script_host"));
         for (const std::string& n : names) {
             // 同类型唯一：已挂类型置灰（入口闸的 UI 面；AttachScript 内再兜底）
             const scripting::ScriptBox* box =
                 ctx.ActiveScene().TryGet<scripting::ScriptBox>(e);
             const bool taken = box && scripting::FindSlot(*box, n.c_str()) >= 0;
             char item[72];
-            std::snprintf(item, sizeof(item), "%s%s", taken ? "已挂 " : "", n.c_str());
+            std::snprintf(item, sizeof(item), "%s%s",
+                          taken ? tr("insp.script_attached") : "", n.c_str());
             if (!ImGui::MenuItem(item, nullptr, false, !taken)) continue;
             // 关联同名 .cs 资产（文件 stem == 类名；找不到 = guid 0，仅类名装配）
             uint64_t guid = 0;
@@ -866,14 +913,14 @@ void InspectorPanel::OnGui(EditorApp& app) {
     }
 
     ImGui::Spacing();
-    if (ImGui::Button("Add Component", ImVec2(-1, 0))) ImGui::OpenPopup("add_comp");
+    if (ImGui::Button(tr("insp.add_component"), ImVec2(-1, 0))) ImGui::OpenPopup("add_comp");
     if (ImGui::BeginPopup("add_comp")) {
         for (uint16_t id = 0; id < reg.Count(); ++id) {
             const ComponentMeta& meta = reg.At(id);
             if (!meta.emplaceFn || !meta.hasFn) continue;
             if (ProtectedComponent(meta.name)) continue;
             if (meta.hasFn(ctx.ActiveScene(), e)) continue;
-            if (ImGui::MenuItem(meta.name)) {
+            if (ImGui::MenuItem(DisplayName(meta.name))) {
                 const std::string before = ctx.SnapshotSceneJson();
                 meta.emplaceFn(ctx.ActiveScene(), e);
                 ctx.dirty = true; // 新登记组件零编辑器代码即出现在此（验收点）
@@ -887,6 +934,8 @@ void InspectorPanel::OnGui(EditorApp& app) {
 }
 
 void InspectorPanel::DrawComponent(EditorApp& app, const ComponentMeta& meta, ecs::Entity e) {
+    using lemon::editor::loc::tr;
+    using lemon::editor::loc::trFmt;
     EditorContext& ctx = app.Ctx();
     void* comp = meta.getFn ? meta.getFn(ctx.ActiveScene(), e) : nullptr;
     if (!comp && meta.readFn) comp = const_cast<void*>(meta.readFn(ctx.ActiveScene(), e));
@@ -905,7 +954,10 @@ void InspectorPanel::DrawComponent(EditorApp& app, const ComponentMeta& meta, ec
     // 组件级 ID 作用域：字段表/控件 ID = 窗口/组件/字段——跨组件同名字段不撞
     // （Inspector ID 唯一性的外层保证；内层 = DrawField 的 PushID(f.name)）
     ImGui::PushID(meta.name);
-    if (ImGui::CollapsingHeader(meta.name, &open, ImGuiTreeNodeFlags_DefaultOpen)) {
+    // 组件头显示名本地化；### 后段（=注册名）保 header ID 不随语言变（展开态
+    // 与 PushID 作用域均按原名 hash，行为与旧版逐位一致）
+    const std::string header = std::string(DisplayName(meta.name)) + "###" + meta.name;
+    if (ImGui::CollapsingHeader(header.c_str(), &open, ImGuiTreeNodeFlags_DefaultOpen)) {
         // M4.8-a 组件级重置：右键组件头 → removeFn+emplaceFn 恢复默认值（Unity
         // Reset Component 同语义）。Meta 除外（guid = 身份，重置会断场景引用）；
         // Transform2D 可重置 = 归零（Unity 同）。弹窗 ID 在 PushID(meta.name)
@@ -913,7 +965,7 @@ void InspectorPanel::DrawComponent(EditorApp& app, const ComponentMeta& meta, ec
         if (ImGui::BeginPopupContextItem("comp_reset_ctx")) {
             const bool canReset = std::strcmp(meta.name, "Meta") != 0 &&
                                   meta.removeFn && meta.emplaceFn && !ctx.Playing();
-            if (ImGui::MenuItem("重置组件（恢复默认值）", nullptr, false, canReset)) {
+            if (ImGui::MenuItem(tr("insp.reset_component"), nullptr, false, canReset)) {
                 const std::vector<uint8_t> before = ctx.SnapshotComponent(e, meta.id);
                 meta.removeFn(ctx.ActiveScene(), e);
                 meta.emplaceFn(ctx.ActiveScene(), e);
@@ -971,12 +1023,19 @@ void InspectorPanel::DrawComponent(EditorApp& app, const ComponentMeta& meta, ec
                     pf = &a;
                     break;
                 }
-            if (pf)
-                ImGui::TextDisabled("prefab: %s (guid %016llx)", pf->relPath.c_str(),
-                                    (unsigned long long)pf->guid);
-            else
-                ImGui::TextDisabled("prefab: %s（填 prefab 资产 GUID 低 32 位）",
-                                    pid == 0 ? "未绑定" : "无效 id");
+            if (pf) {
+                char hex[24];
+                std::snprintf(hex, sizeof(hex), "%016llx", (unsigned long long)pf->guid);
+                ImGui::TextDisabled("%s", trFmt("insp.prefab_info_fmt",
+                                                {pf->relPath.c_str(), hex})
+                                              .c_str());
+            } else {
+                ImGui::TextDisabled("%s",
+                                    trFmt("insp.prefab_info_unbound_fmt",
+                                          {pid == 0 ? std::string_view(tr("insp.prefab_unbound"))
+                                                    : std::string_view(tr("insp.prefab_invalid"))})
+                                        .c_str());
+            }
         }
         // 属性轨提交：交互结束帧 = before(空闲缓存) vs after(现状)；空闲帧刷新缓存。
         // 顺序纪律：提交判定必须在前——ImGui 释放帧 IsItemActive 已翻 false 而
@@ -1024,7 +1083,7 @@ void InspectorPanel::DrawArraySeg(EditorApp& app, const ComponentMeta& meta, voi
     uint8_t count = seg.countOffset == 0xFFFF
                         ? (uint8_t)seg.maxCount
                         : *(const uint8_t*)((const uint8_t*)comp + seg.countOffset);
-    ImGui::TextDisabled("%s[%u]", seg.field, count);
+    ImGui::TextDisabled("%s[%u]", DisplayName(seg.comp, seg.field), count);
     if (!ImGui::BeginTable(seg.field, seg.elemFieldCount ? seg.elemFieldCount : 1,
                            ImGuiTableFlags_SizingStretchProp))
         return;
