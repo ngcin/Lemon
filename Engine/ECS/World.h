@@ -7,6 +7,7 @@
 
 #include <functional>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "Core/JobSystem.h"
@@ -123,6 +124,29 @@ public:
     Scene& CreateScene(const char* name);
     void SetActiveScene(Scene* scene) { active_ = scene; }
     Scene* ActiveScene() { return active_; }
+
+    // ---- 场景档案（ADR-017 D1；M7c 批⑥）----
+    // 档2 场景管理的元数据面：Play 世界单 registry + SceneMembership 分组（见
+    // SceneMembership.h），场景名/路径/装载态住 World。scenes_/active_（registry 面）
+    // 保留——编辑器 edit/play 双 registry 与 GameEntry 单场景现状不动；LoadScene
+    // 换场路径（批⑥b 编排）走档案 + membership，与 registry 面正交。句柄 0 保留
+    // （kSceneHandleUnassigned），发号从 1 起单调递增（进程内；跨进程恒等性由
+    // 装载次序保证——回放同序装载即同号）。
+    struct SceneRecord {
+        uint32_t handle = 0;
+        std::string name;      // 场景名（.scene "name" 段恢复；UI 显示面）
+        std::string path;      // 项目相对路径（ADR-017 D4 寻址：路径 > 唯一 stem）
+        bool isLoaded = false; // 装载态（BuildInto 成功后置位，换场编排维护）
+    };
+    uint32_t CreateSceneRecord(const char* name, const char* path = "");
+    uint32_t SceneRecordCount() const { return (uint32_t)sceneRecords_.size(); }
+    /// 返回指针指向 vector 元素——**持有期间不得 CreateSceneRecord**（扩容失效）；
+    /// 装载期建档、之后只读的编排形态天然安全（review 2026-10-08 F4 契约注记）
+    const SceneRecord* SceneRecordAt(uint32_t index) const; // 越界 = nullptr
+    SceneRecord* FindSceneRecord(uint32_t handle);
+    const SceneRecord* FindSceneRecord(uint32_t handle) const;
+    uint32_t ActiveSceneHandle() const { return activeSceneHandle_; }
+    void SetActiveSceneHandle(uint32_t handle) { activeSceneHandle_ = handle; }
 
     SystemPipeline& Pipeline() { return pipeline_; }
 
@@ -243,6 +267,9 @@ private:
     std::vector<std::unique_ptr<Rng>> systemRngs_;
     std::vector<std::unique_ptr<Scene>> scenes_;
     Scene* active_ = nullptr;
+    std::vector<SceneRecord> sceneRecords_;        // 档2 场景档案（批⑥；与 scenes_ 正交）
+    uint32_t activeSceneHandle_ = 0;               // kSceneHandleUnassigned = 无
+    uint32_t nextSceneHandle_ = 1;                 // 发号器（0 保留）
     SystemPipeline pipeline_;
     class SeparationSystem* separation_ = nullptr; // InstallDefaultSystems 填（生命周期同管线）
     RingQueue<EventPacket> events_;

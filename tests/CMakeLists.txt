@@ -7,6 +7,7 @@ add_executable(lemon-tests
   engine/CoreTests.cpp
   engine/RendererTests.cpp
   engine/EcsTests.cpp
+  engine/SceneTests.cpp
   engine/GameplayTests.cpp
   engine/AssetsTests.cpp
   engine/EditorTests.cpp

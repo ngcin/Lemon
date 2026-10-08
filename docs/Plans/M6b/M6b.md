@@ -31,7 +31,7 @@ Status: in-progress（③a–③c done；**③c-2 同值去重微批 done 2026-0
 3. 流程状态机档1 落地（单场景零引擎改动：主菜单/暂停/设置/结算→重开/回菜单）并接通 svr-test 全流程（与 M6a 出口判据① 合流）。**重开 = C# 自律清场**（Destroy run 实体使 tween 自清 / 常驻实体逐个 `KillAll` / 各屏 `SetItems` 重灌 + `SetText` 复位清单随 ③d-2 批文件落账），session-reset op 登记后手不实现；svr-test 存档档位随批对齐（`vs.best` → meta 已改，`svr.*` 诊断键 → ③d-2 统一处置）；
 4. 图鉴屏（100~500 条 SetItems）实测 ADR-008 预算内（>3ms 再启虚拟化评估；**2026-09-30 随 ③e 迁 M9**）**+ 单帧 UI ops arena 实耗 < 64 KiB 断言**（500 条实耗 ≈ 50KB ≈ 77% 占用贴边——2026-09-29 审核余值；`EstimateBytes` ×3 为上界仅用于 C# 预扩容，勿当实耗读）；
 5. smoke 全链绿 + 回归 full（uirml-chain 断言随迁移升级）；
-6. LoadScene 档2 评估结论落 ADR（档1 不够用再开工）。
+6. LoadScene 档2 评估结论落 ADR（档1 不够用再开工）——**2026-10-08 债清：[ADR-017](../../ADR/ADR-017-Scene-Management-And-LoadScene.md) 定案并转正式排期**（M7c 批⑤–⑩；动因 = 用户多关卡/多 UI 场景需求，档1 局限成立）。
 
 **范围边界（2026-09-29 审核落账 D3）**：本里程碑只交付**编辑器内**产品壳——出口判据不含可跑打包产物；runtime 侧 resolver 装配与打包线 UI 呈现归 M8（③d 前置通道 B 对未装 resolver 的裸运行时维持现行响亮失败是既定口径，非欠账）。
 

@@ -512,7 +512,7 @@ int main(int argc, char** argv) {
     // packager 烤好 .baked 在场才装载——运行时零 FreeType 零栅格化红线，缺档 =
     // 内置 5×7 页降级红字）----
     if (pf.fxFont != 0) {
-        if (const assets::IndexedEntry* fe = index.FindByGuid(pf.fxFont)) {
+        if (index.FindByGuid(pf.fxFont) != nullptr) { // 在场性判存（条目内容不用）
             const std::string dst = assets::FontBakedPath(root, pf.fxFont);
             std::error_code fontEc;
             if (fs::is_regular_file(dst, fontEc))

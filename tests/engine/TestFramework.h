@@ -28,6 +28,7 @@ inline bool ExpectNear0(float a, float b) { return std::fabs(a - b) < 1e-5f; }
 void RunCoreTests();
 void RunRendererTests();
 void RunEcsTests();
+void RunSceneTests();
 void RunGameplayTests();
 void RunAssetsTests();
 void RunEditorTests();

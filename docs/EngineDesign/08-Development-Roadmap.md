@@ -195,7 +195,7 @@ CI 每日跑 bench-mow/bench-sim，数字写入构建报告（性能回退 > 10%
 5. **Play 中编辑回灌**（降级为"Stop 后保留 diff 报告"）
 6. **macOS 正式支持**（保持开发可用级）
 7. **编辑器 C++ 插件机制**（面板注册表编译期版顶住）
-8. **LoadScene 完整场景切换**（产品壳档1 单场景状态机满足 M6a 验收即后置；开工前置 ADR）
+8. **LoadScene 完整场景切换**——**2026-10-08 转正式排期 [ADR-017](../ADR/ADR-017-Scene-Management-And-LoadScene.md)**（触发条件成立：用户多关卡（草原/森林/火山）+ 收集/成就多 UI 场景需求，档1 单场景局限；单 registry+SceneMembership 架构 + Unity 语义对齐 + LoadSceneAsync 统一管线；实施 [M7c 批⑤–⑩](../Plans/M7c/M7c.md)；Additive 预留（D2 用途表备查）；M6b 判据⑥ 债同步清偿）；本条自砍单序列退役
 
 **不砍清单**（砍了就不是这个引擎）：Vulkan 内核、C# 混合模型、合批性能红线、开箱模板、GUID 资产管线。
 

@@ -31,6 +31,12 @@ public:
     /// 从 JSON 文本载入（清空目标 Scene 后重建）；失败返回 false（已告警）
     static bool Load(Scene& scene, const std::string& jsonText);
 
+    /// 构建段装载（ADR-017 D3 Build 阶段；M7c 批⑥）：**不清空**——实体追加进目标
+    /// Scene（换场编排负责旧组清场；DDOL 实体在场即共存 = 单 registry membership
+    /// 语义，见 SceneMembership.h）。解析/校验/迁移失败返回 false 且场景不动；成功
+    /// 后调用方 StampSceneMembership 打标。Load = 本函数 + 清空前奏（行为同旧）。
+    static bool BuildInto(Scene& scene, const std::string& jsonText);
+
     /// 版本迁移链：把 fromVersion 的文档升到 kSchemaVersion（逐级）。
     /// 每级迁移是一个纯 json→json 变换；无法处理返回 false。
     static bool Migrate(std::string& jsonText, uint32_t fromVersion);

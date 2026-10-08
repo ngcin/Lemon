@@ -33,6 +33,7 @@ add_library(lemon-engine STATIC
   ECS/SaveChannel.cpp
   ECS/TweenTable.cpp
   ECS/Scene.cpp
+  ECS/SceneMembership.cpp
   ECS/StateHash.cpp
   ECS/SystemPipeline.cpp
   ECS/World.cpp

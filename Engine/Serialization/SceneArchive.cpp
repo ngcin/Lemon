@@ -395,8 +395,12 @@ ecs::Entity SceneArchive::LoadEntityTree(Scene& scene, const std::string& jsonTe
     return remap[0];
 }
 
-bool SceneArchive::Load(Scene& scene, const std::string& jsonText) {
-    Json doc = Json::parse(jsonText, nullptr, false);
+namespace {
+
+/// 解析+迁移+校验（Load/BuildInto 共用前半；M7c 批⑥ BuildInto 拆分）。失败已告警
+/// 并返回 false（doc 不动）。
+bool ParseSceneDoc(const std::string& jsonText, Json& doc) {
+    doc = Json::parse(jsonText, nullptr, false);
     if (doc.is_discarded()) {
         LEMON_WARN("scene parse failed (invalid json)");
         return false;
@@ -407,8 +411,8 @@ bool SceneArchive::Load(Scene& scene, const std::string& jsonText) {
         return false;
     }
     std::string text = jsonText;
-    while (ver < kSchemaVersion) {
-        if (!Migrate(text, ver)) {
+    while (ver < SceneArchive::kSchemaVersion) {
+        if (!SceneArchive::Migrate(text, ver)) {
             LEMON_WARN("scene migration failed at v%u", ver);
             return false;
         }
@@ -419,26 +423,28 @@ bool SceneArchive::Load(Scene& scene, const std::string& jsonText) {
             return false;
         }
     }
-    if (ver > kSchemaVersion) {
-        LEMON_WARN("scene schema %u newer than engine %u", ver, kSchemaVersion);
+    if (ver > SceneArchive::kSchemaVersion) {
+        LEMON_WARN("scene schema %u newer than engine %u", ver, SceneArchive::kSchemaVersion);
         return false;
     }
     if (!doc.contains("entities") || !doc.at("entities").is_array()) {
         LEMON_WARN("scene missing/invalid entities array");
         return false;
     }
-    // 场景名恢复（Save 写 doc["name"]，Load 原从不读回 → 存档再开标题回默认名；
-    // 旧档/无名档不覆盖调用方默认名）
+    return true;
+}
+
+/// 场景名恢复（Save 写 doc["name"]，Load 原从不读回 → 存档再开标题回默认名；
+/// 旧档/无名档不覆盖调用方默认名）
+void ApplySceneName(Scene& scene, const Json& doc) {
     if (doc.contains("name") && doc.at("name").is_string())
         scene.SetName(doc.at("name").get<std::string>().c_str());
+}
 
-    // 清空目标场景（两阶段销毁直接提交）
-    scene.Each([&](Entity e) { scene.Destroy(e); });
-    scene.CommitDestroys();
-
-    const Json& entities = doc.at("entities");
-
-    // 两遍：先建全部实体（EntityRef 目标可能在本实体之后）
+/// 两遍构建（Load/BuildInto 共用主体）：先建全部实体（EntityRef 目标可能在本实体
+/// 之后），再逐条 ReadEntity。坏档条目（review 2026-10-02 #48）：不留无组件空壳——
+/// 回收预建槽并红字；档内引用该编号的 EntityRef 读到 null（引用目标确实不存在）。
+bool BuildEntities(Scene& scene, const Json& entities) {
     std::vector<Entity> remap;
     remap.reserve(entities.size());
     for (size_t i = 0; i < entities.size(); ++i) remap.push_back(scene.Create());
@@ -448,8 +454,6 @@ bool SceneArchive::Load(Scene& scene, const std::string& jsonText) {
     for (const Json& ent : entities) {
         const size_t idx = i++;
         if (!ReadEntity(scene, ent, remap[idx], remap.data(), remap.size())) {
-            // 坏档条目（review 2026-10-02 #48）：不留无组件空壳——回收预建槽并红字；
-            // 档内引用该编号的 EntityRef 读到 null（引用目标确实不存在）
             LEMON_WARN("scene: entities[%zu] not an object/missing components — dropped",
                        idx);
             scene.Destroy(remap[idx]);
@@ -459,6 +463,27 @@ bool SceneArchive::Load(Scene& scene, const std::string& jsonText) {
     }
     if (dropped) scene.CommitDestroys(); // 当帧回收，不给系统管线看见空壳实体
     return true;
+}
+
+} // namespace
+
+bool SceneArchive::Load(Scene& scene, const std::string& jsonText) {
+    Json doc;
+    if (!ParseSceneDoc(jsonText, doc)) return false;
+    ApplySceneName(scene, doc);
+    // 清空目标场景（两阶段销毁直接提交）
+    scene.Each([&](Entity e) { scene.Destroy(e); });
+    scene.CommitDestroys();
+    return BuildEntities(scene, doc.at("entities"));
+}
+
+bool SceneArchive::BuildInto(Scene& scene, const std::string& jsonText) {
+    // ADR-017 D3 Build 段：不清空——实体追加（换场编排负责旧组清场与 membership
+    // 打标；DDOL 实体在场即共存 = 单 registry membership 语义）
+    Json doc;
+    if (!ParseSceneDoc(jsonText, doc)) return false;
+    ApplySceneName(scene, doc);
+    return BuildEntities(scene, doc.at("entities"));
 }
 
 bool SceneArchive::Migrate(std::string& jsonText, uint32_t fromVersion) {

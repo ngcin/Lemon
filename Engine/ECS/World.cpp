@@ -76,6 +76,32 @@ Scene& World::CreateScene(const char* name) {
     return *scenes_.back();
 }
 
+// ---- 场景档案（ADR-017 D1；M7c 批⑥，头文件口径说明）----
+uint32_t World::CreateSceneRecord(const char* name, const char* path) {
+    SceneRecord rec;
+    rec.handle = nextSceneHandle_++;
+    rec.name = name ? name : "";
+    rec.path = path ? path : "";
+    sceneRecords_.push_back(std::move(rec));
+    return sceneRecords_.back().handle;
+}
+
+const World::SceneRecord* World::SceneRecordAt(uint32_t index) const {
+    return index < sceneRecords_.size() ? &sceneRecords_[index] : nullptr;
+}
+
+World::SceneRecord* World::FindSceneRecord(uint32_t handle) {
+    for (SceneRecord& r : sceneRecords_)
+        if (r.handle == handle) return &r;
+    return nullptr;
+}
+
+const World::SceneRecord* World::FindSceneRecord(uint32_t handle) const {
+    for (const SceneRecord& r : sceneRecords_)
+        if (r.handle == handle) return &r;
+    return nullptr;
+}
+
 // ---- 音频后端（M6c 批②；头文件口径说明）----
 void World::SetAudioBackend(audio::AudioEngine* engine,
                              uint32_t (*resolveClip)(uint64_t guid, void* ctx), void* ctx) {
