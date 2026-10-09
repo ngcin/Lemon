@@ -14,5 +14,9 @@
   "hier.duplicate_ctrl_d": "Duplicate (Ctrl+D)",
   "hier.detach": "Detach From Parent",
   "hier.make_prefab": "Make Prefab (export + link back)",
-  "hier.delete_del": "Delete (Del)"
+  "hier.delete_del": "Delete (Del)",
+  "hier.group_ddol": "DontDestroyOnLoad (persists)",
+  "hier.group_unassigned": "Unassigned",
+  "hier.scene_header": "{0} ({1} roots)",
+  "hier.ddol_badge": "DDOL"
 }

@@ -45,6 +45,9 @@ private:
     /// 行体与子遍历拆分 = 万级平铺列表可走 ImGuiListClipper 只画可见行（性②）
     bool DrawNodeRow(EditorApp& app, ecs::Entity e);
     void DrawNode(EditorApp& app, ecs::Entity e, bool hasHierarchy);
+    /// 批⑩：Play 态场景组渲染（DDOL 置顶合成组 → 已装载档案组（记录序）→
+    /// 未指派兜底组；未指派根显示归并活动组）。编辑态平铺路径不经此。
+    void DrawPlaySceneGroups(EditorApp& app);
     void StartRename(ecs::Scene& s, ecs::Entity e);  // M4.6 §4-7：F2/右键/叶子双击进入
     void CommitRename(EditorApp& app, ecs::Entity e, bool apply);
     static bool PassFilter(ecs::Scene& s, ecs::Entity e, const char* filter);

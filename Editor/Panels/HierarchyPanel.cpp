@@ -12,6 +12,7 @@
 #include "Components/UiComponents.h"
 #include "Core/Log.h"
 #include "ECS/Hierarchy.h"
+#include "ECS/SceneMembership.h" // 批⑩：Play 态场景组分组依据（kSceneFlagDontDestroyOnLoad/句柄）
 #include "Components/RenderComponents.h"
 #include "Interaction/ViewportRenderer.h"
 #include "Scripting/ScriptBox.h"
@@ -189,7 +190,10 @@ void HierarchyPanel::OnGui(EditorApp& app) {
     // 滚动条按需出现（曾挂 AlwaysVerticalScrollbar：空列表也常驻——手测反馈移除）
     ImGui::BeginChild("tree", ImVec2(0, 0), ImGuiChildFlags_None);
 
-    if (filter_.empty()) {
+    if (ctx.Playing() && filter_.empty()) {
+        // 批⑩：Play 态场景组显示（编辑态/过滤态路径逐字节不变——R3）
+        DrawPlaySceneGroups(app);
+    } else if (filter_.empty()) {
         // 性能批②：根一次收集（O(N) TryGet，~0.05ms@万级）。全部为叶（平铺海）且
         // 超阈值 → ImGuiListClipper 只提交可见行——万级全画曾是 ui 段 87% 占比。
         // 带父子结构的场景走原递归（clipper 行号假设每根恰好一行）。
@@ -278,6 +282,109 @@ void HierarchyPanel::OnGui(EditorApp& app) {
     probeAccum();
 }
 
+// 批⑩：Play 态场景组渲染（SceneMembership.h「编辑器按位分组显示归批⑩」预留位
+// 兑现）。Unity 式分组：DDOL 根置顶合成组（位在根——批⑦ D1 根位式，根无祖先 =
+// 位检查即 lineage）→ 已装载档案组按记录序（装载序；isLoaded=false 不显示 =
+// 异步 staging 期新档天然隐藏）→ 未指派兜底组（防御显示，运行时装载路径不应
+// 出现）。未指派根显示归并活动组（Play 中编辑器新建实体无打标——Unity 心智
+// 模型；仅显示面语义，生命周期不变：下次 Single 换场同被清）。组内全叶 >256
+// 走 clipper（与编辑态同阈同性质——bench-survivor 万级平铺 Play 态受益者保形）。
+void HierarchyPanel::DrawPlaySceneGroups(EditorApp& app) {
+    using lemon::editor::loc::tr;
+    using lemon::editor::loc::trFmt;
+    EditorContext& ctx = app.Ctx();
+    ecs::Scene& scene = ctx.ActiveScene();
+    ecs::World& world = ctx.ActiveWorld();
+
+    // 根收集与编辑态同判据（父缺失/父亡 = 根）
+    rootCache_.clear();
+    scene.Each([&](ecs::Entity e) {
+        const ecs::Hierarchy* h = scene.TryGet<ecs::Hierarchy>(e);
+        if (h && !h->parent.IsNull() && scene.Alive(h->parent)) return; // 非根
+        rootCache_.push_back(e);
+    });
+
+    const uint32_t recN = world.SceneRecordCount();
+    // 句柄 → 记录索引：记录数 = 场景数（个位量级），线性扫即可（发号单调但不
+    // 与 vector 索引显式绑定，不偷懒假设 handle == index+1）
+    const auto recIndexOf = [&](uint32_t handle) -> int {
+        for (uint32_t i = 0; i < recN; ++i)
+            if (const ecs::World::SceneRecord* r = world.SceneRecordAt(i);
+                r && r->handle == handle)
+                return (int)i;
+        return -1;
+    };
+    const uint32_t activeHandle = world.ActiveSceneHandle();
+    const int activeIdx = activeHandle != ecs::kSceneHandleUnassigned
+                              ? recIndexOf(activeHandle)
+                              : -1;
+
+    std::vector<uint32_t> ddol, unassigned;
+    std::vector<std::vector<uint32_t>> groups(recN);
+    std::vector<char> groupHasChildren(recN, 0);
+    bool ddolHasChildren = false, unassignedHasChildren = false;
+    const auto rootHasKids = [&](ecs::Entity e) {
+        const ecs::Hierarchy* h = scene.TryGet<ecs::Hierarchy>(e);
+        return h && !h->firstChild.IsNull() && scene.Alive(h->firstChild);
+    };
+    for (uint32_t i = 0; i < rootCache_.size(); ++i) {
+        const ecs::Entity e = rootCache_[i];
+        const ecs::SceneMembership* m = scene.TryGet<ecs::SceneMembership>(e);
+        const bool kids = rootHasKids(e);
+        if (m && (m->flags & ecs::kSceneFlagDontDestroyOnLoad)) {
+            ddol.push_back(i);
+            ddolHasChildren |= kids;
+            continue;
+        }
+        const uint32_t h = m ? m->scene : ecs::kSceneHandleUnassigned;
+        int gi = h != ecs::kSceneHandleUnassigned ? recIndexOf(h) : -1;
+        if (gi < 0 && h == ecs::kSceneHandleUnassigned) gi = activeIdx; // 无句柄 → 活动组
+        if (gi >= 0) {
+            groups[(size_t)gi].push_back(i);
+            groupHasChildren[(size_t)gi] = groupHasChildren[(size_t)gi] || kids;
+        } else {
+            unassigned.push_back(i); // 未知句柄且无活动档案可归并——兜底组
+            unassignedHasChildren |= kids;
+        }
+    }
+
+    constexpr size_t kClipThreshold = 256; // 性②：与编辑态平铺同阈
+    const auto drawGroup = [&](const char* label, bool accent,
+                               const std::vector<uint32_t>& idx, bool hasChildren) {
+        // 组头：活动场 accent 着色，其余微降不透明度（层级弱于实体行）
+        ImGui::PushStyleColor(ImGuiCol_Text,
+                              accent ? theme::kAccent
+                                     : ImVec4(theme::kText.x, theme::kText.y,
+                                              theme::kText.z, 0.72f));
+        ImGui::TextUnformatted(label);
+        ImGui::PopStyleColor();
+        ImGui::Separator();
+        if (idx.empty()) return;
+        if (!hasChildren && idx.size() > kClipThreshold) {
+            ImGuiListClipper clip;
+            clip.Begin((int)idx.size());
+            while (clip.Step())
+                for (int i = clip.DisplayStart; i < clip.DisplayEnd; ++i)
+                    DrawNodeRow(app, rootCache_[idx[(size_t)i]]);
+        } else {
+            for (uint32_t i : idx)
+                DrawNode(app, rootCache_[i], scene.Has<ecs::Hierarchy>(rootCache_[i]));
+        }
+    };
+
+    if (!ddol.empty())
+        drawGroup(tr("hier.group_ddol"), false, ddol, ddolHasChildren);
+    for (uint32_t i = 0; i < recN; ++i) {
+        const ecs::World::SceneRecord* r = world.SceneRecordAt(i);
+        if (!r || !r->isLoaded) continue;
+        drawGroup(trFmt("hier.scene_header", {r->name, std::to_string(groups[i].size())})
+                      .c_str(),
+                  r->handle == activeHandle, groups[i], groupHasChildren[i] != 0);
+    }
+    if (!unassigned.empty())
+        drawGroup(tr("hier.group_unassigned"), false, unassigned, unassignedHasChildren);
+}
+
 bool HierarchyPanel::PassFilter(ecs::Scene& s, ecs::Entity e, const char* filter) {
     if (!filter[0]) return true;
     const ecs::Meta* m = s.TryGet<ecs::Meta>(e);
@@ -307,6 +414,7 @@ bool HierarchyPanel::SubtreeMatchesRec(ecs::Scene& s, ecs::Entity e, const char*
 }
 
 bool HierarchyPanel::DrawNodeRow(EditorApp& app, ecs::Entity e) {
+    using lemon::editor::loc::tr;
     EditorContext& ctx = app.Ctx();
     ecs::Scene& scene = ctx.ActiveScene();
 
@@ -349,6 +457,26 @@ bool HierarchyPanel::DrawNodeRow(EditorApp& app, ecs::Entity e) {
                 ImGui::ColorConvertFloat4ToU32(icon == IconKind::AssetPrefab ? theme::kAccent
                                                             : theme::kText));
         }
+    }
+    // 批⑩：DDOL 徽标——membership 位在根（批⑦ D1 根位式），行尾右对齐小徽
+    //（DDOL 组头已置顶归组，行徽 = 逐行可视确认；过滤态平铺同样生效）
+    if (const ecs::SceneMembership* sm = scene.TryGet<ecs::SceneMembership>(e);
+        sm && (sm->flags & ecs::kSceneFlagDontDestroyOnLoad)) {
+        const char* tag = tr("hier.ddol_badge");
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const ImVec2 p0 = ImGui::GetItemRectMin(), p1 = ImGui::GetItemRectMax();
+        const ImVec2 ts = ImGui::CalcTextSize(tag);
+        const float padX = ImGui::GetStyle().FramePadding.x;
+        const float lh = ImGui::GetTextLineHeight();
+        const float cy = (p0.y + p1.y) * 0.5f;
+        const float bw = ts.x + padX, bh = lh * 0.95f;
+        dl->AddRectFilled(
+            ImVec2(p1.x - padX - bw, cy - bh * 0.5f), ImVec2(p1.x - padX, cy + bh * 0.5f),
+            ImGui::ColorConvertFloat4ToU32(ImVec4(theme::kAccent.x, theme::kAccent.y,
+                                                  theme::kAccent.z, 0.22f)),
+            3.0f);
+        dl->AddText(ImVec2(p1.x - padX - bw + padX * 0.5f, cy - lh * 0.5f),
+                    ImGui::ColorConvertFloat4ToU32(theme::kAccent), tag);
     }
     if (ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Left))
         ctx.Select(e, ImGui::GetIO().KeyCtrl); // Ctrl 点选 = 增删选；主选中 = 末位

@@ -14,5 +14,9 @@
   "hier.duplicate_ctrl_d": "复制 (Ctrl+D)",
   "hier.detach": "脱离父级 (Detach)",
   "hier.make_prefab": "Prefab 化（导出 + 回链）",
-  "hier.delete_del": "删除 (Del)"
+  "hier.delete_del": "删除 (Del)",
+  "hier.group_ddol": "DontDestroyOnLoad（跨场幸存）",
+  "hier.group_unassigned": "未分组",
+  "hier.scene_header": "{0}（根 {1}）",
+  "hier.ddol_badge": "DDOL"
 }

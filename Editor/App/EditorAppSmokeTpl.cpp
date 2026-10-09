@@ -94,6 +94,13 @@ struct TplSmokeState {
     uint64_t oldPlayerId = 0; // 重开前玩家句柄（清场断言：旧灭新生）
     int revivedAt = -1;       // 复活帧（二死武装避开复活无敌 2s）
     bool wantPause = false;   // Esc 注入请求（SmokeTplSteer 写 bit6 一帧）
+    // 批⑩：双 Play 钉板（b9 后修登记——stop→replay→menu 再显；PlayResetHook
+    // 自清链的机器回归防线）。状态机住 SmokeTplSample 守卫**外层**（Stop 后
+    // 再进 Play 前的帧是编辑态，Playing() 守卫内不可达）
+    int replayStage = 0; // 0 等流程链收口驻留→1 Stop→2 再进 Play→3 等菜单再显
+                         // →4 完；9 = 任一步失败吸收（verdict 红）
+    bool replayStopOk = false, replayEnterOk = false, replayMenuOk = false;
+    int tomenuAt = -1;  // flowStage 11 收口帧（replayStage 0 段的驻留锚）
 };
 TplSmokeState g_tplSmoke; // 批④：单 TU 化（EditorAppSmoke.h 的 extern 共享面退役）
 
@@ -256,6 +263,32 @@ void EditorApp::SmokeTplSteer(uint64_t frame, ecs::InputState& in) {
 // 进度条盒 + 受击切段 + fx + 卡片直灌点击三帧 + 层序三拍 + 死亡/复活链 +
 // 低频诊断快照；批③c-4 自 Run 外迁，挂点原位）----
 void EditorApp::SmokeTplSample(uint64_t frame) {
+    // ---- 批⑩：双 Play 钉板状态机（住 Playing() 守卫外——Stop 后再进 Play 前
+    // 的帧是编辑态；帧尾钩子内直调 StopPlay/EnterPlayProgrammatic = uirml 冒烟
+    // frame 200/203 局中往返同款先例）----
+    if (Launch().smokeTemplate) {
+        if (g_tplSmoke.replayStage == 0 && g_tplSmoke.flowStage == 12 &&
+            g_tplSmoke.tomenuAt >= 0 &&
+            frame >= (uint64_t)(g_tplSmoke.tomenuAt + 90))
+            g_tplSmoke.replayStage = 1; // 流程链收口驻留满 → 请求 Stop
+        else if (g_tplSmoke.replayStage == 1) {
+            // Stop 前快照终态 code-mount 装载数：gameUi_ 跨 Play 常驻、装载保留
+            //（StopPlay 只 Hide 不卸）——第二局四屏预装会累加计数，uidoc==7 断言
+            // 以第一局末态为准
+            g_tplSmoke.uiLoadsFinal = gameUi_ ? (int)gameUi_->DocumentLoadCount() : -1;
+            g_tplSmoke.replayStopOk = StopPlay();
+            g_tplSmoke.replayStage = g_tplSmoke.replayStopOk ? 2 : 9;
+        } else if (g_tplSmoke.replayStage == 2) {
+            g_tplSmoke.replayEnterOk = EnterPlayProgrammatic();
+            g_tplSmoke.replayStage = g_tplSmoke.replayEnterOk ? 3 : 9;
+        } else if (g_tplSmoke.replayStage == 3 && gameUi_ &&
+                   gameUi_->IsDocumentShown("Assets/UI/main.rml")) {
+            // b9 后修缺陷面（Booted 用户静态跨局存活误杀新种子 = 无流程壳无菜单）
+            // ——菜单再显即 PlayResetHook 自清链的端到端机器证
+            g_tplSmoke.replayMenuOk = true;
+            g_tplSmoke.replayStage = 4;
+        }
+    }
     if (Launch().smokeTemplate && ctx_.Playing() && frame > 5) {
         // M6c 批④：音频链采样——装载恰 7（一次）+ 暂停屏在场期声部数（逐帧
         // 覆写 = 恢复前末值）+ 暂停解除后首帧声部数（挂起续响：BGM 不死）
@@ -616,6 +649,7 @@ void EditorApp::SmokeTplSample(uint64_t frame) {
         case 11: // 菜单回归 + run 实体清场（玩家不在场）
             if (menuShown && !playerAlive(0)) {
                 g_tplSmoke.tomenuOk = true;
+                g_tplSmoke.tomenuAt = (int)frame; // 批⑩：双 Play 段驻留锚
                 g_tplSmoke.flowStage = 12;
             }
             break;
@@ -662,7 +696,13 @@ bool EditorApp::SmokeTplVerdict() {
         // M7a 批⓪ D6：entryScene 解析回显位（开项目经 OpenProjectPipeline 后
         // EntryScene() 应读到模板声明的入口——与播种期 wiz 位构成写入→回显闭环）
         const bool entryParseOk = EntryScene() == "Scenes/MainMenu.scene";
-        g_tplSmoke.uiLoadsFinal = gameUi_ ? (int)gameUi_->DocumentLoadCount() : -1;
+        // 批⑩：双 Play 段已在 Stop 前快照 uiLoadsFinal（第二局装载会累加，7 断言
+        // 以第一局末态为准）；未跑到双 Play 段（预算截断/流程未收口）= 保持原末读
+        if (g_tplSmoke.replayStage == 0)
+            g_tplSmoke.uiLoadsFinal = gameUi_ ? (int)gameUi_->DocumentLoadCount() : -1;
+        // 批⑩：双 Play 钉板（stop→replay→menu 再显全链）
+        const bool replayOk = g_tplSmoke.replayStopOk && g_tplSmoke.replayEnterOk &&
+                              g_tplSmoke.replayMenuOk;
         const bool tplOk = g_tplSmoke.hudDocOk && g_tplSmoke.hudBarBox && g_tplSmoke.bestLoaded &&
                            g_tplSmoke.waveRow &&
                            g_tplSmoke.deaths > 0 && g_tplSmoke.levelUps > 0 && g_tplSmoke.cardsSeen &&
@@ -673,7 +713,8 @@ bool EditorApp::SmokeTplVerdict() {
                            g_tplSmoke.uiLoadsFinal == 7 && layerOk && flowOk && // 批⑨：code-mount 装载恰 7 + 层序三拍 + 流程链
                            g_tplSmoke.audMount == 7 && g_tplSmoke.audPauseVoices >= 1 &&
                            g_tplSmoke.audResumeVoices >= 1 && // 批④：七件装载 + 暂停挂起续响
-                           g_tplSmoke.entryWiz && entryParseOk; // 批⓪：entryScene 写入+回显
+                           g_tplSmoke.entryWiz && entryParseOk && // 批⓪：entryScene 写入+回显
+                           replayOk; // 批⑩：双 Play 段
         std::printf("[lemon] smoke-template: hud(doc=%s bar=%s) saveLoad=%s wave(row=%s n=%d) "
                     "kills=%d levelUps=%d cards(doc seen=%s pick=%s hidden=%s) "
                     "layer(%d/%d/%d=%s) "
@@ -682,7 +723,8 @@ bool EditorApp::SmokeTplVerdict() {
                     "entry(wiz=%s parse=%s) "
                     "aud(mount=%d pause=%d resume=%d=%s) "
                     "flow(menu=%s start=%s results=%s restart=%s pause=%s "
-                    "set=%s/%s resume=%s tomenu=%s) => %s\n",
+                    "set=%s/%s resume=%s tomenu=%s) "
+                    "replay(stop=%s enter=%s menu2=%s) => %s\n",
                     g_tplSmoke.hudDocOk ? "YES" : "NO",
                     g_tplSmoke.hudBarBox ? "YES" : "NO", g_tplSmoke.bestLoaded ? "YES" : "NO",
                     g_tplSmoke.waveRow ? "YES" : "NO", g_tplSmoke.waveStarts, g_tplSmoke.deaths,
@@ -703,6 +745,9 @@ bool EditorApp::SmokeTplVerdict() {
                     g_tplSmoke.pauseOk ? "YES" : "NO", g_tplSmoke.settingsOk ? "YES" : "NO",
                     g_tplSmoke.settingsToggled ? "YES" : "NO",
                     g_tplSmoke.resumedOk ? "YES" : "NO", g_tplSmoke.tomenuOk ? "YES" : "NO",
+                    g_tplSmoke.replayStopOk ? "YES" : "NO",
+                    g_tplSmoke.replayEnterOk ? "YES" : "NO",
+                    g_tplSmoke.replayMenuOk ? "YES" : "NO",
                     tplOk ? "OK" : "FAIL");
         std::printf("[lemon] smoke-template: diag %s gems(peak)=%d mobs(peak)=%d\n",
                     g_tplSmoke.hudRows, g_tplSmoke.gemsPeak, g_tplSmoke.mobsPeak);
