@@ -44,6 +44,12 @@ Status: done ✅（2026-10-09 机器面。批⑩ 转正拍板 = 用户 2026-10-0
 - smoke-template 双 Play 段机器钉板绿（stop→replay→menu 再显入回归第 5 步判定）；
 - 回归 full 21/21 + 单测 34,716 只增不减 + ctest 4/4 + 构建零警告 + bench-survivor 门禁 fps≥76.5 不降。
 
+## Review 轮（2026-10-09 提交 b117e50 后全量自查）
+
+- **F1（P3 健壮性，当日修）未装载记录句柄实体静默隐没**：分桶 recIndexOf 不查 isLoaded，而渲染层跳过未装载记录 → membership 句柄指向未装载记录的实体从 Hierarchy 消失，违背兜底组「防御显示」意图（R2）。合法流程到不了该态（Single 清场同帧销毁非 DDOL 实体；staging 实体在独立 registry；DDOL 先于句柄判断入组），属异常态显示防线。修 = `loadedIdx`（只认已装载记录；活动组归并同守卫），未装载/未知句柄一律落兜底组可见。验证 = 构建零警告 + smoke-template 全绿（replay 三位 YES / uidoc=7 / play-roundtrip byte-exact=YES）。
+- 确认面（核过无缺陷）：trFmt 临时 string 全表达式内消费；SceneRecord 指针绘制期不建档（装载期建档、面板期只读 = World.h F4 契约注记面）；DDOL 徽标绘制点与 TreeNode 间零 item 提交（GetItemRect 系列仍指树行）；双 Play 状态机一帧一步转换/失败吸收 9/预算截断=帧锚定确定性红；第二局残留一次性标志位全被守卫（flowStage 12 无 case、layerStage 6 收口、click 冷却、催命段全 consumed、Steer 站桩注入菜单态无害）；Stop 期 EventSink 随旧世界弃（第二局计数不需要）；saves 双 Stop 幂等重写（settings 值不变——回归 saves 段实证）；编辑态路径逐字节不变；行内拖放 mid-iteration 暴露面与编辑态既有形态一致（非新增）；性能 = recIndexOf O(roots×记录数·个位) + 组内 clipper 保形 + bench fps=82 实证。
+- 观察项（不动）：O1 徽标与超长实体名可能视觉重叠（SpanAvailWidth 行满宽，Unity 同款形态）；O2 "Assets/UI/main.rml" 字面量在内层 kMainDoc 与外层 replay 块重复（文件既有 kHudDoc/kHudDoc2 先例，不抽）；O3 未指派归并活动组会掩盖引擎侧漏打标（R2 已裁决维持：常见态 = 编辑器合法新建，运行时路径「零未打标」另有 smoke 断言面）。
+
 ## 5. 红线自查（开工前对齐）
 
 - **Engine 内核零改动**（本批全部落在 `Editor/` + `Tools/`；vtable 59 / 组件 id / 系统序零动 → 金回放零重录预期，同批⑨ 口径跳过实测注明依据）。

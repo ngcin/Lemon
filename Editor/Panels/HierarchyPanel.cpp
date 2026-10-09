@@ -314,9 +314,18 @@ void HierarchyPanel::DrawPlaySceneGroups(EditorApp& app) {
                 return (int)i;
         return -1;
     };
+    // review F1（2026-10-09）：仅**已装载**记录入组——句柄指向未装载记录 = 异常
+    // 态（Single 清场同帧销毁非 DDOL 实体、staging 实体在独立 registry，合法
+    // 流程到不了），真出现时落兜底组可见，不静默隐没
+    const auto loadedIdx = [&](uint32_t handle) -> int {
+        const int i = recIndexOf(handle);
+        if (i < 0) return -1;
+        const ecs::World::SceneRecord* r = world.SceneRecordAt((uint32_t)i);
+        return r && r->isLoaded ? i : -1;
+    };
     const uint32_t activeHandle = world.ActiveSceneHandle();
     const int activeIdx = activeHandle != ecs::kSceneHandleUnassigned
-                              ? recIndexOf(activeHandle)
+                              ? loadedIdx(activeHandle)
                               : -1;
 
     std::vector<uint32_t> ddol, unassigned;
@@ -337,13 +346,13 @@ void HierarchyPanel::DrawPlaySceneGroups(EditorApp& app) {
             continue;
         }
         const uint32_t h = m ? m->scene : ecs::kSceneHandleUnassigned;
-        int gi = h != ecs::kSceneHandleUnassigned ? recIndexOf(h) : -1;
+        int gi = h != ecs::kSceneHandleUnassigned ? loadedIdx(h) : -1;
         if (gi < 0 && h == ecs::kSceneHandleUnassigned) gi = activeIdx; // 无句柄 → 活动组
         if (gi >= 0) {
             groups[(size_t)gi].push_back(i);
             groupHasChildren[(size_t)gi] = groupHasChildren[(size_t)gi] || kids;
         } else {
-            unassigned.push_back(i); // 未知句柄且无活动档案可归并——兜底组
+            unassigned.push_back(i); // 未知/未装载句柄且无活动档案可归并——兜底组
             unassignedHasChildren |= kids;
         }
     }
