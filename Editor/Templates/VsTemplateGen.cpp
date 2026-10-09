@@ -828,8 +828,8 @@ public sealed class GameFlow : LemonBehaviour
 
     // 跨场种子守卫（批⑨ D1）：MainMenu 重装的新种子标记 dup、首 Update 自毁。
     // 跨局复位：静态随域存活（Stop→Play 不清）——经 Events.PlayResetHook 每局清
-    /// （否则二次 Play 新种子被旧局守卫误杀 = 全灭，批⑨ 真人走查实报）；热重载
-    /// 仍走 StateBag（OnHotReloadOut/In）
+    // （否则二次 Play 新种子被旧局守卫误杀 = 全灭，批⑨ 真人走查实报）；热重载
+    // 仍走 StateBag（OnHotReloadOut/In）
     private static bool Booted;
     private bool dup;
 
@@ -906,7 +906,14 @@ public sealed class GameFlow : LemonBehaviour
         Audio.Paused = false; // 暂停残留防御（换场亦强制清——b6b D6；先归位再开局）
         Audio.PlayBgm(kBgm, 0.55f); // M6c 批④：开战 BGM（EnterRun 起播含装载期）
         GameMain.HideCardsDoc(); // 在途动态屏一并收
-        LoadingScreen.Begin(kBattleScene); // 批⑧ 样例：LoadSceneAsync + 加载屏 + DDOL 驱动
+        // review F1：场景不可解析（改名/删档）= op 无效且 Begin 未挂屏——不回滚
+        // 则 St 恒 Loading、入口屏已隐、BGM 在播 = 软锁；回菜单态 + 静场自愈
+        if (!LoadingScreen.Begin(kBattleScene).isValid) {
+            Audio.StopBgm(0.5f);
+            St = State.Menu;
+            UI.Show(GameMain.MainDoc);
+            UI.Apply();
+        }
     }
 
     /// <summary>sceneLoaded 路由（GameMain.Configure 订阅；同步/异步两门面共用）。
@@ -1639,7 +1646,7 @@ public sealed class PlayerHud : LemonBehaviour
     {
         // 批⑨：HUD 文档 code-mount（通道 B 现载）——本实体随战斗场景装载，
         // Start = 开局时机（原场景声明 showOnStart 装载退役；origin=CSharp
-        /// 跨场幸存，GameFlow.ReturnToMenu 显式收屏）
+        // 跨场幸存，GameFlow.ReturnToMenu 显式收屏）
         UI.Show(kDoc);
         UI.Apply();
     }

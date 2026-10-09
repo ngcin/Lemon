@@ -122,7 +122,7 @@ public static unsafe class Events
             try { h(); }
             catch (Exception ex) {
                 Console.Error.WriteLine("[lemon][error] PlayResetHook 订阅异常（已拦）：" +
-                                        ex.Message);
+                                        ex);
             }
     }
 

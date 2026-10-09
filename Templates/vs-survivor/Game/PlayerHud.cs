@@ -27,7 +27,7 @@ public sealed class PlayerHud : LemonBehaviour
     {
         // 批⑨：HUD 文档 code-mount（通道 B 现载）——本实体随战斗场景装载，
         // Start = 开局时机（原场景声明 showOnStart 装载退役；origin=CSharp
-        /// 跨场幸存，GameFlow.ReturnToMenu 显式收屏）
+        // 跨场幸存，GameFlow.ReturnToMenu 显式收屏）
         UI.Show(kDoc);
         UI.Apply();
     }

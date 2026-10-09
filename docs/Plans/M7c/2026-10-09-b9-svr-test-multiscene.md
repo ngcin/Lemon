@@ -65,6 +65,14 @@ Status: done ✅（2026-10-09 机器面。**D1–D5 用户未应答按推荐推�
 - 验证：单测 34,716 / script-tests 1,818 逐位不变、game-smoke OK、template-chain OK、svr-test boot 零异常零契约红（类型 9 = 注册面含 VolcanoTableLoader 实证）。
 - 登记候选：smoke-template 双 Play 段（stop→replay→menu 再显）机器钉板归批⑩/收尾批。
 
+## Review 轮（2026-10-09 真人复测过后全量自查）
+
+- **F1（P1 健壮性，当日修）EnterRun 失败软锁**：`LoadingScreen.Begin` 返回 op 无效（场景改名/删档）时两 GameFlow 均忽略——St 恒 Loading、入口屏已隐、BGM 在播、世界冻结且无恢复路径。修 = op 无效即回菜单态 + StopBgm 自愈（svr-test + 模板内嵌两侧）。
+- **F2（P3，当日修）孪生实现分叉**：svr-test OnSceneLoaded 缺「未知场景隐菜单」默认分支（模板有）——补齐对齐。
+- **F3（P3，当日修）注释风格**：4 处 `///` 混入 `//` 块（合法但噪声）——清理；Events.PlayResetHook 捕获日志 Message→全异常链（与 Behaviours 同口径）。
+- 确认面（无缺陷）：Events.PlayResetHook（锁外快照广播/逐订阅隔离/静态构造订阅每域一次）；LoadingScreen Begin 代收 + 跨局复位；CMake staging（custom_target ALL + DEPENDS 次序，copy_if_different 无变化廉价 no-op）；smoke pacing 谓词（排除 bench/交互/smoke-close 正确）；GameEntry/SmokeTpl 断言面（回归实证）；prefab 实体 guid 重生成轮换（语义惰性——资产 guid/spriteId 不动，smoke-guid 实证）。
+- 验证：复测模板 game-smoke OK（uidoc=7）/ template-chain OK + editor-smoke PASS / svr-test boot 零错误 / script-tests 1,818 / 构建零新警告。
+
 ## 5. 红线自查（开工前对齐）
 
 - **Engine 内核零改动**（GameEntry smoke 面可动；若 smoke 断言需要内核让步 = 设计错误回 D1–D5 重议）；vtable 59 / 组件 id / 系统序零动 → 金回放零重录。
