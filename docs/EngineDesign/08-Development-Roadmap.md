@@ -168,6 +168,12 @@ Tilemap 数据 + chunk 烘焙渲染 → 碰撞层 → 自动瓦片 + TilePalette
 光照裁剪版（法线 RT + 点/锥光 + blob 阴影）→ 后处理链（bloom/冲击波/色调）→ 性能终测（压测 A + **2h soak 长时稳定**：内存曲线平/零崩溃，崩溃转 dump 体系登记）→ 文档站 v1（使用手册，yami Documentation 对标的最小版）→ incremental 模板（若余量，否则移 v1.1）。
 **验收**：压测 A 全绿；光照默认关闭零成本；soak 达标。
 
+> **架构债登记（2026-10-09，[引擎评审](../Reports/2026-10-09-engine-code-review.md) M23/L34/L39；D4 追认）**——只登记不修码，触发条件成立即启动（届时按条目立 ADR）：
+> - **#M23 C++/C# 边界 vtable 59 槽 god-interface**（双侧手工逐字节镜像）：当前以表尾追加 + LegacyFrozenBytes 冻结区 + 判空降级纪律管理。**触发 = 槽位数 ≥ 72 或发生一次双侧不同步回归** → 启动按域拆表（分组 + 版本化），占位 [ADR-018](../ADR/ADR-018-Script-Boundary-Vtable-Split-Placeholder.md)。
+> - **#L34 Assets↔Renderer 头文件级双向依赖**：目录分层纪律注记维持。**触发 = M8 光照批需在 Renderer 内新增对 Assets 类型的包含时** → 抽共享叶子或倒置依赖。
+> - **#L39 World 通道聚合 hub**（15 头 / 按值持 8+ 非 ECS 通道）：**触发 = M9 需新增第 9 个通道或出现包含编译时长恶化可测** → 通道注册表/接口化。
+> 修复进度跟踪在 [M7c 批⑪](../Plans/M7c/2026-10-09-b11-engine-review-fixes.md)；三条债不随批⑪ 修码。
+
 ## 3. 性能验收场景（进 `Samples/`，CI 冒烟）
 
 | 场景 | 构成 | 判据 |
