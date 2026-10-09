@@ -102,6 +102,15 @@ int NativeWrite(uint64_t e, uint8_t id, const void* src, uint32_t size) {
     // get-or-create：先 read 取已有；emplace 只对缺失组件（对已有组件二次 emplace
     // 在 entt Release 下 = 池损坏 → AV。M3-7 实测 10 万弹崩、5k 侥幸的根因）
     ecs::Entity ent{e};
+    // review 2026-10-09 #H1：死/版本失效句柄的 readFn 恒 null → 必落 emplace 分支，
+    // entt 的 emplace 不校验实体存活（Release 无断言）= 幽灵注入池。失效 = 红字 +
+    // 返回 0（D1 口径：与 SDK「句柄失效 Alive=false 自查」契约一致，不炸游戏）。
+    if (!g_scene->Alive(ent)) {
+        LEMON_WARN("SetComponent：实体句柄已失效（#%llu，组件 '%s'）——目标可能已被"
+                   "销毁；请在缓存句柄跨帧处用 Alive 自查",
+                   (unsigned long long)ent.id, m.name);
+        return 0;
+    }
     void* p = (void*)m.readFn(*g_scene, ent);
     const bool emplaced = p == nullptr;
     if (!p) p = m.emplaceFn(*g_scene, ent);
@@ -990,6 +999,13 @@ void ScriptHost::TickBatch(ecs::World& world, ecs::Scene& scene, float dt) {
 
 void ScriptHost::AttachBehaviour(ecs::World& world, ecs::Scene& scene, ecs::Entity e,
                                  int typeId) {
+    // review 2026-10-09 #H1：Alive 闸——死句柄 TryGet<ScriptBox> 恒 null → 必落
+    // Emplace<ScriptBox> = 幽灵注入；失效 = 红字 + 返回（D1 口径，同 NativeWrite）。
+    if (!scene.Alive(e)) {
+        LEMON_WARN("AttachScript：实体句柄已失效（#%llu，typeId %d）——命令丢弃",
+                   (unsigned long long)e.id, typeId);
+        return;
+    }
     // M6a 批⓪：追加新槽（运行时挂载路径——op4/C# AddComponent；className 空 =
     // Play 期内槽，ExitPlay 随快照丢弃不入档）。同类型唯一双层分权：C++ 槽层
     // **幂等**——同 typeId 槽已存在 = 不追加、重挂实例（盖 ResetPlayDomain 后的
@@ -1153,8 +1169,16 @@ void ScriptHost::ApplyStructural(ecs::World& world, ecs::Scene& scene) {
             }
             case 2: { // AddComponent（注册表驱动；get-or-create——对已有组件再
                 // emplace = entt 池损坏，与 NativeWrite/AttachBehaviour 同口径 M12）
+                // review 2026-10-09 #H1：Alive 闸——死句柄 hasFn 恒 false → 必落
+                // emplace = 幽灵注入；失效 = 丢弃 + 红字（D1 同 NativeWrite 口径）
                 ecs::Entity e = Resolve(op.entity);
                 if (!e.IsNull() && op.compId < reg.Count()) {
+                    if (!scene.Alive(e)) {
+                        LEMON_WARN("AddComponent：实体句柄已失效（#%llu，组件 '%s'）"
+                                   "——命令丢弃",
+                                   (unsigned long long)e.id, reg.At(op.compId).name);
+                        break;
+                    }
                     const auto& m = reg.At(op.compId);
                     if (!m.hasFn(scene, e)) m.emplaceFn(scene, e);
                 }

@@ -565,6 +565,24 @@ struct UiSubsystem::Impl {
         }
     }
 
+    // 批⑪ H3（review 2026-10-09 #H3）：DOM 破坏性 op 前置失效。SetText/
+    // SetInnerRml 可命中任意元素 id（含追踪容器自身/其祖先）——SetInnerRML 就地
+    // RemoveChild 全部子元素并立即析构，ContainerState 缓存的 container/tpl/
+    // proto/itemRoots 裸指针全部悬挂；原失效面只有文档装载/重载/卸载，DOM 内
+    // 突变不失效 = 后续 SetItems/SetText 对死指针操作（use-after-free）。祖先
+    // 判定必须在突变前做（改后指针已悬）；命中即整条失效（容器态惰性重建）。
+    void InvalidateContainersUnder(const std::string& docName, Rml::Element* el) {
+        const std::string prefix = docName + "/";
+        for (auto it = containers.begin(); it != containers.end();) {
+            bool under = false;
+            if (it->first.rfind(prefix, 0) == 0 && it->second.container) {
+                for (Rml::Element* p = it->second.container; p; p = p->GetParentNode())
+                    if (p == el) { under = true; break; }
+            }
+            it = under ? containers.erase(it) : std::next(it);
+        }
+    }
+
     void PushReloadedEvent(const std::string& docName) {
         UiEventC ev{};
         ev.kind = (uint8_t)UiEventKind::DocumentReloaded;
@@ -954,9 +972,11 @@ void UiSubsystem::ApplyOps(const UiOpC* ops, uint32_t count, const char* arena,
             break;
         case UiOpType::SetText:
             if (Rml::Element* el = i.ResolveKey(*d, docName,
-                    i.ArenaStr(arena, arenaBytes, op.s1, "key")))
+                    i.ArenaStr(arena, arenaBytes, op.s1, "key"))) {
+                i.InvalidateContainersUnder(docName, el); // #H3：子树含追踪容器即先失效
                 el->SetInnerRML(Rml::String(EscapeText(
                     i.ArenaStr(arena, arenaBytes, op.s2, "text"))));
+            }
             break;
         case UiOpType::SetAttr:
             if (Rml::Element* el = i.ResolveKey(*d, docName,
@@ -982,8 +1002,10 @@ void UiSubsystem::ApplyOps(const UiOpC* ops, uint32_t count, const char* arena,
             break;
         case UiOpType::SetInnerRml:
             if (Rml::Element* el = i.ResolveKey(*d, docName,
-                    i.ArenaStr(arena, arenaBytes, op.s1, "key")))
+                    i.ArenaStr(arena, arenaBytes, op.s1, "key"))) {
+                i.InvalidateContainersUnder(docName, el); // #H3：子树含追踪容器即先失效
                 el->SetInnerRML(Rml::String(i.ArenaStr(arena, arenaBytes, op.s2, "rml")));
+            }
             break;
         case UiOpType::SetItems: {
             const uint32_t off = op.s3;

@@ -22,6 +22,8 @@ Status: in-progress（制定 2026-10-09；D1–D5 全部按建议追认，用户
 | H2 | `Engine/Assets/PlayCaches.cpp:49-65` | 删内联弱解析器改调 `AnimAsset::ParseClipJson`（注意 loopMode→loop 映射与 SheetAndCell 寻址），或最低限度对 fps/loop/sheet/cell 补 is_number/is_boolean/is_string 预检 | 坏档用例：`"loop":1`、`"fps":"8"`、sheet 数字 → 红字跳过不炸 Play（契约 PlayCaches.h:6） |
 | H3 | `Engine/Ui/UiSubsystem.cpp:986`（关联 216-224/386-402） | SetText/SetInnerRml 命中任一追踪容器自身或其祖先时同步 `InvalidateContainers`；或容器态改持弱引用 + 使用前存活校验（二选一，实现时按 Rml 观察者机制成本定） | 新增用例：SetInnerRml 命中容器 id 后 SetItems/SetText 正常、无 UAF；ASAN 门（mac-san）复跑 |
 
+> **b11a 机器面 ✅ 2026-10-09**——构建零警告；单测 **34,721**（+5：TestClipCacheBadArchive——坏 `"loop":1`/`"fps":"8"`/sheet 数字红字跳过不 terminate，好 clip 照常登记含帧事件）/script-tests **1,830**（+12：TestStaleHandleSdk——stale 三连经三闸红字丢弃，Velocity/ScriptBox/Transform2D 三池终局零幽灵 + C++ 侧真实 stale id 命令流二组同验）/ctest 4/4/smoke-uirml `--validate` 脚本+无脚本双模式 **OK**（H3 前置失效零扰动：items=2/1 contract=1）。H3 修法 = `InvalidateContainersUnder`（突变前按祖先链判定整条失效）。**H3 专项 wipe 用例随 b11b 首项补**：SetText 命中容器即连 `<ui-template>` 原型一并销毁——重建须专用夹具容器或文档重载，直接复用 cards 会扰动 contract==1/items==2 终局断言。ASAN（mac-san）复跑归收批统一门（H 类 + M1/M2）。
+
 ## 2. 子批 b11b — P1 中危缺陷 14 项
 
 **坏数据 abort 面（先清，四条崩溃缝 + 一条 boot 面）**：

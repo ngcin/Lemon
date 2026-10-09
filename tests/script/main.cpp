@@ -337,7 +337,7 @@ void TestDomainManager() {
         auto listFn = (int (*)(char*, int))GetExport("lemon_behaviours_list");
         char buf[4096];
         int n = listFn ? listFn(buf, (int)sizeof buf) : -1;
-        Expect(n == 22, "behaviours list after hot reload (+M11/M15/F-08.2/T3/b1/b2/T3c/T3d/A档tween/T5存档档/b3c UI/M6c b2 audio/M7c b1 fx/M7c b7 scene/M7c b8 async probes)");
+        Expect(n == 23, "behaviours list after hot reload (+M11/M15/F-08.2/T3/b1/b2/T3c/T3d/A档tween/T5存档档/b3c UI/M6c b2 audio/M7c b1 fx/M7c b7 scene/M7c b8 async/b11 H1 stale probes)");
         // M4.6 回归（用户实测闪退根因）：相对路径进 dm_reload 曾抛 ArgumentException
         // 逃逸 UnmanagedCallersOnly → coreclr abort。拦截层必须转 0 返回且进程存活
         // （本断言能跑到 = 进程没死）。换装失败后旧域已弃——再换一次真路径恢复。
@@ -564,6 +564,84 @@ void TestBehaviourAndStructuralOps() {
         opsSubmit(4, 3, 0x8000000000000003ull);
         for (int i = 0; i < 3; i++) w2.Step(0.25f); // 帧1 重新报 250（FrameCount 从 1 重计）
         Expect(dtSeenAgain == 1, "time reset: new session restarts at FrameCount 1");
+    }
+}
+
+// 批⑪ H1（review 2026-10-09 #H1）：失效实体句柄三闸端到端——StaleHandleProbeBehaviour
+// （typeId 22，表尾注册序）帧1 Spawn target / 帧2 Destroy / 帧4 stale 三连（C# 侧
+// SetComponent=write 闸 + AddComponent 值组件=op2 闸 + AddComponent 脚本=op4→
+// AttachBehaviour 闸）/ 帧5 健康标记。断言：标记序 1801→1804 各恰一次 + 终局场景
+// AliveCount==0 且 Velocity/ScriptBox/Transform2D 三视图计数全零——无闸时 Release
+// 恰好把幽灵注进这三个池（D1 口径：红字 WARN + 默认值，不炸不注）。
+void TestStaleHandleSdk() {
+    using namespace lemon::ecs;
+    auto timeResetFn = (void (*)())GetExport("lemon_time_reset");
+    Expect(timeResetFn != nullptr, "lemon_time_reset exported");
+    timeResetFn(); // Time 属于"一局"——fc==1 编排依赖归零
+
+    auto opsSubmit = (void (*)(unsigned char, unsigned char, uint64_t))GetExport("lemon_ops_submit");
+    Expect(opsSubmit != nullptr, "ops export resolved");
+
+    WorldDesc d;
+    d.threadCount = 1;
+    World w(d);
+    Scene& s = w.CreateScene("StaleT");
+    w.SetActiveScene(&s);
+    w.SetScriptBackend(&g_sh);
+    w.Pipeline().AddSystem(std::make_unique<DestroyCommitSystem>());
+    w.Pipeline().AddSystem(std::make_unique<CSharpBatchSystem>());
+    w.Pipeline().AddSystem(std::make_unique<ScriptEventDispatchSystem>());
+    w.Pipeline().ResolveOrder();
+
+    int m1801 = 0, m1802 = 0, m1803 = 0, m1804 = 0;
+    w.SetEventSink([&](World&, const EventPacket& p) {
+        if (p.type != GameEvent::Custom) return;
+        if (p.user == 1801) ++m1801;
+        else if (p.user == 1802) ++m1802;
+        else if (p.user == 1803) ++m1803;
+        else if (p.user == 1804) ++m1804;
+    });
+
+    // 探针经占位链挂载（typeId 22）
+    opsSubmit(0, 0, 0x8000000000000001ull);
+    opsSubmit(4, 22, 0x8000000000000001ull);
+
+    for (int i = 0; i < 7; i++) w.Step(0.25f); // fc1..7：编排 + stale 三连 + 自毁落地
+
+    Expect(m1801 == 1 && m1802 == 1, "stale probe: target created + destroy queued");
+    Expect(m1803 == 1, "stale probe: trio survived (no exception/crash through gate)");
+    Expect(m1804 == 1, "stale probe: healthy frame after stale calls");
+
+    // 无幽灵：三池计数全零（无闸时 SetComponent 注 Velocity、AttachScript 注
+    // ScriptBox、且幽灵实体永不清除——视图计数会卡 1）
+    int vel = 0, sb = 0, tf = 0;
+    for (auto [e, c] : s.View<Velocity>().each()) { (void)e; (void)c; ++vel; }
+    for (auto [e, c] : s.View<lemon::scripting::ScriptBox>().each()) { (void)e; (void)c; ++sb; }
+    for (auto [e, c] : s.View<Transform2D>().each()) { (void)e; (void)c; ++tf; }
+    Expect(vel == 0, "no ghost Velocity injected by stale SetComponent/AddComponent");
+    Expect(sb == 0, "no ghost ScriptBox injected by stale AttachScript");
+    Expect(tf == 0, "no ghost Transform2D (target destroyed cleanly)");
+    Expect(s.AliveCount() == 0, "stale probe: scene empty at end (probe self-destroyed)");
+
+    // C++ 侧第二组：对已销毁实体直接走命令流（真实 stale id 非占位）——覆盖
+    // ApplyStructural case2/case4 的 Alive 闸在非 C# 发起路径下同样成立
+    {
+        Entity victim = s.Create();
+        s.Emplace<Transform2D>(victim);
+        s.Destroy(victim);
+        s.CommitDestroys();
+        const uint64_t stale = victim.id; // 版本已 bump = 失效句柄
+        const ComponentRegistry& reg = ComponentRegistry::Instance();
+        const ComponentMeta* velMeta = reg.Find("Velocity");
+        Expect(velMeta != nullptr, "Velocity in registry");
+        opsSubmit(2, (unsigned char)velMeta->id, stale); // op2 AddComponent on stale
+        opsSubmit(4, 22, stale);                         // op4 AttachScript on stale
+        w.Step(0.25f);
+        int vel2 = 0, sb2 = 0;
+        for (auto [e, c] : s.View<Velocity>().each()) { (void)e; (void)c; ++vel2; }
+        for (auto [e, c] : s.View<lemon::scripting::ScriptBox>().each()) { (void)e; (void)c; ++sb2; }
+        Expect(vel2 == 0 && sb2 == 0, "cpp-side stale ops dropped by Alive gates");
+        Expect(s.AliveCount() == 0, "no entity resurrected by stale ops");
     }
 }
 
@@ -2116,6 +2194,7 @@ int main() {
     TestFxSdk();        // M7c 批①：Lemon.Fx 表现升级面 + 哈希免疫反例
     TestSceneSdk();     // M7c 批⑦：SceneManager 全链（四跳/事件序/DDOL/红字拒）
     TestSceneAsyncSdk(); // M7c 批⑧：LoadSceneAsync 全链（契约/门控/await/取代取消）
+    TestStaleHandleSdk(); // 批⑪ H1：失效句柄三闸（write/op2/op4）+ 无幽灵注入
 
     // M4.6 探针（编辑器切项目场景）：同进程二次 ScriptHost 生命周期。CoreCLR 运行时
     // 进程单例——第二次 Initialize 的真实行为必须钉板（成功/失败都合法，崩 = 缺陷）。

@@ -24,6 +24,7 @@
 #include "Audio/BakedClip.h"
 #include "Audio/SpscRing.h" // M6c 批①b：SPSC 环序锁
 #include "Assets/AssetIndex.h" // M7a 批②：运行时只读索引
+#include "Assets/PlayCaches.h" // 批⑪ H2：Play 三缓存构建（坏 clip 红字跳过验收）
 #include "Assets/AtlasBake.h" // M7a 批⑥：LAT1 容器/装箱/烤制
 #include "Assets/AtlasStore.h" // M7a 批⑥：LAT1 装载登记核
 #include "Assets/ProjectFile.h" // M7a 批②：project.lemon 只读解析
@@ -1639,6 +1640,81 @@ void TestBakeProjectAtlas() {
 
 } // namespace
 
+// 批⑪ H2（review 2026-10-09 #H2）：BuildClipCache 坏档红字跳过——弱解析器时代坏
+// 字段类型（"loop":1 / "fps":"8" / sheet 数字）抛 nlohmann type_error 穿透 =
+// std::terminate，违反「坏 clip 红字跳过不炸 Play」契约（PlayCaches.h）；改调
+// AnimAsset::ParseClipJson 后坏 clip 全部跳过、好 clip 照常登记。本用例跑通即
+// 主断言（terminate 会让进程直接死）。
+class FakeClipSource final : public lemon::assets::PlayCacheSource {
+public:
+    struct Item {
+        uint64_t guid;
+        std::string rel, abs;
+    };
+    std::vector<Item> clips;
+    lemon::assets::IndexedEntry spriteEntry{};
+    uint64_t spriteGuid = 0;
+    void Each(lemon::assets::AssetType type,
+              const std::function<void(uint64_t, const std::string&, const std::string&)>& fn)
+        const override {
+        if (type != lemon::assets::AssetType::Clip) return;
+        for (const Item& it : clips) fn(it.guid, it.rel, it.abs);
+    }
+    const lemon::assets::IndexedEntry* FindSprite(uint64_t guid) const override {
+        return guid == spriteGuid ? &spriteEntry : nullptr;
+    }
+    bool HasClip(uint64_t) const override { return true; }
+};
+
+void TestClipCacheBadArchive() {
+    namespace fs = std::filesystem;
+    using lemon::ecs::World;
+    const fs::path root = fs::temp_directory_path() /
+                          ("lemon-test-clipcache-" + std::to_string(lemon::CurrentProcessId()));
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root, ec);
+
+    const std::string sheet = "0011223344556677";
+    auto writeFile = [&](const char* name, const std::string& body) {
+        std::ofstream f(root / name, std::ios::trunc);
+        f << body;
+        return (root / name).string();
+    };
+    const std::string good =
+        writeFile("good.anim", "{\"fps\":8,\"loop\":true,\"frames\":[{\"sheet\":\"" + sheet +
+                                   "\",\"cell\":0}],\"events\":[{\"frame\":0,\"id\":5}]}");
+    const std::string badLoop = writeFile(
+        "bad_loop.anim", "{\"fps\":8,\"loop\":1,\"frames\":[{\"sheet\":\"" + sheet + "\",\"cell\":0}]}");
+    const std::string badFps = writeFile(
+        "bad_fps.anim", "{\"fps\":\"8\",\"loop\":true,\"frames\":[{\"sheet\":\"" + sheet + "\",\"cell\":0}]}");
+    const std::string badSheet =
+        writeFile("bad_sheet.anim", "{\"fps\":8,\"frames\":[{\"sheet\":42,\"cell\":0}]}");
+
+    FakeClipSource src;
+    src.clips = {{0xAAAA0001ull, "good.anim", good},
+                 {0xAAAA0002ull, "bad_loop.anim", badLoop},
+                 {0xAAAA0003ull, "bad_fps.anim", badFps},
+                 {0xAAAA0004ull, "bad_sheet.anim", badSheet}};
+    src.spriteGuid = 0x0011223344556677ull;
+    src.spriteEntry.type = lemon::assets::AssetType::Sprite;
+    src.spriteEntry.spriteId = 7; // 未切片整图：cell 0 = 本体号
+
+    World w;
+    lemon::assets::BuildClipCache(w, src); // 坏档红字跳过不炸 = 主断言
+
+    const auto* g = w.Clips().Find((uint32_t)0xAAAA0001ull);
+    Expect(g != nullptr && g->frames.size() == 1 && g->frames[0] == 7,
+           "good clip registered with resolved spriteId");
+    Expect(g != nullptr && g->loop && g->events.size() == 1 && g->events[0].id == 5,
+           "good clip loop + frame event carried");
+    Expect(w.Clips().Find((uint32_t)0xAAAA0002ull) == nullptr, "bad 'loop':1 skipped not terminate");
+    Expect(w.Clips().Find((uint32_t)0xAAAA0003ull) == nullptr, "bad 'fps':string skipped");
+    Expect(w.Clips().Find((uint32_t)0xAAAA0004ull) == nullptr, "bad sheet:number skipped");
+
+    fs::remove_all(root, ec);
+}
+
 void RunAssetsTests() {
 #ifdef LEMON_EDITOR_CORE
     TestProjectFile();
@@ -1691,5 +1767,8 @@ void RunAssetsTests() {
 #endif
 #ifdef LEMON_EDITOR_CORE
     TestBakeProjectAtlas();
+#endif
+#ifdef LEMON_EDITOR_CORE
+    TestClipCacheBadArchive(); // 批⑪ H2：坏 clip 红字跳过不炸 Play
 #endif
 }

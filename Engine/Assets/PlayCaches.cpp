@@ -1,14 +1,13 @@
 // Lemon 引擎 — Play 三缓存构建实现（M7a 批④；见 PlayCaches.h 契约注记）。
-// nlohmann/json 只进本 .cpp。clip 帧解析沿用装载期口径（sheet GUID + cell →
-// spriteId 的解析需要资产源，与 AnimAsset::ParseClipJson 的纯文本半分工——
-// 批③ 批文件既定：解析器 b2 已下沉、缓存构建归本件）。
+// clip 帧解析沿用装载期口径（sheet GUID + cell → spriteId 的解析需要资产源；
+// JSON 解析全部下沉 AnimAsset/TableAsset/ControllerAsset 的 Parse*Json 唯一实现
+// ——批⑪ H2（review 2026-10-09）：本件原内联 clip 解析器是弱拷贝，坏字段类型
+// 抛 type_error 穿透 = terminate，违反「坏档红字跳过不炸 Play」契约，已删除）。
 #include "Assets/PlayCaches.h"
 
 #include <fstream>
 #include <unordered_set>
 #include <vector>
-
-#include <nlohmann/json.hpp>
 
 #include "Assets/AnimAsset.h"
 #include "Assets/ControllerAsset.h"
@@ -18,7 +17,6 @@
 
 namespace lemon::assets {
 namespace {
-using Json = nlohmann::json;
 
 bool ReadFileText(const std::string& absPath, std::string& out) {
     std::ifstream f(absPath, std::ios::binary);
@@ -45,57 +43,49 @@ void BuildClipCache(ecs::World& world, const PlayCacheSource& src) {
                                   const std::string& absPath) {
         std::string text;
         if (!ReadFileText(absPath, text)) return;
-        Json doc = Json::parse(text, nullptr, false);
-        if (doc.is_discarded() || !doc.contains("frames") || !doc.at("frames").is_array() ||
-            !doc.contains("fps")) {
-            LEMON_WARN("clip 解析失败（需 frames[]/fps）：%s——跳过", relPath.c_str());
+        // 批⑪ H2（review 2026-10-09）：解析走 AnimAsset::ParseClipJson 唯一实现
+        //（review 2026-10-02 #30 加固的类型预检版）——坏字段类型红字跳过不炸
+        // Play。语义收紧两处随源解析器：坏 events 帧号越界 = 拒整 clip（原内联
+        // 静默跳过该事件）；sheet 非 hex GUID = 拒（原由 FindSprite miss 兜住）。
+        const ClipData clip = ParseClipJson(text);
+        if (!clip.ok) {
+            LEMON_WARN("clip 解析失败（%s）：%s——跳过", relPath.c_str(),
+                       clip.error.c_str());
             return;
         }
-        const float fps = doc.at("fps").get<float>();
-        const bool loop = !doc.contains("loop") || doc.at("loop").get<bool>(); // 缺省 true
+        const float fps = clip.fps;
+        const bool loop = clip.loopMode != 0; // ClipTable::Add 是 bool 面（PingPong
+                                               // 档面按循环收；运行时权威在实体）
         std::vector<uint32_t> frames;
         bool ok = true;
-        for (const Json& fr : doc.at("frames")) {
-            if (!fr.is_object() || !fr.contains("sheet") || !fr.contains("cell")) {
-                ok = false;
-                break;
-            }
-            const uint64_t sheetGuid = HexToGuid(fr.at("sheet").get<std::string>().c_str());
-            const IndexedEntry* sheet = src.FindSprite(sheetGuid);
-            const uint32_t cell = fr.at("cell").get<uint32_t>();
+        for (const ClipFrame& fr : clip.frames) {
+            const IndexedEntry* sheet = src.FindSprite(fr.sheetGuid);
             // M6a 批② T3b-1：整图引用——未切片 sheet 的 cell 0 = 本体号（文件夹
             // 多单图动画，一帧一图）；切片表照旧 cell 界内连号
             uint32_t spriteId = 0;
             if (sheet && sheet->type == AssetType::Sprite) {
                 if (sheet->Sliced())
-                    spriteId = sheet->SliceSpriteId(cell);
-                else if (cell == 0)
+                    spriteId = sheet->SliceSpriteId(fr.cell);
+                else if (fr.cell == 0)
                     spriteId = sheet->spriteId;
             }
             if (spriteId == 0) {
                 LEMON_WARN("clip 帧悬空（sheet 缺失/未切片且 cell≠0/cell 越界 %u）：%s 帧 %zu——跳过该 clip",
-                           cell, relPath.c_str(), frames.size());
+                           fr.cell, relPath.c_str(), frames.size());
                 ok = false;
                 break;
             }
             frames.push_back(spriteId);
         }
         if (!ok) return;
-        // T3d 批③：帧事件表（可选 events[]；宽容解析——坏事件跳过不炸 clip，
-        // 与帧表同款"帧必须可解析"校验已在 ClipEdit 侧拦，此处防手写档越界）
+        // T3d 批③：帧事件表（ParseClipJson 已保证帧号界内、id 数值合法）
         std::vector<ecs::ClipEventDef> events;
-        if (doc.contains("events") && doc.at("events").is_array()) {
-            for (const Json& ev : doc.at("events")) {
-                if (!ev.is_object() || !ev.contains("frame") || !ev.at("frame").is_number())
-                    continue;
-                const uint32_t frame = ev.at("frame").get<uint32_t>();
-                if (frame >= frames.size()) continue;
-                ecs::ClipEventDef d;
-                d.frame = (uint16_t)frame;
-                if (ev.contains("id") && ev.at("id").is_number())
-                    d.id = (uint16_t)ev.at("id").get<uint32_t>();
-                events.push_back(d);
-            }
+        events.reserve(clip.events.size());
+        for (const ClipEventEdit& ev : clip.events) {
+            ecs::ClipEventDef d;
+            d.frame = (uint16_t)ev.frame;
+            d.id = (uint16_t)ev.id;
+            events.push_back(d);
         }
         const uint32_t clipId = (uint32_t)guid; // 低 32 位（映射约定同 prefabId）
         if (!seenClipIds.insert(clipId).second)
