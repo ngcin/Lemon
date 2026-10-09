@@ -56,6 +56,15 @@ Status: done ✅（2026-10-09 机器面。**D1–D5 用户未应答按推荐推�
 - RunSweeper 全仓零引用（svr-test / 模板 / 生成器内嵌串三处grep证）；
 - 批⑦ 敞口①（编辑器内换场端到端机器驱动）= template-chain smoke 过；敞口②（UI 点击换场不可回放）= 键盘路径落地 + 候选 B 登记候选池。
 
+## 后修（2026-10-09 真人走查首轮，[DevLog](../../DevLog/2026-10-09-m7c-b9-post-fix.md)）
+
+- **实报①火山不刷怪**：VolcanoTableLoader 漏注册（场景脚本需 `Behaviours.Register`）→ GameMain 补。
+- **实报②Stop→再 Play 全灭**：`Booted` 用户静态跨局存活（`lemon_play_reset` 清不了用户静态）误杀新局种子 → SDK 新公共面 `Lemon.Events.PlayResetHook`（跨局复位广播）+ GameFlow/LoadingScreen 静态构造订阅自清（svr-test + 模板内嵌串两侧；`s_driver` DDOL 句柄同 bug 类一并清）。
+- **连带挖出：lemon-game runtime 暂存陈旧**（POST_BUILD 只随重链触发，SDK .cs 单独重编不刷新 exe 旁 runtime/——本例新 API 缺方法炸静态构造的表象即由此来）→ staging 改每构建跑的 `lemon-game-runtime` custom target。
+- 诊断小改：Behaviours 构造器异常红字打全异常链。
+- 验证：单测 34,716 / script-tests 1,818 逐位不变、game-smoke OK、template-chain OK、svr-test boot 零异常零契约红（类型 9 = 注册面含 VolcanoTableLoader 实证）。
+- 登记候选：smoke-template 双 Play 段（stop→replay→menu 再显）机器钉板归批⑩/收尾批。
+
 ## 5. 红线自查（开工前对齐）
 
 - **Engine 内核零改动**（GameEntry smoke 面可动；若 smoke 断言需要内核让步 = 设计错误回 D1–D5 重议）；vtable 59 / 组件 id / 系统序零动 → 金回放零重录。

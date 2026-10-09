@@ -20,6 +20,16 @@ public static class LoadingScreen
 
     private static Lemon.GameObject s_driver; // 现任驱动（Begin 代收上一任——批⑧ F3）
 
+    static LoadingScreen()
+        // 跨局复位（批⑨ 真人走查补）：s_driver 静态随域存活，旧局句柄跨 World
+        // id 复用会误判 Alive → 二次 Play 加载屏死驱。每局清（hook 通道见 Events）
+        => Lemon.Events.PlayResetHook += () => {
+               s_driver = default;
+               Pending = default;
+               HoldingGate = false;
+               GameProgress = 0f;
+           };
+
     /// <summary>发起异步换场 + 挂加载屏（svr-test 场景小 = 直通形态，不门控）。
     /// 返回 op 供调用方轮询/订阅 completed。op 无效（场景不可解析/Additive 红字）
     /// = 不挂屏原样返回。重复 Begin = 新请求取代（引擎单槽）+ 旧驱动代收。</summary>

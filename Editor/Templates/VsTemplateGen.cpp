@@ -826,10 +826,14 @@ public sealed class GameFlow : LemonBehaviour
     private static State settingsFrom = State.Menu; // 设置屏返回目标（入口双源）
     private static bool prevPause, prevConfirm;     // 边沿（按住只触发一次）
 
-    // 跨场种子守卫（批⑨ D1）：MainMenu 重装的新种子标记 dup、首 Update 自毁——
-    // Booted 静态随域重建复位，热重载经 StateBag 传递（OnHotReloadOut/In）
+    // 跨场种子守卫（批⑨ D1）：MainMenu 重装的新种子标记 dup、首 Update 自毁。
+    // 跨局复位：静态随域存活（Stop→Play 不清）——经 Events.PlayResetHook 每局清
+    /// （否则二次 Play 新种子被旧局守卫误杀 = 全灭，批⑨ 真人走查实报）；热重载
+    /// 仍走 StateBag（OnHotReloadOut/In）
     private static bool Booted;
     private bool dup;
+
+    static GameFlow() => Lemon.Events.PlayResetHook += () => Booted = false;
 
     // 结算数据（ShowResults 落板 + 热重载重灌）
     private static string resTitle = "", resScore = "", resTime = "", resKills = "",
@@ -1699,6 +1703,16 @@ public static class LoadingScreen
     internal static float GameProgress; // 游戏自报段（0..1；门控形态的开门条件）
 
     private static Lemon.GameObject s_driver; // 现任驱动（Begin 代收上一任——批⑧ F3）
+
+    static LoadingScreen()
+        // 跨局复位（批⑨ 真人走查补）：s_driver 静态随域存活，旧局句柄跨 World
+        // id 复用会误判 Alive → 二次 Play 加载屏死驱。每局清（hook 通道见 Events）
+        => Lemon.Events.PlayResetHook += () => {
+               s_driver = default;
+               Pending = default;
+               HoldingGate = false;
+               GameProgress = 0f;
+           };
 
     /// <summary>发起异步换场 + 挂加载屏。返回 op 供调用方轮询/订阅 completed。
     /// op 无效（场景不可解析/Additive 红字）= 不挂屏原样返回。重复 Begin = 新请求

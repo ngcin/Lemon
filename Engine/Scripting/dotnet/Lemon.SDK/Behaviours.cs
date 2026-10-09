@@ -164,8 +164,8 @@ public static class Behaviours
         LemonBehaviour b;
         try { b = slot.Factory(); } // 用户构造器（#15）：唯一无护栏生命周期——红字跳过，
         catch (Exception ex) {      // C++ 侧槽已写、实例未挂 = 脚本哑火，必须可见
-            Console.Error.WriteLine(
-                $"[lemon][error] behaviour '{slot.Name}' 构造器异常（实例未挂载）: {ex.Message}");
+            Console.Error.WriteLine( // 全异常链（批⑨ 后修：TargetInvocation 等包装的
+                $"[lemon][error] behaviour '{slot.Name}' 构造器异常（实例未挂载）: {ex}"); // 内层才是真因）
             return;
         }
         b.gameObject = new GameObject(e);

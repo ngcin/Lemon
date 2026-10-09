@@ -29,10 +29,14 @@ public sealed class GameFlow : LemonBehaviour
     private static State settingsFrom = State.Menu; // 设置屏返回目标（入口双源）
     private static bool prevPause, prevConfirm;     // 边沿（按住只触发一次）
 
-    // 跨场种子守卫（批⑨ D1）：MainMenu 重装的新种子标记 dup、首 Update 自毁——
-    // Booted 静态随域重建复位，热重载经 StateBag 传递（OnHotReloadOut/In）
+    // 跨场种子守卫（批⑨ D1）：MainMenu 重装的新种子标记 dup、首 Update 自毁。
+    // 跨局复位：静态随域存活（Stop→Play 不清）——经 Events.PlayResetHook 每局清
+    /// （否则二次 Play 新种子被旧局守卫误杀 = 全灭，批⑨ 真人走查实报）；热重载
+    /// 仍走 StateBag（OnHotReloadOut/In）
     private static bool Booted;
     private bool dup;
+
+    static GameFlow() => Lemon.Events.PlayResetHook += () => Booted = false;
 
     // 结算数据（ShowResults 落板 + 热重载重灌）
     private static string resTitle = "", resScore = "", resTime = "", resKills = "",

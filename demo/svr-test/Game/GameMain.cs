@@ -39,7 +39,8 @@ public static class GameMain
         Lemon.Behaviours.Register<PlayerBehaviour>();
         Lemon.Behaviours.Register<AllyBehaviour>();
         Lemon.Behaviours.Register<RedVsBlue>();
-        Lemon.Behaviours.Register<WaveTableLoader>(); // 波次表载入（M6a 批② 范例）
+        Lemon.Behaviours.Register<WaveTableLoader>();
+        Lemon.Behaviours.Register<VolcanoTableLoader>(); // 批⑨：火山场子类（场景脚本需注册才解析——火山 Director 挂它） // 波次表载入（M6a 批② 范例）
         Lemon.Behaviours.Register<DuelBehaviour>(); // T3d 终验：ani.scene 双怪对决（状态机全链）
         Lemon.Behaviours.Register<UiEcho>(); // UiTest.scene：UI 事件回显（③c 真人验收观测面）
         Lemon.Behaviours.Register<TweenDemo>(); // ani.scene：宝石 Tween.Scale OutBack 弹跳演示

@@ -111,5 +111,22 @@ public static unsafe class Events
     {
         lock (s_pendingLock) s_pending.Clear();
         for (int i = 0; i < s_received.Length; i++) s_received[i] = 0;
+        // 批⑨ 后补：用户静态跨局复位通道。静态默认随域存活（Stop→Play 不清）——
+        // 「每局一份」语义的静态（流程壳守卫/DDOL 驱动句柄等）没有自清时机
+        // （ClearInstances 只清 SDK 实例表、OnDestroy 在 Stop 快拆不达），真机
+        // 首例 = svr-test 二次 Play 全灭（批⑨ 真人走查）。订阅面 = Configure 期
+        // 静态订阅（跨局存活，与事件订阅同生命周期）。逐订阅异常隔离（红字保进程）。
+        var hook = PlayResetHook;
+        if (hook == null) return;
+        foreach (Action h in hook.GetInvocationList())
+            try { h(); }
+            catch (Exception ex) {
+                Console.Error.WriteLine("[lemon][error] PlayResetHook 订阅异常（已拦）：" +
+                                        ex.Message);
+            }
     }
+
+    /// <summary>进 Play 域复位广播（每局一次，装配新实例前）。「每局一份」静态的
+    /// 自清通道——订阅归 GameMain.Configure（跨局存活面）。批⑨ 后补。</summary>
+    public static event Action? PlayResetHook;
 }
