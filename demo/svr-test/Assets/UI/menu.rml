@@ -11,10 +11,11 @@
 <div id="main" class="menu-bg">
   <div id="main-title" class="menu-title">LEMON SURVIVORS</div>
   <div id="main-list" class="menu-list">
-    <button id="btn-start" class="btn-lg" data-event="start">开始游戏</button>
+    <button id="btn-start" class="btn-lg" data-event="start">开始游戏（草地）</button>
+    <button id="btn-volcano" class="btn-lg" data-event="start-volcano">火山（困难）</button>
     <button id="btn-msettings" class="btn-lg" data-event="settings">设置</button>
   </div>
-  <div id="main-hint" class="hint">移动 WASD · 攻击 自动 · 暂停 Esc</div>
+  <div id="main-hint" class="hint">开始/重开 R · 火山 空格 · 移动 WASD · 暂停 Esc</div>
 </div>
 </body>
 </rml>

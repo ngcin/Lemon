@@ -67,6 +67,26 @@ PlayerBehaviour.cs 或场景后重新生成，勿手改 .prefab 内 guid）。
 - 波次：`Director` 实体 WaveDirector（Inspector 数组段可调参）。
 - 三选一池：PlayerBehaviour.kOptions（7 项固定序轮换，零 RNG = 回放友好）。
 
+## 多场景流程（M7c 批⑨）
+
+- **场景结构**：`Scenes/MainMenu.scene`（入口 = 流程壳：GameFlow 种子实体，
+  DDOL 跨场幸存）+ `Scenes/Grass.scene` / `Scenes/Volcano.scene`（战斗场自含
+  Player + Director——装载即开局）。四屏流程文档（菜单/暂停/设置/结算）与
+  加载屏 = code-mount（`UI.Show` 通道 B 现载，origin=CSharp 跨场幸存——场景
+  声明式 UIDocument 换场即卸，故不走场景声明）。
+- **换场**：进战斗 = `LoadingScreen.Begin`（LoadSceneAsync + 加载屏，批⑧ 样例
+  消费）；回菜单 = 同步 `LoadScene("MainMenu")`。**RunSweeper 退役**——清场
+  由引擎换场编排接管（除 DDOL 系外全清）；重开一局 = 重装载战斗场，零握手。
+- **键盘位**（入 InputState = 可回放；鼠标点击为人用路径）：菜单 R = 草地 /
+  空格 = 火山；结算 R = 重开 / Esc = 回菜单。
+- **火山（困难）**：`Assets/tables/waves_volcano.tab`（guid `7e57100000100011`，
+  更难变体 = 占位数值，改表即调）+ `VolcanoTableLoader`（`WaveTableLoader`
+  子类换表 GUID）。草地 = `waves.tab` 原表不变。
+- **编辑器直开战斗场 Play** = 裸战斗（无流程壳——种子在 MainMenu 场；与直开
+  Main.scene/ani.scene 同口径）。完整流程从 MainMenu.scene 进 Play。
+- 调参入口：`Game/GameFlow.cs`（流程态机/键盘位）、`Game/LoadingScreen.cs`
+  （加载屏权重与文案）。
+
 ## 受击表现（M6a 批①引擎能力的项目侧接线）
 
 - **资产**：`Assets/hero-hit.clip`（guid `5bd31a7c20000003`）与 `monster-hit.clip`

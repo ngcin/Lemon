@@ -863,6 +863,20 @@ int EditorApp::Run(const EditorLaunch& launch) {
         BenchSample(frame, benchT0, bPump, bSim, bUi0, bUi1, bAcq, bScene,
                     bUiDraw, bPresent);
         ++frame;
+        // 批⑨：smoke 会话帧率下限（60Hz 墙钟）——FileWatcher 500ms 轮询的等待窗
+        // 全部按帧数标定（≈50 帧 @60Hz > 轮询周期）；显示器睡眠/合成器不节流时
+        // 实测 500fps+，帧窗墙钟塌缩 → watcher 竞速假红（2026-10-09 首现：屏睡
+        // 态 asset/uirml×2/script 四步确定性红、屏醒即绿、HEAD 基线同败 = 机器级
+        // 既有敞口）。交互会话（frames==0）与 bench（Immediate 压测口径）不动。
+        if (launch.frames > 0 && !launch.benchSurvivor && !launch.benchScene &&
+            (launch.smoke || launch.smokeUi || launch.smokeTemplate ||
+             launch.smokeUirml || launch.smokeAnim || launch.smokeAudio)) {
+            const auto frameDur = BenchClock::now() - benchT0;
+            const auto floor60 = std::chrono::milliseconds(18); // 55.6fps：比 60Hz
+            // 标定略慢——帧数窗（≈50 帧 @60Hz > 500ms 轮询）取得宽裕而非贴边
+            if (frameDur < floor60)
+                std::this_thread::sleep_for(floor60 - frameDur);
+        }
     }
 
     bool playVerified = true;

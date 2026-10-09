@@ -28,11 +28,14 @@ public static class GameMain
 
     public static void Configure()
     {
-        // 注册序 = 跨类型 Update 执行序：流程闸最先（批③d-2 GameFlow/RunSweeper）
+        // 注册序 = 跨类型 Update 执行序：流程闸最先（批③d-2 GameFlow；批⑨ 起
+        // 清场归引擎换场——RunSweeper 退役）
         Lemon.Behaviours.Register<GameFlow>();
-        Lemon.Scripting.Register(new RunSweeper());
         // UI 事件单点订阅 → GameFlow 路由（流程四屏 start/resume/settings/...）
         Lemon.UI.Events.Subscribe(OnUiEvent);
+        // 批⑨：场景事件路由（与 UI.Events 同生命周期——Configure 随域重建重跑，
+        // 订阅随之重订；热重载后换场回调不断链）
+        SceneManager.sceneLoaded += GameFlow.OnSceneLoaded;
         Lemon.Behaviours.Register<PlayerBehaviour>();
         Lemon.Behaviours.Register<AllyBehaviour>();
         Lemon.Behaviours.Register<RedVsBlue>();

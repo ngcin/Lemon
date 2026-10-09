@@ -48,6 +48,7 @@ struct TplSmokeState {
     // main/pause/settings/results）——零装载护栏升级为"通道 A 装载恰 6"（装载点
     // 单一性防线的同型收紧；bench 场景仍零装载）
     int uiLoads = -1;
+    int uiLoadsFinal = -1; // 批⑨：终态 code-mount 累计装载（恰 7 = 四屏预装+HUD+卡片+加载屏）
     // 批③d-1：文档化断言态（原 RtUi 行/卡片探针随迁）+ 层序三拍状态机
     bool hudDocOk = false;
     int layerStage = 0; // 0 基线请求→1 取回→2 等卡片→3 取回→4 等隐藏→5 取回→6 完
@@ -167,12 +168,12 @@ bool EditorApp::SmokeTplSeedProject() {
         try {
             const nlohmann::json j = nlohmann::json::parse(text);
             g_tplSmoke.entryWiz = j.contains("entryScene") &&
-                                  j.at("entryScene") == "Scenes/Main.scene";
+                                  j.at("entryScene") == "Scenes/MainMenu.scene";
         } catch (const std::exception&) {
         }
         if (!g_tplSmoke.entryWiz) {
             LEMON_ERROR("smoke-template：向导复制丢 entryScene（新 project.lemon 无"
-                        " entryScene=\"Scenes/Main.scene\"）");
+                        " entryScene=\"Scenes/MainMenu.scene\"）");
             return false;
         }
     }
@@ -186,7 +187,7 @@ bool EditorApp::SmokeTplSeedProject() {
 // ---- --smoke-template 场景+预置存档播种（M5 批④/M6a 批② T5；批③c-4 自 Run
 // else-if 链外迁：守卫（场景开链）留原位，函数体逐位随迁）----
 bool EditorApp::SmokeTplSeedScene() {
-    if (!ctx_.OpenScene(launch_->projectDir + "/Scenes/Main.scene")) return false;
+    if (!ctx_.OpenScene(launch_->projectDir + "/Scenes/MainMenu.scene")) return false;
     {
         namespace fs = std::filesystem;
         std::error_code ec;
@@ -201,13 +202,11 @@ bool EditorApp::SmokeTplSeedScene() {
             .write((const char*)bytes.data(), (std::streamsize)bytes.size());
     }
     smokeSeeded_ = ctx_.ActiveScene().AliveCount();
-    forceDefaultLayout_ = true; // overlay 断言依赖 Scene 面板前台（同 smoke-drag 语义）
-    // overlay 三要素需要选中实体：选玩家（tag "Player"）
-    ctx_.EditScene().Each([&](ecs::Entity e) {
-        if (const ecs::Meta* m = ctx_.EditScene().TryGet<ecs::Meta>(e);
-            m && std::strcmp(m->tag, "Player") == 0)
-            ctx_.Select(e, false);
-    });
+    forceDefaultLayout_ = true; // Scene 面板前台（grid 像素防线依赖场景 RT）
+    // 批⑨ 起入口场唯一实体 = Flow 种子（无 SpriteRenderer——选中框/Gizmo 手柄按
+    // 包围盒画，Transform-only 实体 = 零像素）。overlay 三要素走「无选中 = 跳过」
+    // 语义（M7a 批⑧ 适配先例）；像素防线由 basic smoke / smoke-drag 链（选中精灵
+    /// 实体）继续覆盖。
     return true;
 }
 
@@ -215,8 +214,9 @@ bool EditorApp::SmokeTplSeedScene() {
 // 无捕获 lambda 引 g_tplSmoke（文件级存储两刚需之一）；批③c-4 自 Run 外迁）----
 void EditorApp::SmokeTplPlaySetup() {
     if (Launch().smokeTemplate && ctx_.Playing()) {
-    // 批③d-2：通道 A 装载数（恰 6 = 六文档场景声明；bench 场景零装载口径
-    // 不变——装载点只在 MountSceneUiDocuments 的 EnterPlay 扫描）
+    // 批⑨：通道 A 装载数（入口场零 UIDocument 声明 = 恒 0，打印口径保留）；
+    // 装载链断言移终态 DocumentLoadCount（code-mount 恰 7：流程四屏预装 + HUD
+    // + 卡片 + 加载屏——verdict 侧 uiLoadsFinal）
     g_tplSmoke.uiLoads = gameUi_ ? (int)gameUi_->DocumentLoadCount() : -1;
     ctx_.ActiveWorld().SetEventSink(
         [](ecs::World&, const ecs::EventPacket& p) {
@@ -661,7 +661,8 @@ bool EditorApp::SmokeTplVerdict() {
                             g_tplSmoke.tomenuOk;
         // M7a 批⓪ D6：entryScene 解析回显位（开项目经 OpenProjectPipeline 后
         // EntryScene() 应读到模板声明的入口——与播种期 wiz 位构成写入→回显闭环）
-        const bool entryParseOk = EntryScene() == "Scenes/Main.scene";
+        const bool entryParseOk = EntryScene() == "Scenes/MainMenu.scene";
+        g_tplSmoke.uiLoadsFinal = gameUi_ ? (int)gameUi_->DocumentLoadCount() : -1;
         const bool tplOk = g_tplSmoke.hudDocOk && g_tplSmoke.hudBarBox && g_tplSmoke.bestLoaded &&
                            g_tplSmoke.waveRow &&
                            g_tplSmoke.deaths > 0 && g_tplSmoke.levelUps > 0 && g_tplSmoke.cardsSeen &&
@@ -669,7 +670,7 @@ bool EditorApp::SmokeTplVerdict() {
                            g_tplSmoke.revived && g_tplSmoke.scriptOk &&
                            g_tplSmoke.mobHitClip && g_tplSmoke.fxText && g_tplSmoke.fxBar && // 批①
                            g_tplSmoke.tablesOk && // 批② T4：数值表载入
-                           g_tplSmoke.uiLoads == 6 && layerOk && flowOk && // 批③d-1/③d-2：装载恰 6 + 层序三拍 + 流程链
+                           g_tplSmoke.uiLoadsFinal == 7 && layerOk && flowOk && // 批⑨：code-mount 装载恰 7 + 层序三拍 + 流程链
                            g_tplSmoke.audMount == 7 && g_tplSmoke.audPauseVoices >= 1 &&
                            g_tplSmoke.audResumeVoices >= 1 && // 批④：七件装载 + 暂停挂起续响
                            g_tplSmoke.entryWiz && entryParseOk; // 批⓪：entryScene 写入+回显
@@ -692,7 +693,7 @@ bool EditorApp::SmokeTplVerdict() {
                     g_tplSmoke.deathSeen ? "YES" : "NO", g_tplSmoke.revived ? "YES" : "NO",
                     g_tplSmoke.scriptOk ? "YES" : "NO", g_tplSmoke.mobHitClip ? "YES" : "NO",
                     g_tplSmoke.fxText ? "YES" : "NO", g_tplSmoke.fxBar ? "YES" : "NO",
-                    g_tplSmoke.tablesOk ? "YES" : "NO", g_tplSmoke.uiLoads,
+                    g_tplSmoke.tablesOk ? "YES" : "NO", g_tplSmoke.uiLoadsFinal,
                     g_tplSmoke.entryWiz ? "YES" : "NO", entryParseOk ? "YES" : "NO",
                     g_tplSmoke.audMount, g_tplSmoke.audPauseVoices, g_tplSmoke.audResumeVoices,
                     (g_tplSmoke.audMount == 7 && g_tplSmoke.audPauseVoices >= 1 &&

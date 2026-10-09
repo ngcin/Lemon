@@ -1,88 +1,127 @@
 using System;
 using Lemon;
-using Lemon.Interop;
 
-/// <summary>流程状态机（M6b 批③d-2 档1：单场景零引擎改动；svr-test 版——拷自
-/// vs-survivor 模板同批，适配点：prefab GUID/清场 tag 集/RtUi HUD 行清屏/无
-/// GameMain.Run 静态）。只提供流程原语：EnterRun（清场 + 重挂双 prefab）/
-/// ShowResults / ReturnToMenu / SetPaused——**死亡策略归游戏侧**（本游戏 =
-/// PlayerBehaviour.Die 首死复活对话（RtUi）/二死结算，见其分叉）。
-/// 重开 = C# 自律清场：RunSweeper 按 tag 扫场销毁 run 实体（SceneOps 命令
-/// 次帧首应用）→ Spawning 握手（SweepObserved）后重挂 Player/Director prefab。</summary>
+/// <summary>流程状态机（M7c 批⑨ 多场景形态；前身 = M6b 批③d-2 档1 单场景版——
+/// RunSweeper 清场补丁退役，引擎换场清场（批⑦ D2「除 DDOL 系外全清」）接管）。
+/// 跨场壳（批⑨ D1）= 本实体 DDOL（Awake 自标 + MainMenu 重装新种子 Booted 守卫
+/// 自毁）+ 四屏流程文档 code-mount（UI.Show 通道 B 现载 = origin=CSharp 跨场
+/// 幸存——换场 sweep 只卸 origin=Scene，场景声明式 UIDocument 不跨场）。
+/// 换场门面（批⑨ D5）：进战斗 = LoadingScreen.Begin（LoadSceneAsync + 加载屏，
+/// 批⑧ 样例消费）；回菜单 = 同步 LoadScene("MainMenu")。
+/// 键盘位（批⑨ D3，批⑦ 敞口② 修法）：菜单 R=草地 / 空格=火山；结算 R=重开 /
+/// Esc=回菜单——语义位入 InputState = 可回放；鼠标点击路径为人用（非回放口径）。
+/// 死亡策略归游戏侧（PlayerBehaviour.Die 首死复活对话（RtUi）/二死结算）不变。
+/// 战斗场自含 Player/Director（批⑨ D2）——装载即开局，无 spawn 握手。</summary>
 public sealed class GameFlow : LemonBehaviour
 {
-    // svr-test 资产 GUID（批③d-2 新落；引用锚点，勿改）
-    private const string kPlayerPrefab = "ee516071c5ca3e29";
-    private const string kDirectorPrefab = "b2d7cc08d3ada0cd";
+    // M6c 竖切批：战斗 BGM（Assets/Audio/bgm.mp3 = yami watery_cave；Bgm 组单槽循环）
+    private const string kBgm = "6a6d100000000001";
+    private const string kMenuScene = "MainMenu";
 
-    internal enum State { Menu, Spawning, Run, Paused, Results, Settings }
+    internal enum State { Menu, Loading, Run, Paused, Results, Settings }
 
     // ---- 流程态（静态：UI 事件经 GameMain 单点订阅路由，不持实例）----
     internal static State St = State.Menu;
     private static State settingsFrom = State.Menu; // 设置屏返回目标（入口双源）
-    private static bool prevPause;                  // Esc 边沿（按住只切一次）
-    // M6c 竖切批：战斗 BGM（Assets/Audio/bgm.mp3 = yami watery_cave；Bgm 组单槽循环）
-    private const string kBgm = "6a6d100000000001";
+    private static bool prevPause, prevConfirm, prevAttack; // 边沿（按住只触发一次）
+    private static string battleScene = "Grass";    // 当前战斗场（结算重开用）
 
-    // 清场握手：EnterRun/ReturnToMenu 置 Armed → RunSweeper 批扫置 Observed →
-    // GameFlow 观察后清对、开局（命令入队与 spawn 间恒有 Essential 提交拍）
-    internal static bool SweepArmed, SweepObserved;
+    // 跨场种子守卫（D1）：MainMenu 重装的新种子标记 dup、首 Update 自毁——
+    // Booted 静态随域重建复位，热重载经 StateBag 传递（OnHotReloadOut/In）
+    private static bool Booted;
+    private bool dup;
+
     // 结算数据（ShowResults 落板 + 热重载重灌）
     private static string resTitle = "", resScore = "", resTime = "", resKills = "",
                          resBest = "";
 
+    protected override void Awake()
+    {
+        if (Booted) { dup = true; return; } // 重装副本：静默等首帧自毁
+        Booted = true;
+        // 跨场幸存（批⑦ D1 根位式：位只标根 O(1)，清场判祖先链）
+        LemonBehaviour.DontDestroyOnLoad(gameObject);
+    }
+
     protected override void Start()
     {
-        // 进 Play 即菜单。显式 re-Show：装载通道 Show 序随场景实体迭代序
-        //（EnTT 逆序——先建者后显 = 置顶），不重排则流程屏压序漂移；显隐归本类
+        if (dup) return;
+        // 进 Play 即菜单。文档 = 通道 B 现载（origin=CSharp；批⑨ 起流程四屏不再
+        // 走场景 UIDocument 声明——origin=Scene 换场即卸，见类头注）。隐藏屏
+        // Show+Hide 一次性预装载：通道 B 只在 Show 现载，此后隐藏态可写
+        //（RefreshSettingsUi 首帧即写 settings DOM——③d-2 先例语义保持）
         Time.Scale = 0f;
         St = State.Menu;
+        battleScene = "Grass";
         UI.Show(GameMain.MainDoc);
+        UI.Show(GameMain.PauseDoc);     UI.Hide(GameMain.PauseDoc);
+        UI.Show(GameMain.SettingsDoc);  UI.Hide(GameMain.SettingsDoc);
+        UI.Show(GameMain.ResultsDoc);   UI.Hide(GameMain.ResultsDoc);
         UI.Apply();
         LoadSettings();
     }
 
     protected override void Update()
     {
-        bool pauseEdge = Input.Pause && !prevPause; // 边沿语义（按住 Esc 不连切）
+        if (dup) { gameObject.Destroy(); return; } // 重装副本首帧自毁（Awake 期不动世界）
+        bool pauseEdge = Input.Pause && !prevPause;         // Esc/P（bit6）
+        bool confirmEdge = Input.Confirm && !prevConfirm;   // R（bit5「确认/重开」）
+        bool attackEdge = Input.Attack && !prevAttack;      // 空格（bit4；菜单态无冲刺语义）
         switch (St) {
         case State.Menu:
-            if (SweepObserved) { SweepArmed = false; SweepObserved = false; } // 回菜单清场收尾
+            if (confirmEdge) EnterRun("Grass");       // 键盘路径（D3：入 InputState 可回放）
+            else if (attackEdge) EnterRun("Volcano");
             break;
-        case State.Spawning:
-            if (!SweepObserved) break;                 // 清场批未过——等握手
-            SweepArmed = false;
-            SweepObserved = false;
-            Instantiate.Prefab(kPlayerPrefab, new Vec2(0f, 0f));
-            Instantiate.Prefab(kDirectorPrefab, new Vec2(0f, 0f));
-            Time.Scale = 1f;
-            St = State.Run;                            // 入口屏已在 EnterRun 即隐
-            break;
+        case State.Loading:
+            break;                                    // 加载屏期间无输入消费
         case State.Run:
-            if (pauseEdge) SetPaused(true);            // Esc/P（bit6，批③d-2 D4）
+            if (pauseEdge) SetPaused(true);
             break;
         case State.Paused:
             if (pauseEdge) SetPaused(false);
             break;
+        case State.Results:
+            if (confirmEdge) EnterRun(battleScene);   // R = 重开当前战斗场
+            else if (pauseEdge) ReturnToMenu();       // Esc = 回菜单
+            break;
         }
         prevPause = Input.Pause;
+        prevConfirm = Input.Confirm;
+        prevAttack = Input.Attack;
     }
 
-    // ---- 流程原语（PlayerBehaviour 死亡分叉 / UI 事件调用）----
+    // ---- 换场与场景事件（订阅面归 GameMain.Configure = UI.Events 同生命周期，
+    //      热重载随域重建重订）----
 
-    /// <summary>开始/重开一局：清场 →（握手后）重挂双 prefab → Run。入口屏即隐
-    ///（菜单/结算——点击即走，不留残屏盖在新局上）；Spawning 中重入忽略。</summary>
-    internal static void EnterRun()
+    /// <summary>开始/重开一局：隐入口屏 + 加载屏 + 异步装载（激活帧引擎清场接管
+    /// RunSweeper 职责；sceneLoaded(battle) → Run）。Loading 中重入忽略。</summary>
+    internal static void EnterRun(string scene)
     {
-        if (St == State.Spawning) return;
-        SweepArmed = true;
-        SweepObserved = false;
-        St = State.Spawning;
-        Time.Scale = 0f; // 清场期冻结（无玩家在场防导演空转）
+        if (St == State.Loading) return;
+        battleScene = scene;
+        St = State.Loading;
+        Time.Scale = 0f; // 装载期冻结（sceneLoaded 置 1）
         UI.Hide(GameMain.MainDoc);
         UI.Hide(GameMain.ResultsDoc);
         UI.Apply();
-        Audio.PlayBgm(kBgm, 0.55f); // M6c 竖切批：开战 BGM（单槽顶停旧曲；清场冻结不挂起——BGM 循环声部级暂停待批②）
+        Audio.Paused = false; // 暂停残留防御（换场亦强制清——b6b D6；先归位再开局）
+        Audio.PlayBgm(kBgm, 0.55f); // 开战 BGM（单槽顶停旧曲；菜单静场）
+        LoadingScreen.Begin(scene); // 批⑧ 样例：LoadSceneAsync + 加载屏 + DDOL 驱动
+    }
+
+    /// <summary>sceneLoaded 路由（GameMain.Configure 订阅；同步/异步两门面共用）。
+    /// 初始 entryScene 装载不推事件（oldHandle==0）——Start 已覆盖菜单首显。</summary>
+    internal static void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+    {
+        if (scene.name == kMenuScene) {
+            St = State.Menu;
+            Time.Scale = 0f;
+            UI.Show(GameMain.MainDoc); // 重装副本种子已自毁——DDOL 壳独占流程
+            UI.Apply();
+        } else if (scene.name == "Grass" || scene.name == "Volcano") {
+            Time.Scale = 1f;
+            St = State.Run; // 战斗场自含 Player/Director（D2）——装载即开局
+        }
     }
 
     /// <summary>结算屏（死亡策略的第二半——何时调由游戏侧决定）。</summary>
@@ -102,30 +141,28 @@ public sealed class GameFlow : LemonBehaviour
         St = State.Results;
     }
 
-    /// <summary>回主菜单：清场 + 实底菜单 + RtUi HUD 行收屏（本游戏战斗 HUD 走
-    /// RtUi 兼容层——ADR-014 D5；玩家已销毁无人再写，残留行在此清）。</summary>
+    /// <summary>回主菜单：同步换场（D5：小场景无屏闪）+ 静场 + RtUi HUD 行收屏
+    ///（本游戏战斗 HUD 走 RtUi 兼容层——ADR-014 D5；玩家已销毁无人再写，残留行
+    /// 在此清；换场 Fx 整场清为双保险）。激活帧 sceneLoaded(MainMenu) 显菜单。</summary>
     internal static void ReturnToMenu()
     {
         // review 2026-10-02 #2：暂停中回菜单必须解挂——Audio.Paused 残留会使下局
         // PlayBgm 新声部生而挂起（整局静音）；StopBgm 只停曲不清全局暂停态
         Audio.Paused = false;
         Audio.StopBgm(0.5f); // M6c 批④：回菜单静场（0.5s 淡出）
-        SweepArmed = true;
-        SweepObserved = false;
         Time.Scale = 0f;
         UI.Hide(GameMain.PauseDoc);
         UI.Hide(GameMain.SettingsDoc);
         UI.Hide(GameMain.ResultsDoc);
-        UI.Show(GameMain.MainDoc);
         UI.Apply();
         Ui.Clear("hp"); Ui.Clear("xp"); Ui.Clear("time"); Ui.Clear("kills");
         Ui.Clear("best"); Ui.Clear("wave"); Ui.Clear("over");
-        St = State.Menu;
+        SceneManager.LoadScene(kMenuScene); // 同步门面：下帧激活 → OnSceneLoaded
     }
 
     /// <summary>暂停对（Run↔Paused；死亡冻结期无输入消费，天然不响应）。
     /// M6c 批② D5：显式音频暂停（循环/BGM 挂起、UI 组免疫）——引擎不自动映射
-    /// Time.Scale，菜单/选卡/清场等流程冻结不误停 BGM。</summary>
+    /// Time.Scale，菜单/选卡/装载等流程冻结不误停 BGM。</summary>
     internal static void SetPaused(bool on)
     {
         Audio.Paused = on; // 先挂起再冻结（恢复反向：先解冻再续响）
@@ -147,7 +184,8 @@ public sealed class GameFlow : LemonBehaviour
     internal static void HandleUiEvent(Lemon.UiEvent e)
     {
         if (e.DocStr == GameMain.MainDoc) {
-            if (e.EvStr == "start") EnterRun();
+            if (e.EvStr == "start") EnterRun("Grass");
+            else if (e.EvStr == "start-volcano") EnterRun("Volcano");
             else if (e.EvStr == "settings") OpenSettings(State.Menu);
         } else if (e.DocStr == GameMain.PauseDoc) {
             if (e.EvStr == "resume") SetPaused(false);
@@ -160,7 +198,7 @@ public sealed class GameFlow : LemonBehaviour
             else return;
             SaveSettings(); // 开关翻转即持久化 + 刷新标签
         } else if (e.DocStr == GameMain.ResultsDoc) {
-            if (e.EvStr == "restart") EnterRun();
+            if (e.EvStr == "restart") EnterRun(battleScene);
             else if (e.EvStr == "tomenu") ReturnToMenu();
         }
     }
@@ -279,7 +317,7 @@ public sealed class GameFlow : LemonBehaviour
     {
         UI.SetText(GameMain.SettingsDoc, "btn-fxtext", GameMain.Settings.FxText ? "开" : "关");
         UI.SetText(GameMain.SettingsDoc, "btn-fxbar", GameMain.Settings.FxBar ? "开" : "关");
-        // 滑条 value 属性 + 右侧百分数（隐藏态可写——装载文档 DOM 常在，③d-2 先例）
+        // 滑条 value 属性 + 右侧百分数（隐藏态可写——通道 B 装载文档 DOM 常在，③d-2 先例）
         UI.SetAttr(GameMain.SettingsDoc, "vol-master", "value", Pct(GameMain.Settings.MasterVol));
         UI.SetAttr(GameMain.SettingsDoc, "vol-bgm", "value", Pct(GameMain.Settings.BgmVol));
         UI.SetAttr(GameMain.SettingsDoc, "vol-sfx", "value", Pct(GameMain.Settings.SfxVol));
@@ -297,7 +335,7 @@ public sealed class GameFlow : LemonBehaviour
         RefreshSettingsUi();
     }
 
-    // 热重载状态迁移（流程态 + 设置——静态随域重建必须经包走）
+    // 热重载状态迁移（流程态 + 设置 + 跨场种子/战斗场——静态随域重建必须经包走）
     protected override void OnHotReloadOut(Lemon.StateBag bag)
     {
         bag.Set("st", (int)St);
@@ -308,6 +346,8 @@ public sealed class GameFlow : LemonBehaviour
         bag.Set("vbgm", GameMain.Settings.BgmVol);
         bag.Set("vsfx", GameMain.Settings.SfxVol);
         bag.Set("vui", GameMain.Settings.UiVol);
+        bag.Set("booted", Booted); // 批⑨：种子守卫随包（域重建静态复位后恢复）
+        bag.Set("battle", battleScene == "Volcano" ? 1 : 0); // StateBag 只收值类型
     }
 
     protected override void OnHotReloadIn(Lemon.StateBag bag)
@@ -320,43 +360,8 @@ public sealed class GameFlow : LemonBehaviour
         if (bag.TryGet("vbgm", out float vb)) GameMain.Settings.BgmVol = vb;
         if (bag.TryGet("vsfx", out float vs)) GameMain.Settings.SfxVol = vs;
         if (bag.TryGet("vui", out float vu)) GameMain.Settings.UiVol = vu;
+        if (bag.TryGet("booted", out bool bo)) Booted = bo;
+        if (bag.TryGet("battle", out int bs)) battleScene = bs == 1 ? "Volcano" : "Grass";
         ApplyVolumes(); // 引擎侧随域重建归默认——热进即回设
-    }
-}
-
-/// <summary>清场批量系统（档②；svr-test tag 集——比模板多 FastMob/FlySword/
-/// ScatterBullet 弹种与 "spawned"（Instantiate.Spawn 的残影/盟友等无 prefab 态））。
-/// 常驻注册 + 门控早退：非 armed 拍 C# 零工作。</summary>
-public sealed class RunSweeper : IForEachSystem
-{
-    private static readonly string[] kRunTags = {
-        "Player", "Director", "Mob", "BossMob", "FastMob", "Gem", "Bullet",
-        "PierceBullet", "ScatterBullet", "FlySword", "Blade", "spawned",
-    };
-
-    public string Name => "RunSweeper";
-    public Query Query => Query.With<Meta>();
-
-    public unsafe void ForEach(ref readonly Chunk chunk)
-    {
-        if (!GameFlow.SweepArmed) return;
-        var meta = chunk.Span<Meta>();
-        for (int i = 0; i < chunk.Length; ++i) {
-            if (TagIs(ref meta[i], kRunTags)) SceneOps.Destroy(chunk.Entities[i]);
-        }
-        GameFlow.SweepObserved = true; // 握手位（GameFlow 观察后清对——本批全块扫完）
-    }
-
-    private static unsafe bool TagIs(ref Meta m, string[] tags)
-    {
-        foreach (string t in tags) {
-            fixed (byte* p = m.Tag) {
-                bool same = true;
-                for (int i = 0; i < t.Length && i < 24; ++i)
-                    if (p[i] != (byte)t[i]) { same = false; break; }
-                if (same && (t.Length >= 24 || p[t.Length] == 0)) return true;
-            }
-        }
-        return false;
     }
 }

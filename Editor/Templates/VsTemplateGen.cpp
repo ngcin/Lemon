@@ -485,7 +485,7 @@ body {
     <button id="btn-start" class="btn-lg" data-event="start">开始游戏</button>
     <button id="btn-msettings" class="btn-lg" data-event="settings">设置</button>
   </div>
-  <div id="main-hint" class="hint">移动 WASD · 攻击 自动 · 暂停 Esc/P</div>
+  <div id="main-hint" class="hint">开始/重开 R · 移动 WASD · 攻击 自动 · 暂停 Esc/P</div>
 </div>
 </body>
 </rml>
@@ -563,6 +563,31 @@ body {
       <button id="btn-restart" class="btn-lg" data-event="restart">再战一局</button>
       <button id="btn-rtomenu" class="btn-lg" data-event="tomenu">回主菜单</button>
     </div>
+  </div>
+</div>
+</body>
+</rml>
+)RML"},
+        // 批⑨：加载屏入生成器（批⑧ 样例资产补齐——原手加于产物目录）
+        {"loading.rml", kLoadingRml, "rml", R"RML(<rml>
+<head><title>loading</title>
+<link type="text/rcss" rel="stylesheet" href="theme.rcss"/>
+<style>
+/* 加载屏（M7c 批⑧ 样例；ADR-017 D3）：code-mounted 文档（UI.Show 通道 B 现载，
+     origin=CSharp 跨场幸存——换场 sweep 只卸 origin=Scene）——驱动方 =
+     Game/LoadingScreen.cs（DDOL 实体轮询 AsyncSceneLoad.progress）。 */
+#loading { display: block; }
+#load-bar { width: 320dp; }
+#load-title { font-size: var(--fs-hud); margin-bottom: var(--sp-2); }
+#load-hint  { color: var(--c-dim); margin-top: var(--sp-2); }
+</style>
+</head>
+<body>
+<div id="loading-modal" class="scrim">
+  <div id="loading" class="panel">
+    <div id="load-title">加载中…</div>
+    <progress id="load-bar" class="bar xp" max="100"/>
+    <div id="load-hint"/>
   </div>
 </div>
 </body>
@@ -677,13 +702,15 @@ public static class GameMain
         public static float UiVol = 0.8f;
     }
 
-    /// <summary>UI 文档名（批③d-1 cards + 批③d-2 流程四屏）。UI 资产建后
+    /// <summary>UI 文档名（批③d-1 cards + 批③d-2 流程四屏；批⑨ 加载屏与 HUD
+    /// 常量入本表——六文档全 code-mount，见 GameFlow 头注）。UI 资产建后
     /// 不挪不改名（relPath 寻址约定）。</summary>
     internal const string CardsDoc = "Assets/UI/cards.rml";
     internal const string MainDoc = "Assets/UI/main.rml";
     internal const string PauseDoc = "Assets/UI/pause.rml";
     internal const string SettingsDoc = "Assets/UI/settings.rml";
     internal const string ResultsDoc = "Assets/UI/results.rml";
+    internal const string HudDoc = "Assets/UI/hud.rml";
 
     // M6c 批④：UI 组按钮音（Assets/Audio/ui-click.ogg——全体 Click 统一打点，
     // 暂停中仍可响 = Ui 组不挂起语义的消费实证）
@@ -698,18 +725,20 @@ public static class GameMain
     public static void Configure()
     {
         // 注册序 = 跨类型 Update 执行序（04 §3.2）：流程 → 移动 → 战斗 → HUD
-        //（批③d-2：GameFlow 首个——状态闸先于玩法 tick）
+        //（批③d-2：GameFlow 首个——状态闸先于玩法 tick。批⑨ 起清场归引擎换场
+        //——RunSweeper 退役）
         Lemon.Behaviours.Register<GameFlow>();
         Lemon.Behaviours.Register<PlayerMovement>();
         Lemon.Behaviours.Register<PlayerCombat>();
         Lemon.Behaviours.Register<PlayerHud>();
-        // 档② 清场批量系统（批③d-2：GameFlow.EnterRun/ReturnToMenu 消费）
-        Lemon.Scripting.Register(new RunSweeper());
         // 批③d-1：UI 事件静态订阅（Configure 每域一次，跨局存活——③c 先例）。
         // Click(pick) → 待选 key（PlayerCombat.Update 消费式读取）；DocumentReloaded
         // → shown 态重灌（M2 契约——隐藏态不重放，防凭空亮屏）。批③d-2 起流程
         // 四屏事件（start/resume/settings/...）一并路由 GameFlow
         Lemon.UI.Events.Subscribe(OnUiEvent);
+        // 批⑨：场景事件路由（与 UI.Events 同生命周期——Configure 随域重建重跑，
+        // 订阅随之重订；热重载后换场回调不断链）
+        SceneManager.sceneLoaded += GameFlow.OnSceneLoaded;
     }
 
     private static void OnUiEvent(Lemon.UiEvent e)
@@ -748,6 +777,8 @@ public static class GameMain
 
     internal static void HideCardsDoc()
     {
+        if (!CardsShown) return; // 批⑨：未显过屏 = 未装载（通道 B 只在 Show 现载）——
+                                 // Hide op 对未装载文档 = 契约红，直接 no-op
         CardsShown = false;
         UI.Hide(CardsDoc);
         UI.Apply();
@@ -766,94 +797,135 @@ public static class GameMain
         std::ofstream f(game / "GameFlow.cs", std::ios::trunc);
         f << FillGuidPlaceholders(R"CS(using System;
 using Lemon;
-using Lemon.Interop;
 
-/// <summary>流程状态机（M6b 批③d-2 档1：单场景零引擎改动）。只提供流程原语：
-/// EnterRun（清场 + 重挂双 prefab）/ ShowResults / ReturnToMenu / SetPaused——
+/// <summary>流程状态机（M7c 批⑨ 多场景形态；前身 = M6b 批③d-2 档1 单场景版——
+/// RunSweeper 清场补丁退役，引擎换场清场（批⑦ D2「除 DDOL 系外全清」）接管）。
+/// 跨场壳（批⑨ D1）= 本实体 DDOL（Awake 自标 + MainMenu 重装新种子 Booted 守卫
+/// 自毁）+ 流程文档 code-mount（UI.Show 通道 B 现载 = origin=CSharp 跨场幸存
+/// ——换场 sweep 只卸 origin=Scene，场景声明式 UIDocument 不跨场）。
+/// 换场门面（批⑨ D5）：进战斗 = LoadingScreen.Begin（LoadSceneAsync + 加载屏，
+/// 批⑧ 样例消费）；回菜单 = 同步 LoadScene("MainMenu")。战斗场 Grass.scene
+/// 自含 Player/Director（批⑨ D2）——装载即开局，重开 = 重装载，无 spawn 握手。
+/// 键盘位（批⑨ D3，批⑦ 敞口② 修法）：菜单 R=开始；结算 R=重开 / Esc=回菜单
+/// ——语义位入 InputState = 可回放；鼠标点击路径为人用（非回放口径）。
 /// **死亡策略归游戏侧**（何时复活/何时结算由 PlayerCombat.Die 决定；本模板示例
-/// = 每局一次复活，改复活道具/表驱动只动那一处分叉）。
-/// 重开 = C# 自律清场：RunSweeper 按 tag 扫场销毁 run 实体（SceneOps 命令
-/// 次帧首应用）→ Spawning 握手（SweepObserved）后重挂 Player/Director prefab——
-/// 脚本/表载/Start 与 WaveDirector 运行态随重挂自然归零，无手工复位清单。</summary>
+/// = 每局一次复活，改复活道具/表驱动只动那一处分叉）。</summary>
 public sealed class GameFlow : LemonBehaviour
 {
     // 模板资产 GUID（{GUID:…} 占位符——生成期自 VsTemplateGen.h 常量回填，勿手写 hex）
-    private const string kPlayerPrefab = "{GUID:kPlayerPf}";
-    private const string kDirectorPrefab = "{GUID:kDirectorPf}";
-    // M6c 批④：BGM（Assets/Audio/bgm.ogg——开局起播，单槽交叉淡出 = 重开不叠曲）
+    // M6c 批④：BGM（Assets/Audio/bgm.ogg——EnterRun 起播含装载期，单槽交叉淡出
+    // = 重开不叠曲）
     private const string kBgm = "{GUID:kBgmOgg}";
+    private const string kMenuScene = "MainMenu";
+    private const string kBattleScene = "Grass";
 
-    internal enum State { Menu, Spawning, Run, Paused, Results, Settings }
+    internal enum State { Menu, Loading, Run, Paused, Results, Settings }
 
     // ---- 流程态（静态：UI 事件经 GameMain 单点订阅路由，不持实例）----
     internal static State St = State.Menu;
     private static State settingsFrom = State.Menu; // 设置屏返回目标（入口双源）
-    private static bool prevPause;                  // Esc 边沿（按住只切一次）
-    // 清场握手：EnterRun/ReturnToMenu 置 Armed → RunSweeper 批扫（同帧或次帧，
-    // 取决于事件派发时点）置 Observed → GameFlow 观察 Observed 后清对、开局。
-    // 命令入队与 spawn 之间恒有 Essential 提交拍（#15 内固定序：Update → 批量）。
-    internal static bool SweepArmed, SweepObserved;
+    private static bool prevPause, prevConfirm;     // 边沿（按住只触发一次）
+
+    // 跨场种子守卫（批⑨ D1）：MainMenu 重装的新种子标记 dup、首 Update 自毁——
+    // Booted 静态随域重建复位，热重载经 StateBag 传递（OnHotReloadOut/In）
+    private static bool Booted;
+    private bool dup;
+
     // 结算数据（ShowResults 落板 + 热重载重灌）
     private static string resTitle = "", resScore = "", resTime = "", resKills = "",
                          resBest = "";
 
+    protected override void Awake()
+    {
+        if (Booted) { dup = true; return; } // 重装副本：静默等首帧自毁
+        Booted = true;
+        // 跨场幸存（批⑦ D1 根位式：位只标根 O(1)，清场判祖先链）
+        LemonBehaviour.DontDestroyOnLoad(gameObject);
+    }
+
     protected override void Start()
     {
-        // 进 Play 即菜单（装载与首 tick 间可能有一帧 sim——首波 startTime≥5s 兜底）。
-        // 显式 re-Show：装载通道的 Show 序随场景实体迭代序（EnTT 逆序——先建者
-        // 后显 = 置顶），不重排则 HUD 压住实底菜单；D1 语义下流程屏显隐归本类
+        if (dup) return;
+        // 进 Play 即菜单。文档 = 通道 B 现载（origin=CSharp；批⑨ 起流程四屏不再
+        // 走场景 UIDocument 声明——origin=Scene 换场即卸，见类头注）。隐藏屏
+        // Show+Hide 一次性预装载：通道 B 只在 Show 现载，此后隐藏态可写
+        //（RefreshSettingsUi 首帧即写 settings DOM——③d-2 先例语义保持）
         Time.Scale = 0f;
         St = State.Menu;
         UI.Show(GameMain.MainDoc);
+        UI.Show(GameMain.PauseDoc);     UI.Hide(GameMain.PauseDoc);
+        UI.Show(GameMain.SettingsDoc);  UI.Hide(GameMain.SettingsDoc);
+        UI.Show(GameMain.ResultsDoc);   UI.Hide(GameMain.ResultsDoc);
         UI.Apply();
         LoadSettings();
     }
 
     protected override void Update()
     {
-        bool pauseEdge = Input.Pause && !prevPause; // 边沿语义（按住 Esc 不连切）
+        if (dup) { gameObject.Destroy(); return; } // 重装副本首帧自毁（Awake 期不动世界）
+        bool pauseEdge = Input.Pause && !prevPause;       // Esc/P（bit6）
+        bool confirmEdge = Input.Confirm && !prevConfirm; // R（bit5「确认/重开」）
         switch (St) {
         case State.Menu:
-            if (SweepObserved) { SweepArmed = false; SweepObserved = false; } // 回菜单清场收尾
+            if (confirmEdge) EnterRun(); // 键盘路径（批⑨ D3：入 InputState 可回放）
             break;
-        case State.Spawning:
-            if (!SweepObserved) break;                 // 清场批未过——等握手
-            SweepArmed = false;
-            SweepObserved = false;
-            Instantiate.Prefab(kPlayerPrefab, new Vec2(0f, 0f));
-            Instantiate.Prefab(kDirectorPrefab, new Vec2(0f, 0f));
-            GameMain.Run.Time = 0f;
-            GameMain.Run.Kills = 0;
-            GameMain.Run.Dead = false;
-            GameMain.Run.ReviveUsed = false;
-            Time.Scale = 1f;
-            Audio.PlayBgm(kBgm, 0.55f); // M6c 批④：开战 BGM（再战重入同曲 = 单槽顶停旧曲）
-            St = State.Run;                            // 入口屏已在 EnterRun 即隐
-            break;
+        case State.Loading:
+            break;                       // 加载屏期间无输入消费
         case State.Run:
-            if (pauseEdge) SetPaused(true);            // Esc/P（bit6，批③d-2 D4）
+            if (pauseEdge) SetPaused(true);
             break;
         case State.Paused:
             if (pauseEdge) SetPaused(false);
             break;
+        case State.Results:
+            if (confirmEdge) EnterRun();       // R = 重开
+            else if (pauseEdge) ReturnToMenu(); // Esc = 回菜单
+            break;
         }
         prevPause = Input.Pause;
+        prevConfirm = Input.Confirm;
     }
 
     // ---- 流程原语（PlayerCombat 死亡分叉 / UI 事件调用）----
 
-    /// <summary>开始/重开一局：清场 →（握手后）重挂双 prefab → Run。入口屏即隐
-    ///（菜单/结算——点击即走，不留残屏盖在新局上）；Spawning 中重入忽略。</summary>
+    /// <summary>开始/重开一局：隐入口屏 + 加载屏 + 异步装载（激活帧引擎清场接管
+    /// RunSweeper 职责；sceneLoaded(Grass) → 重置 Run → Run 态）。Loading 中重入
+    /// 忽略。</summary>
     internal static void EnterRun()
     {
-        if (St == State.Spawning) return;
-        SweepArmed = true;
-        SweepObserved = false;
-        St = State.Spawning;
-        Time.Scale = 0f; // 清场期冻结（无玩家在场防导演空转）
+        if (St == State.Loading) return;
+        St = State.Loading;
+        Time.Scale = 0f; // 装载期冻结（sceneLoaded 置 1）
         UI.Hide(GameMain.MainDoc);
         UI.Hide(GameMain.ResultsDoc);
         UI.Apply();
+        Audio.Paused = false; // 暂停残留防御（换场亦强制清——b6b D6；先归位再开局）
+        Audio.PlayBgm(kBgm, 0.55f); // M6c 批④：开战 BGM（EnterRun 起播含装载期）
+        GameMain.HideCardsDoc(); // 在途动态屏一并收
+        LoadingScreen.Begin(kBattleScene); // 批⑧ 样例：LoadSceneAsync + 加载屏 + DDOL 驱动
+    }
+
+    /// <summary>sceneLoaded 路由（GameMain.Configure 订阅；同步/异步两门面共用）。
+    /// 未知场景（测试/工具场）= 隐菜单——流程壳不越界认领。初始 entryScene 装载
+    /// 不推事件（oldHandle==0）——Start 已覆盖菜单首显。</summary>
+    internal static void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+    {
+        if (scene.name == kMenuScene) {
+            St = State.Menu;
+            Time.Scale = 0f;
+            UI.Show(GameMain.MainDoc); // 重装副本种子已自毁——DDOL 壳独占流程
+            UI.Apply();
+        } else if (scene.name == kBattleScene) {
+            GameMain.Run.Time = 0f;    // 一局共享态随装载归零（原 Spawning 段迁移）
+            GameMain.Run.Kills = 0;
+            GameMain.Run.Dead = false;
+            GameMain.Run.ReviveUsed = false;
+            Time.Scale = 1f;
+            St = State.Run; // 战斗场自含 Player/Director（批⑨ D2）——装载即开局
+        } else {
+            UI.Hide(GameMain.MainDoc); // 未知场不认领——菜单只属于菜单场
+            UI.Apply();
+        }
     }
 
     /// <summary>结算屏（死亡策略的第二半——何时调由游戏侧决定）。</summary>
@@ -873,23 +945,23 @@ public sealed class GameFlow : LemonBehaviour
         St = State.Results;
     }
 
-    /// <summary>回主菜单：清场（在途动态屏一并收）+ 实底菜单。</summary>
+    /// <summary>回主菜单：同步换场（批⑨ D5：小场景无屏闪）+ 静场 + 在途动态屏
+    /// 收屏 + HUD 隐藏（code-mounted 跨场幸存——显式收）。激活帧
+    /// sceneLoaded(MainMenu) 显菜单。</summary>
     internal static void ReturnToMenu()
     {
         // review 2026-10-02 #1：暂停中回菜单必须解挂——Audio.Paused 残留会使下局
         // PlayBgm 新声部生而挂起（整局静音）；StopBgm 只停曲不清全局暂停态
         Audio.Paused = false;
         Audio.StopBgm(0.5f); // M6c 批④：回菜单静场（0.5s 淡出）
-        SweepArmed = true;
-        SweepObserved = false;
         Time.Scale = 0f;
         UI.Hide(GameMain.PauseDoc);
         UI.Hide(GameMain.SettingsDoc);
         UI.Hide(GameMain.ResultsDoc);
+        UI.Hide(GameMain.HudDoc); // 批⑨：HUD origin=CSharp 跨场幸存——显式收屏
         GameMain.HideCardsDoc();
-        UI.Show(GameMain.MainDoc);
         UI.Apply();
-        St = State.Menu;
+        SceneManager.LoadScene(kMenuScene); // 同步门面：下帧激活 → OnSceneLoaded
     }
 
     /// <summary>暂停对（Run↔Paused；卡片冻结期 Input 已被模态让出，天然不响应）。
@@ -1067,7 +1139,7 @@ public sealed class GameFlow : LemonBehaviour
         RefreshSettingsUi();
     }
 
-    // 热重载状态迁移（流程态 + 设置——静态随域重建必须经包走）
+    // 热重载状态迁移（流程态 + 设置 + 跨场种子——静态随域重建必须经包走）
     protected override void OnHotReloadOut(Lemon.StateBag bag)
     {
         bag.Set("st", (int)St);
@@ -1078,6 +1150,7 @@ public sealed class GameFlow : LemonBehaviour
         bag.Set("vbgm", GameMain.Settings.BgmVol);
         bag.Set("vsfx", GameMain.Settings.SfxVol);
         bag.Set("vui", GameMain.Settings.UiVol);
+        bag.Set("booted", Booted); // 批⑨：种子守卫随包（域重建静态复位后恢复）
     }
 
     protected override void OnHotReloadIn(Lemon.StateBag bag)
@@ -1090,45 +1163,8 @@ public sealed class GameFlow : LemonBehaviour
         if (bag.TryGet("vbgm", out float vb)) GameMain.Settings.BgmVol = vb;
         if (bag.TryGet("vsfx", out float vs)) GameMain.Settings.SfxVol = vs;
         if (bag.TryGet("vui", out float vu)) GameMain.Settings.UiVol = vu;
+        if (bag.TryGet("booted", out bool bo)) Booted = bo;
         ApplyVolumes(); // 引擎侧随域重建归默认——热进即回设
-    }
-}
-
-/// <summary>清场批量系统（档②；GameFlow.EnterRun/ReturnToMenu 消费）：SweepArmed
-/// 时按 tag 销毁 run 实体（SceneOps 命令缓冲——次帧首应用；tag 命中集 = 清场
-/// 清单，新 run 内容带 Meta.tag 进集即被清；UI_*/Flow 常驻件不在集 = 天然豁免）。
-/// 常驻注册 + 门控早退：非 armed 拍 C# 零工作（With&lt;Meta&gt; 枚举成本 = C++ 构块，
-/// bench 红线见批文件 T9）。</summary>
-public sealed class RunSweeper : IForEachSystem
-{
-    private static readonly string[] kRunTags = {
-        "Player", "Director", "Mob", "BossMob", "Gem", "Bullet", "PierceBullet", "Blade",
-    };
-
-    public string Name => "RunSweeper";
-    public Query Query => Query.With<Meta>();
-
-    public unsafe void ForEach(ref readonly Chunk chunk)
-    {
-        if (!GameFlow.SweepArmed) return;
-        var meta = chunk.Span<Meta>();
-        for (int i = 0; i < chunk.Length; ++i) {
-            if (TagIs(ref meta[i], kRunTags)) SceneOps.Destroy(chunk.Entities[i]);
-        }
-        GameFlow.SweepObserved = true; // 握手位（GameFlow 观察后清对——本批全块扫完）
-    }
-
-    private static unsafe bool TagIs(ref Meta m, string[] tags)
-    {
-        foreach (string t in tags) {
-            fixed (byte* p = m.Tag) {
-                bool same = true;
-                for (int i = 0; i < t.Length && i < 24; ++i)
-                    if (p[i] != (byte)t[i]) { same = false; break; }
-                if (same && (t.Length >= 24 || p[t.Length] == 0)) return true;
-            }
-        }
-        return false;
     }
 }
 )CS");
@@ -1595,6 +1631,15 @@ public sealed class PlayerHud : LemonBehaviour
         });
     }
 
+    protected override void Start()
+    {
+        // 批⑨：HUD 文档 code-mount（通道 B 现载）——本实体随战斗场景装载，
+        // Start = 开局时机（原场景声明 showOnStart 装载退役；origin=CSharp
+        /// 跨场幸存，GameFlow.ReturnToMenu 显式收屏）
+        UI.Show(kDoc);
+        UI.Apply();
+    }
+
     protected override void Update()
     {
         if (GameMain.Run.Dead) return;
@@ -1622,6 +1667,100 @@ public sealed class PlayerHud : LemonBehaviour
 }
 )CS");
     }
+    {
+        // 批⑨：加载屏样例入生成器（批⑧ 手加进产物目录的补齐——fresh 生成不再
+        // 缺件；Doc = 全 relPath，通道 B 以 relPath 解析，修批⑧ 裸文件名笔误）
+        std::ofstream f(game / "LoadingScreen.cs", std::ios::trunc);
+        f << R"CS(// 加载屏样例（M7c 批⑧；ADR-017 D3"游戏侧重初始化归游戏侧"的模板侧兑现）。
+// 形态（Unity 加载屏同构 + Lemon 特有面）：
+//   * 文档 = code-mounted（UI.Show 通道 B 现载 → origin=CSharp 跨场幸存——换场
+//     sweep 只卸 origin=Scene；无需在场景里声明 UIDocument）；
+//   * 驱动 = LoadingScreenDriver（LemonBehaviour）挂在 Begin() 即时生成的实体上，
+//     Awake 自标 DontDestroyOnLoad → 跨场幸存轮询进度；完成即自毁；
+//   * 进度 = 引擎段 × 0.8 + 游戏自报段 × 0.2 权重混合（ADR D3 原文口径）。
+// 两形态：
+//   ① 直通（默认）：LoadingScreen.Begin("Grass") —— 门开，装载完成即激活；
+//   ② 门控：LoadingScreen.Begin("Grass", holdGate: true) —— 引擎段停 0.9 等
+//     游戏段就绪（配置/存档回读等前置完成后 ReportGameProgress(1f)）→ 驱动自动
+//     开门激活。注意：sceneLoaded 在激活时才发——激活后的重初始化（铺 NPC 等）
+//     请订阅 sceneLoaded 后自行分帧（每帧 N 个，防激活帧一次性 spawn 卡帧）。
+// 契约提醒（04 分册响亮规则）：progress 是纯呈现量（分帧预算依赖、跨机器不确定）
+// ——玩法分支只许挂 sceneLoaded/isDone/completed，禁挂 progress 分支。
+using Lemon;
+
+/// <summary>加载屏入口（静态门面；驱动实体自管理自清理）。</summary>
+public static class LoadingScreen
+{
+    public const string Doc = "Assets/UI/loading.rml";
+
+    // Begin → 驱动 Awake 的交接槽（AttachScript 次帧生效，驱动 Awake 从此取 op）
+    internal static AsyncSceneLoad Pending;
+    internal static bool HoldingGate;
+    internal static float GameProgress; // 游戏自报段（0..1；门控形态的开门条件）
+
+    private static Lemon.GameObject s_driver; // 现任驱动（Begin 代收上一任——批⑧ F3）
+
+    /// <summary>发起异步换场 + 挂加载屏。返回 op 供调用方轮询/订阅 completed。
+    /// op 无效（场景不可解析/Additive 红字）= 不挂屏原样返回。重复 Begin = 新请求
+    /// 取代（引擎单槽）+ 旧驱动代收（被取代 op 永不 isDone，孤儿驱动会常驻 tick）。</summary>
+    public static AsyncSceneLoad Begin(string scene, bool holdGate = false)
+    {
+        var op = SceneManager.LoadSceneAsync(scene);
+        if (!op.isValid) return op;
+        if (s_driver.Alive) s_driver.Destroy(); // 上一驱动代收（其 op 已被取代）
+        op.allowSceneActivation = !holdGate;
+        Pending = op;
+        HoldingGate = holdGate;
+        GameProgress = 0f;
+        UI.Show(Doc, modal: true);
+        s_driver = Instantiate.Spawn<LoadingScreenDriver>(0, new Vec2(0, 0));
+        return op;
+    }
+
+    /// <summary>游戏段进度自报（0..1，钳制）。门控形态：引擎段到 0.9 且自报满 1
+    /// → 驱动开门（激活帧 = 下一 Essential）；直通形态只参与显示权重。</summary>
+    public static void ReportGameProgress(float f)
+    {
+        GameProgress = f < 0f ? 0f : f > 1f ? 1f : f;
+    }
+}
+
+/// <summary>加载屏驱动（Begin 生成；Awake 自标 DDOL，完成自毁——零残留）。</summary>
+public sealed class LoadingScreenDriver : LemonBehaviour
+{
+    private const float kEngineWeight = 0.8f, kGameWeight = 0.2f;
+    private AsyncSceneLoad _op;
+
+    protected override void Awake()
+    {
+        _op = LoadingScreen.Pending;
+        // 跨场幸存：驱动挂在当前 active 场景组里，不标 DDOL 会在激活帧被清场
+        LemonBehaviour.DontDestroyOnLoad(gameObject);
+    }
+
+    protected override void Update()
+    {
+        if (!_op.isValid) return; // Begin 交接失败（防御）
+        // 权重混合（ADR D3：引擎段 × 权重 + 自报游戏段 × 权重）
+        float total = kEngineWeight * _op.progress + kGameWeight * LoadingScreen.GameProgress;
+        UI.SetAttr(LoadingScreen.Doc, "load-bar", "value", ((int)(total * 100f)).ToString());
+        UI.SetText(LoadingScreen.Doc, "load-hint",
+                   LoadingScreen.HoldingGate ? "准备中…" : "装载中…");
+        // 门控形态：引擎段 0.9 + 游戏段满 → 开门（激活帧 = 下一 Essential）
+        if (LoadingScreen.HoldingGate && _op.progress >= 0.9f &&
+            LoadingScreen.GameProgress >= 1f) {
+            _op.allowSceneActivation = true;
+            LoadingScreen.HoldingGate = false;
+        }
+        if (_op.isDone) {
+            UI.Hide(LoadingScreen.Doc);
+            LoadingScreen.Pending = default;
+            gameObject.Destroy(); // 驱动自清（DDOL 实体不随场清——必须显式）
+        }
+    }
+}
+)CS";
+    }
 }
 
 // --smoke-guid（M6a 批⓪ T5）：sprite 引用 GUID 稳定性链。三难并发——导入新图
@@ -1648,14 +1787,14 @@ bool RunGuidSmokeChain(uint32_t spriteIdBase) {
         return false;
     }
 
-    // 局1：开项目 + 场景，编辑态实例化六 prefab（T2 的 Instantiate 解析路径）
-    // → 存档 → 记基线（tag → guid/id）
+    // 局1：开项目 + 场景（批⑨ 起 = Grass.scene 战斗场），编辑态实例化
+    // 6 prefab（T2 的 Instantiate 解析路径）→ 存档 → 记基线（tag → guid/id）
     EditorContext ctx;
     if (!ctx.Assets().OpenProject(root, spriteIdBase)) {
         LEMON_ERROR("smoke-guid：open project 失败");
         return false;
     }
-    if (!ctx.OpenScene(root + "/Scenes/Main.scene")) {
+    if (!ctx.OpenScene(root + "/Scenes/Grass.scene")) {
         LEMON_ERROR("smoke-guid：open scene 失败");
         return false;
     }
@@ -1673,12 +1812,13 @@ bool RunGuidSmokeChain(uint32_t spriteIdBase) {
                      sr->spriteId});
         });
     };
-    const Vec2 spawnAt[7] = {{-300, 0}, {300, 0}, {0, -300},
-                             {0, 300},  {-300, -300}, {300, 300}, {0, 0}};
-    const uint64_t prefabGuids[7] = {kMobPf,   kBossPf, kBulletPf,
-                                     kPiercePf, kGemPf, kBladePf,
-                                     kPlayerPf}; // 批③d-2：Player 迁 prefab——第 7 根
-    for (int i = 0; i < 7; ++i)
+    const Vec2 spawnAt[6] = {{-300, 0}, {300, 0}, {0, -300},
+                             {0, 300},  {-300, -300}, {300, 300}};
+    // 批⑨：Player prefab 退出链（战斗场内联已覆盖场景侧 guid 解析；prefab
+    // 本体 guid 走 meta 记账不依赖实例化）——6 实例 + Grass 内联 Player = 7
+    const uint64_t prefabGuids[6] = {kMobPf, kBossPf, kBulletPf,
+                                     kPiercePf, kGemPf, kBladePf};
+    for (int i = 0; i < 6; ++i)
         if (ctx.InstantiatePrefabAsset(prefabGuids[i], spawnAt[i]).IsNull()) {
             LEMON_ERROR("smoke-guid：prefab %d 实例化失败", i);
             return false;
@@ -1689,7 +1829,7 @@ bool RunGuidSmokeChain(uint32_t spriteIdBase) {
     }
     std::vector<Row> base;
     collect(ctx, base);
-    if (base.size() != 7) { // 七 prefab 根（批③d-2：Player 自场景迁 prefab）
+    if (base.size() != 7) { // 批⑨：6 prefab 实例 + Grass 内联 Player
         LEMON_ERROR("smoke-guid：基线实体数 %zu ≠ 7", base.size());
         return false;
     }
@@ -1717,7 +1857,7 @@ bool RunGuidSmokeChain(uint32_t spriteIdBase) {
         LEMON_ERROR("smoke-guid：reopen project 失败");
         return false;
     }
-    if (!ctx2.OpenScene(root + "/Scenes/Main.scene")) {
+    if (!ctx2.OpenScene(root + "/Scenes/Grass.scene")) {
         LEMON_ERROR("smoke-guid：reopen scene 失败");
         return false;
     }
@@ -1847,7 +1987,7 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
         std::ofstream f(root / "project.lemon", std::ios::trunc);
         f << "{\n  \"schemaVersion\": 1,\n  \"name\": \"vs-survivor\",\n"
              "  \"engineVersion\": \"0.5.0-m5\",\n  \"guid\": \"tpl-placeholder\",\n"
-             "  \"entryScene\": \"Scenes/Main.scene\"\n}\n";
+             "  \"entryScene\": \"Scenes/MainMenu.scene\"\n}\n";
     }
     {
         std::ofstream f(root / "README.md", std::ios::trunc);
@@ -1866,15 +2006,20 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
              "  逐件来源表见 `Samples/Assets/cc0-audio/README.md`，THIRD_PARTY.md\n"
              "  已登记——CC0 无署名义务，登记仅为溯源）。\n\n"
              "## 玩法锚点\n\n"
-             "- 流程（M6b 批③d-2 档1）：**单场景** `Main.scene` 只放常驻件（UI 六文档\n"
-             "+ Flow 实体）；玩家/导演在 `Prefabs/Player.prefab`/`Director.prefab`，\n"
-             "GameFlow 开局/重开时清场重挂（RunSweeper 按 tag 扫场销毁——重开 = C#\n"
-             "自律清场，零引擎改动）。流程 = 主菜单 → 一局 → Esc 暂停/设置 → 死亡\n"
-             "（首死复活对话/二死结算）→ 重开/回主菜单；**死亡策略归游戏侧**（模板\n"
-             "示例 = 每局一次复活，见 PlayerCombat.Die 分叉——改复活道具/表驱动只动\n"
-             "那一处）。\n"
+             "- 流程（M7c 批⑨ 多场景）：`MainMenu.scene`（入口 = 流程壳：GameFlow\n"
+             "种子实体 DDOL 跨场幸存）+ `Grass.scene`（战斗场自含 Player/Director\n"
+             "——装载即开局）。六文档（菜单/暂停/设置/结算/HUD/卡片）与加载屏 =\n"
+             "code-mount（`UI.Show` 通道 B 现载，origin=CSharp 跨场幸存——场景声明\n"
+             "式 UIDocument 换场即卸，故不走场景声明）。**RunSweeper 退役**——清场\n"
+             "由引擎换场接管（除 DDOL 系外全清）；进战斗 = `LoadingScreen.Begin`\n"
+             "（LoadSceneAsync + 加载屏）；回菜单 = 同步 LoadScene。流程 = 主菜单 →\n"
+             "一局 → Esc 暂停/设置 → 死亡（首死复活对话/二死结算）→ 重开/回主菜单；\n"
+             "**死亡策略归游戏侧**（模板示例 = 每局一次复活，见 PlayerCombat.Die\n"
+             "分叉——改复活道具/表驱动只动那一处）。键盘位（入 InputState = 可回\n"
+             "放）：菜单 R = 开始；结算 R = 重开 / Esc = 回菜单。\n"
              "- 玩家：`Player.prefab` 挂三脚本（M6a 批⓪ scripts[]：流程 → 移动 →\n"
              "战斗 → HUD 注册序 = 跨类型 Update 执行序）；一局共享态在 GameMain.Run。\n"
+             "（批⑨ 起战斗场内联同構实体——prefab 留作参考资产/拖放入场用。）\n"
              "- 波次：`Director.prefab` WaveDirector（Inspector 数组段可调参）。\n"
              "- 数值表（M6a 批② T4）：升级池/武器参数/XP 曲线在 `Assets/tables/`\n"
              "（upgrades.tab / weapons.tab / balance.tab——PlayerCombat.Start 读，\n"
@@ -1886,7 +2031,8 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
              "改名/移位/manifest 重建后打开场景自动归一（M6a 批⓪ T2）。\n"
              "- 游戏 UI（M6b 批③d-1/③d-2）：六文档全走 .rml（HUD + 升级三选一/\n"
              "死亡对话 + 主菜单/暂停/设置/结算——`Assets/UI/`，theme.rcss 主题 token\n"
-             "单源；场景 UI_* 实体挂 UIDocument 声明装载）。**换肤 = 改 theme.rcss 的\n"
+             "单源；批⑨ 起全六文档 + 加载屏 code-mount——UI.Show 通道 B 现载\n"
+             "origin=CSharp 跨场幸存，场景不再声明 UIDocument）。**换肤 = 改 theme.rcss 的\n"
              "token 区**（色板/字号/间距，全 dp——画布缩放时 UI 物理比例恒定，720dp\n"
              "设计基准）；改布局/文案 = 改 .rml/.rcss 资产，引擎零改动。数字键选择\n"
              "已退役（点击选择）；设置两开关（飘字/血条）+ 音量四滑条（主/音乐/\n"
@@ -1900,45 +2046,12 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
              "挂起，M6c 批④ 起联动），与游戏内暂停是两回事。\n";
     }
 
-    // 3) 打开项目（扫描记账）→ 播种场景 + 覆写 prefab 内容。
+    // 3) 打开项目（扫描记账）→ prefab 内容覆写 + 场景拆二落盘。
     // base = 调用方传入（OpenProjectPipeline 同规则——真实打开路径一致）
     if (!ctx.Assets().OpenProject(root.string(), spriteIdBase)) return false;
+    // scratch 场景（prefab 导出用——实体建后即毁，终态空）
     ctx.NewScene();
     ecs::Scene& s = ctx.EditScene();
-
-    // 批③d-2：场景只留常驻件——玩家/导演迁 Player.prefab/Director.prefab
-    //（EnterRun 时 C# 重挂：重开 = 清场 + 重 spawn，脚本/表载/Start 与
-    // WaveDirector 运行态随重挂自然归零——零手工复位清单）。
-    // UI 六屏场景声明（通道 A——EnterPlay 扫描装载）：HUD/Main 进 Play 即显
-    //（实底菜单覆盖 HUD；暂停/设置/结算 scrim 叠加时 HUD 在下 = 战况可视）；
-    // 其余装载但隐藏（showOnStart=0，C# UI.Show 点亮——动态屏）。运行时显隐
-    // 归 C#（组件字段只承载设计期声明态，Play 期写回不生效——③d 前置铁律）。
-    {
-        ecs::Entity hud = ctx.CreateEntity("UI_HUD");
-        s.Emplace<ecs::UIDocument>(hud,
-                                   ecs::UIDocument{.sourceAssetGuid = kHudRml});
-        ecs::Entity cards = ctx.CreateEntity("UI_Cards");
-        s.Emplace<ecs::UIDocument>(cards, ecs::UIDocument{.sourceAssetGuid = kCardsRml,
-                                                          .showOnStart = 0});
-        ecs::Entity main = ctx.CreateEntity("UI_Main");
-        s.Emplace<ecs::UIDocument>(main,
-                                   ecs::UIDocument{.sourceAssetGuid = kMainRml});
-        ecs::Entity pause = ctx.CreateEntity("UI_Pause");
-        s.Emplace<ecs::UIDocument>(pause,
-                                   ecs::UIDocument{.sourceAssetGuid = kPauseRml,
-                                                   .showOnStart = 0});
-        ecs::Entity settings = ctx.CreateEntity("UI_Settings");
-        s.Emplace<ecs::UIDocument>(settings,
-                                   ecs::UIDocument{.sourceAssetGuid = kSettingsRml,
-                                                   .showOnStart = 0});
-        ecs::Entity results = ctx.CreateEntity("UI_Results");
-        s.Emplace<ecs::UIDocument>(results,
-                                   ecs::UIDocument{.sourceAssetGuid = kResultsRml,
-                                                   .showOnStart = 0});
-        // Flow 实体：档1 流程状态机（GameFlow——Configure 注册序首个 Update）
-        ecs::Entity flow = ctx.CreateEntity("Flow");
-        ctx.AttachScript(flow, 0, "GameFlow");
-    }
 
     // prefab 内容（scratch 实体 → SaveEntityTree → 覆写 .prefab；导出后销毁）。
     // spriteGuid=0 = 无渲染分路（批③d-2：Director）
@@ -1956,50 +2069,54 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
         f << json;
         return true;
     };
-    // 批③d-2：流程双 prefab（自场景迁出——构造原样移入，Player 含 scripts[]
-    // 三拆；GameFlow EnterRun 经 Instantiate.Prefab 重挂，LoadEntityTree 重放脚本）
-    if (!exportPrefab("Player", 0, kHeroSheet, [&](ecs::Entity e) {
-            s.Emplace<ecs::Health>(e, ecs::Health{.max = 100.0f, .cur = 100.0f});
-            s.Emplace<ecs::Stats>(e).pickupRadius = 96.0f;
-            s.Emplace<ecs::XpProgress>(e, ecs::XpProgress{.xpToNext = 30.0f});
-            ecs::Shooter& psh = s.Emplace<ecs::Shooter>(e);
-            psh.projectileId = (uint32_t)kBulletPf;
-            psh.interval = 0.12f;
-            psh.range = 2000.0f;
-            psh.targetTeam = 1;
-            s.Emplace<ecs::Animator2D>(e).clipId = (uint32_t)kHeroClip;
-            // M6a 批⓪ T4 三拆：槽序镜像注册序（移动 → 战斗 → HUD）；Game/ 不入资产扫描
-            // → scriptGuid 恒 0（className 是持久键）
-            ctx.AttachScript(e, 0, "PlayerMovement");
-            ctx.AttachScript(e, 0, "PlayerCombat");
-            ctx.AttachScript(e, 0, "PlayerHud");
-        }))
-        return false;
-    if (!exportPrefab("Director", 0, 0, [&](ecs::Entity e) {
-            // 16 波：15 波小怪递增 + t=565s Boss；后波接管语义下条目都在波内完成
-            ecs::WaveDirector& wd = s.Emplace<ecs::WaveDirector>(e);
-            wd.spawnTeam = 1;
-            wd.capAlive = 300;
-            wd.waveCount = 16;
-            for (int w = 0; w < 15; ++w) {
-                ecs::WaveDef& def = wd.waves[w];
-                def.startTime = 5.0f + 35.0f * (float)w;
-                def.rampMult = 1.0f;
-                def.entryCount = 2;
-                def.entries[0] = ecs::WaveEntry{.prefabId = (uint32_t)kMobPf,
-                                                .count = (uint16_t)(30 + w * 4),
-                                                .interval = 0.6f, .range = 560.0f};
-                def.entries[1] = ecs::WaveEntry{.prefabId = (uint32_t)kMobPf,
-                                                .count = (uint16_t)(15 + w * 2),
-                                                .interval = 0.35f, .range = 320.0f};
-            }
-            ecs::WaveDef& def = wd.waves[15];
-            def.startTime = 565.0f;
-            def.entryCount = 1;
-            def.entries[0] = ecs::WaveEntry{.prefabId = (uint32_t)kBossPf, .count = 1,
-                                            .interval = 1.0f, .range = 80.0f};
-        }))
-        return false;
+    // 批⑨：Player/Director 构造提取复用——prefab 导出与 Grass 场内联同構双发
+    //（战斗场自含 = 装载即开局，批⑨ D2；prefab 留作参考资产/拖放入场用）。
+    // 构造体内部经 ctx.EditScene() 取当前场景 = scratch（prefab 路径）或
+    // Grass（内联路径）皆可。
+    auto buildPlayer = [&](ecs::Entity e) {
+        ecs::Scene& sc = ctx.EditScene();
+        sc.Emplace<ecs::Health>(e, ecs::Health{.max = 100.0f, .cur = 100.0f});
+        sc.Emplace<ecs::Stats>(e).pickupRadius = 96.0f;
+        sc.Emplace<ecs::XpProgress>(e, ecs::XpProgress{.xpToNext = 30.0f});
+        ecs::Shooter& psh = sc.Emplace<ecs::Shooter>(e);
+        psh.projectileId = (uint32_t)kBulletPf;
+        psh.interval = 0.12f;
+        psh.range = 2000.0f;
+        psh.targetTeam = 1;
+        sc.Emplace<ecs::Animator2D>(e).clipId = (uint32_t)kHeroClip;
+        // M6a 批⓪ T4 三拆：槽序镜像注册序（移动 → 战斗 → HUD）；Game/ 不入资产扫描
+        // → scriptGuid 恒 0（className 是持久键）
+        ctx.AttachScript(e, 0, "PlayerMovement");
+        ctx.AttachScript(e, 0, "PlayerCombat");
+        ctx.AttachScript(e, 0, "PlayerHud");
+    };
+    auto buildDirector = [&](ecs::Entity e) {
+        ecs::Scene& sc = ctx.EditScene();
+        // 16 波：15 波小怪递增 + t=565s Boss；后波接管语义下条目都在波内完成
+        ecs::WaveDirector& wd = sc.Emplace<ecs::WaveDirector>(e);
+        wd.spawnTeam = 1;
+        wd.capAlive = 300;
+        wd.waveCount = 16;
+        for (int w = 0; w < 15; ++w) {
+            ecs::WaveDef& def = wd.waves[w];
+            def.startTime = 5.0f + 35.0f * (float)w;
+            def.rampMult = 1.0f;
+            def.entryCount = 2;
+            def.entries[0] = ecs::WaveEntry{.prefabId = (uint32_t)kMobPf,
+                                            .count = (uint16_t)(30 + w * 4),
+                                            .interval = 0.6f, .range = 560.0f};
+            def.entries[1] = ecs::WaveEntry{.prefabId = (uint32_t)kMobPf,
+                                            .count = (uint16_t)(15 + w * 2),
+                                            .interval = 0.35f, .range = 320.0f};
+        }
+        ecs::WaveDef& def = wd.waves[15];
+        def.startTime = 565.0f;
+        def.entryCount = 1;
+        def.entries[0] = ecs::WaveEntry{.prefabId = (uint32_t)kBossPf, .count = 1,
+                                        .interval = 1.0f, .range = 80.0f};
+    };
+    if (!exportPrefab("Player", 0, kHeroSheet, buildPlayer)) return false;
+    if (!exportPrefab("Director", 0, 0, buildDirector)) return false;
     if (!exportPrefab("Mob", 1, kMonsterSheet, [&](ecs::Entity e) {
             s.Emplace<ecs::Health>(e, ecs::Health{.max = 20.0f, .cur = 20.0f});
             s.Emplace<ecs::Knockback>(e);
@@ -2061,15 +2178,36 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
         }))
         return false;
 
-    // 4) 场景落盘 + 终态记账（prefab 内容覆写后 hash 刷新）
+    // 4) 场景拆二落盘（批⑨ D1/D2/D4）+ 终态记账（prefab 内容覆写后 hash 刷新）。
+    // MainMenu = 流程壳：Flow 种子（guid 钉死 = scene-smoke DDOL 夹具，kFlowEntityGuid
+    // ↔ GameEntry kSceneSmokeDdolGuid 两处字面量互为镜像）；六文档全 code-mount
+    //（GameFlow.Start 预装载）——场景不再声明 UIDocument。
     {
-        std::ofstream f(root / "Scenes" / "Main.scene", std::ios::trunc);
-        f << ecs::SceneArchive::Save(s);
+        ctx.NewScene();
+        ecs::Scene& ms = ctx.EditScene();
+        ms.SetName("MainMenu"); // 场景 doc name = C# scene.name 匹配面（GameFlow 路由）
+        ecs::Entity flow = ctx.CreateEntity("Flow");
+        ms.Get<ecs::Meta>(flow).guid = vs_template::kFlowEntityGuid;
+        ctx.AttachScript(flow, 0, "GameFlow");
+        std::ofstream f(root / "Scenes" / "MainMenu.scene", std::ios::trunc);
+        f << ecs::SceneArchive::Save(ms);
+    }
+    // Grass = 战斗场自含（Player/Director 内联，构造与 prefab 同構）——装载即
+    // 开局；重开 = 重装载（引擎清场接管 RunSweeper 职责）。
+    {
+        ctx.NewScene();
+        ecs::Scene& gs = ctx.EditScene();
+        gs.SetName("Grass"); // 同上：C# scene.name 匹配面
+        buildPlayer(ctx.CreateSpriteEntityByGuid("Player", kHeroSheet));
+        buildDirector(ctx.CreateEntity("Director"));
+        std::ofstream f(root / "Scenes" / "Grass.scene", std::ios::trunc);
+        f << ecs::SceneArchive::Save(gs);
     }
     ctx.Assets().Rescan();
     ctx.Assets().SaveManifest();
-    LEMON_LOG("gen-vs-template：OK → %s（scene %zuB，%u 实体）", root.string().c_str(),
-              ecs::SceneArchive::Save(s).size(), s.AliveCount());
+    LEMON_LOG("gen-vs-template：OK → %s（Grass %zuB；MainMenu/Grass 拆场）",
+              root.string().c_str(),
+              ecs::SceneArchive::Save(ctx.EditScene()).size());
     return true;
 }
 

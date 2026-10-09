@@ -1,0 +1,23 @@
+<rml>
+<head><title>loading</title>
+<link type="text/rcss" rel="stylesheet" href="theme.rcss"/>
+<style>
+/* 加载屏（M7c 批⑨；批⑧ 样例的 svr-test 版）：code-mounted 文档（UI.Show 通道 B
+     现载，origin=CSharp 跨场幸存——换场 sweep 只卸 origin=Scene）——驱动方 =
+     Game/LoadingScreen.cs（DDOL 实体轮询 AsyncSceneLoad.progress）。 */
+#loading { display: block; }
+#load-bar { width: 320dp; }
+#load-title { font-size: var(--fs-hud); margin-bottom: var(--sp-2); }
+#load-hint  { color: var(--c-dim); margin-top: var(--sp-2); }
+</style>
+</head>
+<body>
+<div id="loading-modal" class="scrim">
+  <div id="loading" class="panel">
+    <div id="load-title">加载中…</div>
+    <progress id="load-bar" class="bar xp" max="100"/>
+    <div id="load-hint"/>
+  </div>
+</div>
+</body>
+</rml>

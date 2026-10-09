@@ -397,9 +397,10 @@ private:
 };
 
 // ---- --smoke-scene 夹具（M7c 批⑥b 换场编排单跳）------------------------
-// 第二场景 = 内嵌最小档（3 实体；cards.rml 声明 showOnStart=1——换场前模板声明
-// 为 0 且 hidden，换场后 sweep 卸旧 + afterBuild 装新声明显式 Show，断言区分度）。
-// guid 取固定段避开模板已用值；DDOL 目标 = Main.scene 的 GameFlow 实体（tag Flow）。
+// 第二场景 = 内嵌最小档（3 实体；cards.rml 声明 showOnStart=1——批⑨ 起模板流程
+// 文档 code-mount（菜单态 cards 未挂），每跳 sweep 卸旧 origin=Scene + afterBuild
+// 装新声明显式 Show，断言区分度）。guid 取固定段避开模板已用值；DDOL 目标 =
+// MainMenu.scene 的 GameFlow 实体（tag Flow，guid 钉死 = kFlowEntityGuid 镜像）。
 constexpr const char* kSceneSmokeSceneB = R"({"schemaVersion":2,"name":"SceneB","entities":[
   {"components":{"Meta":{"guid":4700000000000000001,"layer":0,"prefabId":0,"tag":"","team":0},"Transform2D":{"pos":[64.0,64.0],"rot":0.0,"scale":[1.0,1.0]}}},
   {"components":{"Meta":{"guid":4700000000000000002,"layer":0,"prefabId":0,"tag":"","team":0},"Transform2D":{"pos":[128.0,128.0],"rot":0.0,"scale":[1.0,1.0]}}},
@@ -752,16 +753,17 @@ int main(int argc, char** argv) {
     resolveSceneScripts(scene);
 
     // ---- UI/音频挂载（通道 A 声明装载 + 烤制/装载注册 + 后端接线）----
-    uint32_t mountedUi = 0, mountedAudio = 0;
+    uint32_t mountedAudio = 0;
     // 声明装载 lambda 化（换场 afterBuild 复用；ReconcileDocuments 随装载头调用
-    // —— M6b 根因收口的不变量层口径）
+    // —— M6b 根因收口的不变量层口径）。批⑨ 起入口场景零声明文档 = 返回值恒 0
+    //（装载链断言移 RESULT 侧 DocumentLoadCount——code-mount 口径），不再记账
     auto mountSceneUi = [&](ecs::Scene& s) -> uint32_t {
         const IdxUiDocSource uiSrc(index);
         const uint32_t n = ui::MountSceneDocuments(ui, s, uiSrc);
         ui::ReconcileDocuments(ui, uiSrc);
         return n;
     };
-    mountedUi = mountSceneUi(scene);
+    mountSceneUi(scene);
     {
         const IdxAudioSource audioSrc(index);
         mountedAudio = audioMount.MountAll(audioSrc);
@@ -1055,7 +1057,8 @@ int main(int argc, char** argv) {
             sceneHopOk[sceneHop] =
                 prevLeft == expectLeft && orphan == 0 && ddolStable && freshHandle &&
                 ecs::CountSceneGroup(scene, newH) == 3 &&
-                !ui.HasDocument("Assets/UI/main.rml") &&
+                ui.HasDocument("Assets/UI/main.rml") && // 批⑨：CSharp 幸存者仍挂
+                !ui.IsDocumentShown("Assets/UI/main.rml") && // 流程已隐（未知场不认领）
                 ui.IsDocumentShown("Assets/UI/cards.rml") &&
                 !audio.IsPaused() && world.Fx().TextCount() == 0 &&
                 recPrev && !recPrev->isLoaded && recNew && recNew->isLoaded;
@@ -1124,7 +1127,8 @@ int main(int argc, char** argv) {
             sceneHopAsync = 2; // 终态（RESULT 汇总）
             sceneHopAsyncOk = terminal && orphan == 0 && ddolStable &&
                               ecs::CountSceneGroup(scene, newH) == 3 &&
-                              !ui.HasDocument("Assets/UI/main.rml") &&
+                              ui.HasDocument("Assets/UI/main.rml") && // 批⑨ 同步跳同款
+                              !ui.IsDocumentShown("Assets/UI/main.rml") &&
                               ui.IsDocumentShown("Assets/UI/cards.rml") &&
                               !audio.IsPaused() && world.Fx().TextCount() == 0 &&
                               recPrev && !recPrev->isLoaded && recNew && recNew->isLoaded &&
@@ -1152,15 +1156,16 @@ int main(int argc, char** argv) {
         // lemon-game 无呈现面——批④ §5 登记边界）
         const bool ok = scene.AliveCount() > 0 && rm.LastStats().visible > 0 &&
                         batcher.LastBatchCount() > 0 && ui.ContractErrorCount() == 0 &&
-                        mountedUi > 0 && mountedAudio > 0 && host.BatchSystemCount() > 0 &&
-                        hudShown && cardsShown;
+                        ui.DocumentLoadCount() >= 4 && mountedAudio > 0 && // 批⑨：code-mount 装载链（四屏预装起）
+                        hudShown && cardsShown; // 脚本链断言 = 行为面（hud/cards 由 C# 驱动）——
+                                                // 批⑨ 起模板零批量系统（RunSweeper 退役）
         std::printf(
             "[lemon-game] RESULT game-smoke: frames=%llu fps=%.1f alive=%u visible=%u "
             "batches=%u ticks=%llu uidoc=%u audio=%u atlas=%u scriptSys=%u contractErr=%u "
             "hud=%d cards=%d => %s\n",
             (unsigned long long)frame, frameSec > 0 ? (double)statFrames / frameSec : 0.0,
             scene.AliveCount(), rm.LastStats().visible, batcher.LastBatchCount(),
-            (unsigned long long)world.TickIndex(), mountedUi, mountedAudio, atlasPages,
+            (unsigned long long)world.TickIndex(), ui.DocumentLoadCount(), mountedAudio, atlasPages,
             host.BatchSystemCount(), ui.ContractErrorCount(), hudShown ? 1 : 0,
             cardsShown ? 1 : 0, ok ? "OK" : "FAIL");
         std::fflush(stdout);
@@ -1181,7 +1186,7 @@ int main(int argc, char** argv) {
             "[lemon-game] RESULT scene-smoke: frames=%llu hops=%d async=%d entry=%u final=%u "
             "finalGroup=%u orphan=%u ddolAlive=%d ddolLineage=%zu hopOk=%d%d%d%d "
             "asyncOk=%d(monotonic=%d hashStable=%d capped=%d prog=%.2f) "
-            "uiMainGone=%d uiCardsShown=%d unpaused=%d fxCleared=%d contractErr=%u "
+            "uiMainIdle=%d uiCardsShown=%d unpaused=%d fxCleared=%d contractErr=%u "
             "=> %s\n",
             (unsigned long long)frame, sceneHop, sceneHopAsync == 2 ? 1 : 0, sceneHopEntry,
             newH, ecs::CountSceneGroup(scene, newH),
@@ -1191,7 +1196,7 @@ int main(int argc, char** argv) {
             sceneHopOk[0] ? 1 : 0, sceneHopOk[1] ? 1 : 0, sceneHopOk[2] ? 1 : 0,
             sceneHopOk[3] ? 1 : 0, sceneHopAsyncOk ? 1 : 0, asyncMonotonic ? 1 : 0,
             asyncHashStable ? 1 : 0, asyncCapped ? 1 : 0, (double)asyncLastProgress,
-            ui.HasDocument("Assets/UI/main.rml") ? 0 : 1,
+            ui.IsDocumentShown("Assets/UI/main.rml") ? 0 : 1,
             ui.IsDocumentShown("Assets/UI/cards.rml") ? 1 : 0,
             audio.IsPaused() ? 0 : 1, world.Fx().TextCount() == 0 ? 1 : 0,
             ui.ContractErrorCount(), ok ? "OK" : "FAIL");

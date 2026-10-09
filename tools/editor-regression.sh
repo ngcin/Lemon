@@ -119,7 +119,9 @@ grep_step "smoke-close dirty (dirty scene confirm)" "OK" \
 retry_step "smoke-drag (viewport gizmo move+rotate+resize+zoom+sling+focus injection)" \
     "smoke-drag: .* => OK" \
     "${EDITOR}" --smoke-drag --frames 90 --no-reopen
-grep_step "smoke-ui (real-person session: shortcuts/undo/scrub/save/play/rename/reparent/nav/layout)" \
+# smoke-ui = 注入抖动位（批⑨ 登记首例：回归并发负载下 hier 行点击偶失——独立
+# 复跑两连绿、smoke-drag 同族；两次取优机器化 09 §9）
+retry_step "smoke-ui (real-person session: shortcuts/undo/scrub/save/play/rename/reparent/nav/layout)" \
     "smoke-ui: .* => OK" \
     "${EDITOR}" --project "${TMP}/ui" --smoke-ui --frames 160 --no-reopen
 

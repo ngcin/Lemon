@@ -30,13 +30,15 @@ public static class GameMain
         public static float UiVol = 0.8f;
     }
 
-    /// <summary>UI 文档名（批③d-1 cards + 批③d-2 流程四屏）。UI 资产建后
+    /// <summary>UI 文档名（批③d-1 cards + 批③d-2 流程四屏；批⑨ 加载屏与 HUD
+    /// 常量入本表——六文档全 code-mount，见 GameFlow 头注）。UI 资产建后
     /// 不挪不改名（relPath 寻址约定）。</summary>
     internal const string CardsDoc = "Assets/UI/cards.rml";
     internal const string MainDoc = "Assets/UI/main.rml";
     internal const string PauseDoc = "Assets/UI/pause.rml";
     internal const string SettingsDoc = "Assets/UI/settings.rml";
     internal const string ResultsDoc = "Assets/UI/results.rml";
+    internal const string HudDoc = "Assets/UI/hud.rml";
 
     // M6c 批④：UI 组按钮音（Assets/Audio/ui-click.ogg——全体 Click 统一打点，
     // 暂停中仍可响 = Ui 组不挂起语义的消费实证）
@@ -51,21 +53,20 @@ public static class GameMain
     public static void Configure()
     {
         // 注册序 = 跨类型 Update 执行序（04 §3.2）：流程 → 移动 → 战斗 → HUD
-        //（批③d-2：GameFlow 首个——状态闸先于玩法 tick）
+        //（批③d-2：GameFlow 首个——状态闸先于玩法 tick。批⑨ 起清场归引擎换场
+        //——RunSweeper 退役）
         Lemon.Behaviours.Register<GameFlow>();
         Lemon.Behaviours.Register<PlayerMovement>();
         Lemon.Behaviours.Register<PlayerCombat>();
         Lemon.Behaviours.Register<PlayerHud>();
-        // M7c 批⑧：加载屏驱动（样例件，Begin() 时才实例化——注册不挂载，
-        // 单场景现状零影响；多场景消费归批⑨ svr-test 迁移）
-        Lemon.Behaviours.Register<LoadingScreenDriver>();
-        // 档② 清场批量系统（批③d-2：GameFlow.EnterRun/ReturnToMenu 消费）
-        Lemon.Scripting.Register(new RunSweeper());
         // 批③d-1：UI 事件静态订阅（Configure 每域一次，跨局存活——③c 先例）。
         // Click(pick) → 待选 key（PlayerCombat.Update 消费式读取）；DocumentReloaded
         // → shown 态重灌（M2 契约——隐藏态不重放，防凭空亮屏）。批③d-2 起流程
         // 四屏事件（start/resume/settings/...）一并路由 GameFlow
         Lemon.UI.Events.Subscribe(OnUiEvent);
+        // 批⑨：场景事件路由（与 UI.Events 同生命周期——Configure 随域重建重跑，
+        // 订阅随之重订；热重载后换场回调不断链）
+        SceneManager.sceneLoaded += GameFlow.OnSceneLoaded;
     }
 
     private static void OnUiEvent(Lemon.UiEvent e)
@@ -104,6 +105,8 @@ public static class GameMain
 
     internal static void HideCardsDoc()
     {
+        if (!CardsShown) return; // 批⑨：未显过屏 = 未装载（通道 B 只在 Show 现载）——
+                                 // Hide op 对未装载文档 = 契约红，直接 no-op
         CardsShown = false;
         UI.Hide(CardsDoc);
         UI.Apply();

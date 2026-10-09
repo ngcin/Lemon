@@ -50,6 +50,11 @@ constexpr uint64_t kMainRml = 0x7e57300000100004ull;      // main.rml（主菜�
 constexpr uint64_t kPauseRml = 0x7e57300000100005ull;     // pause.rml（暂停）
 constexpr uint64_t kSettingsRml = 0x7e57300000100006ull;  // settings.rml（设置）
 constexpr uint64_t kResultsRml = 0x7e57300000100007ull;   // results.rml（结算）
+constexpr uint64_t kLoadingRml = 0x7e57300000100008ull;   // loading.rml（加载屏，批⑧ 样例/批⑨ 入生成器）
+// M7c 批⑨：MainMenu.scene 流程壳 Flow 种子实体 guid——钉死跨重生成稳定。
+// GameEntry.cpp --smoke-scene 的 DDOL 夹具常量 kSceneSmokeDdolGuid 同值
+//（两处字面量互为镜像，改动须同步）。
+constexpr uint64_t kFlowEntityGuid = 0x9825a9b3406b688cull;
 // M6c 批④：模板音频七件（Samples/Assets/cc0-audio 拷入 Assets/Audio/；7e574 段
 // = 音频族——0 程序图/1 prefab/2 表/3 UI rml 之后。CC0 来源登记见包内 README）
 constexpr uint64_t kBgmOgg = 0x7e57400000000001ull;       // bgm.ogg（BGM 循环，流式）
