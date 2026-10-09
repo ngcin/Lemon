@@ -1,6 +1,6 @@
 # 批⑨：消费者迁移——svr-test 拆多场景（MainMenu + Grass/Volcano）+ RunSweeper 退役 + 加载屏接入 + 模板随迁
 
-Status: done ✅（2026-10-09 机器面。**D1–D5 用户未应答按推荐推进待追认**：D1=A code-mount 壳+DDOL 种子+重装自毁守卫 / D2=A 战斗场自含 / D3=A 键盘位（UI 指针入流登记候选池）/ D4=A 模板两场景 / D5=A async 进场+同步回菜单。出口判据全落：单测 34,716 逐位不变（引擎内核零改动）/ script-tests 1,818 / ctest 4/4 / game-smoke OK（uidoc=7 code-mount 恰值）/ scene-smoke OK（CSharp 幸存者双断言新口径）/ **template-chain OK = 批⑦ 敞口① 收口** / smoke-guid OK / RunSweeper 全仓代码零引用 / 回归 full 21/21（首跑四红 = 机器级既有敞口——smoke 帧数窗按 60Hz 标定 vs 显示器睡眠无节流 500fps+，本批顺手修复 = smoke 会话 18ms 帧率下限，HEAD 基线同败实证非本批引入）/ 构建零警告。**真人走查待用户**。[DevLog](../../DevLog/2026-10-09-m7c-b9-svr-test-multiscene.md)。下一批 = 批⑩（可选）或 M7c 收尾转 M8）
+Status: done ✅（2026-10-09 机器面。**D1–D5 已追认（用户 2026-10-09，[裁决 DevLog](../../DevLog/2026-10-09-m7c-b8-b9-ratify-and-b10-go.md)）**：D1=A code-mount 壳+DDOL 种子+重装自毁守卫 / D2=A 战斗场自含 / D3=A 键盘位（UI 指针入流登记候选池）/ D4=A 模板两场景 / D5=A async 进场+同步回菜单。出口判据全落：单测 34,716 逐位不变（引擎内核零改动）/ script-tests 1,818 / ctest 4/4 / game-smoke OK（uidoc=7 code-mount 恰值）/ scene-smoke OK（CSharp 幸存者双断言新口径）/ **template-chain OK = 批⑦ 敞口① 收口** / smoke-guid OK / RunSweeper 全仓代码零引用 / 回归 full 21/21（首跑四红 = 机器级既有敞口——smoke 帧数窗按 60Hz 标定 vs 显示器睡眠无节流 500fps+，本批顺手修复 = smoke 会话 18ms 帧率下限，HEAD 基线同败实证非本批引入）/ 构建零警告。**真人走查待用户**。[DevLog](../../DevLog/2026-10-09-m7c-b9-svr-test-multiscene.md)。批⑩ 已拍板（用户 2026-10-09）：编辑器打磨后 M7c 收尾转 M8）
 
 - 日期：2026-10-09
 - 关联：[ADR-017](../../ADR/ADR-017-Scene-Management-And-LoadScene.md) 批⑨ 行 · [b6b](./2026-10-08-b6b-scene-switch-orchestration.md)（SceneSwitcher 编排/清场）· [b7](./2026-10-08-b7-sdk-scene-facade.md)（SDK 门面；§4 两条敞口本批收口）· [b8](./2026-10-08-b8-loadscene-async.md)（LoadSceneAsync + 加载屏样例）· [M7c.md](./M7c.md) 批⑨ 行
@@ -21,7 +21,7 @@ Status: done ✅（2026-10-09 机器面。**D1–D5 用户未应答按推荐推�
 | 9 | 表权威：WaveDirector.waves 清零、waves.tab 唯一权威（`WaveTableLoader.cs:8–9`）；表 GUID = C# const（:24） | Volcano 变体 = const→虚属性 + 子类 + 新表 |
 | 10 | .meta 手工可造（`{"guid","type"}` 最小面——waves.tab.meta 实证）；场景文件无 .meta（按路径>唯一 stem 解析） | 新表/新 rml 可手落；新场景纯文件 |
 
-## 2. 设计裁决点（用户未应答按推荐推进，待追认）
+## 2. 设计裁决点（按推荐推进，用户 2026-10-09 全数追认）
 
 - **D1 跨场壳形态（核心）**：**code-mount UI + DDOL GameFlow 种子 + 重装自毁守卫**——四屏流程文档从 UIDocument 场景实体改为 GameFlow 代码装载（通道 B 现载，origin=CSharp 跨场幸存）；GameFlow 种子 Awake 自标 DDOL；MainMenu 重装时新种子 Booted 守卫自毁（静态 + StateBag 随热重载）。否决备选：A) Boot 独立场景两跳（入口多一跳 + 项目打开落在近空场景，编辑器 UX 差）；B) UIDocument 实体标 DDOL（origin=Scene 仍被 sweep 无条件卸载——事实 #3，不可行）。
 - **D2 战斗场景内容形态**：**自含实体**（Player + Director(+载表脚本) 内联进 Grass/Volcano.scene——Main.scene 先例）vs sceneLoaded 后分帧铺 spawn 初始化器（批⑧ T9 登记样例）。推荐自含：svr-test 战斗场 ≤3 实体、零初始化握手；分帧铺 spawn 指引已在 LoadingScreen.cs 头注 + 04 分册，代码样例待真实大场景消费者（M9 tilemap）再落（登记 M9 注）。
