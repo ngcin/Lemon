@@ -847,7 +847,10 @@ struct Device::Impl {
             cb.fn(*ownerDevice);
         }
         deviceLost = false;
-        lossPending = false; // 若重建期再次探明丢失，置位保留 → 下帧再走一轮恢复
+        // lossPending 不在此清（b11b 复审 R1）：重建期再次探明的丢失（recreate
+        // 回调上传撞 DEVICE_LOST 置位）须保留——下帧 AcquireNextImage 头部消费
+        // 路径不触设备即再走一轮恢复；若在此清掉，下帧会先撞 VK_CHECK(
+        // vkResetFences)，持续丢失设备上该调用可返回 DEVICE_LOST 直接 abort
     }
 
     bool wantTimestamps = false;

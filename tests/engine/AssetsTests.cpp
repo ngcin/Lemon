@@ -1313,8 +1313,13 @@ void TestFontImporterBadOutline() {
     fs::create_directories(root / "Assets", ec);
     fs::create_directories(root / ".lemon", ec);
     const uint64_t fontGuid = 0x6200000000000001ull;
+    const uint64_t goodGuid = 0x6200000000000002ull;
     {
         std::ofstream f(root / "Assets" / "body.ttf", std::ios::binary);
+        f << "ttf";
+    }
+    {
+        std::ofstream f(root / "Assets" / "good.ttf", std::ios::binary);
         f << "ttf";
     }
     // "zz" = stoull invalid_argument 形态（修复前测试进程自身 terminate）；
@@ -1325,10 +1330,18 @@ void TestFontImporterBadOutline() {
           << "\",\"type\":\"font\",\"importer\":{\"charset\":\"AB\",\"size\":32,"
              "\"outline\":[2,\"zz\"]}}";
     }
+    // 对照组（b11b 复审 R2）：合法 8 位 hex 必须照常生效——防「过严化」回归
+    // （非抛改严后若整串拒绝一切，仅凭坏值用例测不出）
+    {
+        std::ofstream f(root / "Assets" / "good.ttf.meta", std::ios::trunc);
+        f << "{\"guid\":\"" << lemon::assets::GuidToHex(goodGuid)
+          << "\",\"type\":\"font\",\"importer\":{\"outline\":[1,\"20c04040\"]}}";
+    }
     {
         std::ofstream f(root / ".lemon" / "manifest.json", std::ios::trunc);
         f << "{\"assets\":["
-          << "{\"path\":\"Assets/body.ttf\",\"guid\":" << fontGuid << ",\"type\":\"font\"}"
+          << "{\"path\":\"Assets/body.ttf\",\"guid\":" << fontGuid << ",\"type\":\"font\"},"
+          << "{\"path\":\"Assets/good.ttf\",\"guid\":" << goodGuid << ",\"type\":\"font\"}"
           << "]}";
     }
     AssetIndex idx; // 修复前：stoull("zz") 抛 → 测试进程自身 terminate（红得响亮）
@@ -1341,6 +1354,9 @@ void TestFontImporterBadOutline() {
         Expect(fo->fontPx == 32 && fo->fontOutlinePx == 2,
                "font-bad: sibling importer fields still parsed");
     }
+    const lemon::assets::IndexedEntry* go = idx.FindByGuid(goodGuid);
+    Expect(go && go->fontOutlineColor == 0x20c04040u && go->fontOutlinePx == 1,
+           "font-bad: legal hex still parsed (anti-over-tightening control)");
     fs::remove_all(root, ec);
 }
 

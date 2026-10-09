@@ -50,3 +50,17 @@ smoke-uirml 增专用夹具（wipehost/wipebox/wtpl，`display:none` 零像素�
 - M22 无单测（InputCollector 在 lemon-game 运行时 TU，SDL 事件合成不值当；game-smoke 步把守）。
 - TriggerSystem 扫掠（probe=4 族）登记待 profile 证据再动。
 - M7/M8/M11/M12/M16/M17/M19/M4（中危性能 8 项）归 b11c；L 类低危归 b11d。
+
+## 追记：复审轮（2026-10-10）
+
+b11b 提交（f831f54）后按 b11a 同款口径自审 20 项：M3/M1/M2/M13/M14/M15/M21/M6/M9/M10/M18/M20/M22/H3 用例逐项读 diff + 竞争/死锁/析构序/确定性专项。
+
+**R1（M3，low，已修）**：HandleDeviceLost 尾部 `lossPending = false` 与自身注释「置位保留」矛盾。保留标志是承重的——重建期再探明的丢失（recreate 回调上传撞 DEVICE_LOST）被误清后，下帧先撞 `VK_CHECK(vkResetFences)`，持续丢失设备上该调用可返回 DEVICE_LOST 直接 abort；头部消费路径（AcquireNextImage 顶）不触设备即再走恢复。修码对齐注释（删该行）。
+
+**R2（M15 测试卫生，low，已修）**：TestFontImporterBadOutline 缺合法值对照组——非抛改严后若「过严化」整串拒绝一切，仅凭坏值用例测不出。补 good.ttf 对照（"20c04040" 8 位合法 hex 照常生效）。
+
+**R3（H3 覆盖面注记，info，不改）**：wipe 用例经 SetInnerRml 两形态；SetText（escape 面）同 helper 两分支对称（同一 InvalidateContainersUnder 调用点），未单列用例。
+
+**查实无恙的疑点**（记录判据）：IsDeviceLost 并入 lossPending 零外部调用者 = 惰性改动；GameEntry:973 与 EditorApp 同款消费 deviceLost/needsRecreate = lossPending 恢复路径双宿主生效；AssetGpuCache/ThumbCache 无 worker 线程 = lossPending 单线程读写无竞争；M6 慢弹 K=1 与模板 speed=320 下金回放/回放字节位零扰动、homing 弹 seg 取积分后速度无系统序错位；M18 Play 的 feed/retire 声明先于锁域 = 析构必在解锁后（声明序即析构序）；M20 三失败分支各自 teardown 正确（Initialise 失败不可调 Rml::Shutdown 属 RmlUi 6.3 Core 半初始化事实）；M9 换场 Essential 窗口无在途域命令（tick 同步等待完结）= RunPooled 无死锁窗口。
+
+复验：构建零警告 / 单测 **34,752**（+1 对照断言）。
