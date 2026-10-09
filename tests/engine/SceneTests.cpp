@@ -5,12 +5,16 @@
 // 孪生世界确定性轨迹）。
 #include "TestFramework.h"
 
+#include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "Components/BehaviorComponents.h"
 #include "Components/CoreComponents.h"
+#include "Components/RenderComponents.h"
 #include "ECS/Hierarchy.h"
 #include "ECS/SceneMembership.h"
 #include "ECS/SceneSwitcher.h"
@@ -584,6 +588,329 @@ void TestSceneSwitchDeterministicTrajectory() {
 
 } // namespace
 
+// ---- 批⑧：LoadSceneAsync（分帧状态机 / 契约 / 回放激活帧 / 压测）--------------
+
+namespace {
+
+// 异步事件记录后端（kind 序 + 载荷；批⑧ 起四事件）
+struct AsyncRecordingBackend final : public IScriptBackend {
+    std::vector<uint8_t> kinds;
+    std::vector<std::pair<uint32_t, uint32_t>> handles;
+    void TickBatch(World&, Scene&, float) override {}
+    void PullPendingEvents(World&) override {}
+    void DispatchEvents(World&, Scene&, const EventPacket*, uint32_t) override {}
+    void ApplyStructural(World&, Scene&) override {}
+    void NotifyPendingDestroys(World&, Scene&) override {}
+    void SceneEventNotify(World&, Scene&, SceneEventKind kind, uint32_t oldH,
+                          uint32_t newH, uint8_t) override {
+        kinds.push_back((uint8_t)kind);
+        handles.emplace_back(oldH, newH);
+    }
+    bool KindIs(size_t i, SceneEventKind k) const {
+        return kinds.size() > i && kinds[i] == (uint8_t)k;
+    }
+};
+
+/// 大档生成器（压测/多帧行为）：每实体 4 组件（Transform2D/Meta/Velocity/
+/// SpriteRenderer——解码路径全覆盖）
+std::string MakeBigSceneText(const char* name, int count) {
+    World w;
+    Scene& s = w.CreateScene(name);
+    for (int i = 0; i < count; ++i) {
+        Entity e = s.Create();
+        s.Emplace<Transform2D>(e, Transform2D{{float(i % 100), float(i / 100)}});
+        Meta& m = s.Emplace<Meta>(e);
+        std::strcpy(m.tag, "mob");
+        s.Emplace<Velocity>(e, Velocity{{1.0f, 0.5f}});
+        SpriteRenderer& sr = s.Emplace<SpriteRenderer>(e);
+        sr.spriteId = (uint32_t)(i % 32);
+    }
+    return SceneArchive::Save(s);
+}
+
+void TestSceneAsyncMachineContract() {
+    // ① 小档一帧效：默认预算下 TickAsync 单次调用直抵激活（与同步同帧效）
+    {
+        SwitchFixture fx("Grass");
+        AsyncRecordingBackend backend;
+        fx.w.SetScriptBackend(&backend);
+        const uint32_t op = fx.w.Switcher().RequestAsync(
+            {.name = "Volcano", .path = "Scenes/Volcano.scene",
+             .jsonText = MakeSceneText("Volcano", "lava", 3)});
+        Expect(op == 1, "first op id is 1");
+        fx.w.Switcher().TickAsync(fx.w, fx.s); // 一帧：预备段 + 激活同窗
+        Expect(fx.w.ActiveSceneHandle() != fx.handle, "activated same tick (small doc)");
+        AsyncSceneQuery q;
+        Expect(fx.w.Switcher().Async().Query(op, q) && q.isDone && q.progress >= 1.0f,
+               "terminal: isDone + progress 1.0");
+        Expect(fx.w.Switcher().Async().Query(9999, q) == false, "unknown op rejected");
+        Expect(backend.kinds.size() == 4, "four events (U/L/A/AsyncCompleted)");
+        Expect(backend.KindIs(0, SceneEventKind::Unloaded) &&
+                   backend.KindIs(1, SceneEventKind::Loaded) &&
+                   backend.KindIs(2, SceneEventKind::ActiveChanged) &&
+                   backend.KindIs(3, SceneEventKind::AsyncCompleted),
+               "kind order incl. async tail");
+        Expect(backend.handles.size() == 4 &&
+                   backend.handles[3].first == op &&
+                   backend.handles[3].second == fx.w.ActiveSceneHandle(),
+               "asyncCompleted payload: opId + new handle");
+        Expect(CountSceneGroup(fx.s, fx.w.ActiveSceneHandle()) == 3, "new group 3");
+        Expect(CountSceneGroup(fx.s, kSceneHandleUnassigned) == 0, "zero orphans");
+    }
+    // ② 门控：关 = 停 0.9（世界逐位不动），开 = 下一 Essential 激活
+    {
+        SwitchFixture fx("Grass");
+        AsyncRecordingBackend backend;
+        fx.w.SetScriptBackend(&backend);
+        Entity ddol = Entity::Null();
+        s_each_first(fx.s, fx.handle, ddol);
+        MarkDontDestroyOnLoad(fx.s, ddol);
+        const uint64_t h0 = ComputeStateHash(fx.s);
+        const uint32_t op = fx.w.Switcher().RequestAsync(
+            {.name = "V", .path = "v.scene", .jsonText = MakeSceneText("V", "v", 2)});
+        Expect(fx.w.Switcher().Async().SetActivation(op, false), "gate closed");
+        for (int i = 0; i < 5; ++i) {
+            fx.w.Switcher().TickAsync(fx.w, fx.s);
+            AsyncSceneQuery q;
+            Expect(fx.w.Switcher().Async().Query(op, q) && !q.isDone &&
+                       q.progress <= 0.9f + 1e-6f,
+                   "gate closed: not done, capped at 0.9");
+            Expect(fx.w.ActiveSceneHandle() == fx.handle, "gate closed: active unchanged");
+            Expect(ComputeStateHash(fx.s) == h0, "gate closed: world bit-identical");
+        }
+        AsyncSceneQuery q;
+        fx.w.Switcher().Async().Query(op, q);
+        Expect(q.progress >= 0.9f - 1e-6f, "staged work complete at gate (0.9)");
+        Expect(fx.w.Switcher().Async().SetActivation(op, true), "gate reopened");
+        fx.w.Switcher().TickAsync(fx.w, fx.s);
+        Expect(fx.w.ActiveSceneHandle() != fx.handle, "activated after gate open");
+        Expect(fx.s.Alive(ddol), "ddol survives async activation");
+        Expect(fx.w.Switcher().Async().Query(op, q) && q.isDone && q.progress >= 1.0f,
+               "terminal after gate open");
+        Expect(backend.kinds.size() == 4, "exactly one event batch (completed once)");
+        // 终态不可改门
+        Expect(!fx.w.Switcher().Async().SetActivation(op, false),
+               "terminal op rejects gate change");
+    }
+    // ③ 多帧分帧 + 预备期零可见性：小预算 + 大档 → staging 帧主世界哈希逐帧不变、
+    // progress 单调上升；激活后七面成立
+    {
+        SwitchFixture fx("Grass");
+        const std::string big = MakeBigSceneText("Big", 400);
+        const uint64_t h0 = ComputeStateHash(fx.s);
+        fx.w.Switcher().Async().SetBudgetMs(0.0001f); // 每 tick 恰一个 chunk
+        const uint32_t op = fx.w.Switcher().RequestAsync(
+            {.name = "Big", .path = "Scenes/Big.scene", .jsonText = big});
+        float last = 0.0f;
+        int stagedFrames = 0;
+        AsyncSceneQuery q;
+        while (fx.w.ActiveSceneHandle() == fx.handle && stagedFrames < 200) {
+            fx.w.Switcher().TickAsync(fx.w, fx.s);
+            ++stagedFrames;
+            Expect(fx.w.Switcher().Async().Query(op, q) && q.progress >= last - 1e-6f,
+                   "progress monotonic across frames");
+            last = q.progress;
+            if (!q.isDone)
+                Expect(ComputeStateHash(fx.s) == h0,
+                       "staging frame: main world bit-identical");
+        }
+        Expect(stagedFrames >= 2, "big doc spreads across frames under tiny budget");
+        Expect(fx.w.ActiveSceneHandle() != fx.handle, "activated after staged frames");
+        Expect(fx.w.Switcher().Async().Query(op, q) && q.isDone, "terminal after spread");
+        Expect(CountSceneGroup(fx.s, fx.w.ActiveSceneHandle()) == 400, "400 integrated");
+        Expect(CountSceneGroup(fx.s, kSceneHandleUnassigned) == 0, "zero orphans after");
+        Expect(std::string(fx.s.Name()) == "Big", "scene name restored from staged doc");
+    }
+    // ④ 失败契约（批文件 §5）：Parse 段失败 = 世界逐位不动 + 终态 + kind3(newHandle=0)
+    {
+        SwitchFixture fx("Grass");
+        AsyncRecordingBackend backend;
+        fx.w.SetScriptBackend(&backend);
+        const uint64_t h0 = ComputeStateHash(fx.s);
+        const uint32_t op = fx.w.Switcher().RequestAsync(
+            {.name = "Broken", .path = "Scenes/Broken.scene", .jsonText = "{ not json"});
+        Expect(op != 0, "op issued even for bad doc (failure surfaces at Parse stage)");
+        fx.w.Switcher().TickAsync(fx.w, fx.s);
+        AsyncSceneQuery q;
+        Expect(fx.w.Switcher().Async().Query(op, q) && q.isDone,
+               "failed op reaches terminal (isDone)");
+        Expect(fx.w.ActiveSceneHandle() == fx.handle, "world untouched on async failure");
+        Expect(ComputeStateHash(fx.s) == h0, "world bit-identical on async failure");
+        Expect(fx.w.SceneRecordCount() == 1, "no stray record on async failure");
+        Expect(backend.kinds.size() == 1 && backend.KindIs(0, SceneEventKind::AsyncCompleted),
+               "only AsyncCompleted(fail) pushed");
+        Expect(backend.handles.size() == 1 && backend.handles[0].first == op &&
+                   backend.handles[0].second == 0,
+               "fail payload: opId + zero handle");
+    }
+    // ⑤ 单槽统一：同步请求取消在途 async（completed 不推）；async 取代同步 pending
+    {
+        SwitchFixture fx("Grass");
+        AsyncRecordingBackend backend;
+        fx.w.SetScriptBackend(&backend);
+        const uint32_t op = fx.w.Switcher().RequestAsync(
+            {.name = "A", .path = "a.scene", .jsonText = MakeSceneText("A", "a", 1)});
+        fx.w.Switcher().Async().SetActivation(op, false); // 卡在门，保证在途
+        fx.w.Switcher().TickAsync(fx.w, fx.s);
+        fx.w.Switcher().Request({.name = "S", .path = "s.scene",
+                                 .jsonText = MakeSceneText("S", "s", 1)});
+        Expect(!fx.w.Switcher().Async().HasInFlight(), "sync request cancels in-flight async");
+        fx.w.Switcher().Execute(fx.w, fx.s);
+        Expect(fx.w.ActiveSceneHandle() != fx.handle, "sync switch executed");
+        bool sawAsyncTail = false;
+        for (uint8_t k : backend.kinds)
+            if (k == (uint8_t)SceneEventKind::AsyncCompleted) sawAsyncTail = true;
+        Expect(!sawAsyncTail, "cancelled op: completed never pushed");
+        // 反向：async 取代未消费 pending
+        fx.w.Switcher().Request({.name = "P", .path = "p.scene",
+                                 .jsonText = MakeSceneText("P", "p", 1)});
+        const uint32_t op2 = fx.w.Switcher().RequestAsync(
+            {.name = "Q", .path = "q.scene", .jsonText = MakeSceneText("Q", "q", 1)});
+        Expect(!fx.w.Switcher().HasPending(), "async request clears sync pending");
+        fx.w.Switcher().TickAsync(fx.w, fx.s);
+        Expect(w_find_name(fx.w, fx.w.ActiveSceneHandle()) == std::string("Q"),
+               "async wins over superseded sync pending");
+        (void)op2;
+    }
+}
+
+void TestSceneAsyncReplayFrameContract() {
+    // 回放激活帧契约（ADR-017 D3）：A = 异步装载（低预算多帧，观测激活帧 M）；
+    // B = 同步路径在帧 M 执行（= 回放侧"同步重放 + 记录激活帧"形态）。两侧逐帧
+    // ComputeStateHash 全等（含加载帧——staging 零可见性 + 激活帧原子集成的机械
+    // 证明）+ 激活后实体句柄集合逐位一致（集成段复刻同步槽位序列）。
+    const std::string docGrass = MakeSceneText("Grass", "mob", 6);
+    const std::string docBig = MakeBigSceneText("Big", 120);
+
+    struct Twin {
+        World w;
+        Scene* s = nullptr;
+        Entity ddol = Entity::Null();
+        uint32_t origin = 0;
+    };
+    auto setup = [&](Twin& t) {
+        t.w.InstallDefaultSystems();
+        t.s = &t.w.CreateScene("run");
+        t.origin = t.w.CreateSceneRecord("Grass", "Scenes/Grass.scene");
+        SceneArchive::BuildInto(*t.s, docGrass);
+        StampSceneMembership(*t.s, t.origin);
+        t.w.SetActiveScene(t.s);
+        t.w.SetActiveSceneHandle(t.origin);
+        s_each_first(*t.s, t.origin, t.ddol);
+        MarkDontDestroyOnLoad(*t.s, t.ddol);
+    };
+    Twin a, b;
+    setup(a);
+    setup(b);
+    a.w.Switcher().Async().SetBudgetMs(0.0001f); // A：多帧预备
+    const uint32_t op = a.w.Switcher().RequestAsync(
+        {.name = "Big", .path = "Scenes/Big.scene", .jsonText = docBig});
+    Expect(op != 0, "async op issued on twin A");
+
+    const int kMaxFrames = 200;
+    int activatedAt = -1;
+    std::vector<uint64_t> hashA, hashB;
+    for (int f = 1; f <= kMaxFrames; ++f) {
+        a.w.Step(1.0f / 60.0f); // Essential 内 SceneSwitchSystem：Execute + TickAsync
+        if (a.w.ActiveSceneHandle() != a.origin && activatedAt < 0) {
+            activatedAt = f;
+            // 回放侧等价形态：激活帧已记录（= 本帧），同步路径恰在本帧 Essential
+            // 执行——Request 先入槽，B 的本帧 Step 内消费（装载 + 同帧系统推进
+            // 与 A 完全同位）
+            b.w.Switcher().Request({.name = "Big", .path = "Scenes/Big.scene",
+                                    .jsonText = docBig});
+        }
+        b.w.Step(1.0f / 60.0f);
+        hashA.push_back(ComputeStateHash(*a.s));
+        hashB.push_back(ComputeStateHash(*b.s));
+    }
+    Expect(activatedAt > 1, "async activation observed at a multi-frame boundary");
+    // A 加载帧（1..activatedAt-1）世界 = 旧场照常 tick：与 B 同帧哈希全等
+    int firstBad = -1;
+    for (int f = 0; f < kMaxFrames; ++f)
+        if (hashA[(size_t)f] != hashB[(size_t)f] && firstBad < 0) firstBad = f;
+    Expect(firstBad < 0, "per-frame hash streams identical (load frames + activation)");
+    // 激活后实体句柄逐位一致（集成段复刻同步槽位分配序列的机械断言）
+    std::vector<uint64_t> idsA, idsB;
+    a.s->Each([&](Entity e) { idsA.push_back(e.id); });
+    b.s->Each([&](Entity e) { idsB.push_back(e.id); });
+    std::sort(idsA.begin(), idsA.end());
+    std::sort(idsB.begin(), idsB.end());
+    Expect(idsA == idsB, "entity handle sets bit-identical (async integrate == sync build)");
+    Expect(idsA.size() == 120 + 1, "120 built + ddol survivor");
+    Expect(a.s->Alive(a.ddol) && b.s->Alive(b.ddol) && a.ddol == b.ddol,
+           "ddol handles stable and identical");
+    Expect(CountSceneGroup(*a.s, a.w.ActiveSceneHandle()) == 120 &&
+               CountSceneGroup(*b.s, b.w.ActiveSceneHandle()) == 120,
+           "both twins fully stamped");
+    Expect(a.w.ActiveSceneHandle() == b.w.ActiveSceneHandle(), "same new handle (records aligned)");
+    // 后续帧继续锁步（激活后世界同轨）
+    const uint64_t hA0 = ComputeStateHash(*a.s);
+    for (int f = 0; f < 10; ++f) {
+        a.w.Step(1.0f / 60.0f);
+        b.w.Step(1.0f / 60.0f);
+        if (ComputeStateHash(*a.s) != ComputeStateHash(*b.s)) firstBad = kMaxFrames + f;
+    }
+    (void)hA0;
+    Expect(firstBad < 0, "post-activation frames stay in lockstep");
+}
+
+void TestSceneAsyncPressure() {
+    // 分帧压测（批⑧ 出口判据；数字入 DevLog，无硬性能门禁——机器相关）：
+    // 20k 实体 ×4 组件合成档，4ms 预算——staged 帧 TickAsync 墙钟 ≤ 预算+容差
+    //（chunk 粒度容差）、激活帧墙钟/总帧数打印、对照同步单帧全量装载。
+    const int kN = 20000;
+    const std::string big = MakeBigSceneText("Big", kN);
+
+    SwitchFixture fx("Grass");
+    fx.w.Switcher().Async().SetBudgetMs(4.0f);
+    const uint32_t op = fx.w.Switcher().RequestAsync(
+        {.name = "Big", .path = "Scenes/Big.scene", .jsonText = big});
+    AsyncSceneQuery q;
+    int stagedFrames = 0;
+    float parseTickMs = 0.0f, maxStagedMs = 0.0f, activationMs = 0.0f;
+    while (fx.w.ActiveSceneHandle() == fx.handle && stagedFrames < 1000) {
+        const auto t0 = std::chrono::steady_clock::now();
+        fx.w.Switcher().TickAsync(fx.w, fx.s);
+        const float ms = std::chrono::duration<float, std::milli>(
+                             std::chrono::steady_clock::now() - t0)
+                             .count();
+        const bool activated = fx.w.ActiveSceneHandle() != fx.handle;
+        if (stagedFrames == 0)
+            parseTickMs = ms; // 首帧含 Parse 原子段（预算豁免——ADR D3 口径，单列）
+        else if (activated)
+            activationMs = ms;
+        else
+            maxStagedMs = ms > maxStagedMs ? ms : maxStagedMs;
+        ++stagedFrames;
+    }
+    Expect(fx.w.Switcher().Async().Query(op, q) && q.isDone, "pressure: op terminal");
+    Expect(CountSceneGroup(fx.s, fx.w.ActiveSceneHandle()) == (uint32_t)kN,
+           "pressure: all 20k integrated");
+    Expect(CountSceneGroup(fx.s, kSceneHandleUnassigned) == 0, "pressure: zero orphans");
+    // 预算断言 = sanity 天花板而非硬门（墙钟预算对 CI/机器噪声敏感——精确数字
+    // 归 DevLog；结构保证 = 每 chunk 后 overBudget 检查。天花板取 3× 预算：稳态
+    // 实测 4.0-5.7ms，超 12ms = 机制性回归而非噪声）
+    Expect(maxStagedMs <= 12.0f, "staged frames respect budget (sanity ceiling 3x)");
+
+    // 对照：同步单帧全量装载同一档
+    SwitchFixture fx2("Grass");
+    const auto t1 = std::chrono::steady_clock::now();
+    fx2.w.Switcher().Request({.name = "Big", .path = "Scenes/Big.scene", .jsonText = big});
+    fx2.w.Switcher().Execute(fx2.w, fx2.s);
+    const float syncMs = std::chrono::duration<float, std::milli>(
+                             std::chrono::steady_clock::now() - t1)
+                             .count();
+    Expect(CountSceneGroup(fx2.s, fx2.w.ActiveSceneHandle()) == (uint32_t)kN,
+           "pressure: sync load built same count");
+
+    LEMON_LOG("[async-pressure] entities=%d comps=4 budgetMs=4.0 stagedFrames=%d "
+              "parseTickMs=%.3f maxStagedMs=%.3f activationMs=%.3f syncOneShotMs=%.3f",
+              kN, stagedFrames, parseTickMs, maxStagedMs, activationMs, syncMs);
+}
+
+} // namespace
+
 void RunSceneTests() {
     TestSceneMembershipStampAndCount();
     TestSceneGroupTeardownKeepsDDOL();
@@ -602,4 +929,7 @@ void RunSceneTests() {
     TestSpawnPrefabStampsTree();
     TestSceneMultiSwitchDDOLTrajectory();
     TestSceneSwitchDeterministicTrajectory();
+    TestSceneAsyncMachineContract();         // 批⑧
+    TestSceneAsyncReplayFrameContract();     // 批⑧
+    TestSceneAsyncPressure();                // 批⑧
 }

@@ -49,9 +49,18 @@ token 区**（色板/字号/间距，全 dp——画布缩放时 UI 物理比例
 已退役（点击选择）；设置两开关（飘字/血条）+ 音量四滑条（主/音乐/
 音效/界面，M6c 批④）持久化于 Settings 档。
 - 音频（M6c 批④）：BGM 开局起播（单槽 = 重开不叠曲）/ 命中·击杀·拾取·
-升级·波次事件音 + UI 组按钮音（暂停中可响）；Esc 暂停 = BGM 声部级
-挂起续响（恢复不回跳）。**编辑器内注意**：Esc 是编辑器惯例 = 退出 Play，
-游戏内暂停请按 **P**（bit6 同映射别名；独立运行时 Esc 生效）。音频资产
-在 `Assets/Audio/`，换音 = 换文件保名（.meta guid 不动，脚本零改动）；
-音量即时生效 + Settings 档持久。工具栏暂停钮 = 编辑器检视冻结（音频同步
-挂起，M6c 批④ 起联动），与游戏内暂停是两回事。
+  升级·波次事件音 + UI 组按钮音（暂停中可响）；Esc 暂停 = BGM 声部级
+  挂起续响（恢复不回跳）。**编辑器内注意**：Esc 是编辑器惯例 = 退出 Play，
+  游戏内暂停请按 **P**（bit6 同映射别名；独立运行时 Esc 生效）。音频资产
+  在 `Assets/Audio/`，换音 = 换文件保名（.meta guid 不动，脚本零改动）；
+  音量即时生效 + Settings 档持久。工具栏暂停钮 = 编辑器检视冻结（音频同步
+  挂起，M6c 批④ 起联动），与游戏内暂停是两回事。
+- 加载屏（M7c 批⑧ 样例，本模板暂无多场景消费者——批⑨ svr-test 迁移接入）：
+  `LoadingScreen.Begin("Volcano")` 一行 = 异步换场 + 加载屏（`loading.rml`
+  code-mounted，origin=CSharp 跨场幸存）+ DDOL 驱动实体轮询进度自毁。
+  进度 = 引擎段 ×0.8 + 游戏自报段 ×0.2（`LoadingScreen.ReportGameProgress`）；
+  `holdGate: true` = 引擎段停 0.9 等游戏段满 1 再激活（开门即下一 Essential）。
+  激活后的重初始化（铺 NPC 防激活帧卡帧）= 订阅 `SceneManager.sceneLoaded`
+  后自行分帧。**契约**：progress 是纯呈现量（跨机器不确定），玩法分支只许挂
+  sceneLoaded/isDone/completed。await 形态：`await SceneManager.LoadSceneAsync
+  ("Volcano")`（域线程同步续跑，恢复点 = 激活 Essential 收口处）。

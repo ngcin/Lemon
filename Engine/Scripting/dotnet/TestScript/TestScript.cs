@@ -66,6 +66,10 @@ public static class GameMain
         // script-tests TestSceneSdk 消费：四跳（含同名重装）+ 事件序/时序 +
         // DDOL 幸存 + Additive/坏名红字拒 + Scene 查询面）
         Lemon.Behaviours.Register<SceneProbeBehaviour>();
+        // M7c 批⑧：LoadSceneAsync 全 API 面（typeId 21，表尾注册同上约定——
+        // script-tests TestSceneAsyncSdk 消费：progress 单调/0.9 封顶/门控/completed
+        // 恰一次/await 域线程续跑/事件序（completed 晚于 sceneLoaded）/取代取消）
+        Lemon.Behaviours.Register<AsyncSceneProbeBehaviour>();
         // 批⑦：换场三事件订阅（Configure 期静态订阅，跨局存活）——事件序记录
         // "U:<name>:<valid>:<loaded>" / "L:<name>:<path>:<mode>" / "A:<old>><new>"
         Lemon.SceneManager.sceneUnloaded += st => SceneLog.Add(
@@ -876,6 +880,114 @@ public sealed class SceneProbeBehaviour : Lemon.LemonBehaviour
                       Lemon.SceneManager.GetSceneByName("Cave").rootCount >= 1;
             // DDOL 自身跨四跳存活：Update 仍在跑 + gameObject 句柄非零
             if (ok && gameObject.Entity.Id != 0) Mark(1809);
+        }
+    }
+}
+
+// M7c 批⑧：LoadSceneAsync 全 API 面探针（typeId 21，表尾注册）。分段断言（按
+// Time.FrameCount，Mark 1851..1861）：默认直通激活 + progress 契约 + 门控 0.9
+// 封顶/开门激活 + await 域线程续跑（completed 晚于 sceneLoaded 的全序）+ 单槽
+// 取代（被取代 op completed 不推）+ Additive/坏名无效 op。引擎面对拍在 C++ 侧
+//（TestSceneAsyncSdk：档案数/零孤组/终态 active）。
+public sealed class AsyncSceneProbeBehaviour : Lemon.LemonBehaviour
+{
+    private int _c1, _c2, _c4, _c5;          // 各 op completed 计数（恰一次断言面）
+    private Lemon.AsyncSceneLoad _gateOp;     // 门控跳句柄（跨帧开门/查询）
+    private Lemon.AsyncSceneLoad _replOp;     // 被取代跳句柄（completed 恒 0 断言面）
+    private bool _awaitResumed;
+    private int _awaitResumedFc = -1;
+
+    private void Mark(ushort id)
+        => Lemon.Events.Push(Lemon.Interop.GameEvent.Custom, id, default, default);
+
+    private static string LogAt(int i) => i < GameMain.SceneLog.Count ? GameMain.SceneLog[i] : "";
+
+    private async void AwaitLoad(string scene)
+    {
+        await Lemon.SceneManager.LoadSceneAsync(scene); // 自定义 awaiter：域线程
+        _awaitResumed = true;                           // 同步续跑（激活 Essential 内）
+        _awaitResumedFc = Lemon.Time.FrameCount;        //（= 上一帧号——Advance 后于此）
+        GameMain.SceneLog.Add("C:" + scene);            // 续跑先于 completed 订阅族
+    }
+
+    protected override void Update()
+    {
+        var fc = Lemon.Time.FrameCount;
+        var log = GameMain.SceneLog;
+        const float eps = 1e-5f;
+        if (fc == 1) {
+            log.Clear(); // 进程内多测试共域——本测试起点清零
+            Lemon.LemonBehaviour.DontDestroyOnLoad(gameObject); // 探针跨场幸存
+            var op = Lemon.SceneManager.LoadSceneAsync("Volcano");
+            op.completed += _ => { _c1++; GameMain.SceneLog.Add("C:Volcano"); };
+            bool ok = op.isValid && !op.isDone && op.progress < eps &&
+                      op.allowSceneActivation; // 默认开门
+            if (ok) Mark(1851);
+        } else if (fc == 2) {
+            // fc2 Essential 已激活（小档一帧效）——契约四件套 + completed 晚于
+            // sceneLoaded/activeSceneChanged 的全序（log 尾 = C:）
+            var act = Lemon.SceneManager.GetActiveScene();
+            bool ok = act.name == "Volcano" && log.Count == 4 &&
+                      LogAt(0) == "U:Main:1:1" &&
+                      LogAt(1) == "L:Volcano:Scenes/Volcano.scene:Single" &&
+                      LogAt(2) == "A:Main>Volcano" &&
+                      LogAt(3) == "C:Volcano" && _c1 == 1;
+            if (ok) Mark(1852);
+        } else if (fc == 3) {
+            _gateOp = Lemon.SceneManager.LoadSceneAsync("Grass");
+            _gateOp.allowSceneActivation = false; // 门控变体（setter → native + 镜像）
+            _gateOp.completed += _ => { _c2++; GameMain.SceneLog.Add("C:Grass"); };
+            if (_gateOp.isValid && !_gateOp.allowSceneActivation) Mark(1853);
+        } else if (fc == 4) {
+            // 门关：预备毕停 0.9、isDone 未置、世界不动（log 无新增）、completed 未推
+            var act = Lemon.SceneManager.GetActiveScene();
+            bool ok = act.name == "Volcano" && log.Count == 4 && _c2 == 0 &&
+                      !_gateOp.isDone && _gateOp.progress >= 0.9f - eps &&
+                      _gateOp.progress <= 0.9f + eps;
+            if (ok) Mark(1854);
+        } else if (fc == 5) {
+            _gateOp.allowSceneActivation = true; // 开门 → 下一 Essential 激活
+            if (_gateOp.allowSceneActivation) Mark(1855);
+        } else if (fc == 6) {
+            // 开门后终态：isDone/1.0/completed 恰一次 + await 变体发起
+            var act = Lemon.SceneManager.GetActiveScene();
+            bool ok = act.name == "Grass" && _gateOp.isDone &&
+                      _gateOp.progress >= 1.0f - eps && _c2 == 1 &&
+                      log.Count == 8 && LogAt(7) == "C:Grass";
+            if (ok) Mark(1856);
+            AwaitLoad("Cave");
+        } else if (fc == 7) {
+            // await 续跑点：fc7 Essential（SceneSwitch #18）激活内联续跑——先于
+            // 本帧 #15 Time.Advance ⇒ 续跑点读到的 FrameCount 仍是 6（上一帧号）。
+            // "== 6" 即"激活帧内、Update 前续跑"的时序证明（无线程池跳 Hop）
+            var act = Lemon.SceneManager.GetActiveScene();
+            bool ok = _awaitResumed && _awaitResumedFc == 6 && act.name == "Cave" &&
+                      log.Count == 12 && LogAt(11) == "C:Cave";
+            if (ok) Mark(1857);
+        } else if (fc == 8) {
+            _replOp = Lemon.SceneManager.LoadSceneAsync("Volcano");
+            _replOp.allowSceneActivation = false; // 卡门——给取代语义制造在途
+            _replOp.completed += _ => { _c4++; GameMain.SceneLog.Add("C:Volcano"); };
+            if (_replOp.isValid) Mark(1858);
+        } else if (fc == 9) {
+            var op5 = Lemon.SceneManager.LoadSceneAsync("Cave"); // 取代 _replOp（引擎 WARN）
+            op5.completed += _ => { _c5++; GameMain.SceneLog.Add("C:Cave"); };
+            if (op5.isValid) Mark(1859);
+        } else if (fc == 10) {
+            // 取代语义：被取代 op 的 completed 不推（_c4 恒 0——订阅挂在被取代
+            // opId 的注册表项上，取消即弃）；胜者正常终态恰一次
+            var act = Lemon.SceneManager.GetActiveScene();
+            bool ok = act.name == "Cave" && _c4 == 0 && _c5 == 1 && log.Count == 16 &&
+                      LogAt(15) == "C:Cave";
+            if (ok) Mark(1860);
+        } else if (fc == 11) {
+            // 红字面：Additive = 无效 op；坏名 = 无效 op（世界不动、零事件）
+            var opAdd = Lemon.SceneManager.LoadSceneAsync("Volcano", Lemon.LoadSceneMode.Additive);
+            var opBad = Lemon.SceneManager.LoadSceneAsync("Nowhere");
+            var act = Lemon.SceneManager.GetActiveScene();
+            bool ok = !opAdd.isValid && !opBad.isValid && act.name == "Cave" &&
+                      log.Count == 16;
+            if (ok) Mark(1861);
         }
     }
 }

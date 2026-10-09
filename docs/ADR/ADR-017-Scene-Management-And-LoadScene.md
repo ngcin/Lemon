@@ -81,6 +81,8 @@ Unity 社区五类真实用途对 Lemon 的价值评估：
 - **游戏侧重初始化归游戏侧**（引擎不越权把 Awake/Start 异步化——Unity 也不）：模板给初始化器样例 = `sceneLoaded` 后分帧铺 spawn（每帧 N 个，防激活帧一次性 spawn 500 NPC 卡帧）+ 加载屏进度 = 引擎段×权重 + 自报游戏段混合；加载屏 = code-mounted RmlUi 文档（origin=CSharp 跨场幸存）+ 原生 `<progress>` 元素（③d-1 先例）。加载期间旧场景照常 tick（Unity 同款；要冻结自己 Time.Scale=0）。
 - **确定性契约（唯一真设计张力）**：分帧完成时机依赖帧预算，跨机器不确定。定契约为——**激活帧 = 回放流里记录的确定性事件；中间 progress 为纯呈现量，玩法逻辑只许挂 sceneLoaded/isDone/completed，禁挂 progress 分支**（ADR 响亮规则 + 契约测试；无机器强制，登记已知敞口）。回放走同步路径 + 记录激活帧。
 
+> **批⑧ 落地注（2026-10-08）**：Build 段建进暂存 registry（主世界逐位不动 = 加载帧哈希流全等的结构基础）；激活帧原子集成按台账复刻同步路径槽位分配序列 ⇒ 异步/同步激活句柄逐位一致（孪生用例机械证明，03 §12）。Resolve/Assets v1 = 占位段（Assets 承担 DOM 分帧回收；GUID/SpriteRef 归一留在激活帧 afterBuild——脚本实例必须活在最终句柄上，预备段无宿主依赖工作可做，压测数字落账后如需再升 stageResolve 钩子）。单槽统一跨同步/异步（新请求 WARN 取代在途者，被取代 op completed 不推）。
+
 ### D4 寻址：路径 > 唯一 stem > 响亮失败；无 build index
 
 解析序：项目相对路径（`"Scenes/Forest.scene"`）精确命中 → 唯一文件名 stem（`"Forest"`，Unity 式便捷）→ 不唯一/缺失 = 红字响亮失败。**不做 Unity build settings 场景清单**（Unity 最著名的脚手架坑）——场景即资产，包内按 GUID 编目；`ResolveEntryScene` 泛化为 `ResolveScene`（packager 校验面同步）。GUID 重载 = v2 后手（与 prefab GUID 生态对齐）。
@@ -166,7 +168,7 @@ public static void DontDestroyOnLoad(GameObject go);                            
 
 - **批⑥ 引擎核心**（membership/场景档案/换场协议/StateHash 分组/回放扩展）：smoke-scene 单跳 + 单测 + 回归 full + bench 门禁不降 + 金回放零重录验证。**开工首查项 = 全 `Scene&` 调用面盘点**（系统/提取/编辑器/夹具）+ membership 哈希流口径定案。
 - **批⑦ SDK 门面**（SceneManager/Scene/AsyncSceneLoad/DontDestroyOnLoad/三事件 + vtable 尾加）：smoke-scene 四跳全链——每跳断言：旧场 membership 实体归零 / DDOL 幸存者精确清单且句柄不变 / origin=Scene 文档卸载数 = 预期 / origin=CSharp 文档存活 / Audio.Paused==false / 事件序 sceneUnloaded→sceneLoaded→activeSceneChanged / StateHash 分组稳定 / 零 membership 孤组。script-tests 扩。
-- **批⑧ LoadSceneAsync**（分帧状态机 + AsyncSceneLoad + 加载屏样例 + 回放契约用例）：大场景分帧压测（预算实测入 DevLog）+ progress 单调、0.9 封顶、completed 恰一次 + 回放激活帧逐位一致（async 装载、同步回放）。
+- **批⑧ LoadSceneAsync**（分帧状态机 + AsyncSceneLoad + 加载屏样例 + 回放契约用例）：大场景分帧压测（预算实测入 DevLog）+ progress 单调、0.9 封顶、completed 恰一次 + 回放激活帧逐位一致（async 装载、同步回放）。**✅ 2026-10-08 机器面**：20k 实体×4 组件压测（staged 帧 ≤4ms+块容差 / 激活帧 ~13ms / 同步对照 ~370ms，DevLog）+ TestSceneAsyncMachineContract（契约/门控/失败/单槽）+ TestSceneAsyncReplayFrameContract（孪生逐帧哈希全等 + 句柄集合相等）+ script-tests TestSceneAsyncSdk（progress/门控 0.9/await 域线程续跑/completed 恰一次/取代取消/Additive 无效 op）+ scene-smoke 第 5 跳（宿主端到端，门控变体）+ 模板加载屏样例（LoadingScreen.cs + loading.rml）。
 - **批⑨ 消费者迁移**：svr-test 拆多场景（MainMenu + Grass/Volcano）+ **RunSweeper 删除** + GameFlow 瘦身行数对比入 DevLog（价值主张量化账）+ vs-survivor 模板随迁 + 真人走查 + 回归 full。
 - **批⑩（可选）编辑器打磨**：Play 态 Hierarchy 场景组显示 + DDOL 徽标 + i18n 词条。
 

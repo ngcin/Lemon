@@ -72,6 +72,12 @@ public unsafe struct NativeApi
     public delegate* unmanaged<uint> ActiveSceneHandle;                        // 0 = 无活动档案
     public delegate* unmanaged<uint, int> SetActiveScene;                      // v1：仅当前 active 合法
     public delegate* unmanaged<ulong, int> MarkDontDestroyOnLoad;              // C++ 找根（非根 WARN）+ 根位标记
+    // ---- M7c 批⑧（LoadSceneAsync；表尾追加同上约定。结构性通道族——异步装载改
+    // 世界状态，回放保障 = 确定性执行 + 哈希流捕获（激活帧 = 记录的确定性事件）；
+    // 查询/门通道只读异步机状态面，均不入 StateHash ----
+    public delegate* unmanaged<byte*, byte, uint> SceneLoadAsyncRequest;       // opId（1 起；0=失败）
+    public delegate* unmanaged<uint, int, int> SceneAsyncSetActivation;        // 1=受理（在途）；0=终态/未知
+    public delegate* unmanaged<uint, float*, byte*, int> SceneAsyncQuery;      // 1=命中；progress 0..1（门关封顶 0.9）
 }
 
 /// <summary>场景档案快照（与 C++ lemon::scripting::SceneInfoC 逐字节一致；
@@ -487,4 +493,34 @@ internal static unsafe class Native
 
     internal static int MarkDontDestroyOnLoad(ulong entity) =>
         Api.MarkDontDestroyOnLoad != null ? Api.MarkDontDestroyOnLoad(entity) : 0;
+
+    // ---- M7c 批⑧（LoadSceneAsync；旧宿主未注册时安全降级：opId 0 / 门设丢弃 / 查询 false）----
+
+    internal static uint SceneLoadAsyncRequest(string nameOrPath, byte mode)
+    {
+        if (Api.SceneLoadAsyncRequest == null || string.IsNullOrEmpty(nameOrPath)) return 0;
+        byte* p = stackalloc byte[300];
+        CopyUtf8(nameOrPath, p, 299);
+        return Api.SceneLoadAsyncRequest(p, mode);
+    }
+
+    internal static bool SceneAsyncSetActivation(uint opId, bool allow)
+    {
+        if (Api.SceneAsyncSetActivation == null || opId == 0) return false;
+        return Api.SceneAsyncSetActivation(opId, allow ? 1 : 0) == 1;
+    }
+
+    /// <summary>查询失败/旧宿主 = false（out 参数零初始化）。</summary>
+    internal static bool SceneAsyncQuery(uint opId, out float progress, out bool isDone)
+    {
+        progress = 0f;
+        isDone = false;
+        if (Api.SceneAsyncQuery == null || opId == 0) return false;
+        float p = 0f;
+        byte d = 0;
+        if (Api.SceneAsyncQuery(opId, &p, &d) != 1) return false;
+        progress = p;
+        isDone = d != 0;
+        return true;
+    }
 }

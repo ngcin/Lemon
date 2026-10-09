@@ -339,6 +339,7 @@ RingQueue<EventPacket> gEvents;          // 系统只入队，帧末 ScriptEvent
 - 输入快照 + seeded RNG（每系统独立子流）+ 固定步长 + 稳定排序 ⇒ **逐帧可重放**（调试利器：崩溃帧重放）。
 - v1 只做"开发者重放"（录输入流到文件，`--replay` 启动参数回放），不做联机回放服务。
 - **换场与回放（M7c 批⑥c 落地注，2026-10-08）**：换场机制对哈希流零扰动——membership 不入 StateHash（§2 落地注①），引擎面"同请求序列 ⇒ 同逐帧哈希轨迹"由孪生世界锁步单测钉住（多次换场 + DDOL 幸存者轨迹）；金回放跨版本三档（m7c-b4 录档 → 批⑥ 构建回放）mismatches=0 = 零重录机械证明。C# `LoadScene`（批⑦ 已落地）= 确定性执行入哈希流口径（见 §2 落地注③，op 不显式录档）；async 分帧的激活帧契约见 [ADR-017](../ADR/ADR-017-Scene-Management-And-LoadScene.md) D3。
+- **LoadSceneAsync 确定性（M7c 批⑧ 落地注，2026-10-08）**：分帧状态机的 Build 段建进**暂存 registry**（`SceneSwitcher` 内 `AsyncSceneLoader` 持有）——预备帧主世界逐位不动（哈希流与"无装载"全等），激活 = 单 Essential 窗口原子执行（清场原码 + 集成段按台账**复刻同步路径槽位分配序列**——同建槽序/同坏槽回收 ⇒ 句柄逐位一致）。回放契约的机械证明 = SceneTests `TestSceneAsyncReplayFrameContract`：孪生世界 A（异步低预算，观测激活帧 M）∥ B（同步 Request 于帧 M）→ 逐帧哈希全等 + 激活后实体句柄集合相等。墙钟预算只影响 progress 中间值（呈现量）与激活帧号（记录为确定性事件）；Parse 段原子不可分帧、激活帧有界尖峰（20k 实体合成档实测：staged 帧 ≤4ms+块容差 / 激活帧 ~13ms / 对照同步单帧 ~370ms，DevLog 2026-10-08-m7c-b8）。
 
 ## 13. 存档与场景快照
 

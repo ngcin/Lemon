@@ -55,6 +55,7 @@
 #include "Core/Math.h"
 #include "ECS/Scene.h"
 #include "ECS/SceneMembership.h" // MarkDontDestroyOnLoadTree/CountSceneGroup（smoke-scene）
+#include "ECS/StateHash.h"       // ComputeStateHash（批⑧ async 跳：staging 零可见性断言）
 #include "ECS/World.h"
 #include "Platform/Window.h"
 #include "Renderer/Atlas.h"
@@ -833,6 +834,14 @@ int main(int argc, char** argv) {
     int sceneHop = -1; // -1 未发起；0..3 进行中；4 完成
     uint32_t sceneHopPrev = 0, sceneHopEntry = 0, sceneHopHandles[4] = {0, 0, 0, 0};
     bool sceneHopOk[4] = {false, false, false, false};
+    // 第 5 跳 async（批⑧）：-1 未发；0 门关观测中；1 已开门待激活；2 终态
+    int sceneHopAsync = -1;
+    uint32_t sceneAsyncOp = 0;
+    bool sceneHopAsyncOk = false;
+    bool asyncMonotonic = false, asyncHashStable = true, asyncCapped = true;
+    uint64_t asyncHashBaseline = 0;
+    float asyncLastProgress = 0.0f;
+    int asyncGateHold = 0;
     ecs::Entity sceneSmokeDdol = ecs::Entity::Null();
     std::vector<ecs::Entity> sceneDdolBaseline; // 首跳前 DDOL 系快照（精确清单对照）
     std::vector<SpritePacket> textPackets, fxBarPackets;
@@ -1060,6 +1069,67 @@ int main(int argc, char** argv) {
                      .jsonText = sceneHops[sceneHop].json});
             }
         }
+        // --smoke-scene 第 5 跳（批⑧ async，门控变体）：C++ 直发 RequestAsync +
+        // allowSceneActivation=false——预备/门关期间世界逐帧哈希不变（staging 零
+        // 可见性）+ progress 单调且封顶 0.9 → 稳定后开门 → 激活（七面 + isDone/
+        // progress==1.0 终态）。预算默认 4ms（本夹具 3 实体一帧直抵门 = 0.9 停）；
+        // 多帧分帧行为归 engine 单测（TestSceneAsyncMachineContract）
+        if (smokeScene && sceneHop == 4 && sceneHopAsync == -1 && frame == 100) {
+            sceneHopAsync = 0; // 0 = 门关观测中
+            sceneHopPrev = world.ActiveSceneHandle();
+            audio.SetPaused(true);      // D6 强制清断言源（本跳重置）
+            world.Fx().PopupText("stale", 0.0f, 0.0f); // Fx 整场清断言源
+            sceneAsyncOp = world.Switcher().RequestAsync(
+                {.name = "SceneB", .path = "Scenes/SceneB.scene",
+                 .jsonText = kSceneSmokeSceneB});
+            world.Switcher().Async().SetActivation(sceneAsyncOp, false);
+            asyncHashBaseline = ecs::ComputeStateHash(scene);
+            asyncLastProgress = 0.0f;
+            asyncGateHold = 0;
+            asyncMonotonic = sceneAsyncOp != 0;
+            asyncHashStable = true;
+            asyncCapped = true;
+        }
+        if (smokeScene && sceneHopAsync == 0 && sceneAsyncOp != 0) {
+            ecs::AsyncSceneQuery q;
+            if (world.Switcher().Async().Query(sceneAsyncOp, q)) {
+                asyncMonotonic = asyncMonotonic && q.progress >= asyncLastProgress - 1e-6f;
+                asyncLastProgress = q.progress;
+                if (!q.isDone) {
+                    asyncHashStable = asyncHashStable &&
+                                      ecs::ComputeStateHash(scene) == asyncHashBaseline;
+                    asyncCapped = asyncCapped && q.progress <= 0.9f + 1e-6f;
+                    if (q.progress >= 0.9f - 1e-6f && ++asyncGateHold >= 2) {
+                        world.Switcher().Async().SetActivation(sceneAsyncOp, true);
+                        sceneHopAsync = 1; // 1 = 已开门待激活
+                    }
+                }
+            }
+        }
+        if (smokeScene && sceneHopAsync == 1 && world.ActiveSceneHandle() != sceneHopPrev) {
+            // 激活落地：终态 + 七面（对照同步跳同款口径；SceneB 3 实体）
+            const uint32_t newH = world.ActiveSceneHandle();
+            const uint32_t orphan =
+                ecs::CountSceneGroup(scene, ecs::kSceneHandleUnassigned);
+            const std::vector<ecs::Entity> survivors =
+                ecs::CollectDontDestroyOnLoadLineage(scene);
+            bool ddolStable = survivors.size() == sceneDdolBaseline.size();
+            for (size_t i = 0; ddolStable && i < survivors.size(); ++i)
+                ddolStable = survivors[i] == sceneDdolBaseline[i];
+            const ecs::World::SceneRecord* recPrev = world.FindSceneRecord(sceneHopPrev);
+            const ecs::World::SceneRecord* recNew = world.FindSceneRecord(newH);
+            ecs::AsyncSceneQuery q;
+            const bool terminal = world.Switcher().Async().Query(sceneAsyncOp, q) &&
+                                  q.isDone && q.progress >= 1.0f - 1e-6f;
+            sceneHopAsync = 2; // 终态（RESULT 汇总）
+            sceneHopAsyncOk = terminal && orphan == 0 && ddolStable &&
+                              ecs::CountSceneGroup(scene, newH) == 3 &&
+                              !ui.HasDocument("Assets/UI/main.rml") &&
+                              ui.IsDocumentShown("Assets/UI/cards.rml") &&
+                              !audio.IsPaused() && world.Fx().TextCount() == 0 &&
+                              recPrev && !recPrev->isLoaded && recNew && recNew->isLoaded &&
+                              asyncMonotonic && asyncHashStable && asyncCapped;
+        }
         ++frame;
         if (paced && (frame % 120) == 0 && statFrames > 0 && frameSec > 0) {
             std::printf("[lemon-game] fps=%.1f alive=%u\n",
@@ -1099,24 +1169,28 @@ int main(int argc, char** argv) {
         return ok ? 0 : 1;
     }
     if (smokeScene) {
-        // RESULT 行（回归口径）：四跳全断言（每跳七面）+ 零 UI 契约错误 => OK。
-        // sceneHop < 4 = 帧预算内未完成四跳（红）。
+        // RESULT 行（回归口径）：四跳全断言（每跳七面）+ 第 5 跳 async 终态
+        //（门控变体：单调/哈希不变/0.9 封顶/七面）+ 零 UI 契约错误 => OK。
+        // sceneHop < 4 或 async 跳未终态 = 帧预算内未完成（红）。
         const uint32_t newH = world.ActiveSceneHandle();
         bool hopsAll = sceneHop == 4;
         for (int k = 0; k < 4; ++k) hopsAll = hopsAll && sceneHopOk[k];
+        hopsAll = hopsAll && sceneHopAsync == 2 && sceneHopAsyncOk;
         const bool ok = hopsAll && ui.ContractErrorCount() == 0;
         std::printf(
-            "[lemon-game] RESULT scene-smoke: frames=%llu hops=%d entry=%u final=%u "
+            "[lemon-game] RESULT scene-smoke: frames=%llu hops=%d async=%d entry=%u final=%u "
             "finalGroup=%u orphan=%u ddolAlive=%d ddolLineage=%zu hopOk=%d%d%d%d "
+            "asyncOk=%d(monotonic=%d hashStable=%d capped=%d prog=%.2f) "
             "uiMainGone=%d uiCardsShown=%d unpaused=%d fxCleared=%d contractErr=%u "
             "=> %s\n",
-            (unsigned long long)frame, sceneHop, sceneHopEntry, newH,
-            ecs::CountSceneGroup(scene, newH),
+            (unsigned long long)frame, sceneHop, sceneHopAsync == 2 ? 1 : 0, sceneHopEntry,
+            newH, ecs::CountSceneGroup(scene, newH),
             ecs::CountSceneGroup(scene, ecs::kSceneHandleUnassigned),
             scene.Alive(sceneSmokeDdol) ? 1 : 0,
             ecs::CollectDontDestroyOnLoadLineage(scene).size(),
             sceneHopOk[0] ? 1 : 0, sceneHopOk[1] ? 1 : 0, sceneHopOk[2] ? 1 : 0,
-            sceneHopOk[3] ? 1 : 0,
+            sceneHopOk[3] ? 1 : 0, sceneHopAsyncOk ? 1 : 0, asyncMonotonic ? 1 : 0,
+            asyncHashStable ? 1 : 0, asyncCapped ? 1 : 0, (double)asyncLastProgress,
             ui.HasDocument("Assets/UI/main.rml") ? 0 : 1,
             ui.IsDocumentShown("Assets/UI/cards.rml") ? 1 : 0,
             audio.IsPaused() ? 0 : 1, world.Fx().TextCount() == 0 ? 1 : 0,

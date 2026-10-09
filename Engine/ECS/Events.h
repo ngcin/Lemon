@@ -37,6 +37,10 @@ enum class SceneEventKind : uint8_t {
     Unloaded = 0,    // sceneUnloaded：载荷 = old（随行清扫收口后）
     Loaded,          // sceneLoaded：载荷 = new（Awake/OnEnable 后、Start 前；mode 透传）
     ActiveChanged,   // activeSceneChanged：载荷 = old → new（收口）
+    AsyncCompleted,  // AsyncSceneLoad.completed（M7c 批⑧）：载荷复用 = oldHandle 侧带
+                     // **opId**、newHandle = 新场景句柄（失败终态 = 0——世界不动）。
+                     // 推送点 = 激活收口三事件之后（订阅方可查新场）；不走 EventPacket
+                     //（同族时序理由——域线程换场窗口内同步直推）
 };
 
 struct EventPacket {

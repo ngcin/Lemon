@@ -195,10 +195,32 @@ public readonly struct Transform               // 视图结构：逐属性访问
 > 根位式（D1 批⑦ 修订）：位只落根、清场判据祖先链——后挂子实体随根幸存、移出随新
 > 归属清场（Unity 全对齐）。v1 口径：Single 唯一装载（Additive = 红字，D2 预留）；
 > `sceneCount` = isLoaded 档案数（DDOL 不建模伪场景——Unity 差异）；`SetActiveScene`
-> 仅当前 active 合法；`LoadSceneAsync` 归批⑧。桥面 = vtable 尾加 7 槽（49→56，全部
+> 仅当前 active 合法。桥面 = vtable 尾加 7 槽（49→56，全部
 > 低频；LoadScene 为首个结构性通道——回放保障 = C# 确定性执行 + 哈希流捕获，op 不
 > 显式入流，b6 查② 口径）。已知敞口：UI 点击触发的换场不可回放（鼠标位不入
 > InputState，既有敞口；批⑨ svr-test 迁移时处理）。
+
+> **LoadSceneAsync（M7c 批⑧ 已落地 2026-10-08；ADR-017 D3"一条管线两个门面"的
+> async 面）**：`SceneManager.LoadSceneAsync(nameOrPath, mode = Single)` →
+> `AsyncSceneLoad`（readonly struct 句柄，Unity AsyncOperation 同构）。分帧状态机
+> = Parse → Build（**建进暂存 registry**——主世界逐位不动、旧场照常 tick）→
+> Assets（占位 + DOM 分帧回收）→ Gate → 激活（**单个 Essential 窗口原子执行**：
+> 清场原码 + 集成 + 事件，句柄与同步路径逐位一致）。**进度契约**：progress
+> 0..1、门关（`allowSceneActivation=false`）封顶 0.9（Unity 同款）、激活跳 1.0、
+> `completed` 恰一次（晚于 sceneLoaded/activeSceneChanged；订阅已终态 op = 立即
+> 同步触发）。**响亮规则（回放契约）**：progress 是纯呈现量（分帧预算依赖、跨
+> 机器不确定）——玩法分支**只许挂 sceneLoaded/isDone/completed，禁挂 progress
+> 分支**；激活帧 = 回放流记录的确定性事件（同步路径在记录帧执行 = 逐位一致，
+> SceneTests 孪生用例机械证明）。`await op`（自定义 awaiter）= 域线程同步续跑：
+> 恢复点 = 激活 Essential 收口处（**先于当帧 Time.Advance/Update**——比 Unity
+> SynchronizationContext 更紧的时序）。v1 口径：单在途（新请求 WARN 取代——被
+> 取代 op 已取消、completed 不推）；失败契约 = 请求期拒（无效 op）/ Parse 段失败
+> （世界逐位不动 + 终态 + kind3(newHandle=0)）/ 集成段极端失败（与同步路径同族
+> 敞口）。completed 桥 = `SceneEventKind::AsyncCompleted`（kind3，oldHandle=opId）
+> + vtable 尾加 3 槽（56→59：request/setActivation/query）。加载屏样例 =
+> vs-survivor 模板 `Game/LoadingScreen.cs` + `Assets/UI/loading.rml`（code-mounted
+> origin=CSharp 跨场幸存 + DDOL 驱动 + 引擎段×0.8/游戏自报段×0.2 权重混合 +
+> holdGate 门控形态）。
 
 ### 3.1 协程替代：async/await + C++ 定时器（ADR-009 基调——表面像 Unity，机器走 C++）
 

@@ -174,6 +174,26 @@ struct NativeApiVtable {
                                                       // 唯一装载），他值 = WARN + 0
     int32_t (*markDontDestroyOnLoad)(uint64_t entity); // C++ 找根（非根 WARN 作用于
                                                        // 根树，D5）+ 根位标记（D1）
+    // ---- M7c 批⑧（LoadSceneAsync：AsyncSceneLoader → World/Switcher 异步面；表尾
+    // 追加同上约定。**结构性通道族**（批⑦ sceneLoadRequest 同款口径）——异步装载
+    // 改世界状态，回放保障 = C# 确定性执行 + StateHash 哈希流捕获后果（激活帧 =
+    // 回放流记录的确定性事件，ADR-017 D3 契约）；基准场零调用 = 零漂移。查询/门
+    // 通道只读异步机状态面，不入哈希流 ----
+    uint32_t (*sceneLoadAsyncRequest)(const char* nameOrPath, uint8_t mode); // opId
+                                                                            //（1 起；
+                                                                            // 0=失败：
+                                                                            // mode 拒/
+                                                                            // 寻址红字在先/
+                                                                            // 空宿主）
+    int32_t (*sceneAsyncSetActivation)(uint32_t opId, int32_t allow);       // 1=受理
+                                                                            //（在途 op）；
+                                                                            // 0=终态
+                                                                            // 不可改门/
+                                                                            // 未知 op
+    int32_t (*sceneAsyncQuery)(uint32_t opId, float* progress,
+                               uint8_t* isDone); // 1=命中（在途或终态缓存）；
+                                                // 0=未知 op。progress 0..1（门关
+                                                // 封顶 0.9；终态 1.0=成功）
 };
 
 /// 编辑器资产钩子（M4.4：编辑器宿主装配期经 SetEditorAssetHooks 注入；

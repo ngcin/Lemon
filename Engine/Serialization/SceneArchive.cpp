@@ -534,4 +534,96 @@ bool SceneArchive::Migrate(std::string& jsonText, uint32_t fromVersion) {
     }
 }
 
+// ---- StagedSceneBuild（M7c 批⑧；ADR-017 D3 Parse/Build 分帧段）----------------
+// pimpl 本体：Parse 段产物（Json DOM + 档名）+ Build 段两相游标与槽账。BuildEntities
+// 的"建槽全量→逐实体 ReadEntity"两遍结构拆成可分帧的两相——DecodeEntities 与
+// ReadEntity 零分叉（坏条目同款回收 + 台账 Null 化，时点从"构建尾一次提交"改为
+// "逐条即时回收"：暂存 registry 无管线观察者，提交时点无语义差）。
+struct StagedSceneBuild::Impl {
+    Json doc;                     // 迁移后的场景文档（entities 数组即 Build 源）
+    std::string name;             // 档 "name" 段
+    bool hasName = false;         // 档是否含 name 字符串段（ApplySceneName 同构判据）
+    std::vector<Entity> ledger;   // 槽账（doc 序；Null = 坏条目/未建）
+    size_t created = 0;           // 相一游标（已建槽数）
+    size_t decoded = 0;           // 相二游标（已解码条数）
+};
+
+std::unique_ptr<StagedSceneBuild> StagedSceneBuild::Parse(const std::string& jsonText) {
+    Json doc;
+    if (!ParseSceneDoc(jsonText, doc)) return nullptr; // 告警已在内
+    auto out = std::unique_ptr<StagedSceneBuild>(new StagedSceneBuild());
+    out->impl_ = std::make_unique<Impl>();
+    out->impl_->doc = std::move(doc);
+    if (out->impl_->doc.contains("name") && out->impl_->doc.at("name").is_string()) {
+        out->impl_->name = out->impl_->doc.at("name").get<std::string>();
+        out->impl_->hasName = true;
+    }
+    return out;
+}
+
+StagedSceneBuild::~StagedSceneBuild() = default;
+
+uint32_t StagedSceneBuild::EntityCount() const {
+    return (uint32_t)impl_->doc.at("entities").size();
+}
+
+uint32_t StagedSceneBuild::CreatedCount() const { return (uint32_t)impl_->created; }
+
+uint32_t StagedSceneBuild::DecodedCount() const { return (uint32_t)impl_->decoded; }
+
+bool StagedSceneBuild::HasName() const { return impl_->hasName; }
+
+const std::string& StagedSceneBuild::Name() const { return impl_->name; }
+
+bool StagedSceneBuild::CreateSlots(Scene& staging, uint32_t maxN) {
+    const Json& entities = impl_->doc.at("entities");
+    if (impl_->ledger.empty()) impl_->ledger.resize(entities.size(), Entity::Null());
+    uint32_t n = 0;
+    while (impl_->created < entities.size() && n < maxN) {
+        impl_->ledger[impl_->created] = staging.Create();
+        ++impl_->created;
+        ++n;
+    }
+    return impl_->created >= entities.size();
+}
+
+bool StagedSceneBuild::DecodeEntities(Scene& staging, uint32_t maxN) {
+    const Json& entities = impl_->doc.at("entities");
+    LEMON_ASSERT(impl_->created >= entities.size(),
+                 "StagedSceneBuild: DecodeEntities before CreateSlots done");
+    bool dropped = false;
+    uint32_t n = 0;
+    while (impl_->decoded < entities.size() && n < maxN) {
+        const size_t idx = impl_->decoded++;
+        if (!ReadEntity(staging, entities[idx], impl_->ledger[idx], impl_->ledger.data(),
+                        impl_->ledger.size())) {
+            LEMON_WARN("async scene: entities[%zu] not an object/missing components — dropped",
+                       idx);
+            staging.Destroy(impl_->ledger[idx]); // 台账保留原句柄（集成段全槽
+                                                 // 重映射依据）；有效性 = Alive 判据
+            dropped = true;
+        }
+        ++n;
+    }
+    if (dropped) staging.CommitDestroys(); // 暂存侧即时回收（无管线观察者）
+    return impl_->decoded >= entities.size();
+}
+
+const std::vector<Entity>& StagedSceneBuild::Ledger() const { return impl_->ledger; }
+
+bool StagedSceneBuild::ReleaseDocChunk(uint32_t maxElems) {
+    // 万实体档 DOM 递归析构数十 ms（节点级 free）——从 entities 尾部 resize 分块
+    // 释放（每元素 O(1)：destroy 尾元素 + 容量收缩），清空后整体丢 doc。
+    // 槽账/档名独立于 doc，集成段不受影响。
+    if (impl_->doc.is_null()) return true;
+    Json& arr = impl_->doc.at("entities");
+    const size_t n = arr.is_array() ? arr.size() : 0;
+    if (n > maxElems) {
+        arr.erase(arr.begin() + (std::ptrdiff_t)(n - maxElems), arr.end());
+        return false;
+    }
+    impl_->doc = Json(); // 清空（含末块/非数组防御路径）——此后仅剩槽账
+    return true;
+}
+
 } // namespace lemon::ecs

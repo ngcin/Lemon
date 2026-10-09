@@ -337,7 +337,7 @@ void TestDomainManager() {
         auto listFn = (int (*)(char*, int))GetExport("lemon_behaviours_list");
         char buf[4096];
         int n = listFn ? listFn(buf, (int)sizeof buf) : -1;
-        Expect(n == 21, "behaviours list after hot reload (+M11/M15/F-08.2/T3/b1/b2/T3c/T3d/A档tween/T5存档档/b3c UI/M6c b2 audio/M7c b1 fx/M7c b7 scene probes)");
+        Expect(n == 22, "behaviours list after hot reload (+M11/M15/F-08.2/T3/b1/b2/T3c/T3d/A档tween/T5存档档/b3c UI/M6c b2 audio/M7c b1 fx/M7c b7 scene/M7c b8 async probes)");
         // M4.6 回归（用户实测闪退根因）：相对路径进 dm_reload 曾抛 ArgumentException
         // 逃逸 UnmanagedCallersOnly → coreclr abort。拦截层必须转 0 返回且进程存活
         // （本断言能跑到 = 进程没死）。换装失败后旧域已弃——再换一次真路径恢复。
@@ -795,6 +795,65 @@ void TestSceneSdk() {
     if (probeSurvived) // 唯一 DDOL 幸存者 = 带脚本盒的探针实体（句柄值不写死）
         probeSurvived = s.Alive(ddol[0]) && s.TryGet<lemon::scripting::ScriptBox>(ddol[0]) != nullptr;
     Expect(probeSurvived, "scene: probe entity is the lone ddol survivor (root-bit)");
+}
+
+// M7c 批⑧：LoadSceneAsync C# 语义全链（AsyncSceneProbeBehaviour typeId 21；Mark
+// 1851..1861）：直通激活 + progress 契约 + 门控 0.9/开门 + await 域线程续跑 +
+// 单槽取代（被取代 completed 不推）+ Additive/坏名无效 op。引擎面对拍：档案数/
+// 零孤组/终态 active/DDOL 幸存。进度单调性引擎面已由 SceneTests 钉（此处 C# 面）。
+void TestSceneAsyncSdk() {
+    using namespace lemon::ecs;
+    auto opsSubmit = (void (*)(unsigned char, unsigned char, uint64_t))GetExport("lemon_ops_submit");
+    auto timeResetFn = (void (*)())GetExport("lemon_time_reset");
+    auto playResetFn = (void (*)())GetExport("lemon_play_reset");
+    Expect(opsSubmit && timeResetFn && playResetFn,
+           "ops/time/play-reset exports resolved (scene-async)");
+    timeResetFn();   // AsyncSceneProbe 按 FrameCount 分段
+    playResetFn();   // **新 World = 新一局**（编辑器重进 Play 同款）：清 SceneManager
+                     // 句柄记忆化（否则上一测试世界的句柄 2/3/4 缓存把本世界同名号
+                     // 误映射——TestSceneSdk 后首个再造档案的测试才会踩到的面）+ 清
+                     // 上一世界遗留的 behaviour 实例（句柄重发跨域撞车，M5 批④ 同源）
+    // 内存场景源已进程级注册（TestSceneSdk 的 kSceneDocs 同域复用——脚本侧
+    // LoadSceneAsync 经同一条 SceneSourceHooks 寻址）
+
+    WorldDesc d;
+    d.threadCount = 1;
+    World w(d);
+    Scene& s = w.CreateScene("SceneAsyncT");
+    w.SetActiveScene(&s);
+    w.SetScriptBackend(&g_sh);
+    w.Pipeline().AddSystem(std::make_unique<DestroyCommitSystem>());
+    w.Pipeline().AddSystem(std::make_unique<SceneSwitchSystem>());
+    w.Pipeline().AddSystem(std::make_unique<CSharpBatchSystem>());
+    w.Pipeline().AddSystem(std::make_unique<ScriptEventDispatchSystem>());
+    w.Pipeline().ResolveOrder();
+
+    const uint32_t hMain = w.CreateSceneRecord("Main", "Scenes/Main.scene");
+    if (lemon::ecs::World::SceneRecord* r = w.FindSceneRecord(hMain)) r->isLoaded = true;
+    StampSceneMembership(s, hMain);
+    w.SetActiveSceneHandle(hMain);
+
+    int mark = 0;
+    w.SetEventSink([&](World&, const EventPacket& p) {
+        if (p.type == GameEvent::Custom && p.user >= 1850 && p.user < 1870)
+            mark = (int)p.user - 1850;
+    });
+    opsSubmit(0, 0, 0x800000000000C021ull);                  // Create
+    opsSubmit(2, 0 /*Transform2D*/, 0x800000000000C021ull);
+    opsSubmit(4, 21 /*AsyncSceneProbeBehaviour*/, 0x800000000000C021ull);
+
+    for (int f = 1; f <= 11; ++f) {
+        w.Step(0.25f);
+        Expect(mark == f, "scene-async: frame-by-frame contract holds at fc");
+    }
+    // 引擎面对拍：4 次装载（Volcano/Grass/Cave/Cave——被取代的 Volcano 不建档）
+    // + Main 初始档 = 5 档；终态 Cave；零孤组；探针 DDOL 幸存
+    Expect(w.SceneRecordCount() == 5, "scene-async: one record per completed load");
+    Expect(w.FindSceneRecord(w.ActiveSceneHandle()) &&
+                w.FindSceneRecord(w.ActiveSceneHandle())->name == std::string("Cave"),
+           "scene-async: final active is Cave");
+    Expect(CountSceneGroup(s, lemon::ecs::kSceneHandleUnassigned) == 0, "scene-async: zero orphans");
+    Expect(CollectDontDestroyOnLoadLineage(s).size() == 1, "scene-async: probe ddol survivor");
 }
 
 // M5 批①：Time.Scale（native 表往返 + 缩放 dt 链到 Time.DeltaTime）与
@@ -2056,6 +2115,7 @@ int main() {
     TestAudioSdk();     // M6c 批②：Lemon.Audio 全 API 面 + 哈希免疫反例
     TestFxSdk();        // M7c 批①：Lemon.Fx 表现升级面 + 哈希免疫反例
     TestSceneSdk();     // M7c 批⑦：SceneManager 全链（四跳/事件序/DDOL/红字拒）
+    TestSceneAsyncSdk(); // M7c 批⑧：LoadSceneAsync 全链（契约/门控/await/取代取消）
 
     // M4.6 探针（编辑器切项目场景）：同进程二次 ScriptHost 生命周期。CoreCLR 运行时
     // 进程单例——第二次 Initialize 的真实行为必须钉板（成功/失败都合法，崩 = 缺陷）。

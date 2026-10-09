@@ -557,6 +557,49 @@ int32_t NativeMarkDontDestroyOnLoad(uint64_t e) {
     return (int32_t)ecs::MarkDontDestroyOnLoad(*g_scene, root); // D1 根位式
 }
 
+// ---- M7c 批⑧（LoadSceneAsync 通道；g_world/g_scene 域线程窗口约定同上）----
+// 请求路径与 sceneLoadRequest 共寻址面（SceneSourceHooks——D4 路径 > 唯一 stem >
+// 响亮失败）；分帧推进/激活归 SceneSwitchSystem（Essential #18）。opId 单调，
+// 查询面在途/终态双命中（AsyncSceneLoader::Query）。
+uint32_t NativeSceneLoadAsyncRequest(const char* nameOrPath, uint8_t mode) {
+    if (mode != 0) { // LoadSceneMode.Additive（C# 侧先拦为第一道，此处兜底）
+        LEMON_ERROR("SceneManager.LoadSceneAsync：LoadSceneMode.Additive 未实现"
+                    "（ADR-017 D2 预留）");
+        return 0;
+    }
+    if (!g_world) return 0;
+    if (!nameOrPath || !*nameOrPath) {
+        LEMON_ERROR("SceneManager.LoadSceneAsync：场景名为空");
+        return 0;
+    }
+    if (!g_sceneSource.resolveScene) {
+        if (!g_sceneSourceWarned) {
+            g_sceneSourceWarned = true;
+            LEMON_ERROR("SceneManager.LoadSceneAsync：宿主未注册场景源钩子"
+                        "（SetSceneSourceHooks）——换场不可用");
+        }
+        return 0;
+    }
+    ecs::SceneSwitchRequest req;
+    req.mode = mode;
+    if (!g_sceneSource.resolveScene(nameOrPath, req)) return 0; // 宿主已红字交底
+    return g_world->Switcher().RequestAsync(std::move(req));
+}
+
+int32_t NativeSceneAsyncSetActivation(uint32_t opId, int32_t allow) {
+    if (!g_world || opId == 0) return 0;
+    return g_world->Switcher().Async().SetActivation(opId, allow != 0) ? 1 : 0;
+}
+
+int32_t NativeSceneAsyncQuery(uint32_t opId, float* progress, uint8_t* isDone) {
+    if (!g_world || opId == 0) return 0;
+    ecs::AsyncSceneQuery q;
+    if (!g_world->Switcher().Async().Query(opId, q)) return 0;
+    if (progress) *progress = q.progress;
+    if (isDone) *isDone = q.isDone;
+    return 1;
+}
+
 const NativeApiVtable kNativeApi{NativeIsAlive,
                                  NativeHas,
                                  NativeRead,
@@ -612,7 +655,10 @@ const NativeApiVtable kNativeApi{NativeIsAlive,
                                  NativeSceneInfoByHandle,
                                  NativeActiveSceneHandle,
                                  NativeSetActiveScene,
-                                 NativeMarkDontDestroyOnLoad};
+                                 NativeMarkDontDestroyOnLoad,
+                                 NativeSceneLoadAsyncRequest,
+                                 NativeSceneAsyncSetActivation,
+                                 NativeSceneAsyncQuery};
 } // namespace
 
 void SetScriptIoHooks(const ScriptIoHooks& hooks) { g_scriptIo = hooks; }

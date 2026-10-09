@@ -56,6 +56,9 @@ public static class GameMain
         Lemon.Behaviours.Register<PlayerMovement>();
         Lemon.Behaviours.Register<PlayerCombat>();
         Lemon.Behaviours.Register<PlayerHud>();
+        // M7c 批⑧：加载屏驱动（样例件，Begin() 时才实例化——注册不挂载，
+        // 单场景现状零影响；多场景消费归批⑨ svr-test 迁移）
+        Lemon.Behaviours.Register<LoadingScreenDriver>();
         // 档② 清场批量系统（批③d-2：GameFlow.EnterRun/ReturnToMenu 消费）
         Lemon.Scripting.Register(new RunSweeper());
         // 批③d-1：UI 事件静态订阅（Configure 每域一次，跨局存活——③c 先例）。
