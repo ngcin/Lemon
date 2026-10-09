@@ -61,6 +61,16 @@ uint32_t g_poolWatchCount = 0;
 std::vector<BatchSystemFrame>* g_batchFrames = nullptr; // 消费中的帧数组（置位目标）
 bool g_batchStaleWarned = false;                        // 红字去重（每 tick 一次）
 uint64_t g_batchStaleMarks = 0;                         // 累计置位次数（测试探针）
+// b11a review H1-b：三处失效句柄闸的红字去重（每 tick 一次——脚本缓存句柄在
+// Update 循环里逐帧重试 = 60+ 条/秒刷屏；g_batchStaleWarned 同款先例）
+bool g_staleWriteWarned = false;
+bool g_staleOpWarned = false;
+bool g_staleAttachWarned = false;
+
+// b11a review H1-a：占位句柄（SceneOps kPlaceholderBit 高位置 1）经 vtable 直写
+// 入口会被 ToEntt 截断高 32 位、别名到低位活实体（闸误放行写错实体）。合法实体
+// id 高 32 位保留恒零（Entity.h）——native 句柄族统一拒高 32 位非零。
+bool NativeHandleDereferenceable(uint64_t e) { return (e >> 32) == 0; }
 
 void MarkBatchStaleIfPoolsMoved() {
     if (!g_batchFrames || g_poolWatchCount == 0) return;
@@ -81,13 +91,19 @@ void MarkBatchStaleIfPoolsMoved() {
     }
 }
 
-int NativeIsAlive(uint64_t e) { return g_scene && g_scene->Alive(ecs::Entity{e}) ? 1 : 0; }
+int NativeIsAlive(uint64_t e) {
+    return g_scene && NativeHandleDereferenceable(e) && g_scene->Alive(ecs::Entity{e}) ? 1 : 0;
+}
 int NativeHas(uint64_t e, uint8_t id) {
-    if (!g_scene || id >= ecs::ComponentRegistry::Instance().Count()) return 0;
+    if (!g_scene || !NativeHandleDereferenceable(e) ||
+        id >= ecs::ComponentRegistry::Instance().Count())
+        return 0;
     return ecs::ComponentRegistry::Instance().At(id).hasFn(*g_scene, ecs::Entity{e}) ? 1 : 0;
 }
 int NativeRead(uint64_t e, uint8_t id, void* dst, uint32_t cap) {
-    if (!g_scene || id >= ecs::ComponentRegistry::Instance().Count()) return 0;
+    if (!g_scene || !NativeHandleDereferenceable(e) ||
+        id >= ecs::ComponentRegistry::Instance().Count())
+        return 0;
     const auto& m = ecs::ComponentRegistry::Instance().At(id);
     const void* p = m.readFn(*g_scene, ecs::Entity{e});
     if (!p) return 0;
@@ -105,10 +121,14 @@ int NativeWrite(uint64_t e, uint8_t id, const void* src, uint32_t size) {
     // review 2026-10-09 #H1：死/版本失效句柄的 readFn 恒 null → 必落 emplace 分支，
     // entt 的 emplace 不校验实体存活（Release 无断言）= 幽灵注入池。失效 = 红字 +
     // 返回 0（D1 口径：与 SDK「句柄失效 Alive=false 自查」契约一致，不炸游戏）。
-    if (!g_scene->Alive(ent)) {
-        LEMON_WARN("SetComponent：实体句柄已失效（#%llu，组件 '%s'）——目标可能已被"
-                   "销毁；请在缓存句柄跨帧处用 Alive 自查",
-                   (unsigned long long)ent.id, m.name);
+    // b11a review H1-a：占位句柄（高 32 位非零）同拒——ToEntt 截断会别名低位实体。
+    if (!NativeHandleDereferenceable(e) || !g_scene->Alive(ent)) {
+        if (!g_staleWriteWarned) { // b11a review H1-b：每 tick 一条（脚本逐帧重试防刷屏）
+            g_staleWriteWarned = true;
+            LEMON_WARN("SetComponent：实体句柄已失效（#%llu，组件 '%s'）——目标可能已被"
+                       "销毁或为占位句柄；请在缓存句柄跨帧处用 Alive 自查",
+                       (unsigned long long)ent.id, m.name);
+        }
         return 0;
     }
     void* p = (void*)m.readFn(*g_scene, ent);
@@ -549,7 +569,12 @@ int32_t NativeSetActiveScene(uint32_t handle) {
 int32_t NativeMarkDontDestroyOnLoad(uint64_t e) {
     if (!g_scene || !g_world) return 0;
     const ecs::Entity ent{e};
-    if (!g_scene->Alive(ent)) return 0;
+    // b11a review H1-c：原为静默 return 0——补红字，与 D1「句柄解引用失效 = 红字 +
+    // 默认值」全族口径对齐（占位句柄高位同拒，H1-a 同款）
+    if (!NativeHandleDereferenceable(e) || !g_scene->Alive(ent)) {
+        LEMON_WARN("DontDestroyOnLoad：实体句柄已失效（#%llu）——忽略", ent.id);
+        return 0;
+    }
     // D5：仅根生效——非根调用 WARN 后作用于根树（Unity 兼容；根 = parent 链上行
     // 尽头，深度护栏同 IsDontDestroyOnLoadLineage）
     ecs::Entity root = ent;
@@ -886,6 +911,9 @@ void ScriptHost::TickBatch(ecs::World& world, ecs::Scene& scene, float dt) {
         bool seen[kMaxPoolWatch] = {}; // compId < kMaxPoolWatch（31 组件，余量足）
         g_poolWatchCount = 0;
         g_batchStaleWarned = false;
+        g_staleWriteWarned = false; // b11a review H1-b：三闸红字每 tick 重置
+        g_staleOpWarned = false;
+        g_staleAttachWarned = false;
         constexpr uint32_t kBatchStructHeadroom = 1024; // 单 tick 窗口内结构操作余量
         for (const BatchSys& bs : batch_) {
             if (bs.disabled || bs.compCount == 0) continue;
@@ -1002,8 +1030,11 @@ void ScriptHost::AttachBehaviour(ecs::World& world, ecs::Scene& scene, ecs::Enti
     // review 2026-10-09 #H1：Alive 闸——死句柄 TryGet<ScriptBox> 恒 null → 必落
     // Emplace<ScriptBox> = 幽灵注入；失效 = 红字 + 返回（D1 口径，同 NativeWrite）。
     if (!scene.Alive(e)) {
-        LEMON_WARN("AttachScript：实体句柄已失效（#%llu，typeId %d）——命令丢弃",
-                   (unsigned long long)e.id, typeId);
+        if (!g_staleAttachWarned) { // b11a review H1-b：每 tick 一条
+            g_staleAttachWarned = true;
+            LEMON_WARN("AttachScript：实体句柄已失效（#%llu，typeId %d）——命令丢弃",
+                       (unsigned long long)e.id, typeId);
+        }
         return;
     }
     // M6a 批⓪：追加新槽（运行时挂载路径——op4/C# AddComponent；className 空 =
@@ -1174,9 +1205,12 @@ void ScriptHost::ApplyStructural(ecs::World& world, ecs::Scene& scene) {
                 ecs::Entity e = Resolve(op.entity);
                 if (!e.IsNull() && op.compId < reg.Count()) {
                     if (!scene.Alive(e)) {
-                        LEMON_WARN("AddComponent：实体句柄已失效（#%llu，组件 '%s'）"
-                                   "——命令丢弃",
-                                   (unsigned long long)e.id, reg.At(op.compId).name);
+                        if (!g_staleOpWarned) { // b11a review H1-b：每 tick 一条
+                            g_staleOpWarned = true;
+                            LEMON_WARN("AddComponent：实体句柄已失效（#%llu，组件 '%s'）"
+                                       "——命令丢弃",
+                                       (unsigned long long)e.id, reg.At(op.compId).name);
+                        }
                         break;
                     }
                     const auto& m = reg.At(op.compId);

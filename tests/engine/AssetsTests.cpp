@@ -1652,8 +1652,7 @@ public:
         std::string rel, abs;
     };
     std::vector<Item> clips;
-    lemon::assets::IndexedEntry spriteEntry{};
-    uint64_t spriteGuid = 0;
+    std::vector<lemon::assets::IndexedEntry> sprites; // guid→条目（FindSprite 线性小表）
     void Each(lemon::assets::AssetType type,
               const std::function<void(uint64_t, const std::string&, const std::string&)>& fn)
         const override {
@@ -1661,7 +1660,9 @@ public:
         for (const Item& it : clips) fn(it.guid, it.rel, it.abs);
     }
     const lemon::assets::IndexedEntry* FindSprite(uint64_t guid) const override {
-        return guid == spriteGuid ? &spriteEntry : nullptr;
+        for (const auto& e : sprites)
+            if (e.guid == guid) return &e;
+        return nullptr;
     }
     bool HasClip(uint64_t) const override { return true; }
 };
@@ -1691,14 +1692,35 @@ void TestClipCacheBadArchive() {
     const std::string badSheet =
         writeFile("bad_sheet.anim", "{\"fps\":8,\"frames\":[{\"sheet\":42,\"cell\":0}]}");
 
+    // b11a review F4：切片面补钉——sliced sheet（2×2 切片 sliceBase=100）cell 2 连号
+    // 解析 + 越界 cell 悬空拒 clip 两条分支
+    const std::string sheetSliced = "8899aabbccddeeff";
+    const std::string goodSliced = writeFile(
+        "good_sliced.anim",
+        "{\"fps\":12,\"frames\":[{\"sheet\":\"" + sheetSliced + "\",\"cell\":2}]}");
+    const std::string danglingCell = writeFile(
+        "dangling.anim",
+        "{\"fps\":12,\"frames\":[{\"sheet\":\"" + sheetSliced + "\",\"cell\":9}]}");
+
     FakeClipSource src;
     src.clips = {{0xAAAA0001ull, "good.anim", good},
                  {0xAAAA0002ull, "bad_loop.anim", badLoop},
                  {0xAAAA0003ull, "bad_fps.anim", badFps},
-                 {0xAAAA0004ull, "bad_sheet.anim", badSheet}};
-    src.spriteGuid = 0x0011223344556677ull;
-    src.spriteEntry.type = lemon::assets::AssetType::Sprite;
-    src.spriteEntry.spriteId = 7; // 未切片整图：cell 0 = 本体号
+                 {0xAAAA0004ull, "bad_sheet.anim", badSheet},
+                 {0xAAAA0005ull, "good_sliced.anim", goodSliced},
+                 {0xAAAA0006ull, "dangling.anim", danglingCell}};
+    lemon::assets::IndexedEntry whole;
+    whole.guid = 0x0011223344556677ull;
+    whole.type = lemon::assets::AssetType::Sprite;
+    whole.spriteId = 7; // 未切片整图：cell 0 = 本体号
+    lemon::assets::IndexedEntry sliced;
+    sliced.guid = 0x8899aabbccddeeffull;
+    sliced.type = lemon::assets::AssetType::Sprite;
+    sliced.gridCols = 2;
+    sliced.gridRows = 2;
+    sliced.sliceBase = 100;
+    sliced.sliceCount = 4; // Sliced()=true：cell 界内连号 sliceBase+cell
+    src.sprites = {whole, sliced};
 
     World w;
     lemon::assets::BuildClipCache(w, src); // 坏档红字跳过不炸 = 主断言
@@ -1708,6 +1730,11 @@ void TestClipCacheBadArchive() {
            "good clip registered with resolved spriteId");
     Expect(g != nullptr && g->loop && g->events.size() == 1 && g->events[0].id == 5,
            "good clip loop + frame event carried");
+    const auto* gs = w.Clips().Find((uint32_t)0xAAAA0005ull);
+    Expect(gs != nullptr && gs->frames.size() == 1 && gs->frames[0] == 102,
+           "sliced clip resolves to sliceBase+cell");
+    Expect(w.Clips().Find((uint32_t)0xAAAA0006ull) == nullptr,
+           "out-of-range cell dangling frame rejects clip");
     Expect(w.Clips().Find((uint32_t)0xAAAA0002ull) == nullptr, "bad 'loop':1 skipped not terminate");
     Expect(w.Clips().Find((uint32_t)0xAAAA0003ull) == nullptr, "bad 'fps':string skipped");
     Expect(w.Clips().Find((uint32_t)0xAAAA0004ull) == nullptr, "bad sheet:number skipped");

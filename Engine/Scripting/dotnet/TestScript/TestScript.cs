@@ -997,13 +997,15 @@ public sealed class AsyncSceneProbeBehaviour : Lemon.LemonBehaviour
 }
 
 /// <summary>批⑪ H1（review 2026-10-09 #H1）：失效实体句柄边界验收（typeId 22，表尾
-/// 注册同上约定）。帧1 Spawn target（真实句柄）；帧2 Destroy（op1）；帧4 起 target
-/// 已死（两阶段销毁过）——对 stale 句柄三连：SetComponent&lt;Velocity&gt;（vtable write
-/// 闸 #1）/ AddComponent&lt;Velocity&gt;（op2 闸 #2）/ AddComponent 脚本分路（op4 →
-/// AttachBehaviour 闸 #3）——D1 口径 = 红字 WARN + 默认值/丢弃，不炸不注幽灵；
-/// 次日报健康标记后自毁。C++ 侧（TestStaleHandleSdk）断言标记序 + 场景无幽灵
-/// （AliveCount 与 Velocity/ScriptBox/Transform2D 视图计数全零——无闸时幽灵
-/// 恰好卡在这三处）。</summary>
+/// 注册同上约定）。帧1 Spawn target（真实句柄）；帧2 Destroy（op1）；帧3 起 target
+/// 已死（帧3 Essential 应用 op1 + #17 提交，版本即失效）——对 stale 句柄三连：
+/// SetComponent&lt;Velocity&gt;（vtable write 闸 #1）/ AddComponent&lt;Velocity&gt;（op2 闸
+/// #2）/ AddComponent 脚本分路（op4 → AttachBehaviour 闸 #3）——D1 口径 = 红字
+/// WARN + 默认值/丢弃，不炸不注幽灵；次帧（帧4）报健康标记后自毁。C++ 侧
+/// （TestStaleHandleSdk）断言标记序 + 场景无幽灵（Velocity/ScriptBox/
+/// Transform2D 视图计数终局全零——无闸时幽灵恰好卡在这三处且永不清除）。
+/// 事件号 1871-1874（b11a review F1：原 1801-1804 与 SceneProbe 1800-1819 段
+/// 撞号——main.cpp 既有区间汇 1800≤user&lt;1820 会串号）。</summary>
 public sealed class StaleHandleProbeBehaviour : Lemon.LemonBehaviour
 {
     private Lemon.GameObject _target;
@@ -1017,10 +1019,10 @@ public sealed class StaleHandleProbeBehaviour : Lemon.LemonBehaviour
         var fc = Lemon.Time.FrameCount;
         if (fc == 1) {
             _target = Lemon.Instantiate.Spawn(0, new Lemon.Vec2(3f, 3f));
-            Mark(1801);
+            if (_target.Entity.Id != 0) Mark(1871); // b11a review F3：Spawn 破产 = 无标记 = 红
         } else if (fc == 2) {
             _target.Destroy(); // op1（真实句柄）→ 帧首 Essential 应用 + #17 提交
-            Mark(1802);
+            Mark(1872);
         } else if (_staleAt == 0 && !_target.Alive) {
             var v = new Lemon.Interop.Velocity();
             v.V = new Lemon.Vec2(7f, 0f);
@@ -1028,9 +1030,9 @@ public sealed class StaleHandleProbeBehaviour : Lemon.LemonBehaviour
             _target.AddComponent<Lemon.Interop.Velocity>(); // 闸 #2：op2 AddComponent
             _target.AddComponent<StaleHandleProbeBehaviour>(); // 闸 #3：op4 AttachScript
             _staleAt = (int)fc;
-            Mark(1803);
+            Mark(1873);
         } else if (_staleAt != 0) {
-            Mark(1804); // 三连后仍健康（无异常穿透/无崩溃）
+            Mark(1874); // 三连后仍健康（无异常穿透/无崩溃）
             gameObject.Destroy();
         }
     }

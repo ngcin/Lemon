@@ -575,9 +575,15 @@ struct UiSubsystem::Impl {
         const std::string prefix = docName + "/";
         for (auto it = containers.begin(); it != containers.end();) {
             bool under = false;
-            if (it->first.rfind(prefix, 0) == 0 && it->second.container) {
-                for (Rml::Element* p = it->second.container; p; p = p->GetParentNode())
-                    if (p == el) { under = true; break; }
+            if (it->first.rfind(prefix, 0) == 0) {
+                // b11a review H3-1：命中 <ui-template> 自身（带 id 即可被 GetElementById
+                // 寻址）同样失效——proto 是 tpl 的唯一元素子，销毁即克隆源悬挂；tpl 是
+                // 容器直接子、不在容器祖先链上，须独立判。
+                under = it->second.tpl == el;
+                if (!under && it->second.container) {
+                    for (Rml::Element* p = it->second.container; p; p = p->GetParentNode())
+                        if (p == el) { under = true; break; }
+                }
             }
             it = under ? containers.erase(it) : std::next(it);
         }

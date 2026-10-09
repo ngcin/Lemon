@@ -23,3 +23,17 @@ b11a 当日清：评审确认的三处高危全修，D1 口径（红字 WARN + �
 - H3 专项 wipe 用例（SetText 命中容器 → 失效/响亮失败）随 **b11b 首项**补：wipe 连 `<ui-template>` 原型一并销毁，重建须专用夹具容器或文档重载，复用 cards 会扰动 contract==1/items==2 终局断言。
 - ASAN（mac-san）复跑归批⑪ 收批统一门（H 类 + M1/M2）。
 - 下一步 = b11b（坏数据 abort 面 5 项起）。
+
+## 追记：b11a review 轮（同日）
+
+两份独立只读评审（修复正确性 / 测试质量与回归风险）对 `f3d9f9b` 复核：主体结论「可合入、H2 零保留（41 个实档全量核对零误伤）、H1 三闸无第四漏网点」。发现并已修：
+
+- **H3-1（medium，残 UAF）**：`InvalidateContainersUnder` 谓词漏「命中 `<ui-template>` 自身」形态——tpl 带 id 即可被 GetElementById 寻址，SetInnerRML 销毁其唯一元素子 proto = 克隆源悬挂，下次 SetItems `proto->Clone()` UAF。已补 `tpl == el` 独立判定（tpl 是容器直接子，不在祖先链上）。
+- **H1-a（low）**：占位句柄（kPlaceholderBit 高位）经 vtable 直写入口被 `ToEntt` 截断高 32 位、可别名低位活实体绕过 Alive 闸。已加 `NativeHandleDereferenceable`（高 32 位非零拒），NativeWrite/Read/Has/IsAlive/DDOL 全族生效。
+- **H1-b（low）**：三闸红字无去重，脚本逐帧重试 = 60+ 条/秒刷屏。已按 `g_batchStaleWarned` 先例改每 tick 一条（三旗随 tick 重置）。
+- **H1-c（low）**：DDOL 原闸静默 return 0，与 D1「红字 + 默认值」口径不符（本 DevLog 原文「全族统一」表述过强）。已补红字。
+- **测试卫生（F1–F4）**：探针事件号 1801–1804 与 SceneProbe 1800–1819 撞段 → 迁 **1871–1874**；Spawn 破产静默降级 → `Entity.Id != 0` 门控 Mark；TestClipCacheBadArchive 补**切片 cell 连号解析**与**越界 cell 悬空拒 clip**两分支；注释帧号订正（三连在帧3、健康标记帧4——帧3 Essential 应用 op1 + #17 提交后即死）。
+
+**采纳评审建议**：ASAN（mac-san）门从收批提前至 **b11b**（H3 是 UAF 类、残洞恰是静态读出的——先跑门再继续）。b11b 首项 H3 专项 wipe 用例须覆盖「命中容器」与「命中 tpl」两种形态。
+
+复验：构建零警告 / 单测 **34,723**（+2）/ script-tests **1,830** / ctest 4/4 / smoke-uirml `--validate` **OK**。

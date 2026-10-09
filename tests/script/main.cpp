@@ -568,9 +568,11 @@ void TestBehaviourAndStructuralOps() {
 }
 
 // 批⑪ H1（review 2026-10-09 #H1）：失效实体句柄三闸端到端——StaleHandleProbeBehaviour
-// （typeId 22，表尾注册序）帧1 Spawn target / 帧2 Destroy / 帧4 stale 三连（C# 侧
-// SetComponent=write 闸 + AddComponent 值组件=op2 闸 + AddComponent 脚本=op4→
-// AttachBehaviour 闸）/ 帧5 健康标记。断言：标记序 1801→1804 各恰一次 + 终局场景
+// （typeId 22，表尾注册序）帧1 Spawn target / 帧2 Destroy / 帧3 stale 三连（帧3
+// Essential 应用 op1 + #17 提交后即死；C# 侧 SetComponent=write 闸 + AddComponent
+// 值组件=op2 闸 + AddComponent 脚本=op4→AttachBehaviour 闸）/ 帧4 健康标记。
+// 事件号 1871-1874（b11a review F1：避 SceneProbe 1800-1819 撞段）。断言：标记序
+// 1871→1874 各恰一次 + 终局场景
 // AliveCount==0 且 Velocity/ScriptBox/Transform2D 三视图计数全零——无闸时 Release
 // 恰好把幽灵注进这三个池（D1 口径：红字 WARN + 默认值，不炸不注）。
 void TestStaleHandleSdk() {
@@ -593,13 +595,13 @@ void TestStaleHandleSdk() {
     w.Pipeline().AddSystem(std::make_unique<ScriptEventDispatchSystem>());
     w.Pipeline().ResolveOrder();
 
-    int m1801 = 0, m1802 = 0, m1803 = 0, m1804 = 0;
+    int m1871 = 0, m1872 = 0, m1873 = 0, m1874 = 0;
     w.SetEventSink([&](World&, const EventPacket& p) {
         if (p.type != GameEvent::Custom) return;
-        if (p.user == 1801) ++m1801;
-        else if (p.user == 1802) ++m1802;
-        else if (p.user == 1803) ++m1803;
-        else if (p.user == 1804) ++m1804;
+        if (p.user == 1871) ++m1871;
+        else if (p.user == 1872) ++m1872;
+        else if (p.user == 1873) ++m1873;
+        else if (p.user == 1874) ++m1874;
     });
 
     // 探针经占位链挂载（typeId 22）
@@ -608,9 +610,9 @@ void TestStaleHandleSdk() {
 
     for (int i = 0; i < 7; i++) w.Step(0.25f); // fc1..7：编排 + stale 三连 + 自毁落地
 
-    Expect(m1801 == 1 && m1802 == 1, "stale probe: target created + destroy queued");
-    Expect(m1803 == 1, "stale probe: trio survived (no exception/crash through gate)");
-    Expect(m1804 == 1, "stale probe: healthy frame after stale calls");
+    Expect(m1871 == 1 && m1872 == 1, "stale probe: target created (non-zero handle) + destroy queued");
+    Expect(m1873 == 1, "stale probe: trio survived (no exception/crash through gate)");
+    Expect(m1874 == 1, "stale probe: healthy frame after stale calls");
 
     // 无幽灵：三池计数全零（无闸时 SetComponent 注 Velocity、AttachScript 注
     // ScriptBox、且幽灵实体永不清除——视图计数会卡 1）
