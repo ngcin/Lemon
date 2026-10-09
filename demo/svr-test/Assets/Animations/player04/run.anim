@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "name": "run",
+  "fps": 8,
+  "loop": true,
+  "frames": [
+    {
+      "sheet": "3f9c5964b8117cf7",
+      "cell": 0
+    },
+    {
+      "sheet": "7033fb017f10c87c",
+      "cell": 0
+    },
+    {
+      "sheet": "c51dbbe947a670e4",
+      "cell": 0
+    },
+    {
+      "sheet": "d76d683825a25a49",
+      "cell": 0
+    },
+    {
+      "sheet": "1b41efd7b1797396",
+      "cell": 0
+    },
+    {
+      "sheet": "96b544f7ec349e97",
+      "cell": 0
+    }
+  ]
+}

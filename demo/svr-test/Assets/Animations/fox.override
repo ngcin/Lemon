@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "name": "fox",
+  "segments": [
+    {
+      "name": "idle",
+      "clip": "1121ecbd75c0443e"
+    },
+    {
+      "name": "run",
+      "clip": "7ad125db8a5184c8"
+    }
+  ]
+}

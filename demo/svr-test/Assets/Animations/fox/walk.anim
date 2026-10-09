@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "name": "walk",
+  "fps": 6,
+  "loop": true,
+  "frames": [
+    {
+      "sheet": "739c40edfd82df0d",
+      "cell": 0
+    },
+    {
+      "sheet": "4d0a9a514ffab70c",
+      "cell": 0
+    },
+    {
+      "sheet": "3da3c72adb334d18",
+      "cell": 0
+    },
+    {
+      "sheet": "db3ace217febe3ae",
+      "cell": 0
+    },
+    {
+      "sheet": "fb75f115a98b0f38",
+      "cell": 0
+    },
+    {
+      "sheet": "e2195363b4373528",
+      "cell": 0
+    }
+  ]
+}

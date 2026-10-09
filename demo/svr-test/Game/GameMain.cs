@@ -44,6 +44,10 @@ public static class GameMain
         Lemon.Behaviours.Register<DuelBehaviour>(); // T3d 终验：ani.scene 双怪对决（状态机全链）
         Lemon.Behaviours.Register<UiEcho>(); // UiTest.scene：UI 事件回显（③c 真人验收观测面）
         Lemon.Behaviours.Register<TweenDemo>(); // ani.scene：宝石 Tween.Scale OutBack 弹跳演示
+        // 换装批⑪：怪物朝向翻面（fox 素材默认朝右）。走批量系统而非给每只怪挂
+        // MonoBehaviour——怪物由引擎 PrefabCache::Spawn 原生工厂出生，该路径
+        // 不解析 scripts[]（PrefabCache.h:52 明载），挂脚本的怪永远拿不到 Update。
+        Game.MobFacingSystem.Register();
     }
 
     private static void OnUiEvent(Lemon.UiEvent e)

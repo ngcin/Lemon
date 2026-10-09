@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "name": "player04",
+  "segments": [
+    {
+      "name": "idle",
+      "clip": "7260b8aadaf3a201"
+    },
+    {
+      "name": "run",
+      "clip": "e4f753205049127e"
+    }
+  ]
+}

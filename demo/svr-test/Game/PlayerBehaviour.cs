@@ -28,13 +28,16 @@ public sealed class PlayerBehaviour : LemonBehaviour
     private const string kUpgradesTable = "7e57100000100003";
     private const string kBalanceTable = "7e57100000100004";
 
-    // M6a 批① 受击段 clip（Assets/hero-hit.clip / monster-hit.clip；GUID 与模板
-    // 同号——Anim.ClipId = GUID 低 32 位自算，Main.scene 玩家/Mob.prefab 的
-    // clipId 536870913/536870914 就是 kHeroWalk/kMobWalk）
-    private static readonly uint kHeroWalk = Anim.ClipId("5bd31a7c20000001");
-    private static readonly uint kHeroHit = Anim.ClipId("5bd31a7c20000003");
-    private static readonly uint kMobWalk = Anim.ClipId("5bd31a7c20000002");
-    private static readonly uint kMobHit = Anim.ClipId("5bd31a7c20000004");
+    // M7c 批⑪ 动画换装（Assets/Animations/player04.override / fox.override）：
+    // 段名解析走 AnimGraph.setGuid 绑定的集作用域（NativeClipByName），不再硬编
+    // 旧 yami clip GUID（5bd31a7c2000000{1,3}/{2,4} 已随换装退役——那批是
+    // 16×32 切片素材，与 player04/fox 的整图帧不同源）。玩家 idle↔run 按输入切；
+    // 怪物恒 run（prefab 的 clipId 直接钉 run 段，脚本不驱动）。受击不再切段——
+    // 新素材无受击段，改由飘字 + 显伤条承担受击反馈。
+    private const string kPlayerIdle = "idle";
+    private const string kPlayerRun = "run";
+
+    private bool _playerRunning; // 当前是否在 run 段（切段沿检测用，避免每帧重播）
 
     // M6c 竖切批：音效资产 GUID（Assets/Audio/；meta 预写固定号——模板锚点同款
     // 纪律。BGM 常量在 GameFlow kBgm）
@@ -161,10 +164,9 @@ public sealed class PlayerBehaviour : LemonBehaviour
     {
         var victim = GameObject.From(m.Dst);
         if (!victim.Alive || !victim.TryGetComponent<Meta>(out var meta)) return;
-        if (meta.Team == 1) { // 怪受击：受击段立即打断、播完自动回行走 + 飘字 + 显伤条
+        if (meta.Team == 1) { // 怪受击：飘字 + 显伤条（换装后 fox 集只有 idle/run，
+                               // 无受击段——不再打断动画，受击反馈全走 Fx 通道）
             Audio.PlayOneShot(kSfxHit, 0.45f); // M6c 竖切批：受击音（高命中率小音量）
-            Anim.Play(victim, kMobHit, false);
-            Anim.Queue(victim, kMobWalk);
             // 批③d-2：飘字/血条 = 设置开关门控（GameFlow 设置屏，Settings 档持久）
             if (GameMain.Settings.FxText &&
                 victim.TryGetComponent<Transform2D>(out var tf)) {
@@ -173,31 +175,36 @@ public sealed class PlayerBehaviour : LemonBehaviour
                 //（世界 Y 向下 = 负偏移）。轮④ 基线修正后字形整体上移
                 // 2×(bearingY-h/2)×字号 ≈ 24×字号 px，锚点同步下压补偿：
                 // crit 字号 1.3 → +31；常规字号 1 → +24
+                // 换装后锚点 = fox run 帧实测：画布 104×89，精灵半高 ≈ 44.5，
+                // 故头顶 ≈ -44.5；原 -56/-63 是按旧 yami 16×32 怪调的，偏移过大。
+                // 暴击仍高于常规一个身位档（沿用原 7px 差）。
                 if (kCritRng.NextDouble() < kCritChance)
-                    Fx.Crit($"暴击 {m.P0:0}", new Vec2(tf.Pos.X - 4f, tf.Pos.Y - 63f));
+                    Fx.Crit($"暴击 {m.P0:0}", new Vec2(tf.Pos.X - 20f, tf.Pos.Y - 62f));
                 else
-                    Fx.Text(m.P0, new Vec2(tf.Pos.X - 4f, tf.Pos.Y - 56f), kFxTextMob);
+                    Fx.Text(m.P0, new Vec2(tf.Pos.X - 20f, tf.Pos.Y - 55f), kFxTextMob);
                 ++_fxTexts;
             }
             if (GameMain.Settings.FxBar &&
                 victim.TryGetComponent<Health>(out var hp)) {
                 // M7c 批①：贴图血条 + 延迟白条（掉血时残条停在旧血量线性收敛）
-                Fx.Bar(victim, hp.Cur / hp.Max, kFxBarMob, 26f, kMobBarSkin);
+                // 条宽随换装放大：fox run 帧宽 104px（条须窄于精灵），26→88
+                Fx.Bar(victim, hp.Cur / hp.Max, kFxBarMob, 88f, kMobBarSkin);
                 ++_fxBars;
             }
             ++_mobHits;
             Save.SetString("svr.mobhit", _mobHits.ToString());
         } else if (m.Dst.Id == gameObject.Entity.Id) { // 玩家受击（Hazard 接触）
-            Anim.Play(gameObject, kHeroHit, false);
-            Anim.Queue(gameObject, kHeroWalk);
             var tf = gameObject.GetComponent<Transform2D>();
             var hp = gameObject.GetComponent<Health>();
             if (GameMain.Settings.FxText) {
-                Fx.Text(m.P0, new Vec2(tf.Pos.X - 4f, tf.Pos.Y - 204f), kFxTextPlayer);
-                ++_fxTexts; // 玩家精灵 player01 337×346——头顶 ≈ -173（Y 向下），行底贴头顶血条上方；轮④ 基线补偿 +24
+                // 换装后锚点 = player04 idle 帧实测：画布 51×103，精灵半高 ≈ 51.5，
+                // 故头顶 ≈ -51.5；原 -204 是按旧 player01 337×346 调的，换装后
+                // 偏移量约为原 1/4，会飘到画面外。X 同步补偿半宽（51/2 ≈ 26）。
+                Fx.Text(m.P0, new Vec2(tf.Pos.X - 26f, tf.Pos.Y - 72f), kFxTextPlayer);
+                ++_fxTexts;
             }
             if (GameMain.Settings.FxBar) {
-                Fx.Bar(gameObject, hp.Cur / hp.Max, kFxBarPlayer, 32f); // 每击续命 → 常显
+                Fx.Bar(gameObject, hp.Cur / hp.Max, kFxBarPlayer, 56f); // 每击续命 → 常显
                 ++_fxBars;
             }
             ++_playerHits;
@@ -409,6 +416,28 @@ public sealed class PlayerBehaviour : LemonBehaviour
             System.Math.Clamp(tf.Pos.X + step.X, -kArenaHalf, kArenaHalf),
             System.Math.Clamp(tf.Pos.Y + step.Y, -kArenaHalf, kArenaHalf));
         gameObject.SetComponent(tf);
+
+        // ---- 动画：idle↔run 按输入沿检测（移动中或冲刺中 = run；沿检测避免每帧
+        // Anim.Play 重播把 time 归零 = 动画冻在首帧）----
+        bool moving = axis.X != 0f || axis.Y != 0f || _dashLeft > 0f;
+        if (moving != _playerRunning) {
+            _playerRunning = moving;
+            Anim.Play(gameObject, moving ? kPlayerRun : kPlayerIdle);
+        }
+
+        // ---- 朝向：素材默认朝右，向左走翻面（kSrFlipX 走 SpriteRenderer.flags
+        // 位，与 AllyBehaviour 同款）。用 _facing（最近一次非零移动轴，无输入
+        // 时沿用上次朝向）而非 axis——纯竖直移动时 axis.X=0，不该清掉朝向。
+        // 死区 1px 防贴墙抖动导致每帧翻面闪烁。
+        if (gameObject.TryGetComponent<SpriteRenderer>(out var psr)) {
+            bool wantFlip = _facing.X < -1f;
+            byte pf = (byte)(psr.Flags & ~(kSrFlipX | kSrFlipY));
+            if (wantFlip) pf |= kSrFlipX;
+            if (pf != psr.Flags) {
+                psr.Flags = pf;
+                gameObject.SetComponent(psr);
+            }
+        }
 
         UpdateHud();
         EnsureAlly();
@@ -687,10 +716,13 @@ public sealed class PlayerBehaviour : LemonBehaviour
         bag.Set("blades", _bladeCount);
         bag.Set("swordx", _swordExtra);
         bag.Set("ally", _ally); // 实体本体跨域存活，只迁句柄（防自愈重刷 = 双队友）
-    }
+        }
 
     protected override void OnHotReloadIn(StateBag bag)
     {
+        // 动画段态不入包：复位 false 强制下帧按输入重判（沿检测的初值语义——
+        // 若沿用旧值而实际 clipId 已被换场等改过，该方向移动将不切段）。
+        _playerRunning = false;
         if (bag.TryGet("time", out float t)) _runTime = t;
         if (bag.TryGet("kills", out int k)) _kills = k;
         if (bag.TryGet("best", out int b)) _best = b;
