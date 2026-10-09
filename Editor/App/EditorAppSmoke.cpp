@@ -275,7 +275,10 @@ void EditorApp::SeedSmokeUiRmlProject() {
              // 批③d-1：dp 坐标系断言元（角位 #305060 避让全部既有计数色带——px
              // 定位 + dp 尺寸：期望渲染尺寸 = 100dp/50dp × ratio）
              "#dpbox { position: absolute; left: 700px; top: 415px; width: 100dp;\n"
-             "    height: 50dp; background: #305060; }\n";
+             "    height: 50dp; background: #305060; }\n"
+             // b11b H3 专项：容器缓存失效夹具（display:none 全隐——DOM 语义全在、
+             // 渲染零扰动；cards/negbox 契约断言面不动）
+             "#wipehost { display: none; }\n";
     }
     { // 文档：<link> 引样式 + 三要素 + <img>（热重载中点标题色 → #40ff90 绿）
         std::ofstream f(assets / "uirml.rml", std::ios::trunc);
@@ -299,6 +302,12 @@ void EditorApp::SeedSmokeUiRmlProject() {
              "</div>\n"
              // 批③d-1：dp 断言元（panel 外右下角——px 定位不扰动面板区像素断言）
              "<div id=\"dpbox\"/>\n"
+             // b11b H3 专项：wipehost（宿主，形态一 SetInnerRml 打点）内嵌
+             // wipebox（容器）+ wtpl（ui-template 带 id，形态二打点——打它灭
+             // proto 而元素自身存续 = H3-1 判定面）
+             "<div id=\"wipehost\"><div id=\"wipebox\" data-template=\"wrow\">"
+             "<ui-template id=\"wtpl\" data-name=\"wrow\">"
+             "<div><span data-field=\"v\"/></div></ui-template></div></div>\n"
              "</body>\n</rml>\n";
     }
     launchCopy_.projectDir = tmp.string();

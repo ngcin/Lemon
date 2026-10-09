@@ -230,8 +230,11 @@ struct AudioEngine::Impl {
     // review 2026-10-02 #4：mtx 内取 fillMtx_ 会与填充线程 PumpFeed 的阻塞 fread
     // 成链，设备回调等 mtx 即被磁盘 IO 间接卡；预填整环 256KiB ≈1.4s 余量，
     // job 迟到微秒级无害）
-    uint32_t PlayLocked(uint32_t clipId, const PlayParams& p, FeedRef feed,
-                        FeedRef& outFeedJob) {
+    // M18（review 2026-10-09）：feed 改引用传入（拒绝路径所有权留调用方，锁外析构）；
+    // outRetire 接槽复用弃养的旧 stream（同样锁外析构）——锁内末引用释放 = fclose
+    // 阻塞 DataCallback（等同一把 mtx）
+    uint32_t PlayLocked(uint32_t clipId, const PlayParams& p, FeedRef& feed,
+                        FeedRef& outFeedJob, FeedRef& outRetire) {
         if (clipId == 0 || clipId > clips.size() || clips[clipId - 1].frameCount == 0)
             return 0;
         const Clip& c = clips[clipId - 1];
@@ -312,8 +315,10 @@ struct AudioEngine::Impl {
             }
         }
         Voice& v = voices[slot];
-        if (v.stream) // 复用槽弃养旧流（偷声部/done 未回收同理——生产者撤 job）
+        if (v.stream) { // 复用槽弃养旧流（偷声部/done 未回收同理——生产者撤 job）
             v.stream->dead.store(true, std::memory_order_relaxed);
+            outRetire = std::move(v.stream); // M18：挪出锁外析构
+        }
         v.id = nextVoiceId++;
         v.clipRef = clipId;
         v.cursor = 0;
@@ -711,10 +716,11 @@ uint32_t AudioEngine::Play(uint32_t clipId, const PlayParams& p) {
         }
     }
     Impl::FeedRef feedJob;
+    Impl::FeedRef retire; // M18：拒绝路径的 feed 与槽复用弃养 stream 均锁外析构
     uint32_t voiceId = 0;
     {
         std::lock_guard<std::mutex> lk(impl_->mtx);
-        voiceId = impl_->PlayLocked(clipId, p, std::move(feed), feedJob);
+        voiceId = impl_->PlayLocked(clipId, p, feed, feedJob, retire);
     }
     if (feedJob) { // 填充队列在 mtx 外挂（#4：设备回调不得经 fillMtx_ 间接受阻）
         std::lock_guard<std::mutex> flk(impl_->fillMtx_);
@@ -852,12 +858,19 @@ bool AudioEngine::IsPaused() const {
 }
 
 void AudioEngine::Tick(float dtSeconds) {
+    // M18（review 2026-10-09）：退役 stream 的末引用析构移出锁外——声明先于 lk
+    // 即析构后于 lk（解锁后才 fclose）。一次性流式播完时此处即末引用：锁内
+    // fclose 持 impl_->mtx 执行而 DataCallback 等同一把锁，磁盘 IO（网络盘/高压）
+    // 可逼近 ~10ms 回调期限；review #4 修掉 fread 链时遗漏的对偶面
+    std::vector<Impl::FeedRef> retire;
     std::lock_guard<std::mutex> lk(impl_->mtx);
     for (auto& v : impl_->voices) {
         if (!v.done)
             continue;
-        if (v.stream) // 批①b：回收即弃养（填充线程撤 job；环/句柄随末引用释放）
+        if (v.stream) { // 批①b：回收即弃养（填充线程撤 job；环/句柄随末引用释放）
             v.stream->dead.store(true, std::memory_order_relaxed);
+            retire.emplace_back(std::move(v.stream));
+        }
         v = {}; // 回收：id 归零（号不复用——nextVoiceId 只增）
     }
     if (!impl_->underrunWarned_ && impl_->streamUnderruns_.load(std::memory_order_relaxed) > 0) {

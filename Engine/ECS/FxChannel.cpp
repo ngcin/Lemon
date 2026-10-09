@@ -3,6 +3,7 @@
 #include "ECS/FxChannel.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 
 namespace lemon::ecs {
@@ -16,8 +17,10 @@ void FxChannel::PopupTextEx(const char* text, float x, float y, uint32_t color, 
     FxText& t = texts_[textHead_];
     if (textCount_ < kMaxTexts) ++textCount_; // 覆写最老槽时计数不变
     if (text) {
-        std::memcpy(t.text, text, sizeof(t.text) - 1); // 截断留 NUL 位
-        t.text[sizeof(t.text) - 1] = '\0';
+        // 按 strlen 截断拷贝（review 2026-10-09 M5，ASAN 实报 global-buffer-overflow：
+        // 恒 memcpy 15 字节对短于 15 的合法串（伤害数字 "5"/"12" 是主路径）越界读
+        // 源尾部；RtUiChannel World.cpp 同功能 snprintf 安全写法先例）
+        std::snprintf(t.text, sizeof(t.text), "%s", text);
     } else {
         t.text[0] = '\0';
     }

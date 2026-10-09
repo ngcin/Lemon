@@ -890,8 +890,13 @@ void TestSceneAsyncPressure() {
     Expect(CountSceneGroup(fx.s, kSceneHandleUnassigned) == 0, "pressure: zero orphans");
     // 预算断言 = sanity 天花板而非硬门（墙钟预算对 CI/机器噪声敏感——精确数字
     // 归 DevLog；结构保证 = 每 chunk 后 overBudget 检查。天花板取 3× 预算：稳态
-    // 实测 4.0-5.7ms，超 12ms = 机制性回归而非噪声）
+    // 实测 4.0-5.7ms，超 12ms = 机制性回归而非噪声）。sanitizer 构建豁免：ASAN/
+    // UBSAN 插桩 2-4x 减速会把墙钟推过任何固定天花板（b11b ASAN 门实跑 20k 场
+    // 稳态翻倍超标而 abort——插桩成本非机制回归）；终端性/孤儿/计数断言不受影响
+#if !defined(__SANITIZE_ADDRESS__) && !(defined(__has_feature) && \
+    (__has_feature(address_sanitizer) || __has_feature(undefined_behavior_sanitizer)))
     Expect(maxStagedMs <= 12.0f, "staged frames respect budget (sanity ceiling 3x)");
+#endif
 
     // 对照：同步单帧全量装载同一档
     SwitchFixture fx2("Grass");

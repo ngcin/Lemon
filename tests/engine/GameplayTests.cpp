@@ -240,6 +240,56 @@ void TestVerifyHitMemoryAndPierce() {
     Expect(hits == 1, "scenario-A victim out of second projectile's range");
 }
 
+// M6 扫掠防穿透（review 2026-10-09，D2 追认：阈值门控 + 子步进）：高速弹单步
+// 位移 > 2×hitRadius 时点采样有漏检带——修复前弹心每 tick 只查当前圆域，步长
+// 136px（speed 8192@60Hz）对 hitRadius 12 的目标可整段跳过。修复后沿本帧位移
+// 段子步采样（间距 ≤ 2×hitRadius），段含目标即命中；慢弹路径零扰动由
+// TestVerifyHitMemoryAndPierce 既有断言把守。
+
+void TestProjectileSweepAntiTunnel() {
+    World world;
+    Scene& s = world.CreateScene("sweep");
+    world.SetActiveScene(&s);
+
+    // 静止目标在 x=200：speed 8192 → 步长 ≈136.5px，tick1 弹心落 136.5、tick2
+    // 落 273——两点距目标均 > 12（点采样两 tick 全漏）；tick2 位移段 [136.5, 273]
+    // 含 200，子步采样必经目标圆域
+    Entity victim = s.Create();
+    s.Emplace<Transform2D>(victim, Transform2D{{200, 0}});
+    s.Emplace<Meta>(victim).team = 1;
+    s.Emplace<Health>(victim, Health{.max = 100.0f, .cur = 100.0f});
+
+    Entity p = s.Create();
+    s.Emplace<Transform2D>(p, Transform2D{{0, 0}});
+    s.Emplace<Meta>(p).team = 0;
+    s.Emplace<Velocity>(p, Velocity{{8192.0f, 0.0f}});
+    Projectile& fast = s.Emplace<Projectile>(p);
+    fast.damage = 25.0f;
+    fast.lifetime = 1.0f;
+
+    int hits = 0;
+    world.SetEventSink([&](World&, const EventPacket& e) {
+        if (e.type == GameEvent::Hit && e.dst == victim) ++hits;
+    });
+    world.Pipeline().AddSystem(std::make_unique<MovementSystem>());
+    world.Pipeline().AddSystem(std::make_unique<SpatialHashRebuildSystem>());
+    world.Pipeline().AddSystem(std::make_unique<HitboxSystem>());
+    world.Pipeline().AddSystem(std::make_unique<StatSystem>());
+    world.Pipeline().AddSystem(std::make_unique<ScriptEventDispatchSystem>());
+    world.Pipeline().AddSystem(std::make_unique<DestroyCommitSystem>());
+    world.Pipeline().ResolveOrder();
+    const float dt = 1.0f / 60.0f;
+
+    world.Step(dt); // tick1：段 [0,136.5] 不含目标（双点 0/136.5 距 200 均 > 12）
+    Expect(hits == 0, "tick1: target not on first segment");
+    world.Step(dt); // tick2：段 [136.5,273] 含 200 → 子步扫掠命中（点采样则漏）
+    Expect(hits == 1, "tunneling projectile hits via swept substeps");
+    Expect(s.Get<Health>(victim).cur == 75.0f, "sweep damage applied exactly once");
+    world.Step(dt); // 弹已毁（非穿透）——后续段不再伤
+    Expect(hits == 1, "no double hit from later segments");
+    Expect(!s.Alive(p), "non-piercing projectile consumed on swept hit");
+}
+
 // 磁吸与拾取（M5 批① T2）：双侧取大触程（gem.magnetRadius vs Stats.pickupRadius）、
 // 直写 pos 飞行、触距 8px 入账按 kind 分发、Pickup 事件、目标死亡回落。
 
@@ -1726,6 +1776,7 @@ void TestVerifyTriggerOnceSemantics() {
 void RunGameplayTests() {
     TestVerifyIframesDecrementAndKill();
     TestVerifyHitMemoryAndPierce();
+    TestProjectileSweepAntiTunnel(); // M6：高速弹扫掠防穿透（b11b）
     TestVerifyMagnetAndPickup();
     TestVerifyPickupXpLevelUp();
     TestWaveDirectorWavesAndEvent();

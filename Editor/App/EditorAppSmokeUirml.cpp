@@ -61,6 +61,13 @@ struct UirmlSmokeState {
     // M7a 批① D8：装载失败回滚位（毒化 → 同名重载失败 → shown/modal 强制清 =
     // 输入让出面释放；复原 → 重载成功 = 条目保留可重试）。三段全真才绿。
     bool smokeUiD8RollbackOk = false;
+    // b11b H3 专项（review 2026-10-09 H3/H3-1）：容器缓存失效两形态。wipe 220/225
+    // /230 = 形态一（SetInnerRml 打宿主 wipehost——子树含容器+tpl+proto 全灭）；
+    // 235/240 = 形态二（打 ui-template 自身 wtpl——proto 灭、tpl 元素存续）。
+    // seedN = 建容器后行数（1）；evicted = 打后缓存读数（-1 = 条目真删非悬挂）；
+    // 两形态 rebuild 各 1（新句柄克隆成活）。夹具 display:none 零像素扰动
+    bool smokeUiWipeSeedOk = false, smokeUiWipeEvicted = false;
+    bool smokeUiWipeHostOk = false, smokeUiWipeTplOk = false;
 };
 UirmlSmokeState g_uirmlSmoke;
 
@@ -153,6 +160,66 @@ void EditorApp::SmokeUirmlFrame(uint64_t frame) {
                 0, 20, 27, 32, 1, 0, 0};
             gameUi_->ApplyOps(&op, 1, kNegArena, (uint32_t)sizeof(kNegArena));
             LEMON_LOG("uirml-smoke: 负面契约 op 直灌（field 'nope'）");
+        }
+        // b11b H3 专项（review 2026-10-09 H3/H3-1）：容器缓存失效两形态——打宿主
+        // （子树含容器全灭，形态一）/ 打 ui-template 自身（proto 灭 tpl 存续，形态二
+        // = H3-1 残洞回归位）。打后即刻读数须 -1（缓存条目真删非悬挂——修复前读的
+        // 是已自由元素的旧条目）；随后 SetItems 惰性重建须克隆成活（1 行）。行块用
+        // 八进制转义（十六进制 \x 贪婪连吃后续 hex 字母——C 词法坑，同上负面 op）
+        if (frame == 220 && gameUi_ && ctx_.Playing()) { // 建容器（缓存定型）
+            static const char kWipeArena[] =
+                "Assets/UI/uirml.rml\0"            // s0=0（19 字符 + NUL = 20B）
+                "wipebox\0"                        // s1=20
+                "wrow\0"                           // s2=28
+                "\001k\001\000\001v\001\000a";     // s3=33：1 行 k/{v=a}
+            const ::lemon::ui::UiOpC op = {
+                (uint8_t)::lemon::ui::UiOpType::SetItems, 0, 4, 0,
+                0, 20, 28, 33, 1, 0, 0};
+            gameUi_->ApplyOps(&op, 1, kWipeArena, (uint32_t)sizeof(kWipeArena));
+            g_uirmlSmoke.smokeUiWipeSeedOk =
+                gameUi_->ContainerItemCount("Assets/UI/uirml.rml", "wipebox") == 1;
+        }
+        if (frame == 225 && gameUi_ && ctx_.Playing()) { // 形态一：打宿主（重声明同构）
+            static const char kWipeArena[] =
+                "Assets/UI/uirml.rml\0"            // s0=0
+                "wipehost\0"                       // s1=20
+                "<div id=\"wipebox\" data-template=\"wrow\">"
+                "<ui-template id=\"wtpl\" data-name=\"wrow\">"
+                "<div><span data-field=\"v\"/></div></ui-template></div>"; // s2=29
+            const ::lemon::ui::UiOpC op = {
+                (uint8_t)::lemon::ui::UiOpType::SetInnerRml, 0, 3, 0,
+                0, 20, 29, 0, 0, 0, 0};
+            gameUi_->ApplyOps(&op, 1, kWipeArena, (uint32_t)sizeof(kWipeArena));
+            g_uirmlSmoke.smokeUiWipeEvicted =
+                gameUi_->ContainerItemCount("Assets/UI/uirml.rml", "wipebox") == -1;
+        }
+        if ((frame == 230 || frame == 240) && gameUi_ && ctx_.Playing()) {
+            // 重建（形态一收口 / 形态二打点后收口）：同构 SetItems 走惰性重建路径
+            static const char kWipeArena[] =
+                "Assets/UI/uirml.rml\0"
+                "wipebox\0"
+                "wrow\0"
+                "\001k\001\000\001v\001\000a";
+            const ::lemon::ui::UiOpC op = {
+                (uint8_t)::lemon::ui::UiOpType::SetItems, 0, 4, 0,
+                0, 20, 28, 33, 1, 0, 0};
+            gameUi_->ApplyOps(&op, 1, kWipeArena, (uint32_t)sizeof(kWipeArena));
+            const int n = gameUi_->ContainerItemCount("Assets/UI/uirml.rml", "wipebox");
+            if (frame == 230) g_uirmlSmoke.smokeUiWipeHostOk = n == 1;
+            else g_uirmlSmoke.smokeUiWipeTplOk = n == 1;
+        }
+        if (frame == 235 && gameUi_ && ctx_.Playing()) { // 形态二：打 ui-template 自身
+            static const char kWipeArena[] =
+                "Assets/UI/uirml.rml\0"            // s0=0
+                "wtpl\0"                           // s1=20
+                "<div><span data-field=\"v\"/></div>"; // s2=25（新行根原型）
+            const ::lemon::ui::UiOpC op = {
+                (uint8_t)::lemon::ui::UiOpType::SetInnerRml, 0, 3, 0,
+                0, 20, 25, 0, 0, 0, 0};
+            gameUi_->ApplyOps(&op, 1, kWipeArena, (uint32_t)sizeof(kWipeArena));
+            g_uirmlSmoke.smokeUiWipeEvicted =
+                g_uirmlSmoke.smokeUiWipeEvicted &&
+                gameUi_->ContainerItemCount("Assets/UI/uirml.rml", "wipebox") == -1;
         }
         // 批③d 前置 T5：通道 B 无脚本路径——dyn.rml 未装载，Show op 落空 →
         // resolver 现载（脚本会话由 C# UiRefill 的 UI.Show 走同一通道，本钩让位）
@@ -604,6 +671,9 @@ bool EditorApp::SmokeUirmlVerdict() {
                          g_uirmlSmoke.smokeUiEvictSeedOk && g_uirmlSmoke.smokeUiZombiePixN >= 0 &&
                          g_uirmlSmoke.smokeUiZombiePixN < 5 && g_uirmlSmoke.smokeUiEvictEditOk &&
                          g_uirmlSmoke.smokeUiEvictPixN >= 0 && g_uirmlSmoke.smokeUiEvictPixN < 5 && evict3Ok;
+    // b11b H3 专项：wipe 三段全绿（seed/evicted/两形态重建）
+    const bool wipeOk = g_uirmlSmoke.smokeUiWipeSeedOk && g_uirmlSmoke.smokeUiWipeEvicted &&
+                        g_uirmlSmoke.smokeUiWipeHostOk && g_uirmlSmoke.smokeUiWipeTplOk;
     std::printf("[lemon] smoke-uirml: doc=%d font=%s panel=%d(>3000) titleG=%d(>20) "
                 "bodyB=%d(>20) tex=%d(>500) old=%d/%d(<5) titleTop=%d/%d(≥3/4) "
                 "dp(ratio=%.3f box=%.1fx%.1f/%s) "
@@ -612,7 +682,8 @@ bool EditorApp::SmokeUirmlVerdict() {
                 "p2(stale=%d keepC=%d+%dpx dyn=%s del=%d) "
                 "evict2(seed=%d live=%d edit=%d pix=%d) "
                 "evict3(stopHide=%d delEnt=%d reset=%d/%d pix=%d) "
-                "d8(rollback=%d) => %s\n",
+                "d8(rollback=%d) "
+                "h3(seed=%d evict=%d host=%d tpl=%d) => %s\n",
                 hasDoc ? 1 : 0, gameUi_ ? gameUi_->LoadedFontFamily() : "-",
                 panelN, titleGN, bodyBN, texN, oldGoldN, oldGrayN, titleTopN, titleGN,
                 dpRatio, dpW, dpH, (dpRatioOk && dpBoxOk) ? "OK" : "BAD",
@@ -626,9 +697,11 @@ bool EditorApp::SmokeUirmlVerdict() {
                 g_uirmlSmoke.smokeUiResetSeedOk ? 1 : 0, g_uirmlSmoke.smokeUiResetOnlyOk ? 1 : 0,
                 g_uirmlSmoke.smokeUiDelEntPixN,
                 g_uirmlSmoke.smokeUiD8RollbackOk ? 1 : 0,
+                g_uirmlSmoke.smokeUiWipeSeedOk ? 1 : 0, g_uirmlSmoke.smokeUiWipeEvicted ? 1 : 0,
+                g_uirmlSmoke.smokeUiWipeHostOk ? 1 : 0, g_uirmlSmoke.smokeUiWipeTplOk ? 1 : 0,
                 (uiOk && uiOk3c && uidocOk && dpRatioOk && dpBoxOk &&
-                 g_uirmlSmoke.smokeUiD8RollbackOk) ? "OK" : "FAIL");
-    return uiOk && uiOk3c && uidocOk && dpRatioOk && dpBoxOk;
+                 g_uirmlSmoke.smokeUiD8RollbackOk && wipeOk) ? "OK" : "FAIL");
+    return uiOk && uiOk3c && uidocOk && dpRatioOk && dpBoxOk && wipeOk;
 }
 
 } // namespace lemon::editor

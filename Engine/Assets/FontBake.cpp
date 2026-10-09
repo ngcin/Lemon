@@ -294,8 +294,15 @@ bool LoadBakedFont(const char* bakedPath, BakedFontInfo& info,
     FileHeader h;
     std::memcpy(&h, buf.data(), sizeof(h));
     if (std::memcmp(h.magic, kFontBakeMagic, 4) != 0 || h.version != kVersion) return false;
+    // 头域检（review 2026-10-09 M14，LAT1 读取侧 kAtlasMaxImageDim 同口径）：
+    // pageW/H 零值或巨值时 (size_t)w*h*4 可 2^64 回绕（0x80000000² ≡ 0）——仅含
+    // 头+字形表的小文件即通过字节对账，随后 BitmapFont 以 2^31 量级 CreateTexture
+    // → VK_CHECK abort/驱动 UB。`.lemon/baked/` 是第三方可替换内容，装载侧须自防
+    constexpr uint32_t kPageDimMax = 16384; // GPU maxImageDimension2D 域
+    if (h.pageW == 0 || h.pageH == 0 || h.pageW > kPageDimMax || h.pageH > kPageDimMax)
+        return false;
     const size_t tableEnd = sizeof(h) + (size_t)h.glyphCount * sizeof(FontGlyph);
-    const size_t pixels = (size_t)h.pageW * h.pageH * 4;
+    const size_t pixels = (size_t)h.pageW * h.pageH * 4; // 域检后乘法不再回绕
     if (buf.size() != tableEnd + pixels) return false;
     info.paramsHash = h.paramsHash;
     info.pageW = h.pageW;

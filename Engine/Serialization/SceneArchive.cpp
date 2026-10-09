@@ -47,9 +47,16 @@ bool ReadField(const Json& src, const FieldMeta& f, char* comp, const Entity* re
         if (src.is_null()) { *(Entity*)(comp + f.offset) = Entity::Null(); return true; }
         std::string ref = src.get<std::string>();
         if (ref.size() < 2 || ref[0] != 'e') return false;
-        size_t idx = (size_t)std::strtoull(ref.c_str() + 1, nullptr, 10);
+        // 全消费检查（review 2026-10-09 M21）：strtoull 前缀解析不要求到串尾，
+        // "e5x"/"e 5" 会静默指到实体 5（坏档用户可手编，编号越界有防、格式垃圾
+        // 无防）——要求 endptr 落在串尾且首字符即数字（拒前导空白/负号/空串）
+        char* end = nullptr;
+        const char* digits = ref.c_str() + 1;
+        if (*digits < '0' || *digits > '9') return false; // 拒前导空白/符号（strtoull 会跳会收）
+        const unsigned long long idx = std::strtoull(digits, &end, 10);
+        if (*end != '\0') return false;
         if (idx >= remapCount) return false;
-        *(Entity*)(comp + f.offset) = remap[idx];
+        *(Entity*)(comp + f.offset) = remap[(size_t)idx];
         return true;
     }
     case FieldType::Blob24: {

@@ -124,6 +124,24 @@ void ReadAudioImporter(const fs::path& assetPath, IndexedEntry& e) {
     }
 }
 
+/// 非抛 hex→u32（review 2026-10-09 M15）：整串消费且 ≤8 位才成功。std::stoull
+/// 对非数字/超域串抛 invalid_argument/out_of_range，从 Open 全链无捕获 →
+/// boot/packager 终止；.meta 是用户可手编 JSON，此处须与同文件其余解析同为
+/// 「坏段=默认」非抛口径（HexToGuid 同款手写先例）
+bool ParseHexU32(const std::string& s, uint32_t& out) {
+    if (s.empty() || s.size() > 8) return false;
+    uint32_t v = 0;
+    for (char c : s) {
+        v <<= 4;
+        if (c >= '0' && c <= '9') v |= (uint32_t)(c - '0');
+        else if (c >= 'a' && c <= 'f') v |= (uint32_t)(c - 'a' + 10);
+        else if (c >= 'A' && c <= 'F') v |= (uint32_t)(c - 'A' + 10);
+        else return false;
+    }
+    out = v;
+    return true;
+}
+
 /// 读 .meta 的字体 importer 段（M7c 批①；packager 烤制消费——AssetIndex 打开期
 /// 与音频同款一次小 IO）：`charset/size/outline`；坏段 = 默认（ASCII 95 无描边）
 void ReadFontImporter(const fs::path& assetPath, IndexedEntry& e) {
@@ -152,8 +170,10 @@ void ReadFontImporter(const fs::path& assetPath, IndexedEntry& e) {
             const uint64_t v = px.get<uint64_t>();
             if (v <= 8) e.fontOutlinePx = (uint8_t)v;
         }
-        if (col.is_string())
-            e.fontOutlineColor = (uint32_t)std::stoull(col.get<std::string>(), nullptr, 16);
+        if (col.is_string()) {
+            uint32_t v = 0;
+            if (ParseHexU32(col.get<std::string>(), v)) e.fontOutlineColor = v;
+        }
     }
 }
 
@@ -307,11 +327,23 @@ bool AssetIndex::LoadFromManifest(const std::string& manifestPath) {
     // 精确回绕可绕过原防御，SetSpriteAt 以巨值 resize 直接 bad_alloc 崩装载，LBA1
     // review 2026-10-01 同款教训在号域重演；收口先于随迁/保号消费，count 同时钳
     // 编辑器网格上限 4096 = ReadGridImporter 同域）。真坏账清零转全幅（宁缺勿错）。
+    // 数量对账（review 2026-10-09 M13）：manifest sliceCount 须与 .meta 网格积一致
+    // ——陈旧 manifest（.bak 恢复 / pkg 快照 + 后续改大的 .meta）配新网格时，
+    // RegisterGridSlices 会以 SliceSpriteId 越界回 0 调 SetSpriteAt 触发保留号断言
+    // release abort 硬崩装载；对不上 = 清块转全幅（.meta 是真源，编辑器 Rescan 归位）
+    uint32_t mismatchedSlices = 0;
     for (IndexedEntry& e : entries_) {
         if (e.type != AssetType::Sprite || e.sliceCount == 0) continue;
-        if (e.sliceCount > 4096 || uint64_t(e.sliceBase) + e.sliceCount > idCeiling)
+        if (e.sliceCount > 4096 || uint64_t(e.sliceBase) + e.sliceCount > idCeiling ||
+            e.sliceCount != uint32_t(e.gridCols) * e.gridRows) {
+            ++mismatchedSlices;
             e.sliceBase = e.sliceCount = 0;
+        }
     }
+    if (mismatchedSlices)
+        LEMON_WARN("AssetIndex：%u 条 Sprite 的 manifest 切片账与 .meta 网格不对账"
+                   "（清块转全幅，编辑器 Rescan 归位）",
+                   mismatchedSlices);
     uint32_t nextId = idCeiling;
     std::unordered_map<uint32_t, uint8_t> taken; // 已占号集（撞号检测；无 sprite 的
                                                  // 纯数据项目号域不消费 = 合法）

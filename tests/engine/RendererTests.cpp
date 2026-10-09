@@ -558,6 +558,39 @@ void TestFontBakeGolden() {
     Expect(BakeFontStale(src.c_str(), a.c_str(), p2.Hash()), "outline change stale");
     fs::remove(b, ec);
     Expect(BakeFontStale(src.c_str(), b.c_str(), p.Hash()), "missing product stale");
+    // M14（review 2026-10-09 b11b）：LBF1 头域检——pageW/pageH 零值或巨值时
+    // (size_t)w*h*4 可 2^64 回绕（0x80000000² 积 ≡ 0），仅含头+字形表的小文件
+    // 即过字节对账，随后 BitmapFont 以 2^31 量级 CreateTexture → abort/驱动 UB。
+    // `.lemon/baked/` 是第三方可替换内容——装载侧域检须拒。仿 LAT1 kAtlasMaxImageDim
+    {
+        std::vector<uint8_t> v;
+        std::ifstream f(a, std::ios::binary);
+        v.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+        auto rewriteAndExpectReject = [&](const char* name, uint32_t pw, uint32_t ph,
+                                          bool truncatePayload) {
+            std::vector<uint8_t> w = v;
+            // FileHeader 布局：magic[4] u32 u64(paramsHash) pageW pageH i32 i32 u32
+            struct HLayout { char magic[4]; uint32_t version; uint64_t paramsHash;
+                            uint32_t pageW, pageH; int32_t asc, desc; uint32_t glyphCount; };
+            HLayout h;
+            std::memcpy(&h, w.data(), sizeof(h));
+            const size_t tableEnd = sizeof(h) + (size_t)h.glyphCount * sizeof(FontGlyph);
+            h.pageW = pw;
+            h.pageH = ph;
+            std::memcpy(w.data(), &h, sizeof(h));
+            if (truncatePayload) w.resize(tableEnd); // 头+表即收——回绕积 0 恰过对账
+            const fs::path bad = dir / (std::string("bad-") + name + ".baked");
+            std::ofstream fo(bad, std::ios::binary | std::ios::trunc);
+            fo.write((const char*)w.data(), (std::streamsize)w.size());
+            BakedFontInfo bi;
+            std::vector<FontGlyph> bg;
+            std::vector<uint8_t> br;
+            Expect(!LoadBakedFont(bad.string().c_str(), bi, bg, br), name);
+        };
+        rewriteAndExpectReject("zero-dim", 0, 0, false);
+        rewriteAndExpectReject("wrap-2e31", 0x80000000u, 0x80000000u, true);
+        rewriteAndExpectReject("oversize", 99999, 99999, false);
+    }
     fs::remove_all(dir, ec);
 }
 

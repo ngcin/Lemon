@@ -187,6 +187,15 @@ struct InputCollector {
                 if (!e->key.repeat) self->keyDown[e->key.scancode] = true;
                 break;
             case SDL_EVENT_KEY_UP: self->keyDown[e->key.scancode] = false; break;
+            case SDL_EVENT_WINDOW_FOCUS_LOST:
+            case SDL_EVENT_WINDOW_MINIMIZED:
+                // M22（review 2026-10-09）：失焦瞬间按住的键不会再收到 KEY_UP（去了
+                // 新焦点应用）——gameplay 输入直读本表，不清 = 卡键（Play 态角色持续
+                // 单向移动）。Window.cpp 同款修复只清 m->keys（IsKeyDown 面），本表
+                // 原先无分支清键 = 修复落在不读的路径上
+                std::memset(self->keyDown, 0, sizeof(self->keyDown));
+                self->leftDown = false; // 按住左键失焦同理（拖拽粘滞）
+                break;
             case SDL_EVENT_TEXT_INPUT: self->textInput += e->text.text; break;
             case SDL_EVENT_TEXT_EDITING:
                 self->editing.text = e->edit.text;

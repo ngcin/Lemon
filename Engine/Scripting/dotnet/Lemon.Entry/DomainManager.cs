@@ -286,6 +286,30 @@ internal static unsafe class DomainManager
 
     private static void UiEvtBody() => Lemon.UI.DispatchEvents(s_uiPkts, s_uiCount);
 
+    // ---- 换场事件（M9 review 2026-10-09：池化域线程投递）------------------------
+    // sceneLoaded/sceneUnloaded/activeSceneChanged 的用户 ALC 委托与 await 续段
+    // 原在 UCO 调用线程（模拟主线程）内联执行，而 UnloadScript 的 alc.Unload()
+    // 恰在同一线程——违反 ADR-010 D1「卸载线程从未触碰用户 ALC」纪律；与
+    // lemon_ui_events_dispatch（#14）两导出口径不对称。改走同款池化域线程投递。
+    private static byte s_seKind;
+    private static uint s_seOld, s_seNew;
+    private static byte s_seMode;
+    private static readonly Action s_sceneEvtBody = SceneEvtBody;
+    private static readonly Command s_sceneEvtCmd = new() { Run = s_sceneEvtBody };
+
+    private static void SceneEvtBody()
+        => Lemon.SceneManager.OnNativeSceneEvent(s_seKind, s_seOld, s_seNew, s_seMode);
+
+    /// <summary>换场事件派发（池化，零分配；域线程）。换场频率低非 GC 诉求——
+    /// 线程契约与 PostUiEvents 同款（ADR-010 D1）。</summary>
+    internal static void PostSceneEvent(byte kind, uint oldHandle, uint newHandle, byte mode)
+    {
+        s_seKind = kind; s_seOld = oldHandle; s_seNew = newHandle; s_seMode = mode;
+        RunPooled(s_sceneEvtCmd);
+        if (s_sceneEvtCmd.Error != null)
+            Console.Error.WriteLine("[lemon] 换场事件派发异常（已拦，保进程）：" + s_sceneEvtCmd.Error.Message);
+    }
+
     /// <summary>UI 事件段派发（池化，零分配；域线程）。UI.Events 订阅 handler 是
     /// 用户 ALC 代码——与 PostBatchEvents 同线程契约（ADR-010 D1；原导出内联
     /// 执行击穿"卸载线程从未触碰 ALC"前提，#14）。</summary>
@@ -306,18 +330,25 @@ internal static unsafe class DomainManager
         cmd.Done.Wait();
     }
 
-    /// <summary>批量帧执行（池化，零分配；异常已在域线程内部隔离）。</summary>
+    /// <summary>批量帧执行（池化，零分配；异常已在域线程内部隔离）。Error 补检
+    /// （M10 review 2026-10-09）：隔离面外逃逸的异常原先静默吞 = 哑火零诊断，
+    /// 与 PostUiEvents 口径对齐。</summary>
     internal static unsafe void PostBatchTick(BatchSystemFrame* frames, int count, float dt)
     {
         s_tFrames = frames; s_tCount = count; s_tDt = dt;
         RunPooled(s_tickCmd);
+        if (s_tickCmd.Error != null)
+            Console.Error.WriteLine("[lemon] 批量帧异常（已拦，保进程）：" + s_tickCmd.Error.Message);
     }
 
-    /// <summary>事件段派发（池化，零分配）。</summary>
+    /// <summary>事件段派发（池化，零分配）。Error 补检（M10）：派发段异常原先
+    /// 静默吞且当批剩余事件全丢——红字留痕。</summary>
     internal static unsafe void PostBatchEvents(Lemon.Interop.EventPacket* pkts, int count)
     {
         s_ePkts = pkts; s_eCount = count;
         RunPooled(s_evtCmd);
+        if (s_evtCmd.Error != null)
+            Console.Error.WriteLine("[lemon] 事件派发异常（已拦，保进程）：" + s_evtCmd.Error.Message);
     }
 
     // ---- M3-2b 卸载 pin 诊断探针（长期保留：ADR-010 修订——runtime 升级复测用）---

@@ -1599,6 +1599,57 @@ void TestVerifyNullEntityRefRoundtrip() {
     });
 }
 
+// ---- M21（review 2026-10-09 b11b）：EntityRef 坏格式档拒读 ----
+// strtoull 前缀解析不查 endptr："e1x"/"e 1"/"e-1" 原静默指向实体 1（编号越界有
+// 防、格式垃圾无防）——修复后要求整串消费 + 首字符数字，非法 = 红字 + 保持默认
+// null（ReadEntity 契约），与编号越界同款。控制组：合法 "e1" 正常往返。
+
+void TestBadEntityRefFormatRejected() {
+    auto buildText = [] {
+        World w;
+        Scene& src = w.CreateScene("badref");
+        Entity monster = src.Create();
+        src.Emplace<Transform2D>(monster, Transform2D{{0, 0}});
+        Entity child = src.Create();
+        src.Emplace<Transform2D>(child, Transform2D{{1, 2}});
+        Hierarchy& h = src.Emplace<Hierarchy>(child);
+        h.parent = monster;
+        return SceneArchive::Save(src);
+    };
+    // 控制组：未篡改档 parent 往返非空（篡改基线证明字段确实在读）
+    {
+        World w2;
+        Scene& dst = w2.CreateScene("ctl");
+        Expect(SceneArchive::Load(dst, buildText()), "control load ok");
+        bool seen = false;
+        dst.View<Hierarchy>().each([&](auto, Hierarchy& h) {
+            seen = true;
+            Expect(!h.parent.IsNull(), "control: parent roundtrip non-null");
+        });
+        Expect(seen, "control: hierarchy present");
+    }
+    // 篡改组：三变体全部拒读（parent 保持默认 null）。索引不设假设——按
+    // `"parent":"e` 前缀定位后替换到引号闭（合法基线无论是 e0/e1）
+    for (const char* variant : {"e1x", "e 1", "e-1"}) {
+        std::string text = buildText();
+        const size_t at = text.find("\"parent\":\"e");
+        if (at == std::string::npos) { Expect(false, "parent ref found in text"); continue; }
+        const size_t close = text.find('"', at + 11); // 11 = len("\"parent\":\"e")
+        if (close == std::string::npos) { Expect(false, "parent ref closes"); continue; }
+        const std::string repl = std::string("\"parent\":\"") + variant + "\"";
+        text.replace(at, close - at + 1, repl);
+        World w2;
+        Scene& dst = w2.CreateScene("bad");
+        Expect(SceneArchive::Load(dst, text), "load proceeds (warn per-field)");
+        bool seen = false;
+        dst.View<Hierarchy>().each([&](auto, Hierarchy& h) {
+            seen = true;
+            Expect(h.parent.IsNull(), "bad-format ref kept default null");
+        });
+        Expect(seen, "hierarchy present after bad ref");
+    }
+}
+
 // ---- StateHash：重复稳定 / 裸实体不可见 / 状态变化可检 ----
 
 void TestVerifyStateHashStability() {
@@ -1940,6 +1991,7 @@ void RunEcsTests() {
     TestVerifySystemRngStreams();
     TestVerifyTeamRangeSafety();
     TestVerifyNullEntityRefRoundtrip();
+    TestBadEntityRefFormatRejected(); // M21：坏格式 EntityRef 拒读（b11b）
     TestVerifyStateHashStability();
     TestHierarchyChainLifecycle();
     TestVerifyFullChainFollowsAfterRoundtrip();

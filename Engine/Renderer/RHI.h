@@ -172,7 +172,7 @@ public:
     void* MapBuffer(Buffer);                  // hostMapped=true 时常驻指针
     void DestroyBuffer(Buffer);
     Texture CreateTexture(const TextureDesc&);
-    void UploadTexture(Texture, const void* rgba8Pixels, uint64_t byteSize); // staging 一次性上传（含 mip 链）
+    bool UploadTexture(Texture, const void* rgba8Pixels, uint64_t byteSize); // staging 一次性上传（含 mip 链）；false = 设备丢失未上传（M3：恢复由帧循环统一驱动）
     void DestroyTexture(Texture);
     Sampler CreateSampler(const SamplerDesc&);
     Shader CreateShader(ShaderStage, const uint32_t* spirv, size_t wordCount); // 内部按 SPIR-V 哈希去重

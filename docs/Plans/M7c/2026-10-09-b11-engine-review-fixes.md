@@ -27,6 +27,8 @@ Status: in-progress（制定 2026-10-09；D1–D5 全部按建议追认，用户
 
 ## 2. 子批 b11b — P1 中危缺陷 14 项
 
+> **b11b 机器面 ✅ 2026-10-09**——14 项全清 + H3 专项 wipe 用例（b11a 承诺）落地。ASAN 开工门首跑实报 M5（FxChannel memcpy 对 6 字节串越界读 15B，评审「ASAN 必报」实证）→ 修复后门全绿；终门复跑 34,722 零报告。构建零警告 / 单测 **34,751**（+28：M6 扫掠 / M13 切片对账 / M15 非抛色 / M21 坏引用三变体 / M14 三坏头）/script-tests **1,830** 零回归 / ctest 4/4 / smoke-uirml 双模式 OK（h3 seed/evict/host/tpl 全 1——覆盖「打宿主」与「打 ui-template」两形态）/ 回归 21/21（首跑 --scene reopen 噪声红，隔离 3/3 绿后全量复跑绿）/ bench fps=84。M3 实现要点：不可就地 HandleDeviceLost（调用方持旧 staging），`lossPending` 置位后帧循环 AcquireNextImage 统一恢复；守卫只看 lossPending 不看 deviceLost（重建回调期重上传必须放行）。M9 池化投递 RunPooled 同步等待 = ADR-017 协议⑤时序不变。[DevLog](../../DevLog/2026-10-09-m7c-b11b-review-fixes-medium.md)。TriggerSystem 扫掠（probe=4 族）登记遗留。
+
 **坏数据 abort 面（先清，四条崩溃缝 + 一条 boot 面）**：
 
 | # | 位置 | 修法 |

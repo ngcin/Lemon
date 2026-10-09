@@ -870,10 +870,28 @@ void HitboxSystem::Tick(World& world, Scene& scene, float dt) {
         // teamMask 预过滤（方案 A）：hostile 掩码入查询层，非敌对候选在
         // SpatialHash 内联位/整格早退即拒——密团场景免逐候选 Meta 取
         f.teamMask = teams.HostileMask(projTeam);
-        // hitRadius = 有效判定半径全量（SpatialHash reach = radius + probe，probe=0）
-        scene.Spatial().OverlapCircle(
-            scene, tf.pos, pr.hitRadius, f, 0.0f,
-            [&](Entity hit, const Transform2D& htf) {
+        // M6 扫掠防穿透（review 2026-10-09，D2 追认：阈值门控 + 子步进）：固定步长
+        // 下位移 > 2×hitRadius 即出现漏检带（编辑器允许 speed 至 8192 → 步长
+        // 136px、默认 hitRadius 12 = 最宽 112px 穿透带）。沿本帧位移段（prevPos =
+        // pos - v·dt，MovementSystem 单步积分）取 K 个采样圆心、间距 ≤ 2×
+        // hitRadius 相邻圆域无缝；段首与上帧段尾重采样由命中记忆/iFrames 去重，
+        // 无双重伤害。慢弹（步长在阈内）K=1 = 原单点采样零扰动。子步数钳 64：
+        // 极端配比（极速+微 hitRadius）下采样间距放大，残余漏检属病态配置
+        uint32_t samples = 1;
+        Vec2 seg{0.0f, 0.0f};
+        if (const Velocity* pv = scene.Registry().try_get<Velocity>(ent)) {
+            seg = pv->v * dt;
+            const float stepLen = Length(seg);
+            if (pr.hitRadius > 0.0f && stepLen > 2.0f * pr.hitRadius) {
+                samples = (uint32_t)std::ceil(stepLen / (2.0f * pr.hitRadius)) + 1;
+                if (samples > 64) samples = 64;
+            }
+        }
+        auto probeAt = [&](Vec2 center) {
+            // hitRadius = 有效判定半径全量（SpatialHash reach = radius + probe，probe=0）
+            scene.Spatial().OverlapCircle(
+                scene, center, pr.hitRadius, f, 0.0f,
+                [&](Entity hit, const Transform2D& htf) {
                 (void)htf;
                 const Meta* hm = scene.TryGet<Meta>(hit);
                 if (!hm || !teams.Hostile(projTeam, hm->team)) return true;
@@ -924,6 +942,12 @@ void HitboxSystem::Tick(World& world, Scene& scene, float dt) {
                 }
                 return true;
             });
+        };
+        for (uint32_t s = 0; s < samples && !consumed; ++s) {
+            // 段首（上帧位置）→ 段尾（当前 tf.pos）含两端；samples==1 即 t=1 单点
+            const float t = samples > 1 ? (float)s / (float)(samples - 1) : 1.0f;
+            probeAt(tf.pos - seg * (1.0f - t));
+        }
         if (consumed) {
             EventPacket die{};
             die.type = GameEvent::Death;

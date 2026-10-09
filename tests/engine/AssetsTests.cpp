@@ -1254,6 +1254,96 @@ void TestAssetIndexSliceRebase() {
     fs::remove_all(root, ec);
 }
 
+// ---- M13（review 2026-10-09 b11b）：manifest sliceCount 与 .meta 网格对账 ----
+// 陈旧 manifest（.bak 恢复 / pkg 快照 + 后续改大的 .meta）配新网格时，块号域
+// 本身合法但数量错账——RegisterGridSlices 以 SliceSpriteId 越界回 0 触发保留号
+// 断言 abort。对不上 = 清块转全幅（宁缺勿错；编辑器 Rescan 归位）。
+void TestManifestSliceCountMismatch() {
+    namespace fs = std::filesystem;
+    using lemon::assets::AssetIndex;
+
+    const fs::path root = fs::temp_directory_path() /
+                          ("lemon-test-slicemismatch-" + std::to_string(lemon::CurrentProcessId()));
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root / "Assets", ec);
+    fs::create_directories(root / ".lemon", ec);
+    const uint64_t sheetGuid = 0x6100000000000001ull;
+    {
+        std::ofstream f(root / "Assets" / "sheet.png", std::ios::binary);
+        f << "png";
+    }
+    // .meta 声明 4×4 网格（16 格）；manifest 记 8 = 陈旧账（曾为 2×4）
+    {
+        std::ofstream f(root / "Assets" / "sheet.png.meta", std::ios::trunc);
+        f << "{\"guid\":\"" << lemon::assets::GuidToHex(sheetGuid)
+          << "\",\"type\":\"sprite\",\"importer\":{\"slice\":\"grid\",\"cell\":[8,4],"
+             "\"frames\":[4,4]}}";
+    }
+    {
+        std::ofstream f(root / ".lemon" / "manifest.json", std::ios::trunc);
+        f << "{\"assets\":["
+          << "{\"path\":\"Assets/sheet.png\",\"guid\":" << sheetGuid
+          << ",\"type\":\"sprite\",\"spriteId\":101,\"slice\":{\"base\":102,\"count\":8}}"
+          << "],\"nextSpriteId\":120}";
+    }
+    AssetIndex idx;
+    Expect(idx.Open(root.string(), 100) && idx.FromManifest(), "mismatch: manifest fast path");
+    const lemon::assets::IndexedEntry* sh = idx.FindByGuid(sheetGuid);
+    Expect(sh, "mismatch: entry present");
+    if (sh) {
+        Expect(sh->sliceCount == 0 && sh->sliceBase == 0,
+               "mismatch: stale slice bookkeeping cleared to whole-image");
+        Expect(sh->spriteId != 0, "mismatch: body id retained");
+    }
+    fs::remove_all(root, ec);
+}
+
+// ---- M15（review 2026-10-09 b11b）：字体 outline 色非抛解析 ----
+// std::stoull 对非 hex 串抛 invalid_argument、超域抛 out_of_range，从 Open 全链
+// 无捕获 → boot/packager 终止。修复 = ParseHexU32 整串消费，坏串保持默认色。
+void TestFontImporterBadOutline() {
+    namespace fs = std::filesystem;
+    using lemon::assets::AssetIndex;
+
+    const fs::path root = fs::temp_directory_path() /
+                          ("lemon-test-fontbad-" + std::to_string(lemon::CurrentProcessId()));
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root / "Assets", ec);
+    fs::create_directories(root / ".lemon", ec);
+    const uint64_t fontGuid = 0x6200000000000001ull;
+    {
+        std::ofstream f(root / "Assets" / "body.ttf", std::ios::binary);
+        f << "ttf";
+    }
+    // "zz" = stoull invalid_argument 形态（修复前测试进程自身 terminate）；
+    // 姊妹字段同段解析正常 = 只坏色值、不殃及 charset/size/outlinePx
+    {
+        std::ofstream f(root / "Assets" / "body.ttf.meta", std::ios::trunc);
+        f << "{\"guid\":\"" << lemon::assets::GuidToHex(fontGuid)
+          << "\",\"type\":\"font\",\"importer\":{\"charset\":\"AB\",\"size\":32,"
+             "\"outline\":[2,\"zz\"]}}";
+    }
+    {
+        std::ofstream f(root / ".lemon" / "manifest.json", std::ios::trunc);
+        f << "{\"assets\":["
+          << "{\"path\":\"Assets/body.ttf\",\"guid\":" << fontGuid << ",\"type\":\"font\"}"
+          << "]}";
+    }
+    AssetIndex idx; // 修复前：stoull("zz") 抛 → 测试进程自身 terminate（红得响亮）
+    Expect(idx.Open(root.string(), 100), "font-bad: open survives bad outline color");
+    const lemon::assets::IndexedEntry* fo = idx.FindByGuid(fontGuid);
+    Expect(fo, "font-bad: entry present");
+    if (fo) {
+        Expect(fo->fontOutlineColor == 0xFF202020u,
+               "font-bad: bad hex keeps default outline color");
+        Expect(fo->fontPx == 32 && fo->fontOutlinePx == 2,
+               "font-bad: sibling importer fields still parsed");
+    }
+    fs::remove_all(root, ec);
+}
+
 void TestBakedAtlasContainer() {
     namespace fs = std::filesystem;
     using namespace lemon::assets;
@@ -1782,6 +1872,12 @@ void RunAssetsTests() {
 #endif
 #ifdef LEMON_EDITOR_CORE
     TestAssetIndexSliceRebase();
+#endif
+#ifdef LEMON_EDITOR_CORE
+    TestManifestSliceCountMismatch(); // 批⑪ M13：manifest 切片账对账（b11b）
+#endif
+#ifdef LEMON_EDITOR_CORE
+    TestFontImporterBadOutline(); // 批⑪ M15：outline 色非抛解析（b11b）
 #endif
 #ifdef LEMON_EDITOR_CORE
     TestBakedAtlasContainer();

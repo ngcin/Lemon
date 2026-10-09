@@ -84,7 +84,6 @@ void AppendGameFx(ecs::FxChannel& fx, ecs::Scene& scene, const Rect& view,
             t.y < view.min.y - margin || t.y > view.max.y + margin)
             continue;
         float drawY = t.y + dy;
-        const float lineH = font.LineHeight(scale);
         if (drawY < view.min.y) drawY = view.min.y;
         const uint32_t color = (t.color & 0x00FFFFFFu) |
                                ((uint32_t)(uint8_t)(alpha * 255.0f) << 24);

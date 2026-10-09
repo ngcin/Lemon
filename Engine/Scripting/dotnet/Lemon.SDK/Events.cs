@@ -73,8 +73,14 @@ public static unsafe class Events
             var list = t < 16 ? s_handlers[t] : null;
             if (list == null) continue; // 无订阅者类型跳过（04 §4 预筛）
             var msg = new GameEventMsg(*p);
-            foreach (var h in list) {
-                try { h(msg); }
+            // for 索引迭代（M10 review 2026-10-09）：handler 内 Subscribe/Unsubscribe
+            // （公开 API）改表会使 foreach 枚举器下一步抛 InvalidOperationException——
+            // 不在 per-handler try 内，逃逸后被 RunPooled 静默吞掉且当批剩余事件全丢。
+            // for + 容量重查容忍尾部增删（尾增同包可见/中途删顺移跳过一位——快照语义
+            // 的可接受偏差），零分配（本文件 GC 纪律）；UI.DispatchEvents 快照先例对
+            // 照。try 覆盖索引访问与调用体。
+            for (int hi = 0; hi < list.Count; ++hi) {
+                try { list[hi](msg); }
                 catch (Exception e) { // 异常隔离（04 §7）：单订阅者异常不阻断派发
                     Console.Error.WriteLine($"[lemon][error] event handler {t}: {e.Message}");
                 }

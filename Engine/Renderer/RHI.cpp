@@ -214,6 +214,11 @@ struct Device::Impl {
     std::vector<RecreateCallback> preDestroyCallbacks;
     uint64_t nextRecreateCallbackId = 1;
     bool deviceLost = false;
+    // 帧外提交（ImmediateSubmit 纹理上传路径）探明的丢失（review 2026-10-09 M3）：
+    // 不可就地 HandleDeviceLost——调用方（UploadTexture 等）仍持有旧 allocator 的
+    // staging 资源，重建 = 跨 allocator 释放；置位后本函数族全部早退，恢复由
+    // 帧循环 AcquireNextImage 头部统一驱动（与 acquire 探明同一条路）
+    bool lossPending = false;
 
     // CommandList（Device 持有，BeginFrame 刷新指向）
     CommandList cmdList;
@@ -696,7 +701,14 @@ struct Device::Impl {
     }
 
     // ------------------------------------------------------------ 一次性提交
-    void ImmediateSubmit(const std::function<void(VkCommandBuffer)>& record) {
+    // 返回 false = 设备丢失（本次未执行/结果不可信，调用方放弃后续上传即可）。
+    // 对 DEVICE_LOST 特判不走 VK_CHECK abort（review 2026-10-09 M3）：设备丢失
+    // 瞬间编辑器后台导入/缩略图懒加载若正在上传即整进程 abort，丢用户全部未保存
+    // 工作——帧循环同类错误本就显式走 HandleDeviceLost 完整恢复，此处对齐
+    bool ImmediateSubmit(const std::function<void(VkCommandBuffer)>& record) {
+        // 只看 lossPending（= 丢失已探明、恢复未启动）：HandleDeviceLost 重建期
+        // deviceLost 虽为真，但 recreateCallbacks 的重上传必须在新设备上照常执行
+        if (lossPending) return false;
         VkCommandBufferAllocateInfo ai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
         ai.commandPool = uploadPool;
         ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
@@ -711,9 +723,26 @@ struct Device::Impl {
         VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
         si.commandBufferCount = 1;
         si.pCommandBuffers = &cmd;
-        VK_CHECK(vkQueueSubmit(queue, 1, &si, VK_NULL_HANDLE));
-        VK_CHECK(vkQueueWaitIdle(queue));
+        const VkResult sr = vkQueueSubmit(queue, 1, &si, VK_NULL_HANDLE);
+        if (sr == VK_ERROR_DEVICE_LOST) {
+            lossPending = true;
+            LogMsg(LogLevel::Error,
+                   "immediate submit: device lost — recovery deferred to next frame");
+            vkFreeCommandBuffers(device, uploadPool, 1, &cmd); // 丢失设备上 no-op，规范安全
+            return false;
+        }
+        VK_CHECK(sr);
+        const VkResult wr = vkQueueWaitIdle(queue);
+        if (wr == VK_ERROR_DEVICE_LOST) {
+            lossPending = true;
+            LogMsg(LogLevel::Error,
+                   "immediate submit wait: device lost — recovery deferred to next frame");
+            vkFreeCommandBuffers(device, uploadPool, 1, &cmd);
+            return false;
+        }
+        VK_CHECK(wr);
         vkFreeCommandBuffers(device, uploadPool, 1, &cmd);
+        return true;
     }
 
     void TransitionImage(VkCommandBuffer cmd, VkImage image, uint32_t levelCount,
@@ -818,6 +847,7 @@ struct Device::Impl {
             cb.fn(*ownerDevice);
         }
         deviceLost = false;
+        lossPending = false; // 若重建期再次探明丢失，置位保留 → 下帧再走一轮恢复
     }
 
     bool wantTimestamps = false;
@@ -1002,7 +1032,8 @@ Texture Device::CreateTexture(const TextureDesc& desc) {
     return Texture{id};
 }
 
-void Device::UploadTexture(Texture t, const void* rgba8Pixels, uint64_t byteSize) {
+bool Device::UploadTexture(Texture t, const void* rgba8Pixels, uint64_t byteSize) {
+    if (m->lossPending) return false; // M3：已探明丢失（恢复未启动）——重建回调期放行
     auto& r = m->textures[t.id - 1];
     LEMON_ASSERT(r.image, "invalid texture");
     LEMON_ASSERT(byteSize >= (uint64_t)r.desc.width * r.desc.height * 4, "pixel data too small");
@@ -1024,7 +1055,7 @@ void Device::UploadTexture(Texture t, const void* rgba8Pixels, uint64_t byteSize
 
     VkImage img = r.image;
     const uint32_t levels = r.realMipLevels;
-    m->ImmediateSubmit([&](VkCommandBuffer cmd) {
+    const bool ok = m->ImmediateSubmit([&](VkCommandBuffer cmd) {
         m->TransitionImage(cmd, img, 1, VK_IMAGE_LAYOUT_UNDEFINED,
                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0,
                            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
@@ -1074,6 +1105,7 @@ void Device::UploadTexture(Texture t, const void* rgba8Pixels, uint64_t byteSize
         }
     });
     vmaDestroyBuffer(m->allocator, staging, stagingAlloc);
+    return ok;
 }
 
 void Device::DestroyTexture(Texture t) {
@@ -1262,6 +1294,13 @@ void Device::BindSamplerToSlot(Sampler s, uint32_t slot) {
 
 AcquireResult Device::AcquireNextImage() {
     AcquireResult out;
+    if (m->lossPending) { // M3（review 2026-10-09）：帧外提交探明的丢失在此恢复
+        m->lossPending = false;
+        m->HandleDeviceLost("immediate-submit");
+        out.deviceLost = true;
+        out.needsRecreate = true;
+        return out;
+    }
     if (!m->swapchain) { // 丢失重建后延后建链
         if (!m->CreateSwapchainObjects()) { out.needsRecreate = true; return out; }
     }
@@ -1368,7 +1407,7 @@ void Device::EnableTimestamps() {
 }
 FrameTiming Device::LastFrameTiming() const { return m->lastTiming; }
 
-bool Device::IsDeviceLost() const { return m->deviceLost; }
+bool Device::IsDeviceLost() const { return m->deviceLost || m->lossPending; }
 
 void Device::SimulateDeviceLoss() { m->HandleDeviceLost("simulated (acceptance hook)"); }
 
@@ -1577,10 +1616,17 @@ bool Device::DebugFetchCapture(std::vector<uint8_t>& rgbaOut, uint32_t& w, uint3
 
 // ----------------------------------------------------------- CommandList --
 namespace {
-/// 通用动态渲染块开启（swapchain / 离屏共用；old=UNDEFINED 是获取屏障规范写法）
+/// 通用动态渲染块开启（swapchain / 离屏共用；old=UNDEFINED 是获取屏障规范写法）。
+/// srcStage/srcAccess 默认 TOP_OF_PIPE/0（首作用域空集——交换链图像由 acquire
+/// 语义背书）；持久离屏 RT 传 FRAGMENT_SHADER+SHADER_READ（review 2026-10-09
+/// M1）：帧 N-1 尾部 UI 采样读同一 image 可能仍在途（submit 间无 GPU 端依赖），
+/// 空首作用域 = WAR 竞态偶发残影/撕裂；pipeline barrier 的执行依赖跨 submit
+/// 边界有效，可对先前提交的采样建立依赖
 void BeginDynamicRendering(VkCommandBuffer cmd, VkImageView view, uint32_t w, uint32_t h,
                            const float clearColor[4], VkImage image,
-                           VkPipelineStageFlags dstStage) {
+                           VkPipelineStageFlags dstStage,
+                           VkPipelineStageFlags srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                           VkAccessFlags srcAccess = 0) {
     VkImageMemoryBarrier b{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
     b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
@@ -1588,9 +1634,9 @@ void BeginDynamicRendering(VkCommandBuffer cmd, VkImageView view, uint32_t w, ui
     b.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
     b.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     b.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    b.srcAccessMask = 0;
+    b.srcAccessMask = srcAccess;
     b.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, dstStage, 0, 0, nullptr, 0,
+    vkCmdPipelineBarrier(cmd, srcStage, dstStage, 0, 0, nullptr, 0,
                          nullptr, 1, &b);
     VkRenderingAttachmentInfo color{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
     color.imageView = view;

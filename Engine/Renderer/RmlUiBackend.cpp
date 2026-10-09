@@ -43,6 +43,7 @@ struct GeoAlloc {
     VkDeviceSize vOffset = 0;                     // 池内偏移（绑定用）
     VkDeviceSize iOffset = 0;
     uint32_t numIndices = 0;
+    uint32_t gen = 0; // vblock 世代（M2：跨世代句柄不可在新块上释放）
 };
 
 struct TextureRes {
@@ -159,6 +160,7 @@ struct RmlUiBackend::Impl final : public Rml::RenderInterface {
     bool warnedLoadTexture = false;
     bool warnedClipMask = false;
     uint32_t geoFails = 0;
+    uint32_t geoGen = 0; // vblock 世代号（RecreateAfterLoss 递增）
 
     // 与 rmlui.vert 的 push constant 一致（72B）
     struct Pc {
@@ -477,6 +479,7 @@ struct RmlUiBackend::Impl final : public Rml::RenderInterface {
             v.clear();
         }
         for (auto& v : pendingGeo) v.clear();
+        ++geoGen; // 旧世代句柄后续经 ReleaseGeometry 到来时按世代丢弃（M2）
         for (TextureRes* t : liveTex) {
             t->set = VK_NULL_HANDLE;
             t->view = VK_NULL_HANDLE;
@@ -546,6 +549,7 @@ struct RmlUiBackend::Impl final : public Rml::RenderInterface {
         g->vOffset = vOff;
         g->iOffset = iOff;
         g->numIndices = (uint32_t)indices.size();
+        g->gen = geoGen;
         return (Rml::CompiledGeometryHandle)g;
     }
 
@@ -572,7 +576,12 @@ struct RmlUiBackend::Impl final : public Rml::RenderInterface {
 
     void ReleaseGeometry(Rml::CompiledGeometryHandle geometry) override {
         auto* g = (GeoAlloc*)geometry;
-        pendingGeo[frameIndex % kDeferFrames].emplace_back(g->vAlloc, g->iAlloc);
+        // M2（review 2026-10-09）：跨世代句柄直接丢弃——设备丢失重建后 ui-subsystem
+        // 置 reloadDocsNextUpdate → 翌帧 Rml 卸载文档时用旧 vblock 句柄回调本函数，
+        // 照常入延迟环 = DrainDeferred 在**新** vblock 上 vmaVirtualFree 外来句柄，
+        // VMA TLSF 就地解引用并把旧块节点并入新块自由链表 = 堆损坏
+        if (g->gen == geoGen)
+            pendingGeo[frameIndex % kDeferFrames].emplace_back(g->vAlloc, g->iAlloc);
         delete g;
     }
 

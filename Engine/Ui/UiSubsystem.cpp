@@ -636,12 +636,20 @@ bool UiSubsystem::Init(rhi::Device& device, rhi::Format rtFormat, void* sdlWindo
     i.device = &device;
     i.sys.sdlWindow = sdlWindow;
     if (!i.backend->Init(device, rtFormat)) { // #46：失败红字已落——空 RenderInterface
+        // M20（review 2026-10-09）：失败就地拆 impl_——保留会让后续显式/析构防御
+        // Shutdown 调从未 Initialise 的 Rml::Shutdown（debug 断言中止、release 空指针
+        // UB），「UI 缺席降级运行」契约变崩溃。此路 Rml 未触、backend Init 失败已自清
+        impl_.reset();
         return false;                          // 不得塞进 Rml（原静默 nullptr 直传）
     }
     Rml::SetSystemInterface(&i.sys);
     Rml::SetRenderInterface((Rml::RenderInterface*)i.backend->RenderInterfacePtr());
     if (!Rml::Initialise()) {
         LEMON_ERROR("ui-subsystem: Rml::Initialise 失败");
+        // M20：Initialise 失败时 core 半初始化——Rml::Shutdown 不可调；backend 已
+        // Init 成功须正规拆（WaitIdle/DestroyAll/反注册回调）
+        i.backend->Shutdown();
+        impl_.reset();
         return false;
     }
     i.listener.impl = &i;
@@ -651,6 +659,8 @@ bool UiSubsystem::Init(rhi::Device& device, rhi::Format rtFormat, void* sdlWindo
                                (Rml::TextInputHandler*)i.ime.HandlerPtr());
     if (!i.ctx) {
         LEMON_ERROR("ui-subsystem: CreateContext 失败");
+        // M20：Rml 已初始化——走完整 Shutdown 序（recreateCb 尚未注册，跳过无害）
+        Shutdown();
         return false;
     }
     for (const auto& c : kFontChain) {
