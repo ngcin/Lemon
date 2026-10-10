@@ -54,6 +54,8 @@ struct EditorLaunch {
     bool smoke = false;      // 退出前自检断言 + 汇总打印（M4.md §6 #13 提案）
     bool demoWindow = false; // 叠加 Dear ImGui Demo（冒烟画面丰富度/手动排障）
     std::string screenshot;  // 非空 = 末帧截屏写 PNG（stb_image_write）
+    std::string smokeLang;   // --smoke-lang <code>：冒烟语言显式覆写（非空优先于
+                             // zh-CN 钉定——回归 en 态宽度锚用，M7c 收官批）
     std::string projectDir;  // --project（M4.4 生效：AssetDatabase 根；空 = cwd 当项目）
     std::string openScene;   // --scene：启动即打开的 .scene（冒烟/CLI 用）
     std::string saveScene;   // --save-scene：场景就绪后保存并退出（CLI roundtrip 验收）
@@ -83,6 +85,14 @@ struct EditorLaunch {
                                 // ExitPlay 兜底回写 .lemon/saves/ 三档）
     bool smokeUirml = false;    // --smoke-uirml：M6b 批③a RmlUi 呈现地基冒烟（隐含
                                 // --play；gameRT 像素断言 + 独立裁决链，不并 editor-smoke 门）
+
+    /// 任一注入/冒烟族模式（语言钉定等「回归可复现」口径；不含 bench——纯性能
+    /// 测量无 UI 文案断言，M7c 批④ §4 登记项随收官批收口）
+    bool AnySmokeMode() const {
+        return smoke || smokeUi || smokeDrag || smokeAnim || smokeTemplate ||
+               smokeGuid || smokeAudio || smokeUirml || playTest || finalTest ||
+               !smokeClose.empty();
+    }
 };
 
 /// 工具标识（Q 选择 / W 移动 / E 旋转 / R 缩放；Godot 式 Select 模式 = 8 向手柄）

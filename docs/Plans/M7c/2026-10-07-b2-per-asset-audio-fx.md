@@ -1,6 +1,6 @@
 # M7c 批② —— per-资产音频参数（听感覆写三件：节流窗/并发上限/微扰幅度）
 
-Status: done 机器面（2026-10-07 当日开工当日收口——单测 34,402→**34,435**（+33：覆写回退链/meta roundtrip/双扫描器夹具）+ ctest 4/4 + 回归 **full 20/20 首跑全绿**（含注入族，本会话后台未复现假红）+ bench-survivor 门禁 **fps=85 ≥ 76.5**；[DevLog](../../DevLog/2026-10-07-m7c-b2-per-asset-audio-fx.md)；**真人听感待用户**——svr-test 右键设覆写进 Play 对比；**review 轮 ✅ 2026-10-08**（核查七面无功能缺陷；三小项全修——钳域常量单源化 `kFxRetriggerMaxSec`/`kFxPitchJitterMax` + 两处注释刷新，复测 34,435 逐位不变，[review DevLog](../../DevLog/2026-10-08-m7c-b2-review.md)）
+Status: done 机器面（2026-10-07 当日开工当日收口——单测 34,402→**34,435**（+33：覆写回退链/meta roundtrip/双扫描器夹具）+ ctest 4/4 + 回归 **full 20/20 首跑全绿**（含注入族，本会话后台未复现假红）+ bench-survivor 门禁 **fps=85 ≥ 76.5**；[DevLog](../../DevLog/2026-10-07-m7c-b2-per-asset-audio-fx.md)；**真人听感 ✅ 2026-10-10 用户过（[验收记录](../../DevLog/2026-10-10-acceptance-m7c-b2-b3.md)）**；**review 轮 ✅ 2026-10-08**（核查七面无功能缺陷；三小项全修——钳域常量单源化 `kFxRetriggerMaxSec`/`kFxPitchJitterMax` + 两处注释刷新，复测 34,435 逐位不变，[review DevLog](../../DevLog/2026-10-08-m7c-b2-review.md)）
 
 > 来源与动机：M6c 两轮听感热修（破音→母带软限幅 + 同 clip 并发上限；"放鞭炮"→重触发节流 + 音高微扰）的三个参数至今**全引擎一份全局值**（Audio Mixer 工具窗滑条 = 过渡试验台）。拾取音想节流宽、挥砍想密；UI 点击想零微扰、脚步想大变化——全局值按下葫芦浮起瓢。本批把三参数做成**每个音频资产可覆写**，.meta 为作者真源。
 >

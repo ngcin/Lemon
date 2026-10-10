@@ -134,10 +134,14 @@ int EditorApp::Run(const EditorLaunch& launch) {
     const auto tStart = std::chrono::steady_clock::now();
 
     // M7c 批③ i18n：翻译表装载 + 语言偏好（editor-settings.json；缺省 zh-CN。
-    // 装载失败不阻断——tr 回退链兜底显示 key/en）
+    // 装载失败不阻断——tr 回退链兜底显示 key/en）。冒烟族钉定 zh-CN（批④ §4
+    // 登记项收口：回归结果不再依赖本机语言设置——en 机 smoke-anim row 必红、
+    // zh 机全绿的不可复现形态；用户设置档不读写）
 #ifdef LEMON_EDITOR_STRINGS_DIR
     loc::LoadStrings(LEMON_EDITOR_STRINGS_DIR);
-    loc::SetLanguage(LoadEditorSettings().language);
+    loc::SetLanguage(!launch.smokeLang.empty()
+                         ? launch.smokeLang
+                         : launch.AnySmokeMode() ? "zh-CN" : LoadEditorSettings().language);
 #endif
 
     SetLogSink(&EditorLogRing::SinkThunk, &log_);

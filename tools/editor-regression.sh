@@ -134,6 +134,13 @@ if [ "${MODE}" = "full" ]; then
     retry_step "anim-chain smoke (grid slice + clip + animator frame mapping; M5-b3)" \
         "smoke-anim: .* => OK" \
         "${EDITOR}" --project "${TMP}/anim" --smoke-anim --frames 120 --no-reopen
+    # M7c 收官批：en 态宽度锚——smoke 族语言已默认钉 zh-CN（AnySmokeMode，
+    # 回归不依赖本机 editor-settings），en 态由本步独立行走：选帧对话框底行
+    # 「替换为」越窗修复（提示按剩余宽省略截断）的回归锚 = f80 row 锁；
+    # 夹具自播种独立目录，不依赖 zh 态步的写入状态（批④ §4 登记项收口）
+    retry_step "anim-chain smoke en (i18n bottom-row width anchor; M7c close)" \
+        "smoke-anim: .* => OK" \
+        "${EDITOR}" --project "${TMP}/anim-en" --smoke-anim --smoke-lang en --frames 120 --no-reopen
     grep_step "template-chain smoke (wizard copy + build + play menu/run/cards/death/revive/results/restart/pause/settings/tomenu; M5-b4+M6b-b3d2)" \
         "smoke-template: .* => OK" \
         "${EDITOR}" --smoke-template --frames 3400 --no-reopen

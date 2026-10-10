@@ -27,7 +27,8 @@ int usageExit(const char* why) {
                 "[--save-scene f.scene] [--play] [--script Game.dll] [--final] "
                 "[--no-reopen] [--smoke-close clean|dirty] [--smoke-drag] "
                 "[--smoke-ui] [--smoke-anim] [--bench-survivor] [--gen-vs-template dir] "
-                "[--smoke-template] [--smoke-guid] [--smoke-uirml] [--smoke-audio]\n");
+                "[--smoke-template] [--smoke-guid] [--smoke-uirml] [--smoke-audio] "
+                "[--smoke-lang zh-CN|en]\n");
     return 2;
 }
 
@@ -76,6 +77,8 @@ int main(int argc, char** argv) {
             launch.smokeUi = true; // 真人会话注入冒烟（快捷键/Undo/保存/重命名/导航等）
         else if (!std::strcmp(argv[i], "--smoke-anim"))
             launch.smokeAnim = launch.smoke = launch.playTest = true; // 动画链冒烟（M5 批③）
+        else if (!std::strcmp(argv[i], "--smoke-lang") && i + 1 < argc)
+            launch.smokeLang = argv[++i]; // 冒烟语言覆写（默认钉 zh-CN；en 态宽度回归锚）
         else if (!std::strcmp(argv[i], "--bench-survivor"))
             launch.benchSurvivor = true; // M5 压测基线（1 万怪刷怪 + Immediate + 帧时）
         else if (!std::strcmp(argv[i], "--bench-scene"))

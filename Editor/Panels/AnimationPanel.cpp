@@ -923,12 +923,30 @@ void AnimationPanel::DrawSheetPicker(EditorApp& app) {
         return out;
     };
     // meta 状态提示放底行左侧空档（上下结构批自右栏移来；悬停 cell 信息另有
-    // 同文 tooltip）——末行固定高（-footH 预留），SameLine 防提示顶出第二行
-    ImGui::TextDisabled("%s", tr("anim.pick.meta_hint"));
+    // 同文 tooltip）——末行固定高（-footH 预留），SameLine 防提示顶出第二行。
+    // 提示按「三钮让位后剩余宽」省略截断（M7c 批④ §4 登记项：en 文案远宽于
+    // zh，不截断时「替换为」右溢出模态窗；截断后悬停看全文）
+    const float bw = 150.0f;
+    const float sp = ImGui::GetStyle().ItemSpacing.x;
+    const float rowW = bw * 3.0f + sp * 2.0f;
+    const char* hint = tr("anim.pick.meta_hint");
+    const float hintMax = ImGui::GetContentRegionAvail().x - rowW - sp;
+    std::string shown = hint;
+    const bool hintCut = ImGui::CalcTextSize(hint).x > hintMax;
+    if (hintCut) {
+        // 逐 UTF-8 码点收缩（尾部连续 0b10xxxxxx 为续字节）+ 省略号至塞进剩余宽
+        while (!shown.empty() &&
+               ImGui::CalcTextSize((shown + "…").c_str()).x > hintMax) {
+            size_t end = shown.size() - 1;
+            while (end > 0 && (((unsigned char)shown[end]) & 0xC0) == 0x80) --end;
+            shown.resize(end);
+        }
+        shown += "…";
+    }
+    ImGui::TextDisabled("%s", shown.c_str());
+    if (hintCut && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", hint);
     ImGui::SameLine();
     // 底行三钮（取消/添加/替换为）：右对齐按整行宽让位（按两钮算 = 整行右溢出窗）
-    const float bw = 150.0f;
-    const float rowW = bw * 3.0f + ImGui::GetStyle().ItemSpacing.x * 2.0f;
     const float rightX = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - rowW;
     ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), rightX));
     if (ImGui::Button(tr("common.cancel"), ImVec2(bw, 0)) ||
