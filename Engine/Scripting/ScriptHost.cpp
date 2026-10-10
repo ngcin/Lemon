@@ -784,6 +784,13 @@ bool ScriptHost::Initialize(const char* dotnetRoot, const char* runtimeConfigPat
     scriptsDestroyFn_ = (void (*)(uint64_t))host_.GetExport(kType, "lemon_scripts_destroy");
     scriptsDetachFn_ =
         (void (*)(int, uint64_t))host_.GetExport(kType, "lemon_scripts_detach"); // M6a 批⓪ T3（可缺席）
+    // 批⑪ #M11：批量版三导出（旧 Entry 缺 = null 挂空，回退逐实体导出）
+    scriptsAttachBatchFn_ = (void (*)(const int*, const uint64_t*, int))host_.GetExport(
+        kType, "lemon_scripts_attach_batch");
+    scriptsDestroyBatchFn_ = (void (*)(const uint64_t*, int))host_.GetExport(
+        kType, "lemon_scripts_destroy_batch");
+    scriptsDetachBatchFn_ = (void (*)(const int*, const uint64_t*, int))host_.GetExport(
+        kType, "lemon_scripts_detach_batch");
     opsPullFn_ = (int (*)(SceneOpC*, int))host_.GetExport(kType, "lemon_ops_pull");
     // 批③c（ADR-014 M2/M3）：UI ops 拉取 + UiEvent 派发（旧 Entry 缺 = null 挂空）
     uiOpsPullFn_ =
@@ -1027,6 +1034,15 @@ void ScriptHost::TickBatch(ecs::World& world, ecs::Scene& scene, float dt) {
 
 void ScriptHost::AttachBehaviour(ecs::World& world, ecs::Scene& scene, ecs::Entity e,
                                  int typeId) {
+    if (!PrepareAttach(scene, e, typeId)) return;
+    // Awake/OnEnable 在 PostBatch 内同步执行——native 窗口必须就位（M11）
+    if (scriptsAttachFn_) {
+        NativeApiWindow win(&world, &scene);
+        scriptsAttachFn_(typeId, e.id);
+    }
+}
+
+bool ScriptHost::PrepareAttach(ecs::Scene& scene, ecs::Entity e, int typeId) {
     // review 2026-10-09 #H1：Alive 闸——死句柄 TryGet<ScriptBox> 恒 null → 必落
     // Emplace<ScriptBox> = 幽灵注入；失效 = 红字 + 返回（D1 口径，同 NativeWrite）。
     if (!scene.Alive(e)) {
@@ -1035,7 +1051,7 @@ void ScriptHost::AttachBehaviour(ecs::World& world, ecs::Scene& scene, ecs::Enti
             LEMON_WARN("AttachScript：实体句柄已失效（#%llu，typeId %d）——命令丢弃",
                        (unsigned long long)e.id, typeId);
         }
-        return;
+        return false;
     }
     // M6a 批⓪：追加新槽（运行时挂载路径——op4/C# AddComponent；className 空 =
     // Play 期内槽，ExitPlay 随快照丢弃不入档）。同类型唯一双层分权：C++ 槽层
@@ -1051,15 +1067,11 @@ void ScriptHost::AttachBehaviour(ecs::World& world, ecs::Scene& scene, ecs::Enti
         if (!AppendSlot(*sb, 0, nullptr)) {
             LEMON_WARN("脚本槽满（%u）：实体 %llu 挂载 '%d' 拒绝", kMaxScriptsPerEntity,
                        (unsigned long long)e.id, typeId);
-            return;
+            return false;
         }
         sb->slots[sb->count - 1].typeId = typeId;
     }
-    // Awake/OnEnable 在 PostBatch 内同步执行——native 窗口必须就位（M11）
-    if (scriptsAttachFn_) {
-        NativeApiWindow win(&world, &scene);
-        scriptsAttachFn_(typeId, e.id);
-    }
+    return true;
 }
 
 void ScriptHost::ResolveSlotBehaviour(ecs::World& world, ecs::Scene& scene, ecs::Entity e,
@@ -1075,25 +1087,28 @@ void ScriptHost::ResolveSlotBehaviour(ecs::World& world, ecs::Scene& scene, ecs:
     }
 }
 
+int ScriptHost::FindBehaviourSlot(ecs::Scene& scene, ecs::Entity e, int typeId) {
+    ScriptBox* sb = scene.TryGet<ScriptBox>(e);
+    if (!sb) return -1;
+    for (uint32_t i = 0; i < sb->count; ++i)
+        if (sb->slots[i].typeId == typeId) return (int)i;
+    return -1;
+}
+
 void ScriptHost::DetachBehaviour(ecs::World& world, ecs::Scene& scene, ecs::Entity e,
                                  int typeId) {
     // M6a 批⓪ T3：op5/C# RemoveComponent 脚本分路。先通知托管（OnDestroy +
     // 实例级订阅退订——PostBatch 内同步执行，native 窗口就位 M11），再卸槽
     //（保序 RemoveSlot；空盒随卸与 EditorContext::RemoveScriptSlot 同口径）。
     // 幂等：槽不在（未挂/已卸/typeId 未解析 -1）= no-op。
-    ScriptBox* sb = scene.TryGet<ScriptBox>(e);
-    if (!sb) return;
-    int idx = -1;
-    for (uint32_t i = 0; i < sb->count; ++i)
-        if (sb->slots[i].typeId == typeId) {
-            idx = (int)i;
-            break;
-        }
+    int idx = FindBehaviourSlot(scene, e, typeId);
     if (idx < 0) return;
     if (scriptsDetachFn_) { // 旧 Entry 无导出 = 只卸槽不通知托管（挂空安全）
         NativeApiWindow win(&world, &scene);
         scriptsDetachFn_(typeId, e.id);
     }
+    ScriptBox* sb = scene.TryGet<ScriptBox>(e);
+    if (!sb) return;
     RemoveSlot(*sb, (uint32_t)idx);
     if (sb->count == 0) scene.Remove<ScriptBox>(e);
 }
@@ -1167,11 +1182,68 @@ void ScriptHost::ApplyStructural(ecs::World& world, ecs::Scene& scene) {
         return ecs::Entity{e};
     };
 
+    // ---- 批⑪ #M11：连续同类 op（Destroy/AttachScript/DetachScript）合并单次
+    // 域线程投递——批量销毁（清屏）N 实体原 = N 次命令分配 + N 次同步跨线程往返。
+    // 段边界 flush = ops 原序保持；段内逐条序不变（域线程内按序执行 Awake/
+    // OnDestroy）= 行为与逐条投递逐位同构。收集时先做槽管理/占位解析（段内无
+    // 其他 op 交错，ScriptBox 槽态到 flush 不变）；批量导出缺席回退逐实体版。
+    int segType = -1; // -1 = 无段
+    batchTypes_.clear();
+    batchEnts_.clear();
+    auto FlushSeg = [&]() {
+        if (segType < 0 || batchEnts_.empty()) {
+            segType = -1;
+            return;
+        }
+        NativeApiWindow win(&world, &scene); // 段内 Awake/OnDestroy 回调的 native 窗口
+        switch (segType) {
+        case 1: // Destroy：先整段通知（OnDestroy 同步跑完），再逐条入两阶段队列
+                //（原逐条交错——scene.Destroy 只入队不突变池，序差无观察面）
+            if (scriptsDestroyBatchFn_)
+                scriptsDestroyBatchFn_(batchEnts_.data(), (int)batchEnts_.size());
+            else
+                for (uint64_t id : batchEnts_) scriptsDestroyFn_(id);
+            for (uint64_t id : batchEnts_) scene.Destroy(ecs::Entity{id});
+            break;
+        case 4:
+            if (scriptsAttachBatchFn_)
+                scriptsAttachBatchFn_(batchTypes_.data(), batchEnts_.data(),
+                                      (int)batchEnts_.size());
+            else
+                for (size_t k = 0; k < batchEnts_.size(); ++k)
+                    scriptsAttachFn_(batchTypes_[k], batchEnts_[k]);
+            break;
+        case 5:
+            if (scriptsDetachBatchFn_)
+                scriptsDetachBatchFn_(batchTypes_.data(), batchEnts_.data(),
+                                      (int)batchEnts_.size());
+            else
+                for (size_t k = 0; k < batchEnts_.size(); ++k)
+                    scriptsDetachFn_(batchTypes_[k], batchEnts_[k]);
+            // 槽卸除（flush 时重查——段内前一移除的 memmove 会使已记下标失效）
+            for (size_t k = 0; k < batchEnts_.size(); ++k) {
+                ecs::Entity e{batchEnts_[k]};
+                int idx = FindBehaviourSlot(scene, e, batchTypes_[k]);
+                if (idx < 0) continue;
+                ScriptBox* sb = scene.TryGet<ScriptBox>(e);
+                RemoveSlot(*sb, (uint32_t)idx);
+                if (sb->count == 0) scene.Remove<ScriptBox>(e);
+            }
+            break;
+        }
+        segType = -1;
+        batchTypes_.clear();
+        batchEnts_.clear();
+    };
+
     while (true) {
         if (opBuf_.empty()) opBuf_.resize(256);
         int n = opsPullFn_(opBuf_.data(), (int)opBuf_.size());
         for (int i = 0; i < n; i++) {
             const SceneOpC& op = opBuf_[i];
+            const bool batchable = op.type == 1 || op.type == 4 || op.type == 5;
+            if (segType >= 0 && (!batchable || (int)op.type != segType)) FlushSeg();
+            if (batchable) segType = (int)op.type;
             switch (op.type) {
             case 0: { // Create
                 ecs::Entity e = scene.Create();
@@ -1183,17 +1255,15 @@ void ScriptHost::ApplyStructural(ecs::World& world, ecs::Scene& scene) {
             }
             case 1: { // Destroy（先 OnDestroy 通知，再入两阶段队列——本批随后 CommitDestroys 生效）
                 ecs::Entity e = Resolve(op.entity);
-                if (!e.IsNull()) {
-                    // OnDestroy 在 PostBatch 内同步执行——native 窗口必须就位（M11）
-                    if (scriptsDestroyFn_) {
-                        NativeApiWindow win(&world, &scene);
-                        // 置"已通知"位：同帧稍后的 NotifyPendingDestroys 不再对同实体
-                        // 双发（F-08.2 汇合点恰好一次语义；实体级非槽级——多槽实体
-                        // 按实体一次通知全量实例）
-                        if (ScriptBox* sb = scene.TryGet<ScriptBox>(e))
-                            sb->notified |= kScriptFlagDestroyNotified;
-                        scriptsDestroyFn_(e.id);
-                    }
+                if (e.IsNull()) break;
+                // 置"已通知"位：同帧稍后的 NotifyPendingDestroys 不再对同实体
+                // 双发（F-08.2 汇合点恰好一次语义；实体级非槽级——多槽实体
+                // 按实体一次通知全量实例）
+                if (scriptsDestroyFn_) {
+                    if (ScriptBox* sb = scene.TryGet<ScriptBox>(e))
+                        sb->notified |= kScriptFlagDestroyNotified;
+                    batchEnts_.push_back(e.id);
+                } else {
                     scene.Destroy(e);
                 }
                 break;
@@ -1226,16 +1296,30 @@ void ScriptHost::ApplyStructural(ecs::World& world, ecs::Scene& scene) {
             }
             case 4: { // AttachScript（挂 ScriptBox 新槽 + 托管实例/Awake/OnEnable）
                 // AttachBehaviour = 追加路径（M6a 批⓪ 与解析路径拆分）；native 窗口
-                // 内部就位（M11/M12——对快照已带 ScriptBox 的实体二次 Emplace =
-                // entt 池损坏的旧坑已由 TryGet 分支消除）
+                // 由段 flush 统一就位（M11/M12——对快照已带 ScriptBox 的实体二次
+                // Emplace = entt 池损坏的旧坑已由 TryGet 分支消除）
                 ecs::Entity e = Resolve(op.entity);
-                if (!e.IsNull()) AttachBehaviour(world, scene, e, (int)op.compId);
+                if (e.IsNull()) break;
+                if (scriptsAttachBatchFn_) {
+                    if (PrepareAttach(scene, e, (int)op.compId)) {
+                        batchTypes_.push_back((int)op.compId);
+                        batchEnts_.push_back(e.id);
+                    }
+                } else {
+                    AttachBehaviour(world, scene, e, (int)op.compId);
+                }
                 break;
             }
             case 5: { // DetachScript（M6a 批⓪ T3：卸单槽——OnDestroy+退订+槽移除）
-                // 防御：typeId 查无槽/ScriptBox 不在 = 幂等 no-op（DetachBehaviour 内）
+                // 防御：typeId 查无槽/ScriptBox 不在 = 幂等 no-op（收集时查槽过滤）
                 ecs::Entity e = Resolve(op.entity);
-                if (!e.IsNull()) DetachBehaviour(world, scene, e, (int)op.compId);
+                if (e.IsNull()) break;
+                if (scriptsDetachBatchFn_ && FindBehaviourSlot(scene, e, (int)op.compId) >= 0) {
+                    batchTypes_.push_back((int)op.compId);
+                    batchEnts_.push_back(e.id);
+                } else {
+                    DetachBehaviour(world, scene, e, (int)op.compId);
+                }
                 break;
             }
             default: break;
@@ -1243,6 +1327,7 @@ void ScriptHost::ApplyStructural(ecs::World& world, ecs::Scene& scene) {
         }
         if (n < (int)opBuf_.size()) break; // 拉空
     }
+    FlushSeg(); // 尾段（跨拉批窗口的连续段在此一次投递）
 }
 
 void ScriptHost::NotifyPendingDestroys(ecs::World& world, ecs::Scene& scene) {
@@ -1252,16 +1337,23 @@ void ScriptHost::NotifyPendingDestroys(ecs::World& world, ecs::Scene& scene) {
     // 在统一提交点前补发：DestroyQueueTag ∩ ScriptBox 且未通知过的实体。
     // 恰好一次由 kScriptFlagDestroyNotified 保证（脚本命令路径 ApplyStructural 已
     // 通知并置位）。池内部序遍历 = 确定序（回放两侧同源）。
-    // 迭代器不变量（#52）：循环体内跑任意托管 OnDestroy——当前所有导出（spawn/
-    // attach/destroy）都只投递命令不就地改池，View 迭代安全靠这一前提成立。日后
-    // vtable 若加"同步 native Destroy/Attach"导出，本循环必须先收集再回调。
+    // 迭代器不变量（#52 + L13 review 2026-10-09）：先收集后回调——OnDestroy 回调
+    // 内 vtable 就地建实体/加组件已是现实（Instantiate.Spawn / DDOL Emplace），
+    // 原注释「导出只投递命令不改池」前提不实，迭代安全靠池不相交侥幸；收集把该
+    // 前提做实，且 N 实体单次批量投递（#M11——原逐实体 = N 次跨线程往返）。
     if (!scriptsDestroyFn_) return;
-    NativeApiWindow win(&world, &scene);
-    // 空 tag 不进 each() 载荷（entt 3.15 语义）——DestroyQueueTag 只作过滤器
+    batchEnts_.clear();
     for (auto&& [ent, sb] : scene.View<ecs::DestroyQueueTag, ScriptBox>().each()) {
         if (sb.notified & kScriptFlagDestroyNotified) continue;
         sb.notified |= kScriptFlagDestroyNotified;
-        scriptsDestroyFn_(ecs::Scene::FromEntt(ent).id);
+        batchEnts_.push_back(ecs::Scene::FromEntt(ent).id);
+    }
+    if (batchEnts_.empty()) return;
+    NativeApiWindow win(&world, &scene);
+    if (scriptsDestroyBatchFn_) {
+        scriptsDestroyBatchFn_(batchEnts_.data(), (int)batchEnts_.size());
+    } else {
+        for (uint64_t id : batchEnts_) scriptsDestroyFn_(id);
     }
 }
 

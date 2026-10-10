@@ -1,6 +1,6 @@
 # M7c 批⑪ — 引擎评审修复（review 2026-10-09，65 项四梯队）
 
-Status: in-progress（制定 2026-10-09；D1–D5 全部按建议追认，用户 2026-10-09；b11a 开工同日）
+Status: done（制定 2026-10-09；D1–D5 全部按建议追认，用户 2026-10-09；b11a/b11b ✅ 10-09、b11c/b11d ✅ 10-10——65 项四梯队全清：H 3 + M 23 + L 38 修码、L35 否决关闭、M23/L34/L39 登记不修码；出口判据全绿，收批注记见 §9）
 
 ## 0. 背景与目标
 
@@ -60,6 +60,9 @@ Status: in-progress（制定 2026-10-09；D1–D5 全部按建议追认，用户
 
 ## 3. 子批 b11c — P1/P2 中危性能 8 项（两条线）
 
+> **b11c 机器面 ✅ 2026-10-10**——8 项全落（D5 执行序）。M7 差量同步（稳态零重建，声明变化 move 保容量）/ M8 allGrid_ 双径（等距平局语义同队版既定口径）/ M11 三批量导出 + ApplyStructural 连续段合并 + NotifyPendingDestroys 先收集后单次投递（**顺带把 L13 做实**）/ M12 TypeSlot.ByEntity + 全局槽号表双层索引（销毁序 = 实体序×槽注册序逐位保持，回放确定性）/ M19 声部级 256 帧 refill（字节序逐位同序 = 离线哈希不变）/ M16 byGuid_+byWholeId_（FindBySpriteId 区间版无热消费方不动）/ M17 ParsedEntityTree pimpl（shared_ptr 跨 TU；坏档装载期红字跳过，string 版保留）/ M4 UploadTextures API 落地但 **mac 实测负收益调用方回退单张**（dev 装载 111 张：单张 1.31s / 全量批 1.42s / 分块16 1.36s——Metal 提交边界开销主导；Windows 真机验证项登记 08）。实测：bench-sim 万 Flee 场（新增 `--flee`）117–128ms → **9.3–9.4ms/帧（≈12.6×）**；机制数字见 [DevLog](../../DevLog/2026-10-10-m7c-b11c-perf-fixes.md)。单测 34,752/script-tests 1,830/ctest 4/4/回归 21/21/bench fps=81。
+> **b11c review 轮 ✅ 2026-10-10**（独立只读评审）：八项逐路径复核，七项论证成立；抓出 **R-a1（M12，high，已修）**——Detach 升序 Sort+倒序循环 = 降序执行，多槽实体 OnDestroy 序倒序破坏回放确定性（单槽不受影响）；修 = 降序 Sort+倒序循环，补 TestMultiSlotDestroyOrder（销毁序 1881→1882 + 热重载清单 23→26）。M8 等距平局口径交底：≥64 实体+Flee 场平局从池序变环扫序（队版既定例外）——现有金档不含该组合（回归三档 mismatches=0 实证），新录金档按此口径。复验：单测 34,754/script-tests **1,834**/ctest 4/4。
+
 **热路径零分配线（6 项，多数 = 把同文件现成先例搬过去）**：
 
 | # | 位置 | 修法 | 实测口径 |
@@ -77,6 +80,9 @@ Status: in-progress（制定 2026-10-09；D1–D5 全部按建议追认，用户
 |---|---|---|---|
 | M16 | `Engine/Assets/AssetIndex.h:108` | Open 时建 guid→下标 unordered_map（spriteId 表注意切片区间语义，可后置） | 万实体 ResolveSpriteRefs 装载帧 |
 | M17 | `Engine/Assets/PrefabCache.cpp:68` | Build 期预解析存 Entry——**选型见 D3**（pimpl 封装绕开「json 不出头文件」红线，或二进制组件快照） | 连发 spawn 帧分配 |
+
+> **b11d 机器面 ✅ 2026-10-10**——同构 4 项（L2 flush 三点/ L11 剪除+三查询哨兵/ L27 注释修正/ L15 Pcg32 三处 + **ADR-010 D3 grep 防线测试本体化**（TestScriptingRandomDiscipline，+2 断言））+ 小修 21 项（L13 已随 b11c）+ 设计债登记扩充（08 M8 段 + M4 Windows 验证项）。行为面变化三处均有覆盖：L1 排序偏移（出厂正值零扰动）/ L23 重烤拒播（正常档无影响，AudioTests 绿）/ L31 CLI 拒绝（回归全旗标核对放行，21 步全绿实证）。单测 **34,754**/script-tests 1,830/ctest 4/4/回归 21/21/bench fps=84/构建零警告/demo 0 错。[DevLog](../../DevLog/2026-10-10-m7c-b11d-lowfixes-and-reg.md)。L16 登记（native marshal 链改造，M8 候选）；L35 复核否决维持关闭。
+> **b11d review 轮 ✅ 2026-10-10**（独立只读评审）：25 项全过、无阻塞；L1/L22/L23/L36 无害性论证独立核实成立、M4 回退零残留。修 low 五条：R-b1 陈旧注释 / R-b2 NormalizeRad NaN·inf 哨兵 / R-b3 契约注释做实 / R-b5 防线补目标类型 new 形态 / R-b7 include 与文案卫生；登记 R-b4（L11 加法溢出理论缺口）/R-b6（L30 同进程 tmp 共用 + 孤儿积累）。复验：单测 34,754/script-tests 1,834/ctest 4/4。
 
 ## 4. 子批 b11d — 低危卫生 + 登记（不阻塞收批）
 
@@ -116,3 +122,14 @@ Status: in-progress（制定 2026-10-09；D1–D5 全部按建议追认，用户
 ## 8. 执行序
 
 b11a（当日）→ b11b（坏数据面 → 设备丢失 → 语义类，各子步独立提交）→ b11c（两线并行）→ b11d（顺手清 + 登记）→ 收批出口判据全跑 → DevLog + 路线图落账。预计 b11a 半日、b11b 一日、b11c 一日、b11d 半日。
+
+## 9. 收批出口（2026-10-10）
+
+1. 构建零警告 ✅（mac；H 类与 M1/M2 已随 b11b ASAN 双门零报告）。
+2. 单测 **34,754**（基线 34,716 + 38）/ script-tests **1,834**（+16，含 review 轮多槽销毁序对拍）——行为面修复对应用例：坏档红字（b11a/b11b）/ 死句柄拒入池（b11a）/ endptr 拒绝（b11b）/ 失焦清键（b11b）/ Events 重入（b11b）/ stale 三连（b11a）/ 随机纪律 grep 防线（b11d）。
+3. ctest 4/4、回归 21 步全绿、game/scene/template 三 smoke OK ✅。
+4. bench-survivor fps 84（≥76.5 维持）；b11c 实测 = 万 Flee 场 12.6× + M4 三态对比（负收益回退拍板）✅。
+5. §5 同构清单逐行勾销 ✅（H2→ParseClipJson / M15→非抛纪律 / M22→Window 清键 / M5→snprintf / M10→快照迭代 / M9→池化投递 / L11→#19 同款；L2 对照 RmlUi flush 已修非对照）。
+6. DevLog 四条目（b11a/b11b/b11c/b11d）+ 08 路线图 M7c 段批⑪ 登记 + M8 段架构债扩充（M23/L34/L39 原有 + b11d 十项 + M4 Windows 验证）✅。
+
+批⑪ 关闭：评审 65 项全清（修码 64 分四批 + 否决 1），设计债 3 项 + 登记项按 D4 落 08 路线图。四子批各过独立 review 轮（b11a H3-1/H1-a/b/c、b11b R1–R3、b11c R-a1、b11d R-b1/2/3/5/7），review 轮增量全修并复验。

@@ -197,6 +197,10 @@ bool BakeFontFile(const char* srcTtf, const char* dstBaked, const FontBakeParams
             placed.push_back(std::move(pl));
             continue;
         }
+        // L18（review 2026-10-09）：字形位图宽超页宽（直接调 API 无 fontPx 钳制
+        // 可达）= 换行后仍在 penX 放置，页合成 memcpy 每行越 512px 行界写（页内
+        // 相邻行互毁）——横向截断与纵向同款
+        if (cw > kPageW - 2 * kSpacing) { ++dropped; continue; }
         if (penX + kSpacing + cw > kPageW) { // 换行
             shelfY += shelfH + kSpacing;
             shelfH = 0;

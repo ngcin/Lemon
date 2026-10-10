@@ -327,8 +327,11 @@ bool LoadBakedAtlasFile(const std::string& path, BakedAtlasBuild& out) {
             return false;
         }
     }
+    // L21（review 2026-10-09）：拒载前清 out——头契约「失败 false（out 保证为空）」
+    // 原靠唯一消费方弃局部变量巧合成立；部分拒载路径在 out 已 resize/填充后才走此
     const auto Reject = [&](const char* why) {
         LEMON_ERROR("LAT1：拒载（%s）：%s", why, path.c_str());
+        out = BakedAtlasBuild{};
         return false;
     };
     if (buf.size() < sizeof(LatHeader)) return Reject("文件短于头");

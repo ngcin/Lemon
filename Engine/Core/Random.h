@@ -15,7 +15,12 @@ namespace lemon {
 
 class Rng {
 public:
-    Rng() = default; // 未种子状态，Seed() 前调用 Next() 会被断言拦截
+    // L27（review 2026-10-09）：本类无"未种子断言"——Next() 是 constexpr（CI win
+    // 热修④的常量求值要求），恒生效断言会破坏常量求值路径。实况：默认构造后
+    // 不 Seed 直接用 = 固定流（state=0/inc=1），run-to-run 仍确定，但与世界 seed
+    // 无关且所有忘播种实例共享同一条流（跨系统相关随机）——请默认即
+    // Rng(seed, stream) 构造或先 Seed。
+    Rng() = default;
 
     /// seed：全局种子（World 级）；stream：子流 id（0=默认流，系统按注册序取号）
     constexpr Rng(uint64_t seed, uint64_t stream) { Seed(seed, stream); }

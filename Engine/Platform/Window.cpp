@@ -37,6 +37,7 @@ std::unique_ptr<Window> Window::Create(const WindowDesc& desc) {
                                         (desc.resizable ? SDL_WINDOW_RESIZABLE : 0));
     if (!w->m->window) {
         LEMON_ERROR("SDL_CreateWindow failed: %s", SDL_GetError());
+        SDL_Quit(); // L28（review 2026-10-09）：失败路径泄漏初始化（析构守卫走不进）
         return nullptr;
     }
     return w;

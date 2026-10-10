@@ -32,8 +32,10 @@ public:
     ~Scene(); // unique_ptr<SpatialHash> 析构需完整类型，定义在 .cpp
 
     Entity Create();
-    /// 两阶段：入队，帧末 CommitDestroys 提交。线程安全（ProjectileLifetime 等
-    /// 并行系统从 worker 线程调用；销毁队列与打标共用一把锁）。
+    /// 两阶段：入队，帧末 CommitDestroys 提交。仅主线程调用（L7 review
+    /// 2026-10-09 改口：锁只保护队列本身，锁内 registry 结构写与并行迭代仍是
+    /// 数据竞争——原「worker 直调」点名方已改主线程收集提交，03 §4 契约 3；
+    /// 并行销毁 = 收集意图 → 主线程归并）。
     void Destroy(Entity e);
     bool Alive(Entity e) const;
     uint32_t AliveCount() const;

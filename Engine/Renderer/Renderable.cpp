@@ -175,9 +175,13 @@ std::span<const SpritePacket> RenderableManager::Extract(const AtlasRegistry& at
             if (e.desc.order != 0) anyOrder_ = true;
 
             Prepared pr;
+            // L1（review 2026-10-09）：order 域 +32768 偏移打包——原 (uint16_t) 直转
+            // 把 -1 变 65535 排到 0 之上（与 Unity「负 order 在下层」心智相反）；
+            // 偏移后 -32768→0、32767→65535，升降序 painter 序两向都恢复代数序
             pr.p.sortKey = ((uint64_t)e.desc.sortingLayer << 56) |
                            ((slots_[si].key.hash >> 45) & 0xFFFFull) << 40 |
-                           ((uint64_t)(uint16_t)e.desc.order << 24) | ((uint64_t)e.seq & 0xFFFFFFull);
+                           ((uint64_t)(uint32_t)(e.desc.order + 32768) << 24) |
+                           ((uint64_t)e.seq & 0xFFFFFFull);
             pr.p.key = slots_[si].key;
             pr.p.spriteId = e.desc.spriteId;
             pr.p.colorBits = e.desc.colorBits;

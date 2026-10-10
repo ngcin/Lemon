@@ -62,6 +62,16 @@ public:
     /// 从 JSON 实例化子树（新实体集，EntityRef 子树内重映射、跨树引用置空，
     /// root 挂为独立根）。Meta.guid 全部换新（GenerateGuid）。返回新 root。
     static Entity LoadEntityTree(Scene& scene, const std::string& jsonText);
+
+    // ---- 批⑪ #M17：实体树预解析（spawn 热路径免每发全量 Json::parse）----------
+    /// 预解析产物（pimpl——nlohmann json 不出头文件，StagedSceneBuild 同款红线）。
+    /// PrefabCache::Build 期 parse 一次、Spawn 期零解析消费。解析/结构校验失败 =
+    /// nullptr（坏档装载期红字跳过——原运行时 WARN+Null 语义前移到装载期）。
+    /// shared_ptr：跨 TU 持有不完整类型（类型擦除删除器在本 .cpp 创建点捕获）。
+    struct ParsedEntityTree;
+    static std::shared_ptr<ParsedEntityTree> ParseEntityTree(const std::string& jsonText);
+    /// 零解析实例化（与 string 版逐位同构——parse 之后的逻辑共用同核）
+    static Entity LoadEntityTree(Scene& scene, const ParsedEntityTree& parsed);
 };
 
 /// 分帧预备构建（ADR-017 D3 分帧状态机 Parse/Build 段；M7c 批⑧ D1=A）：
@@ -79,7 +89,8 @@ public:
     static std::unique_ptr<StagedSceneBuild> Parse(const std::string& jsonText);
     ~StagedSceneBuild();
 
-    uint32_t EntityCount() const;      // 档内实体条目数（含坏条目——槽账口径）
+    uint32_t EntityCount() const;      // 档内实体条目数（含坏条目——槽账口径；
+                                       // ReleaseDocChunk 后仍可查：回落 ledger，L25）
     uint32_t CreatedCount() const;     // 相一游标（已建槽数——进度权重面）
     uint32_t DecodedCount() const;     // 相二游标（已解码条数——进度权重面）
     /// 档是否含 "name" 字符串段（ApplySceneName 同构判据——集成段仅在真有时

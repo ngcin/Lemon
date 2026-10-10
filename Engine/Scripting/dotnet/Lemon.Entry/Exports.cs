@@ -133,6 +133,8 @@ internal static unsafe class Exports
         Lemon.Events.PlayReset();
         Lemon.UI.PlayReset(); // 批③c：UI 待发/计数随局清（订阅表保留，跨局存活）
         Lemon.SceneManager.PlayReset(); // 批⑦：句柄记忆化随局清（新 playWorld 句柄重发）
+        Lemon.Anim.ResetWarnTables();    // L17（review 2026-10-09）：键含实体 id 的
+        Lemon.Table.ResetWarnTables();   // 告警去重表随局清（防无界累积根串）
     }
 
     /// <summary>换场事件池化投递（M7c 批⑦ D3 / ADR-017 协议⑤；M9 review
@@ -209,16 +211,36 @@ internal static unsafe class Exports
     public static void lemon_scripts_attach(int typeId, Lemon.Interop.EntityHandle e)
         => DomainManager.PostBatch(() => Lemon.Behaviours.Attach(typeId, e));
 
+    /// <summary>批量挂载（review 2026-10-09 #M11）：C++ 侧连续 AttachScript 段
+    /// 单次投递（池化零分配）；段内逐条序不变（域线程内按序执行 Awake）。</summary>
+    [UnmanagedCallersOnly]
+    public static unsafe void lemon_scripts_attach_batch(int* typeIds, Lemon.Interop.EntityHandle* ents,
+                                                         int n)
+        => DomainManager.PostScriptAttachBatch(typeIds, ents, n);
+
     /// <summary>实体销毁通知（Destroy 命令应用时调用；OnDestroy + 托管实例移除）。</summary>
     [UnmanagedCallersOnly]
     public static void lemon_scripts_destroy(Lemon.Interop.EntityHandle e)
         => DomainManager.PostBatch(() => Lemon.Behaviours.Detach(e));
+
+    /// <summary>批量销毁通知（#M11）：NotifyPendingDestroys 收集 + ApplyStructural
+    /// 连续 Destroy 段单次投递；OnDestroy 序 = 输入实体序 × 槽注册序（与逐实体
+    /// 版逐位同构，回放确定性）。</summary>
+    [UnmanagedCallersOnly]
+    public static unsafe void lemon_scripts_destroy_batch(Lemon.Interop.EntityHandle* ents, int n)
+        => DomainManager.PostScriptDestroyBatch(ents, n);
 
     /// <summary>单类型卸载（M6a 批⓪ T3：op5 DetachScript 应用时调用）。
     /// 只卸 (typeId, 实体) 一槽实例：OnDestroy + 实例级订阅退订；未挂 = 幂等 no-op。</summary>
     [UnmanagedCallersOnly]
     public static void lemon_scripts_detach(int typeId, Lemon.Interop.EntityHandle e)
         => DomainManager.PostBatch(() => Lemon.Behaviours.DetachOne(typeId, e));
+
+    /// <summary>批量单类型卸载（#M11）：连续 DetachScript 段单次投递。</summary>
+    [UnmanagedCallersOnly]
+    public static unsafe void lemon_scripts_detach_batch(int* typeIds, Lemon.Interop.EntityHandle* ents,
+                                                         int n)
+        => DomainManager.PostScriptDetachBatch(typeIds, ents, n);
 
     [UnmanagedCallersOnly]
     public static int lemon_behaviours_types() => Lemon.Behaviours.TypeCount;

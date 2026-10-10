@@ -433,15 +433,34 @@ constexpr uint64_t kSceneSmokeDdolGuid = 10963355455248361612ull;
 
 int main(int argc, char** argv) {
     std::string projectArg, sceneArg;
-    int frames = 0;
+    long frames = 0;
     bool smoke = false, smokeScene = false, validate = false;
+    // L31（review 2026-10-09）：未知/残缺参数原静默落空——`--frames abc` 经 atoi→0
+    // 使 paced 反转为 true，自动化调用变交互模式无限挂住。未知/非数字 = 响亮退出。
+    const auto usage = [] {
+        std::fprintf(stderr,
+                     "用法：lemon-game [--project <dir>] [--scene <name>] [--frames N] "
+                     "[--smoke] [--smoke-scene] [--validate]\n");
+    };
     for (int i = 1; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--project") && i + 1 < argc) projectArg = argv[++i];
         else if (!std::strcmp(argv[i], "--scene") && i + 1 < argc) sceneArg = argv[++i];
-        else if (!std::strcmp(argv[i], "--frames") && i + 1 < argc) frames = std::atoi(argv[++i]);
-        else if (!std::strcmp(argv[i], "--smoke")) smoke = true;
+        else if (!std::strcmp(argv[i], "--frames") && i + 1 < argc) {
+            char* end = nullptr;
+            frames = std::strtol(argv[++i], &end, 10);
+            if (end == argv[i] || *end != '\0' || frames < 0 || frames > 100000000) {
+                LEMON_ERROR("lemon-game：--frames 需为非负整数（0 = 交互模式）：'%s'", argv[i]);
+                usage();
+                return 2;
+            }
+        } else if (!std::strcmp(argv[i], "--smoke")) smoke = true;
         else if (!std::strcmp(argv[i], "--smoke-scene")) smokeScene = true;
         else if (!std::strcmp(argv[i], "--validate")) validate = true;
+        else {
+            LEMON_ERROR("lemon-game：未知/残缺参数：'%s'", argv[i]);
+            usage();
+            return 2;
+        }
     }
     const std::string exeDir = ExeDir();
     // 交互 = 墙钟累加；自动化 = 每帧恰一步
@@ -796,13 +815,22 @@ int main(int argc, char** argv) {
 
     // ---- 设备丢失重建（resize 触发整设备重建：程序化页 → 资产页 → UI 全量重载，
     // 编辑器 "editor-viewport"→"asset-gpu" 两段式同序）----
-    device->AddRecreateCallback("game-assets", [&](rhi::Device& d) {
+    // L37（review 2026-10-09）：token 持有 + 作用域尾反注册——回调按引用捕获
+    // 本栈帧对象（atlas/textures/ui），RHI.h 自述契约「不摘除 = 设备丢失重建 UAF」；
+    // guard 晚于被捕获对象声明 = 析构先于它们，token 生命期正确覆盖
+    struct RecreateGuard {
+        rhi::Device* device;
+        rhi::Device::RecreateCallbackId id;
+        ~RecreateGuard() {
+            if (device) device->RemoveRecreateCallback(id);
+        }
+    } recreateGuard{device.get(), device->AddRecreateCallback("game-assets", [&](rhi::Device& d) {
         atlas.Reset();
         BuildProceduralPages(d);
         if (atlasPages) bakedAtlas.RebuildAll(d);
         else textures.RebuildAll(d);
         ui.ReloadAllDocuments();
-    });
+    })};
 
     // ---- 渲器件（colorFormat = 交换链格式：动态渲染管线唯一格式依赖）----
     renderer::SpriteBatcher batcher;

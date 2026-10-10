@@ -288,6 +288,13 @@ public:
     /// 导出 = 只卸槽不通知托管（挂空安全）。
     void DetachBehaviour(ecs::World& world, ecs::Scene& scene, ecs::Entity e, int typeId);
 
+    /// ---- 批⑪ #M11 连续段批量半边（槽管理就地做、托管通知段尾单次投递）----
+    /// AttachBehaviour 的槽管理半边（Alive 闸 + 槽幂等/追加）；false = 拒绝
+    ///（句柄失效/槽满），入批方据此跳过。批量指针不可用时走整函数单发。
+    bool PrepareAttach(ecs::Scene& scene, ecs::Entity e, int typeId);
+    /// DetachBehaviour 的查槽半边；false = 无槽（幂等跳过）。
+    static int FindBehaviourSlot(ecs::Scene& scene, ecs::Entity e, int typeId);
+
     /// 既有槽解析（编辑器 EnterPlay/热重载路径）：场景档槽 typeId=-1 待解析时按名
     /// 映射并原位落 typeId（不追加槽），再挂托管实例（M6a 批⓪ 与 AttachBehaviour
     /// 拆分——原 get-or-create 覆写语义在多槽下会错删兄弟槽）。
@@ -358,6 +365,10 @@ private:
     void (*scriptsAttachFn_)(int, uint64_t) = nullptr;
     void (*scriptsDestroyFn_)(uint64_t) = nullptr;
     void (*scriptsDetachFn_)(int, uint64_t) = nullptr; // M6a 批⓪ T3（旧 Entry = null 挂空安全）
+    // ---- 批⑪ #M11：批量版（旧 Entry = null 挂空安全，回退逐实体导出）----
+    void (*scriptsAttachBatchFn_)(const int*, const uint64_t*, int) = nullptr;
+    void (*scriptsDestroyBatchFn_)(const uint64_t*, int) = nullptr;
+    void (*scriptsDetachBatchFn_)(const int*, const uint64_t*, int) = nullptr;
     int (*opsPullFn_)(SceneOpC*, int) = nullptr;
     // ---- 批③c（旧 Entry 程序集缺两导出 = null 挂空安全，既定纪律）----
     int (*uiOpsPullFn_)(ui::UiOpC*, int, char*, int, int*) = nullptr; // n; *arenaBytes
@@ -370,6 +381,9 @@ private:
 
     std::vector<ecs::EventPacket> pullBuf_; // 脚本 pending 拉取缓冲（复用）
     std::vector<SceneOpC> opBuf_;           // 结构命令拉取缓冲（复用）
+    // ---- 批⑪ #M11：结构命令连续段批量缓冲（复用；attach/detach 成对、destroy 单列）----
+    std::vector<int> batchTypes_;
+    std::vector<uint64_t> batchEnts_;
     // ---- 批③c：UI ops/事件桥缓冲（复用；容量 = UiBridge.h 常量）----
     std::vector<ui::UiOpC> uiOpBuf_;
     std::vector<char> uiArenaBuf_;

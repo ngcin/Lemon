@@ -5,6 +5,7 @@
 #include <system_error>
 
 #include "Core/Log.h"
+#include "Core/Process.h" // CurrentProcessId（L30 tmp 并发防护）
 
 // FsyncFile（M7a 批① M21 durable 写；M7a 批③ 随 WriteFileAtomic 自编辑器迁入）
 #if defined(_WIN32)
@@ -43,7 +44,10 @@ bool FsyncFile(const std::string& path) {
 
 bool WriteFileAtomic(const std::string& path, const void* data, size_t n,
                      bool durable) {
-    const std::string tmp = path + ".tmp";
+    // L30（review 2026-10-09）：固定 .tmp 后缀无并发防护——双开编辑器/编辑器与
+    // 运行时共用 projectRoot 交叉写同一 tmp 再各自 rename = 半档可能被提升为
+    // 正式档（破坏"中断不产生半档"契约）。掺 pid：每进程独立 tmp，rename 各自原子
+    const std::string tmp = path + ".tmp." + std::to_string(CurrentProcessId());
     {
         std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
         if (!f) return false;

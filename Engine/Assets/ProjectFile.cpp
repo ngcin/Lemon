@@ -103,6 +103,12 @@ std::string ResolveScene(const std::string& projectRoot, const ProjectFile& pf,
     if (nameOrPath.empty()) return ResolveEntryScene(projectRoot, pf);
     const fs::path p(nameOrPath);
     if (p.is_absolute()) return std::string(); // 项目相对寻址红线（越根 = 拒绝）
+    // L19（review 2026-10-09）：".." 越根——头注承诺只兑现了一半（"../x.scene"
+    // 拼根后 stat 照常命中）；词法归一后必须仍位于项目根之下（UiSubsystem
+    // lexically_normal 先例同款；C# LoadScene 可越项目根读任意文件）
+    const fs::path norm = p.lexically_normal();
+    for (const auto& part : norm)
+        if (part == "..") return std::string();
     std::error_code ec;
     // ① 路径精确命中（"Scenes/Forest.scene" / "Assets/UI/Main.scene"）
     if (fs::is_regular_file(fs::path(projectRoot) / p, ec)) return p.generic_string();

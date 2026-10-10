@@ -178,6 +178,14 @@ public static class Anim
 
     static readonly HashSet<string> s_paramMissed = new();
 
+    /// <summary>随局/换域清告警去重表（L17 review 2026-10-09）：键含实体 id
+    ///（entt 单调递增），解析失败模式持续时无界累积并根住字符串；PlayReset/
+    /// 域 Reset 原不清这两张表（清的是 Scripting/Events/UI/Behaviours/SceneOps/Time）。</summary>
+    internal static void ResetWarnTables() {
+        s_missed.Clear();
+        s_paramMissed.Clear();
+    }
+
     /// <summary>GUID hex（16 位）→ ulong。非法 hex = 0（= 未绑）。</summary>
     public static ulong GuidOf(string guidHex)
         => guidHex != null &&

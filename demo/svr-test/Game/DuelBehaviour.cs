@@ -28,7 +28,7 @@ public sealed class DuelBehaviour : LemonBehaviour
     // M7c 批①：贴图血条皮肤（Assets/bar_bg.png / bar_fg.png，64×10 → 高 = 宽×10/64）
     // + 延迟白条 + 25% 暴击率（数值层演示——伤害 ×1.5 与表现同源判定）
     private const double kCritChance = 0.25;
-    private static readonly System.Random s_rng = new();
+    private static readonly Lemon.Pcg32 s_rng = new(0xD21u, 0x53u); // L15：PCG32 子流（引擎纪律）
 
     /// <summary>伤害类型表（2026-10-07 元素飘字实装）：每击随机出招，飘字
     /// 颜色/动效/前缀随型变化。色值 RGBA 序（0xAABBGGRR 从高位读）；伤害系数
@@ -145,8 +145,8 @@ public sealed class DuelBehaviour : LemonBehaviour
         if (dx * dx + dy * dy > (kAttackRange + 60f) * (kAttackRange + 60f)) return; // 打点时对手已走远
         // 暴击 × 元素双随机（数值层同源：同一随机源定伤，表现层零额外判定——
         // 伤害 = 基伤 × 类型系数 × 暴击 1.5）
-        bool crit = s_rng.NextDouble() < kCritChance;
-        DmgFx dt = kDmgTypes[s_rng.Next(kDmgTypes.Length)];
+        bool crit = s_rng.Float01() < kCritChance;
+        DmgFx dt = kDmgTypes[(int)s_rng.Range(0, (uint)(kDmgTypes.Length - 1))];
         float dmg = kDamage * dt.Mul * (crit ? 1.5f : 1f);
         fh.Cur -= dmg;
         foe.SetComponent(fh);
@@ -164,7 +164,7 @@ public sealed class DuelBehaviour : LemonBehaviour
         float barTop = fp.HeadDy - 2f - fp.BarH;
         float scale = dt.Scale * (crit ? 1.3f : 1f);
         FxStyle st = crit
-            ? new FxStyle(scale, 1.0f, (float)((s_rng.NextDouble() - 0.5) * 60), FxCurve.Pop)
+            ? new FxStyle(scale, 1.0f, (s_rng.Float01() - 0.5f) * 60f, FxCurve.Pop)
             : new FxStyle(dt.Scale, dt.Life, dt.Drift);
         Fx.Text((crit ? "暴击 " : "") + dt.Tag + " " + dmg.ToString("0"),
                 new Vec2(ot.Pos.X, ot.Pos.Y + barTop - 48f * scale), dt.Color, st);

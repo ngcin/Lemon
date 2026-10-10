@@ -46,6 +46,9 @@ public static class Table
 
     static readonly HashSet<string> s_warned = new HashSet<string>();
 
+    /// <summary>随局/换域清告警去重表（L17：跨局陈旧键残留，与 Anim.ResetWarnTables 同批）。</summary>
+    internal static void ResetWarnTables() => s_warned.Clear();
+
     static void WarnOnce(string guidHex, int row, int col, string? val, string kind)
     {
         if (s_warned.Add(kind + ":" + guidHex + ":" + row + ":" + col))

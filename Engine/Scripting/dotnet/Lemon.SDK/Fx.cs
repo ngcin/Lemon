@@ -97,13 +97,17 @@ public static class Fx
         => Native.FxPopupEx(text, pos.X, pos.Y, color, style.Scale, style.Life,
                             style.DriftX, (byte)style.Curve);
 
+    // L15（review 2026-10-09）：呈现层扰动专用 PCG32 子流（全引擎唯一随机源
+    // 纪律，Pcg32.cs:2；Fx 不入 StateHash = 不影响回放，但流本身仍位级确定）
+    private static readonly Pcg32 s_critJitter = new(0xF11Eu, 0x51u);
+
     /// <summary>暴击糖（默认值集合，游戏侧可全自定义）：黄字 Pop 弹跳 + 随机
     /// 水平散布（命中点 ±，同帧多发不打成一条线）。色值注意通道是 RGBA 序
     ///（r|g<<8|b<<16|a<<24）——0xFF4AD2FF = 黄（255,210,74）；按 ARGB 语感写的
     /// 0xFFFFD24A 解出来是青绿（走查轮④实抓）。</summary>
     public static void Crit(string text, Vec2 pos, float scale = 1.3f)
         => Native.FxPopupEx(text, pos.X, pos.Y, 0xFF4AD2FFu, scale, 1.0f,
-                            (Random.Shared.NextSingle() - 0.5f) * 60f, (byte)FxCurve.Pop);
+                            (s_critJitter.Float01() - 0.5f) * 60f, (byte)FxCurve.Pop);
 
     /// <summary>闪避糖：灰白小号短飘。</summary>
     public static void Miss(Vec2 pos, float scale = 0.85f)

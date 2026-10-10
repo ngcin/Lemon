@@ -41,6 +41,7 @@ struct Config {
     bool noGate = false; // 09 §9 门禁分流③（M7a 批⑧）：录制/诊断跑不做 avg 门禁
     const char* recordFile = nullptr;
     const char* replayFile = nullptr;
+    uint32_t fleeers = 0; // 批⑪ #M8 压测面：万级 Flee 场
 };
 
 // ------------------------------------------------------------ 场景工厂 ----
@@ -90,6 +91,11 @@ void BuildScene(World& world, Scene& s, const Config& cfg, Entity& playerOut) {
         ch.aggroRange = 2000.0f; // 竞技场内恒有目标
         ch.keepRange = 24.0f;
         ch.targetTeam = 0;
+        if (i < cfg.fleeers) { // 批⑪ #M8 压测面：万级 Flee 场（NearestAny 全表最近）
+            Flee& fl = s.Emplace<Flee>(m);
+            fl.range = 400.0f;
+            fl.speed = 80.0f;
+        }
     }
 
     // 补怪口（死后维持怪量：销毁两阶段/池回收/Spawn 系统全链路）
@@ -134,6 +140,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--no-gate")) cfg.noGate = true;
         else if (!std::strcmp(argv[i], "--record")) cfg.recordFile = next();
         else if (!std::strcmp(argv[i], "--replay")) cfg.replayFile = next();
+        else if (!std::strcmp(argv[i], "--flee")) cfg.fleeers = (uint32_t)std::atoi(next());
     }
 
     const bool replaying = cfg.replayFile != nullptr;

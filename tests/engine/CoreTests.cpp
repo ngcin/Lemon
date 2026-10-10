@@ -15,9 +15,10 @@
 #include <cmath>
 #include <cstdint>
 #include <algorithm>
-#include <limits>
 #include <filesystem>
 #include <fstream>
+#include <string>
+#include <limits>
 #include <thread>
 #include "Audio/AudioChannel.h" // M6c 批②：命令通道（World.h 链亦达，显式声明测试意图）
 #include "Audio/AudioEngine.h"
@@ -326,6 +327,43 @@ void TestRingQueue() {
     Expect(g.PeakSize() == 100, "peak tracked");
 }
 
+
+// --------------------------------------------------------------- 随机纪律 ----
+// L15（review 2026-10-09）：ADR-010 D3 所称 grep 防线测试本体化——SDK/Entry 的
+// C# 源码禁 System.Random 使用形态（全引擎唯一随机源 = PCG32 子流；Pcg32.cs:2
+// 纪律注释本身不含这些使用形态，不误伤）。Fx.Crit 曾用 Random.Shared 破纪未被
+// 拦（防线缺失实抓）。
+void TestScriptingRandomDiscipline() {
+    namespace fs = std::filesystem;
+    const fs::path root = LEMON_SOURCE_DIR "/Engine/Scripting/dotnet";
+    Expect(fs::exists(root), "dotnet source root exists");
+    static const char* kBanned[] = {"new System.Random", "Random.Shared",
+                                    ".NextDouble(", "new Random(",
+                                    "System.Random "}; // R-b5（b11d review）：目标类型
+                                    // new 形态（`System.Random r = new();`）；纪律注释
+                                    // （Pcg32.cs:2）用全角括号不误伤
+    uint32_t scanned = 0;
+    std::error_code ec;
+    for (fs::recursive_directory_iterator it(root, ec), end; it != end; it.increment(ec)) {
+        if (ec || !it->is_regular_file()) continue;
+        if (it->path().extension() != ".cs") continue;
+        std::ifstream f(it->path());
+        std::string line;
+        while (std::getline(f, line))
+            for (const char* b : kBanned)
+                if (line.find(b) != std::string::npos) {
+                    char msg[512];
+                    std::snprintf(msg, sizeof msg,
+                                  "random discipline violation: %s contains '%s'",
+                                  it->path().string().c_str(), b);
+                    Expect(false, msg); // 响亮定位（每违规一处一条）
+                    break;
+                }
+        ++scanned;
+    }
+    Expect(scanned > 0, "random discipline scan non-empty");
+}
+
 } // namespace
 
 void RunCoreTests() {
@@ -338,4 +376,5 @@ void RunCoreTests() {
     TestJobSystem();
     TestPool();
     TestRingQueue();
+    TestScriptingRandomDiscipline();
 }

@@ -112,6 +112,11 @@ bool BindHostfxr(HostfxrApi& api, const std::filesystem::path& libPath) {
     api.close = (hostfxr_close_fn)Sym(api.lib, "hostfxr_close_handle"); // 可选符号
     if (!api.initForConfig || !api.getDelegate) {
         LEMON_WARN("hostfxr %s missing required exports", libPath.string().c_str());
+#if defined(_WIN32)
+        FreeLibrary(api.lib); // L14（review 2026-10-09）：失败分支释句柄（候选链
+#else                       // 最多 4 root×2 形态 = 8 次泄漏；进程退出回收但登记清账）
+        dlclose(api.lib);
+#endif
         return false;
     }
     // 错误回调：把宿主侧错误引到引擎日志（可选导出；hostfxr 错误串按 char_t 传——

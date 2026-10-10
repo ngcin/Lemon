@@ -30,6 +30,9 @@ struct TargetEntry {
 
 class TargetBoard {
 public:
+    /// 差量同步（review 2026-10-09 #M7）：声明与现有槽逐位一致（稳态）= 直接
+    /// 返回，TeamList 对象（含 Grid 五组 vector 容量）跨帧保活复用，内容清空
+    /// 由紧随的 Rebuild 负责；声明变化才增删槽（仍被声明的槽 move 保容量）。
     void DeclareTeams(const std::vector<uint32_t>& teamIds);
     /// 收集各声明队 + （可选）全部实体的位置（Meta+Transform 池一遍）。
     /// jobs 非空且实体量 ≥ kParallelMin 时并行收集/建桶（2026-09-26 五万场批）：
@@ -41,7 +44,7 @@ public:
     /// 与同帧 registry 值逐位相同（Rebuild 后至本调用间无人改 Transform）
     Entity Nearest(uint32_t team, Vec2 from, float range, Entity exclude,
                    Vec2* outPos = nullptr) const;
-    Entity NearestAny(Vec2 from, float range, Entity exclude) const; // Flee 威胁
+    Entity NearestAny(Vec2 from, float range, Entity exclude) const; // Flee 威胁（全表桶双径，#M8）
     /// 声明队的收集表（view 序；串行/并行同构对拍等测试用）
     const std::vector<TargetEntry>& TeamEntries(uint32_t team) const;
 
@@ -86,6 +89,10 @@ private:
     };
     std::vector<TeamList> teams_;
     std::vector<TargetEntry> all_;
+    // 全表桶（review 2026-10-09 #M8）：NearestAny 原对 all_ 线性全扫，万级 Flee
+    // 场撞自家教训注释记录的复杂度墙；与队桶同款双径（< kMinList 线性快径，
+    // 等距平局语义差异同队版——Systems.h Grid 注释）。
+    TeamList::Grid allGrid_;
     // 并行收集复用缓冲（稳态零分配）：主线程先按 view 序收集实体（view 无随机
     // 访问，list 序的等距平局语义系于此），再按索引切块并行构条目分桶，
     // 主线程按 chunk 序归并 = 保 view 序。chunkTeams_ 拍平 [chunk][team]。
@@ -118,6 +125,16 @@ private:
     std::vector<uint32_t> teamCounts_;
     uint32_t censusCountdown_ = 0; // 0 = 本 tick 普查（首 tick 必普查）
     bool warnedNoFactory_ = false; // 无工厂告警一次（仅场景确有导演时）
+    // L12（review 2026-10-09）：spawn 请求表成员化复用——原每 tick 局部 vector +
+    // reserve(16) = 每模拟帧一次 malloc/free（空转期照付，稳态零分配口径漏网）
+    struct DeferredSpawn {
+        Entity director; // 失败时回写该导演的 waveSpawned（重取，池可能已搬移）
+        uint8_t entry;   // 波内条目下标
+        uint32_t prefabId;
+        uint32_t team;
+        Vec2 pos;
+    };
+    std::vector<DeferredSpawn> deferred_;
 };
 
 /// #3 出生系统：Spawner cooldown → 预制体工厂实例化 + Spawn 事件；
@@ -134,6 +151,14 @@ private:
     std::vector<uint32_t> teamCounts_;
     uint32_t censusCountdown_ = 0; // 0 = 本 tick 普查（首 tick 必普查）
     bool warnedNoFactory_ = false; // 无工厂告警一次（[ISSUE-4] 仅场景确有 Spawner 时）
+    // L12：同 DirectorSystem（形态略异：组号字段）
+    struct DeferredSpawn {
+        uint32_t prefabId;
+        uint32_t team;
+        Vec2 pos;
+        int group; // 所属 Spawner（组号：工厂不认 prefab 时跳过该组余量 = 旧 break）
+    };
+    std::vector<DeferredSpawn> deferred_;
 };
 
 /// #4 行为 AI：Chase/Patrol/Flee/Shooter → Velocity（并行；最近邻走目标板）

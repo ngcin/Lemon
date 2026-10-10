@@ -375,6 +375,7 @@ void ForEachComponentRange(Scene& s, uint32_t begin, uint32_t end,
                            void (*cb)(Entity, const void*, void*), void* ctx) {
     auto view = s.View<C>();
     if (end > view.size()) end = (uint32_t)view.size();
+    if (begin >= view.size()) return; // L6（review 2026-10-09）：begin 越界 = advance 越 end() 的 UB
     auto it = view.begin();
     std::advance(it, begin);
     for (uint32_t i = begin; i < end; ++i, ++it) {

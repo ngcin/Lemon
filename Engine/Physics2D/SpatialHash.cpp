@@ -2,6 +2,7 @@
 #include "Physics2D/SpatialHash.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 #include "Components/CoreComponents.h"
@@ -21,6 +22,10 @@ void SpatialHash::Rebuild(Scene& scene) {
     auto view = scene.View<Transform2D>();
     items_.reserve(scene.Pool<Transform2D>().size());
     for (auto [ent, tf] : view.each()) {
+        // L11（review 2026-10-09，#19 同款）：非有限坐标的 float→int 是 UB——
+        // 脚本写 Transform/手改场景档可达；静默剪除（不收录 = 不命中，坏数据
+        // 只丢功能不炸）
+        if (!std::isfinite(tf.pos.x) || !std::isfinite(tf.pos.y)) continue;
         int32_t cx = (int32_t)std::floor(tf.pos.x * invCell_);
         int32_t cy = (int32_t)std::floor(tf.pos.y * invCell_);
         uint16_t bits = 0;
@@ -84,6 +89,10 @@ bool SpatialHash::PassSlow(Scene& s, uint32_t entRaw, const QueryFilter& f) cons
 void SpatialHash::OverlapCircle(Scene& scene, Vec2 center, float radius,
                                 const QueryFilter& f, float probeRadius,
                                 FunctionRef<bool(Entity, const Transform2D&)> cb) const {
+    // L11：坏查询防御（NaN/inf 的 float→int 网格换算 UB）——空结果返回
+    if (!std::isfinite(center.x) || !std::isfinite(center.y) ||
+        !std::isfinite(radius) || !std::isfinite(probeRadius))
+        return;
     float reach = radius + probeRadius;
     int32_t x0 = (int32_t)std::floor((center.x - reach) * invCell_);
     int32_t x1 = (int32_t)std::floor((center.x + reach) * invCell_);
@@ -116,6 +125,11 @@ void SpatialHash::OverlapCircle(Scene& scene, Vec2 center, float radius,
 void SpatialHash::OverlapBox(Scene& scene, Rect box, const QueryFilter& f,
                              float probeRadius,
                              FunctionRef<bool(Entity, const Transform2D&)> cb) const {
+    // L11：坏查询防御（同 OverlapCircle）
+    if (!std::isfinite(box.min.x) || !std::isfinite(box.min.y) ||
+        !std::isfinite(box.max.x) || !std::isfinite(box.max.y) ||
+        !std::isfinite(probeRadius))
+        return;
     Rect reach = box.Expanded(probeRadius);
     int32_t x0 = (int32_t)std::floor(reach.min.x * invCell_);
     int32_t x1 = (int32_t)std::floor(reach.max.x * invCell_);
@@ -149,6 +163,10 @@ RayHit SpatialHash::Raycast(Scene& scene, Vec2 origin, Vec2 dir, float maxDist,
     best.entity = Entity::Null();
     best.distance = 3.4e38f; // FLT_MAX：未命中的哨兵（tHit < best 比较基线）
 
+    // L11：坏查询防御（origin/dir/maxDist 非有限 = 采样点 floor→int UB）
+    if (!std::isfinite(origin.x) || !std::isfinite(origin.y) ||
+        !std::isfinite(dir.x) || !std::isfinite(dir.y) || !std::isfinite(maxDist))
+        return best; // 未命中哨兵
     Vec2 d = Normalize(dir);
     if (d == Vec2::Zero()) {
         // 退化：按点查询处理

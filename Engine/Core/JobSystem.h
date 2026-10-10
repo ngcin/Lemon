@@ -49,9 +49,14 @@ public:
         return handle;
     }
 
-    /// 等待单个任务完成
+    /// 等待单个任务完成。L36（review 2026-10-09）：wait 后 get() 取回
+    /// packaged_task 存入的异常重抛——原只 wait 不 get，并行块异常（如建桶任务
+    /// bad_alloc）被静默吞成"部分完成的静默结果"（--threads 1 可见、多线程静默
+    /// 的不一致）；重抛给调用方/主线程统一拦截（引擎响亮失败口径同 LEMON_ASSERT）
     static void Complete(JobHandle& handle) {
-        if (handle.valid()) handle.wait();
+        if (!handle.valid()) return;
+        handle.wait();
+        handle.get();
     }
 
     /// 把 [0, count) 切成不小于 grain 的块并发执行 fn(begin, end)。

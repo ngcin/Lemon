@@ -26,8 +26,33 @@ namespace {
 
 // ------------------------------------------------------ TargetBoard ---------
 void TargetBoard::DeclareTeams(const std::vector<uint32_t>& teamIds) {
-    teams_.clear();
-    for (uint32_t id : teamIds) teams_.push_back({id, {}});
+    // 差量同步（review 2026-10-09 #M7）：稳态 = 声明逐位不变直接返回——原实现
+    // 每帧 clear()+重建把 TeamList（内嵌 list + Grid 五组 vector）容量全部释放，
+    // 下帧 Rebuild 从容量 0 重新翻倍扩容，「Build 暂存复用」注释意图落空。
+    // 一致时内容清空本就由紧随的 Rebuild 负责，此处无事可做。
+    if (teams_.size() == teamIds.size()) {
+        size_t i = 0;
+        while (i < teamIds.size() && teams_[i].id == teamIds[i]) ++i;
+        if (i == teamIds.size()) return;
+    }
+    // 声明变化（进/退场增删 Chase/Shooter）：仍被声明的槽 move 保容量、新槽
+    // 尾插；consumed 防同 id 重复匹配（原实现重复声明建多槽各收条目，保持）。
+    std::vector<bool> consumed(teams_.size(), false);
+    std::vector<TeamList> next;
+    next.reserve(teamIds.size());
+    for (uint32_t id : teamIds) {
+        bool reused = false;
+        for (size_t j = 0; j < teams_.size(); ++j) {
+            if (!consumed[j] && teams_[j].id == id) {
+                consumed[j] = true;
+                next.push_back(std::move(teams_[j]));
+                reused = true;
+                break;
+            }
+        }
+        if (!reused) next.push_back(TeamList{id, {}});
+    }
+    teams_ = std::move(next);
 }
 
 void TargetBoard::Rebuild(Scene& scene, bool collectAll, JobSystem* jobs) {
@@ -47,6 +72,7 @@ void TargetBoard::Rebuild(Scene& scene, bool collectAll, JobSystem* jobs) {
                 if (t.id == meta.team) t.list.push_back(entry);
         }
         for (auto& t : teams_) t.grid.Build(t.list); // many-vs-many 网格桶（小列表空建）
+        if (collectAll) allGrid_.Build(all_); // 全表桶（#M8）：小表空建，NearestAny 兜底线性
         return;
     }
 
@@ -71,6 +97,7 @@ void TargetBoard::Rebuild(Scene& scene, bool collectAll, JobSystem* jobs) {
                 if (t.id == meta.team) t.list.push_back(entry);
         }
         for (auto& t : teams_) t.grid.Build(t.list);
+        if (collectAll) allGrid_.Build(all_);
         return;
     }
     const uint32_t teamCount = (uint32_t)teams_.size();
@@ -103,14 +130,21 @@ void TargetBoard::Rebuild(Scene& scene, bool collectAll, JobSystem* jobs) {
             auto& src = chunkAlls_[ci];
             all_.insert(all_.end(), src.begin(), src.end());
         }
-    if (teamCount > 0) { // 各队独立，逐队入队并行建桶（任务内不嵌套，JobSystem 纪律）
+    // 各队 +（Flee 面）全表桶统一并行建（#M8）：任务内不嵌套（JobSystem 纪律），
+    // 最后一个留给主线程执行（不空等）。
+    const uint32_t buildCount = teamCount + (collectAll ? 1u : 0u);
+    if (buildCount > 0) {
         std::vector<JobSystem::JobHandle> builds;
-        builds.reserve(teamCount - 1);
-        for (uint32_t t = 0; t + 1 < teamCount; ++t) {
-            TeamList& tl = teams_[t];
-            builds.push_back(jobs->Schedule([&tl] { tl.grid.Build(tl.list); }));
-        }
-        teams_.back().grid.Build(teams_.back().list); // 主线程干最后一队（不空等）
+        builds.reserve(buildCount - 1);
+        for (uint32_t idx = 0; idx + 1 < buildCount; ++idx)
+            builds.push_back(jobs->Schedule([this, idx, teamCount] {
+                if (idx < teamCount) teams_[idx].grid.Build(teams_[idx].list);
+                else allGrid_.Build(all_);
+            }));
+        if (teamCount > 0 && buildCount - 1 < teamCount)
+            teams_[buildCount - 1].grid.Build(teams_[buildCount - 1].list);
+        else
+            allGrid_.Build(all_);
         for (auto& h : builds) JobSystem::Complete(h);
     }
 }
@@ -267,17 +301,23 @@ Entity TargetBoard::Nearest(uint32_t team, Vec2 from, float range, Entity exclud
 }
 
 Entity TargetBoard::NearestAny(Vec2 from, float range, Entity exclude) const {
-    Entity best = Entity::Null();
-    float bestD2 = range * range;
-    for (const TargetEntry& te : all_) {
-        if (te.e == exclude) continue;
-        float d2 = LengthSq(te.pos - from);
-        if (d2 < bestD2) {
-            bestD2 = d2;
-            best = te.e;
+    // 双径（review 2026-10-09 #M8）：< kMinList 线性快径（存量场景逐位不变），
+    // ≥ kMinList 走全表桶环搜——原线性全扫在万级 Flee 场（敌群溃逃）回到自家
+    // 教训注释记录的复杂度墙。等距平局语义差异同队版 Nearest（Grid 注释）。
+    if (all_.size() < TeamList::Grid::kMinList) {
+        Entity best = Entity::Null();
+        float bestD2 = range * range;
+        for (const TargetEntry& te : all_) {
+            if (te.e == exclude) continue;
+            float d2 = LengthSq(te.pos - from);
+            if (d2 < bestD2) {
+                bestD2 = d2;
+                best = te.e;
+            }
         }
+        return best;
     }
-    return best;
+    return allGrid_.Nearest(all_, from, range, exclude);
 }
 
 // ---------------------------------------------------------------- #1 输入 --
@@ -327,15 +367,7 @@ void DirectorSystem::Tick(World& world, Scene& scene, float dt) {
     // Transform2D 等组件池追加（嵌套导演/prefab 带 Transform），池扩容搬移使
     // wd/tf/wave 引用与 view 迭代器在迭代中悬空。RNG 在请求时消耗、事件按请求序
     // 推 = 与旧实现逐位同序列（金回放不受影响）
-    struct DeferredSpawn {
-        Entity director; // 失败时回写该导演的 waveSpawned（重取，池可能已搬移）
-        uint8_t entry;   // 波内条目下标
-        uint32_t prefabId;
-        uint32_t team;
-        Vec2 pos;
-    };
-    std::vector<DeferredSpawn> deferred;
-    deferred.reserve(16);
+    deferred_.clear(); // L12：成员缓冲复用（容量稳定）
 
     for (auto [ent, wd, tf] : scene.View<WaveDirector, Transform2D>().each()) {
         // 容量防御钳（Inspector/JSON 手改超容；读档侧 ReadArraySeg 另有一道）
@@ -389,7 +421,7 @@ void DirectorSystem::Tick(World& world, Scene& scene, float dt) {
             Vec2 offset = e.range > 0.0f ? rng.UnitVec2() * e.range * rng.Float01()
                                          : Vec2::Zero();
             const Vec2 pos = tf.pos + offset;
-            deferred.push_back({Scene::FromEntt(ent), i, e.prefabId, wd.spawnTeam, pos});
+            deferred_.push_back({Scene::FromEntt(ent), i, e.prefabId, wd.spawnTeam, pos});
             ++wd.waveSpawned[i]; // 交货计数随请求（失败在执行段废止 + 回退配额）
             ++alive;             // 乐观自增（普查刷新前的本 tick 内闸门）
 
@@ -399,7 +431,7 @@ void DirectorSystem::Tick(World& world, Scene& scene, float dt) {
         }
     }
 
-    for (const DeferredSpawn& d : deferred) {
+    for (const auto& d : deferred_) {
         Entity spawned = world.SpawnPrefab(d.prefabId, d.pos, d.team);
         if (spawned.IsNull()) { // 工厂不认此 prefab：废止条目（不逐 tick 重试）
             --teamCounts_[d.team & 63]; // 请求段乐观自增的回退
@@ -448,14 +480,7 @@ void SpawnSystem::Tick(World& world, Scene& scene, float dt) {
     // spawn 请求表（循环外统一执行，2026-09-24 审查，与 DirectorSystem 同修）：
     // 工厂向组件池追加会使 view 迭代器与 sp/tf 引用迭代中悬空。RNG 在请求时消耗、
     // 事件按请求序推 = 与旧实现逐位同序列
-    struct DeferredSpawn {
-        uint32_t prefabId;
-        uint32_t team;
-        Vec2 pos;
-        int group; // 所属 Spawner（组号：工厂不认 prefab 时跳过该组余量 = 旧 break）
-    };
-    std::vector<DeferredSpawn> deferred;
-    deferred.reserve(16);
+    deferred_.clear(); // L12：成员缓冲复用（容量稳定）
     if (dt <= 0.0f) return; // timeScale=0 冻结（review 2026-10-02 #61）：连发型
     //（interval≤dt）Spawner 出生后冷却钳 0 → 冻结期每 tick 到期，原实现照走出生
     // 分支 = burst 全额泄漏 + RNG 逐 tick 消耗，违背"冻结不消耗"自述
@@ -478,13 +503,13 @@ void SpawnSystem::Tick(World& world, Scene& scene, float dt) {
                 break;
             Vec2 offset = sp.range > 0.0f ? rng.UnitVec2() * sp.range * rng.Float01()
                                           : Vec2::Zero();
-            deferred.push_back({sp.prefabId, sp.spawnTeam, tf.pos + offset, group});
+            deferred_.push_back({sp.prefabId, sp.spawnTeam, tf.pos + offset, group});
             ++teamCounts_[sp.spawnTeam & 63]; // 请求时占额（失败/跳过在执行段回退）
         }
     }
 
     int failedGroup = -1;
-    for (const DeferredSpawn& d : deferred) {
+    for (const auto& d : deferred_) {
         if (d.group == failedGroup) {
             --teamCounts_[d.team & 63];
             continue;

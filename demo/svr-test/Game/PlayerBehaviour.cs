@@ -60,7 +60,7 @@ public sealed class PlayerBehaviour : LemonBehaviour
     private static readonly FxBarSkin kMobBarSkin =
         new("7e57000000000101", "7e57000000000102", 0xFFE8E8E8u, 4f);
     private const double kCritChance = 0.15;
-    private static readonly System.Random kCritRng = new();
+    private static readonly Lemon.Pcg32 kCritRng = new(0xC21u, 0x52u); // L15：PCG32 子流（引擎纪律）
 
     private const float kArenaHalf = 1000f; // 软竞技场边界（脚本层钳制）
     private const uint kColorHp = 0xFF30B0F0u;   // 血条红（ABGR）
@@ -81,7 +81,7 @@ public sealed class PlayerBehaviour : LemonBehaviour
     private const byte kSrFlipX = 0x01;         // SpriteRenderer.flags（与 RenderComponents.h 同步）
     private const byte kSrFlipY = 0x02;
     private const byte kSrEnabled = 0x04;       // C# 整写零值 = 禁用，SetComponent 前必须显式带上
-    private const short kPlayerOrder = 1;       // 玩家桶内层序（残影 0 垫身后；负值被 uint16 强转会排最顶）
+    private const short kPlayerOrder = 1;       // 玩家桶内层序（残影 0 垫身后；负 order 在下层——L1 后 Unity 语义）
 
     // ---- 批② T4 表载缓存（Start 一次载入；Play 中改表下一局生效——快照语义）----
     private sealed class WeaponRow
@@ -178,7 +178,7 @@ public sealed class PlayerBehaviour : LemonBehaviour
                 // 换装后锚点 = fox run 帧实测：画布 104×89，精灵半高 ≈ 44.5，
                 // 故头顶 ≈ -44.5；原 -56/-63 是按旧 yami 16×32 怪调的，偏移过大。
                 // 暴击仍高于常规一个身位档（沿用原 7px 差）。
-                if (kCritRng.NextDouble() < kCritChance)
+                if (kCritRng.Float01() < kCritChance)
                     Fx.Crit($"暴击 {m.P0:0}", new Vec2(tf.Pos.X - 20f, tf.Pos.Y - 62f));
                 else
                     Fx.Text(m.P0, new Vec2(tf.Pos.X - 20f, tf.Pos.Y - 55f), kFxTextMob);

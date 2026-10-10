@@ -74,12 +74,13 @@ public:
     /// 返回 false = root 无 Assets 目录（不可用）。
     bool Open(const std::string& projectRoot, uint32_t spriteIdBase);
 
-    const IndexedEntry* FindByGuid(uint64_t guid) const;
+    const IndexedEntry* FindByGuid(uint64_t guid) const; // O(1)（批⑪ #M16 哈希表）
     const IndexedEntry* FindByPath(const std::string& relPath) const;
     /// 全幅号 ∪ 切片区间（资产反查；SpriteRefSource 回填面**不可**用此口——
     /// cell 号命中会把切片引用升级成整图 guid，本体号专用查询见下）
     const IndexedEntry* FindBySpriteId(uint32_t spriteId) const;
-    /// 仅本体号（SpriteRefs 回填契约：cell 号/程序化页号查无 = 不回填）
+    /// 仅本体号（SpriteRefs 回填契约：cell 号/程序化页号查无 = 不回填）。
+    /// O(1)（批⑪ #M16——ResolveSpriteRefs 每实体调用，原线性全扫）
     const IndexedEntry* FindByWholeSpriteId(uint32_t spriteId) const;
     /// clip/prefab/controller/table/animset 按 GUID 低 32 位反查（运行时映射约定，
     /// 03 §69 组件 schema 恒 uint32；碰撞 = 路径序先登记者）
@@ -106,6 +107,12 @@ private:
     std::string root_;
     std::vector<IndexedEntry> entries_; // relPath 升序
     std::unordered_map<std::string, uint32_t> byPath_; // relPath → entries_ 下标
+    // 批⑪ #M16：装载期等值索引——FindByGuid/FindByWholeSpriteId 被每实体
+    //（ResolveSpriteRefs——装载与每次换场）、每图集条目（AtlasStore）调用，
+    // 数千资产 × 万级实体 = 千万次 u64 比较级装载卡顿。先登记者保留（emplace）
+    // = 原线性版路径序语义。FindBySpriteId（切片区间版）无运行时热消费方不动。
+    std::unordered_map<uint64_t, uint32_t> byGuid_;
+    std::unordered_map<uint32_t, uint32_t> byWholeId_;
     uint32_t spriteIdBase_ = 0;
     bool fromManifest_ = false;
     bool opened_ = false;

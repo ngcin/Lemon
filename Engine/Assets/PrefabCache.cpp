@@ -32,9 +32,17 @@ void PrefabCache::Build(const PrefabSource& src) {
     src.EachPrefab([&](uint64_t guid, const std::string& absPath) {
         std::ifstream f(absPath, std::ios::binary);
         if (!f) return true; // 读不开 = 跳过（健康源仍可能被外部并发删——响亮度让位）
+        std::string json((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        // 批⑪ #M17：Build 期预解析一次（坏档红字跳过——原 Spawn 运行时 WARN+Null
+        // 语义前移装载期，H2「坏档红字跳过」契约同口径）
+        auto parsed = ecs::SceneArchive::ParseEntityTree(json);
+        if (!parsed) {
+            LEMON_WARN("Play prefab 解析失败（装载期跳过）：%s", absPath.c_str());
+            return true;
+        }
         Entry c;
         c.guid = guid;
-        c.json.assign((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        c.parsed = std::move(parsed);
         const uint32_t id = (uint32_t)guid; // 低 32 位（映射约定）
         if (!byId_.emplace(id, std::move(c)).second)
             LEMON_WARN("Play prefab 映射碰撞：guid %016llx 与另一 prefab 低 32 位同值"
@@ -42,6 +50,13 @@ void PrefabCache::Build(const PrefabSource& src) {
                        (unsigned long long)guid, id);
         return true;
     });
+}
+
+PrefabCache::~PrefabCache() = default;
+
+void PrefabCache::Clear() {
+    byId_.clear();
+    warned_.clear();
 }
 
 ecs::Entity PrefabCache::Spawn(ecs::Scene& s, uint32_t prefabId, Vec2 pos,
@@ -56,9 +71,14 @@ ecs::Entity PrefabCache::Spawn(ecs::Scene& s, uint32_t prefabId, Vec2 pos,
                        prefabId);
         return ecs::Entity::Null();
     }
-    ecs::Entity root = InstantiateJson(s, it->second.json, it->second.guid, pos);
+    // 批⑪ #M17：零解析实例化（Build 期已 parse；InstantiateJson 的 pos/prefabId
+    // 回链逻辑就地展开——高频 spawn 免每发全量 Json::parse）
+    ecs::Entity root = ecs::SceneArchive::LoadEntityTree(s, *it->second.parsed);
+    if (root.IsNull()) return root;
+    if (s.Has<ecs::Transform2D>(root)) s.Get<ecs::Transform2D>(root).pos = pos;
+    if (ecs::Meta* m = s.TryGet<ecs::Meta>(root)) m->prefabId = it->second.guid;
     // 队伍覆盖：spawnTeam/弹队语义优先于 prefab 源值（bench 工厂同款）
-    if (ecs::Meta* m = root.IsNull() ? nullptr : s.TryGet<ecs::Meta>(root)) m->team = team;
+    if (ecs::Meta* m = s.TryGet<ecs::Meta>(root)) m->team = team;
     return root;
 }
 

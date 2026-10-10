@@ -337,7 +337,7 @@ void TestDomainManager() {
         auto listFn = (int (*)(char*, int))GetExport("lemon_behaviours_list");
         char buf[4096];
         int n = listFn ? listFn(buf, (int)sizeof buf) : -1;
-        Expect(n == 23, "behaviours list after hot reload (+M11/M15/F-08.2/T3/b1/b2/T3c/T3d/A档tween/T5存档档/b3c UI/M6c b2 audio/M7c b1 fx/M7c b7 scene/M7c b8 async/b11 H1 stale probes)");
+        Expect(n == 26, "behaviours list after hot reload (+M11/M15/F-08.2/T3/b1/b2/T3c/T3d/A档tween/T5存档档/b3c UI/M6c b2 audio/M7c b1 fx/M7c b7 scene/M7c b8 async/b11 H1 stale/b11 R-a1 multi-slot probes)");
         // M4.6 回归（用户实测闪退根因）：相对路径进 dm_reload 曾抛 ArgumentException
         // 逃逸 UnmanagedCallersOnly → coreclr abort。拦截层必须转 0 返回且进程存活
         // （本断言能跑到 = 进程没死）。换装失败后旧域已弃——再换一次真路径恢复。
@@ -575,6 +575,51 @@ void TestBehaviourAndStructuralOps() {
 // 1871→1874 各恰一次 + 终局场景
 // AliveCount==0 且 Velocity/ScriptBox/Transform2D 三视图计数全零——无闸时 Release
 // 恰好把幽灵注进这三个池（D1 口径：红字 WARN + 默认值，不炸不注）。
+// 批⑪ R-a1（b11c review）：多槽实体销毁序对拍——M12 Detach 索引化执行序必须 =
+// 槽注册序升序（降序 Sort+倒序循环）；曾因 Sort 方向叠加返转（升序 Sort+倒序循环
+// = 降序执行）破坏回放确定性。事件号 1881(A,typeId 23)→1882(B,typeId 24)，
+// 断言到达序严格先 A 后 B（覆盖 M11 批量销毁段 + M12 索引化组合链）。
+void TestMultiSlotDestroyOrder() {
+    using namespace lemon::ecs;
+    auto timeResetFn = (void (*)())GetExport("lemon_time_reset");
+    timeResetFn(); // Time 属于"一局"——fc==1 编排依赖归零
+
+    auto opsSubmit = (void (*)(unsigned char, unsigned char, uint64_t))GetExport("lemon_ops_submit");
+    Expect(opsSubmit != nullptr, "ops export resolved");
+
+    WorldDesc d;
+    d.threadCount = 1;
+    World w(d);
+    Scene& s = w.CreateScene("MultiSlot");
+    w.SetActiveScene(&s);
+    w.SetScriptBackend(&g_sh);
+    w.Pipeline().AddSystem(std::make_unique<DestroyCommitSystem>());
+    w.Pipeline().AddSystem(std::make_unique<CSharpBatchSystem>());
+    w.Pipeline().AddSystem(std::make_unique<ScriptEventDispatchSystem>());
+    w.Pipeline().ResolveOrder();
+
+    int seq = 0, seqA = 0, seqB = 0;
+    w.SetEventSink([&](World&, const EventPacket& p) {
+        if (p.type != GameEvent::Custom) return;
+        ++seq;
+        if (p.user == 1881) seqA = seq;
+        else if (p.user == 1882) seqB = seq;
+    });
+
+    // 驱动经占位链挂载（typeId 25，表尾注册序）
+    opsSubmit(0, 0, 0x8000000000000001ull);
+    opsSubmit(4, 25, 0x8000000000000001ull);
+
+    for (int i = 0; i < 8; i++) w.Step(0.25f); // fc1..8：spawn/挂载/销毁/OnDestroy×2/收工
+
+    Expect(seqA > 0 && seqB > 0, "multi-slot: both OnDestroy fired (A and B)");
+    Expect(seqA < seqB, "multi-slot destroy order: slot order ascending (A before B)");
+
+    int sb = 0;
+    for (auto [e, c] : s.View<lemon::scripting::ScriptBox>().each()) { (void)e; (void)c; ++sb; }
+    Expect(sb == 0, "multi-slot: clean teardown (no residual ScriptBox)");
+}
+
 void TestStaleHandleSdk() {
     using namespace lemon::ecs;
     auto timeResetFn = (void (*)())GetExport("lemon_time_reset");
@@ -2197,6 +2242,7 @@ int main() {
     TestSceneSdk();     // M7c 批⑦：SceneManager 全链（四跳/事件序/DDOL/红字拒）
     TestSceneAsyncSdk(); // M7c 批⑧：LoadSceneAsync 全链（契约/门控/await/取代取消）
     TestStaleHandleSdk(); // 批⑪ H1：失效句柄三闸（write/op2/op4）+ 无幽灵注入
+    TestMultiSlotDestroyOrder(); // 批⑪ R-a1：多槽销毁序 = 槽注册序升序（M12 索引化防回归）
 
     // M4.6 探针（编辑器切项目场景）：同进程二次 ScriptHost 生命周期。CoreCLR 运行时
     // 进程单例——第二次 Initialize 的真实行为必须钉板（成功/失败都合法，崩 = 缺陷）。

@@ -263,6 +263,8 @@ std::vector<Entity> IntegrateStaged(Scene& live, Scene& staging,
     }
 
     if (dropped) live.CommitDestroys(); // 镜像 BuildEntities 坏条目回收路径
+    // L9（review 2026-10-09）红线豁免注记：坏槽 = 零组件空实体（live.Create()
+    // 出厂、ReadEntity 拒收即毁），无 ScriptBox/OnDestroy 可漏——直调安全承重
     return liveLedger;
 }
 

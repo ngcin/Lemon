@@ -36,11 +36,32 @@ public static class Behaviours
         public readonly List<bool> StartPending = new();
         public readonly List<int> BadStreak = new();
         public readonly List<bool> Disabled = new();
+        // 实体 id → Instances 下标（review 2026-10-09 #M12）：Detach 原对全部类型槽
+        // ×全实例线性扫描，批量销毁 N 实体 = O(N×总实例数)（清屏双重放大）。
+        // 下标随移除平移同步修正（与 RemoveAt 平移同阶 = 保序删除的理论下界——
+        // swap-remove 会乱 tick 序，不可用）。同实体同槽唯一（Attach 红字拒绝双挂）
+        // = 每实体每槽至多一条目。
+        public readonly Dictionary<ulong, int> ByEntity = new();
     }
 
     internal static readonly List<TypeSlot> Slots = new();
     private static readonly List<TypeSlot> s_ordered = new(); // (Order, 注册序) 预排序：tick 零分配
     private static int s_attached;
+
+    // 实体 → 槽号集合（#M12 外层索引）：槽号在实例生命周期内稳定（不随槽内
+    // RemoveAt 漂移）；Detach 据此跳过无关槽（原实现每实体扫全部类型槽）。
+    // List 池化复用——批量销毁路径稳态零分配。
+    private static readonly Dictionary<ulong, List<int>> s_slotsByEntity = new();
+    private static readonly Stack<List<int>> s_slotListPool = new();
+
+    private static List<int> SlotsOf(ulong id)
+    {
+        if (!s_slotsByEntity.TryGetValue(id, out var list)) {
+            list = s_slotListPool.Count > 0 ? s_slotListPool.Pop() : new List<int>(4);
+            s_slotsByEntity[id] = list;
+        }
+        return list;
+    }
 
     // 热重载待恢复包（M4.5；键 = (类名, 实体 id)）。独立于 Reset()——LoadScript 换域
     // 清注册表时本表必须存活，直到新域 Attach 消费（或下次换装覆盖）。
@@ -174,6 +195,8 @@ public static class Behaviours
         slot.StartPending.Add(true);
         slot.BadStreak.Add(0);
         slot.Disabled.Add(false);
+        slot.ByEntity[e.Id] = idx;   // #M12 双层索引登记（槽内下标 + 槽号）
+        SlotsOf(e.Id).Add(typeId);
         ++s_attached;
         SafeCall(slot, idx, b, LifecycleBits.Awake);
         SafeCall(slot, idx, b, LifecycleBits.OnEnable);
@@ -187,20 +210,54 @@ public static class Behaviours
         }
     }
 
-    /// <summary>卸载（Destroy 命令应用时由 Entry 调用；域线程）。实体销毁 → OnDestroy。</summary>
+    /// <summary>统一实例移除（#M12 索引化）：OnDestroy（未禁用）+ 订阅退订 + 四表
+    /// RemoveAt + 双层索引修正（槽内 ByEntity 平移修正、全局槽号表摘除——空表
+    /// 归还池）。slotIdx = Slots 下标（全局表键值）。</summary>
+    private static void RemoveInstance(int slotIdx, TypeSlot slot, int idx, ulong id)
+    {
+        if (!slot.Disabled[idx]) SafeCall(slot, idx, slot.Instances[idx], LifecycleBits.OnDestroy);
+        slot.Instances[idx].ClearSubscriptions(); // M15：实例级订阅随实例退订
+        slot.Instances.RemoveAt(idx);
+        slot.StartPending.RemoveAt(idx);
+        slot.BadStreak.RemoveAt(idx);
+        slot.Disabled.RemoveAt(idx);
+        slot.ByEntity.Remove(id);
+        for (int j = idx; j < slot.Instances.Count; j++) // 平移修正（与 RemoveAt 同阶）
+            slot.ByEntity[slot.Instances[j].gameObject.Entity.Id] = j;
+        if (s_slotsByEntity.TryGetValue(id, out var slots)) {
+            slots.Remove(slotIdx);
+            if (slots.Count == 0) {
+                s_slotsByEntity.Remove(id);
+                slots.Clear();
+                s_slotListPool.Push(slots);
+            }
+        }
+        --s_attached;
+    }
+
+    /// <summary>卸载（Destroy 命令应用时由 Entry 调用；域线程）。实体销毁 → OnDestroy。
+    /// 销毁序 = 槽注册序升序（同实体同槽唯一）——与原全扫实现逐位同构（回放
+    /// 确定性：OnDestroy 的 op 入队/事件推/native RNG 消耗序不可变）。</summary>
     internal static void Detach(EntityHandle e)
     {
-        foreach (var slot in Slots)
-            for (int i = slot.Instances.Count - 1; i >= 0; i--) {
-                if (slot.Instances[i].gameObject.Entity.Id != e.Id) continue;
-                if (!slot.Disabled[i]) SafeCall(slot, i, slot.Instances[i], LifecycleBits.OnDestroy);
-                slot.Instances[i].ClearSubscriptions(); // M15：实例级订阅随实例退订
-                slot.Instances.RemoveAt(i);
-                slot.StartPending.RemoveAt(i);
-                slot.BadStreak.RemoveAt(i);
-                slot.Disabled.RemoveAt(i);
-                --s_attached;
-            }
+        if (!s_slotsByEntity.TryGetValue(e.Id, out var slots) || slots.Count == 0) return;
+        // 降序排序 + 倒序循环 = 升序处理序，且 RemoveInstance 摘当前项时移除的
+        // 恒为已处理侧尾部（不打扰未处理下标）。R-a1（b11c review）：原实现升序
+        // Sort + 倒序循环 = 降序执行，多槽实体 OnDestroy 序倒序 = 回放确定性破坏。
+        slots.Sort((a, b) => b.CompareTo(a));
+        for (int i = slots.Count - 1; i >= 0; i--) {
+            int s = slots[i];
+            if (!Slots[s].ByEntity.TryGetValue(e.Id, out int idx)) continue; // 防御（恒命中）
+            RemoveInstance(s, Slots[s], idx, e.Id);
+        }
+    }
+
+    /// <summary>批量销毁（review 2026-10-09 #M11：C++ 侧连续段/待销毁收集单次投递）。
+    /// 序 = 输入实体序 × 槽注册序——与逐实体 Detach 逐位同构（OnDestroy 可观察序
+    /// 不变，回放确定性）。</summary>
+    internal static void DetachBatch(ReadOnlySpan<EntityHandle> ents)
+    {
+        foreach (ref readonly var e in ents) Detach(e);
     }
 
     /// <summary>单类型卸载（M6a 批⓪ T3：op5 DetachScript → lemon_scripts_detach 路径；
@@ -210,16 +267,8 @@ public static class Behaviours
     {
         if ((uint)typeId >= (uint)Slots.Count) return;
         var slot = Slots[typeId];
-        for (int i = slot.Instances.Count - 1; i >= 0; i--) {
-            if (slot.Instances[i].gameObject.Entity.Id != e.Id) continue;
-            if (!slot.Disabled[i]) SafeCall(slot, i, slot.Instances[i], LifecycleBits.OnDestroy);
-            slot.Instances[i].ClearSubscriptions();
-            slot.Instances.RemoveAt(i);
-            slot.StartPending.RemoveAt(i);
-            slot.BadStreak.RemoveAt(i);
-            slot.Disabled.RemoveAt(i);
-            --s_attached;
-        }
+        if (!slot.ByEntity.TryGetValue(e.Id, out int idx)) return;
+        RemoveInstance(typeId, slot, idx, e.Id);
     }
 
     /// <summary>实例查询（M6a 批⓪ T3：GameObject.GetComponent 脚本分路）。
@@ -230,10 +279,7 @@ public static class Behaviours
         int id = TypeIdOf(className);
         if (id < 0) return null;
         var slot = Slots[id];
-        for (int i = 0; i < slot.Instances.Count; i++)
-            if (slot.Instances[i].gameObject.Entity.Id == e.Id)
-                return slot.Instances[i];
-        return null;
+        return slot.ByEntity.TryGetValue(e.Id, out int idx) ? slot.Instances[idx] : null;
     }
 
     /// <summary>诊断：活动实例数。</summary>
@@ -294,6 +340,7 @@ public static class Behaviours
         Slots.Clear();
         s_ordered.Clear();
         s_attached = 0;
+        ClearEntityIndex();
     }
 
     /// <summary>硬清实例表（编辑器 EnterPlay 期由 lemon_play_reset 调；M5 批④后修）。
@@ -312,8 +359,21 @@ public static class Behaviours
             slot.StartPending.Clear();
             slot.BadStreak.Clear();
             slot.Disabled.Clear();
+            slot.ByEntity.Clear();
         }
         s_attached = 0;
         s_hotBags.Clear(); // 跨局残留的待恢复包 = 状态串局（同键 (类名,实体)）
+        ClearEntityIndex();
+    }
+
+    /// <summary>实体索引整体清场（#M12）：槽号表清空归还池（槽内 ByEntity 随槽对象
+    /// Clear/丢弃，由调用方处理——Reset 丢弃槽对象、ClearInstances 逐槽清）。</summary>
+    private static void ClearEntityIndex()
+    {
+        foreach (var list in s_slotsByEntity.Values) {
+            list.Clear();
+            s_slotListPool.Push(list);
+        }
+        s_slotsByEntity.Clear();
     }
 }

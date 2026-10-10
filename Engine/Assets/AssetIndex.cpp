@@ -242,8 +242,16 @@ bool AssetIndex::Open(const std::string& projectRoot, uint32_t spriteIdBase) {
                   return a.relPath < b.relPath;
               });
     byPath_.reserve(entries_.size() * 2);
-    for (uint32_t i = 0; i < (uint32_t)entries_.size(); ++i)
+    byGuid_.clear();
+    byWholeId_.clear();
+    byGuid_.reserve(entries_.size() * 2);
+    for (uint32_t i = 0; i < (uint32_t)entries_.size(); ++i) {
         byPath_.emplace(entries_[i].relPath, i);
+        // 批⑪ #M16：等值索引（sort 后路径序 = 原线性版先登记者语义，emplace 保先）
+        if (entries_[i].guid != 0) byGuid_.emplace(entries_[i].guid, i);
+        if (entries_[i].type == AssetType::Sprite && entries_[i].spriteId != 0)
+            byWholeId_.emplace(entries_[i].spriteId, i);
+    }
     opened_ = true;
     LEMON_LOG("AssetIndex：%u 条（%s 路径，sprite %u 号起）", (uint32_t)entries_.size(),
               fromManifest_ ? "manifest 快" : "回退扫描", spriteIdBase_);
@@ -485,9 +493,9 @@ void AssetIndex::ScanFallback() {
 
 const IndexedEntry* AssetIndex::FindByGuid(uint64_t guid) const {
     if (guid == 0) return nullptr;
-    for (const IndexedEntry& e : entries_)
-        if (e.guid == guid) return &e;
-    return nullptr;
+    // 批⑪ #M16：哈希直查（原线性全扫——万级实体 × 千级资产 = 千万次比较级装载卡顿）
+    auto it = byGuid_.find(guid);
+    return it != byGuid_.end() ? &entries_[it->second] : nullptr;
 }
 
 const IndexedEntry* AssetIndex::FindByPath(const std::string& relPath) const {
@@ -509,9 +517,9 @@ const IndexedEntry* AssetIndex::FindBySpriteId(uint32_t spriteId) const {
 
 const IndexedEntry* AssetIndex::FindByWholeSpriteId(uint32_t spriteId) const {
     if (spriteId == 0) return nullptr;
-    for (const IndexedEntry& e : entries_)
-        if (e.type == AssetType::Sprite && e.spriteId == spriteId) return &e;
-    return nullptr;
+    auto it = byWholeId_.find(spriteId); // 批⑪ #M16：等值哈希（无区间语义，与切片版分立）
+    if (it == byWholeId_.end()) return nullptr;
+    return entries_[it->second].type == AssetType::Sprite ? &entries_[it->second] : nullptr;
 }
 
 const IndexedEntry* AssetIndex::FindByLowId(AssetType type, uint32_t lowId) const {

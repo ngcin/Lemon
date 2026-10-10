@@ -74,6 +74,12 @@ public static class GameMain
         // 同上约定——script-tests TestStaleHandleSdk 消费：stale SetComponent/
         // AddComponent/AttachScript 全部红字丢弃，无幽灵注入）
         Lemon.Behaviours.Register<StaleHandleProbeBehaviour>();
+        // 批⑪ R-a1（b11c review）：多槽实体销毁序对拍（typeId 23/24/25 表尾注册
+        // 同上约定）——M12 Detach 索引化执行序必须 = 槽注册序升序；曾因 Sort 方向
+        // 叠加返转破坏回放确定性。script-tests TestMultiSlotDestroyOrder 消费
+        Lemon.Behaviours.Register<MultiSlotOrderProbeA>();
+        Lemon.Behaviours.Register<MultiSlotOrderProbeB>();
+        Lemon.Behaviours.Register<MultiSlotOrderDriver>();
         // 批⑦：换场三事件订阅（Configure 期静态订阅，跨局存活）——事件序记录
         // "U:<name>:<valid>:<loaded>" / "L:<name>:<path>:<mode>" / "A:<old>><new>"
         Lemon.SceneManager.sceneUnloaded += st => SceneLog.Add(
@@ -1033,6 +1039,43 @@ public sealed class StaleHandleProbeBehaviour : Lemon.LemonBehaviour
             Mark(1873);
         } else if (_staleAt != 0) {
             Mark(1874); // 三连后仍健康（无异常穿透/无崩溃）
+            gameObject.Destroy();
+        }
+    }
+}
+
+
+// ---- 批⑪ R-a1（b11c review）：多槽销毁序对拍 ----------------------------------
+// 实体挂 A(typeId 小)/B(typeId 大) 两脚本，销毁时 OnDestroy 事件到达序必须
+// A→B（槽注册序升序，与 M12 索引化前的全扫实现逐位同构）。
+public sealed class MultiSlotOrderProbeA : Lemon.LemonBehaviour
+{
+    protected override void OnDestroy()
+        => Lemon.Events.Push(Lemon.Interop.GameEvent.Custom, 1881, default, default);
+}
+
+public sealed class MultiSlotOrderProbeB : Lemon.LemonBehaviour
+{
+    protected override void OnDestroy()
+        => Lemon.Events.Push(Lemon.Interop.GameEvent.Custom, 1882, default, default);
+}
+
+public sealed class MultiSlotOrderDriver : Lemon.LemonBehaviour
+{
+    private Lemon.GameObject _target;
+    private int _destroyAt;
+
+    protected override void Update()
+    {
+        var fc = Lemon.Time.FrameCount;
+        if (fc == 1) {
+            _target = Lemon.Instantiate.Spawn(0, new Lemon.Vec2(5f, 5f));
+            _target.AddComponent<MultiSlotOrderProbeA>(); // op4（typeId 小，槽 0）
+            _target.AddComponent<MultiSlotOrderProbeB>(); // op4（typeId 大，槽 1）
+        } else if (fc == 2 && _destroyAt == 0) {
+            _target.Destroy(); // op1 → 批量销毁段 → DetachBatch → OnDestroy×2
+            _destroyAt = (int)fc;
+        } else if (_destroyAt != 0) {
             gameObject.Destroy();
         }
     }

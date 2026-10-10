@@ -361,13 +361,8 @@ std::string SceneArchive::SaveEntityTree(Scene& scene, Entity root) {
     return doc.dump();
 }
 
-ecs::Entity SceneArchive::LoadEntityTree(Scene& scene, const std::string& jsonText) {
-    Json doc = Json::parse(jsonText, nullptr, false);
-    if (doc.is_discarded() || !doc.contains("entities") || !doc.at("entities").is_array()) {
-        LEMON_WARN("prefab parse failed (invalid json)");
-        return Entity::Null();
-    }
-    const Json& entities = doc.at("entities");
+// string/预解析两版共核（批⑪ #M17 拆出；逻辑逐行未动）
+static ecs::Entity LoadEntityTreeCore(Scene& scene, const Json& entities) {
     if (entities.empty()) return Entity::Null();
 
     // 两遍：先建全部实体（EntityRef 目标可能在本实体之后）。坏档条目回收预建槽
@@ -402,6 +397,33 @@ ecs::Entity SceneArchive::LoadEntityTree(Scene& scene, const std::string& jsonTe
     return remap[0];
 }
 
+// 批⑪ #M17：实体树预解析产物（pimpl——定义不出 .cpp，nlohmann 红线）
+struct SceneArchive::ParsedEntityTree {
+    Json doc;
+};
+
+std::shared_ptr<SceneArchive::ParsedEntityTree>
+SceneArchive::ParseEntityTree(const std::string& jsonText) {
+    // 结构校验与 string 版入口一致（entities 数组在场；空数组由 core 静默 Null）
+    Json doc = Json::parse(jsonText, nullptr, false);
+    if (doc.is_discarded() || !doc.contains("entities") || !doc.at("entities").is_array())
+        return nullptr;
+    return std::shared_ptr<ParsedEntityTree>(new ParsedEntityTree{std::move(doc)});
+}
+
+ecs::Entity SceneArchive::LoadEntityTree(Scene& scene, const ParsedEntityTree& parsed) {
+    return LoadEntityTreeCore(scene, parsed.doc.at("entities"));
+}
+
+ecs::Entity SceneArchive::LoadEntityTree(Scene& scene, const std::string& jsonText) {
+    auto parsed = ParseEntityTree(jsonText);
+    if (!parsed) {
+        LEMON_WARN("prefab parse failed (invalid json)");
+        return Entity::Null();
+    }
+    return LoadEntityTree(scene, *parsed);
+}
+
 namespace {
 
 /// 解析+迁移+校验（Load/BuildInto 共用前半；M7c 批⑥ BuildInto 拆分）。失败已告警
@@ -417,7 +439,10 @@ bool ParseSceneDoc(const std::string& jsonText, Json& doc) {
         LEMON_WARN("scene missing/invalid schemaVersion");
         return false;
     }
-    std::string text = jsonText;
+    // L24（review 2026-10-09）：v2 现版档（绝大多数）迁移循环不进——拷贝纯浪费
+    //（万实体档 MB 级深拷贝 × 5 个调用点）；确认需迁移才拷可变副本
+    std::string text;
+    if (ver < SceneArchive::kSchemaVersion) text = jsonText;
     while (ver < SceneArchive::kSchemaVersion) {
         if (!SceneArchive::Migrate(text, ver)) {
             LEMON_WARN("scene migration failed at v%u", ver);
@@ -469,6 +494,9 @@ bool BuildEntities(Scene& scene, const Json& entities) {
         }
     }
     if (dropped) scene.CommitDestroys(); // 当帧回收，不给系统管线看见空壳实体
+    // L9（review 2026-10-09）红线豁免注记：此处直调绕过 NotifyPendingDestroys 是
+    // 承重的——坏槽 = ReadEntity 拒收的零组件预建空壳，无 ScriptBox 可通知
+    //（无 OnDestroy 可漏，F1 语义无损）；非坏槽永不走此路径
     return true;
 }
 
@@ -571,6 +599,10 @@ std::unique_ptr<StagedSceneBuild> StagedSceneBuild::Parse(const std::string& jso
 StagedSceneBuild::~StagedSceneBuild() = default;
 
 uint32_t StagedSceneBuild::EntityCount() const {
+    // L25（review 2026-10-09）：ReleaseDocChunk 后 doc 已置 null——原 at() 对 null
+    // json 抛 type_error 穿透 pimpl 边界；回落台账（槽账口径，CreateSlots 已 resize
+    // 对齐——SceneArchive.h 契约补注释放后仍可查询）
+    if (impl_->doc.is_null()) return (uint32_t)impl_->ledger.size();
     return (uint32_t)impl_->doc.at("entities").size();
 }
 

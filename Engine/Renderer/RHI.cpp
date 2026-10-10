@@ -1036,78 +1036,103 @@ Texture Device::CreateTexture(const TextureDesc& desc) {
 }
 
 bool Device::UploadTexture(Texture t, const void* rgba8Pixels, uint64_t byteSize) {
-    if (m->lossPending) return false; // M3：已探明丢失（恢复未启动）——重建回调期放行
-    auto& r = m->textures[t.id - 1];
-    LEMON_ASSERT(r.image, "invalid texture");
-    LEMON_ASSERT(byteSize >= (uint64_t)r.desc.width * r.desc.height * 4, "pixel data too small");
+    // 批⑪ #M4：单张 = 批量1（共核同码）
+    TextureUpload up{t, rgba8Pixels, byteSize};
+    return UploadTextures(&up, 1);
+}
 
-    VkBuffer staging = VK_NULL_HANDLE;
-    VmaAllocation stagingAlloc = VK_NULL_HANDLE;
-    {
+bool Device::UploadTextures(const TextureUpload* uploads, uint32_t count) {
+    if (count == 0) return true;
+    if (m->lossPending) return false; // M3：已探明丢失（恢复未启动）——重建回调期放行
+    // 批⑪ #M4：逐张建 staging（CPU 侧堆分配 + memcpy），全部录制进单个命令缓冲
+    // 一次 submit + 一次 waitIdle——原每张一次全设备同步（管线排空 × N）。
+    // 单张录制体（原 UploadTexture lambda 体逐行未动；Device::Impl 私有 → 内联 lambda）
+    auto recordOne = [this](VkCommandBuffer cmd, const TextureRes& r, VkBuffer staging) {
+        const VkImage img = r.image;
+    const uint32_t levels = r.realMipLevels;
+    m->TransitionImage(cmd, img, 1, VK_IMAGE_LAYOUT_UNDEFINED,
+                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0,
+                       VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+                       VK_PIPELINE_STAGE_TRANSFER_BIT);
+    VkBufferImageCopy copy{};
+    copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    copy.imageExtent = {r.desc.width, r.desc.height, 1};
+    vkCmdCopyBufferToImage(cmd, staging, img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+
+    if (levels > 1) {
+        m->TransitionImage(cmd, img, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                           VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT,
+                           VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+                           VK_PIPELINE_STAGE_TRANSFER_BIT);
+        for (uint32_t i = 1; i < levels; ++i) {
+            // mip 链逐层 blit：屏障必须打到本次的目标层 i（旧代码缺 baseLevel，
+            // 全打在 level 0 上，blit 源/目的布局双双不符，验证层必报错）
+            m->TransitionImage(cmd, img, 1, VK_IMAGE_LAYOUT_UNDEFINED,
+                               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0,
+                               VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+                               VK_PIPELINE_STAGE_TRANSFER_BIT, i);
+            int32_t srcW = std::max(1, (int32_t)r.desc.width >> (i - 1));
+            int32_t srcH = std::max(1, (int32_t)r.desc.height >> (i - 1));
+            int32_t dstW = std::max(1, (int32_t)r.desc.width >> i);
+            int32_t dstH = std::max(1, (int32_t)r.desc.height >> i);
+            VkImageBlit blit{};
+            blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, i - 1, 0, 1};
+            blit.srcOffsets[1] = {srcW, srcH, 1};
+            blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, i, 0, 1};
+            blit.dstOffsets[1] = {dstW, dstH, 1};
+            vkCmdBlitImage(cmd, img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, img,
+                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+            m->TransitionImage(cmd, img, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                               VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                               VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                               VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, i);
+        }
+        m->TransitionImage(cmd, img, levels, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                           VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                           VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+    } else {
+        m->TransitionImage(cmd, img, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                           VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                           VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                           VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+        }
+    };
+    struct Staging {
+        VkBuffer buffer;
+        VmaAllocation alloc;
+        const TextureRes* rec;
+    };
+    std::vector<Staging> stagings;
+    stagings.reserve(count);
+    for (uint32_t i = 0; i < count; ++i) {
+        auto& r = m->textures[uploads[i].tex.id - 1];
+        LEMON_ASSERT(r.image, "invalid texture");
+        LEMON_ASSERT(uploads[i].byteSize >=
+                         (uint64_t)r.desc.width * r.desc.height * 4,
+                     "pixel data too small");
         VkBufferCreateInfo ci{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
-        ci.size = byteSize;
+        ci.size = uploads[i].byteSize;
         ci.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
         VmaAllocationCreateInfo aci{};
         aci.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST;
         aci.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
                     VMA_ALLOCATION_CREATE_MAPPED_BIT;
         VmaAllocationInfo info{};
+        VkBuffer staging = VK_NULL_HANDLE;
+        VmaAllocation stagingAlloc = VK_NULL_HANDLE;
         VK_CHECK(vmaCreateBuffer(m->allocator, &ci, &aci, &staging, &stagingAlloc, &info));
-        std::memcpy(info.pMappedData, rgba8Pixels, (size_t)byteSize);
+        std::memcpy(info.pMappedData, uploads[i].rgba8Pixels, (size_t)uploads[i].byteSize);
+        // L2（review 2026-10-09）：staging 写后显式 flush——HOST_COHERENT 非 required
+        //（AUTO_PREFER_HOST 可选非一致类型），不 flush 则 GPU 读陈旧；coherent 上零成本
+        vmaFlushAllocation(m->allocator, stagingAlloc, 0, VK_WHOLE_SIZE);
+        stagings.push_back({staging, stagingAlloc, &r});
     }
-
-    VkImage img = r.image;
-    const uint32_t levels = r.realMipLevels;
     const bool ok = m->ImmediateSubmit([&](VkCommandBuffer cmd) {
-        m->TransitionImage(cmd, img, 1, VK_IMAGE_LAYOUT_UNDEFINED,
-                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0,
-                           VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
-                           VK_PIPELINE_STAGE_TRANSFER_BIT);
-        VkBufferImageCopy copy{};
-        copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-        copy.imageExtent = {r.desc.width, r.desc.height, 1};
-        vkCmdCopyBufferToImage(cmd, staging, img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
-
-        if (levels > 1) {
-            m->TransitionImage(cmd, img, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                               VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT,
-                               VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT,
-                               VK_PIPELINE_STAGE_TRANSFER_BIT);
-            for (uint32_t i = 1; i < levels; ++i) {
-                // mip 链逐层 blit：屏障必须打到本次的目标层 i（旧代码缺 baseLevel，
-                // 全打在 level 0 上，blit 源/目的布局双双不符，验证层必报错）
-                m->TransitionImage(cmd, img, 1, VK_IMAGE_LAYOUT_UNDEFINED,
-                                   VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0,
-                                   VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
-                                   VK_PIPELINE_STAGE_TRANSFER_BIT, i);
-                int32_t srcW = std::max(1, (int32_t)r.desc.width >> (i - 1));
-                int32_t srcH = std::max(1, (int32_t)r.desc.height >> (i - 1));
-                int32_t dstW = std::max(1, (int32_t)r.desc.width >> i);
-                int32_t dstH = std::max(1, (int32_t)r.desc.height >> i);
-                VkImageBlit blit{};
-                blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, i - 1, 0, 1};
-                blit.srcOffsets[1] = {srcW, srcH, 1};
-                blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, i, 0, 1};
-                blit.dstOffsets[1] = {dstW, dstH, 1};
-                vkCmdBlitImage(cmd, img, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, img,
-                               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
-                m->TransitionImage(cmd, img, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                                   VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                                   VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                                   VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, i);
-            }
-            m->TransitionImage(cmd, img, levels, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                               VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                               VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
-        } else {
-            m->TransitionImage(cmd, img, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                               VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                               VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                               VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
-        }
+        for (uint32_t i = 0; i < count; ++i)
+            recordOne(cmd, *stagings[i].rec, stagings[i].buffer);
     });
-    vmaDestroyBuffer(m->allocator, staging, stagingAlloc);
+    for (const Staging& s : stagings) vmaDestroyBuffer(m->allocator, s.buffer, s.alloc);
     return ok;
 }
 
@@ -1366,6 +1391,13 @@ void Device::EndFrameAndPresent(bool& needsRecreateOut, bool& deviceLostOut) {
     uint32_t fi = (uint32_t)(m->frameCounter % kFramesInFlight);
     auto& slot = m->slots[fi];
     VK_CHECK(vkEndCommandBuffer(slot.cmd));
+
+    // L2（review 2026-10-09）：hostMapped 常驻映射写路径统一 flush——AUTO_PREFER_HOST
+    // + SEQUENTIAL_WRITE 下 HOST_COHERENT 非 required 非 preferred（dGPU 可选非一致
+    // 类型），写后不 flush = GPU 读陈旧数据；coherent 上 VMA 内部直通零成本。
+    //（RmlUiBackend.cpp:379 staging flush 同因先例——spike-04 dGPU 黑屏根因）
+    for (const auto& r : m->buffers)
+        if (r.mapped) vmaFlushAllocation(m->allocator, r.alloc, 0, VK_WHOLE_SIZE);
 
     VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
     si.commandBufferCount = 1;

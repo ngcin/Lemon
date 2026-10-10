@@ -63,7 +63,8 @@ enum class BufferUsage : uint32_t {
 struct BufferDesc {
     uint64_t size = 0;
     uint32_t usage = 0;             // BufferUsage 位或
-    bool hostMapped = true;         // 常驻映射（HOST_VISIBLE|COHERENT, 顺序写）
+    bool hostMapped = true;         // 常驻映射（HOST_VISIBLE 顺序写；COHERENT 非
+                                    // required——写后由 RHI 统一 flush，L2 review 2026-10-09）
     const char* debugName = "buffer";
 };
 
@@ -172,7 +173,19 @@ public:
     void* MapBuffer(Buffer);                  // hostMapped=true 时常驻指针
     void DestroyBuffer(Buffer);
     Texture CreateTexture(const TextureDesc&);
-    bool UploadTexture(Texture, const void* rgba8Pixels, uint64_t byteSize); // staging 一次性上传（含 mip 链）；false = 设备丢失未上传（M3：恢复由帧循环统一驱动）
+    /// 批量上传条目（批⑪ #M4）：批内纹理互异（同图两次 = 第二次 UNDEFINED 获取
+    /// 屏障对非初始布局违例）
+    struct TextureUpload {
+        Texture tex;
+        const void* rgba8Pixels;
+        uint64_t byteSize;
+    };
+    /// 批量上传（批⑪ #M4）：一次 ImmediateSubmit 提交多张——原每张一次全设备
+    /// 同步（waitIdle = 整条 GPU 管线排空），dev 启动/首次导入/丢失全量重导的
+    /// 装载期上百张串行全停收敛为单次。false = 设备丢失（本批不可信——恢复由
+    /// 帧循环统一驱动，调用方不中止装载，与单张版契约一致）。
+    bool UploadTextures(const TextureUpload* uploads, uint32_t count);
+    bool UploadTexture(Texture, const void* rgba8Pixels, uint64_t byteSize); // staging 一次性上传（含 mip 链）= 批量1；false = 设备丢失未上传（M3：恢复由帧循环统一驱动）
     void DestroyTexture(Texture);
     Sampler CreateSampler(const SamplerDesc&);
     Shader CreateShader(ShaderStage, const uint32_t* spirv, size_t wordCount); // 内部按 SPIR-V 哈希去重

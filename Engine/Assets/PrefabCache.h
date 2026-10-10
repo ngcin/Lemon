@@ -13,6 +13,7 @@
 
 #include "Core/Math.h" // Vec2
 #include "ECS/Entity.h"
+#include "Serialization/SceneArchive.h" // 批⑪ #M17：Entry 持 ParsedEntityTree（pimpl）
 
 namespace lemon::ecs {
 class Scene;
@@ -36,13 +37,13 @@ public:
 
 class PrefabCache {
 public:
-    /// 装载期建缓存（源全量 .prefab → {低 32 位 → {guid,json}}；进 Play 时刻快照
-    /// 语义——Play 世界 = 快照，资产变更不追）。低 32 位碰撞 = 红字取先登记者。
+    /// 装载期建缓存（源全量 .prefab → {低 32 位 → {guid,预解析树}}；进 Play 时刻
+    /// 快照语义——Play 世界 = 快照，资产变更不追）。低 32 位碰撞 = 红字取先登记者。
+    /// 批⑪ #M17：Build 期 Json::parse 一次入 Entry（原 Entry 存文本、Spawn 每发
+    /// 全量重解析——高频刷怪/弹幕每轮堆分配密集解析）；坏档装载期红字跳过。
     void Build(const PrefabSource& src);
-    void Clear() {
-        byId_.clear();
-        warned_.clear();
-    }
+    ~PrefabCache(); // Entry 持 pimpl 不完整类型——析构出 .cpp（唯一完整类型点）
+    void Clear();
     bool Empty() const { return byId_.empty(); }
     size_t Size() const { return byId_.size(); }
 
@@ -67,7 +68,9 @@ public:
 private:
     struct Entry {
         uint64_t guid = 0; // 完整资产 GUID（回链用）
-        std::string json;  // .prefab 文本（装载时刻快照）
+        /// 预解析实体树（批⑪ #M17；shared_ptr 跨 TU 持不完整 pimpl——删除器在
+        /// SceneArchive.cpp 创建点捕获）
+        std::shared_ptr<ecs::SceneArchive::ParsedEntityTree> parsed;
     };
     std::unordered_map<uint32_t, Entry> byId_; // 低 32 位 → 条目
     mutable std::unordered_set<uint32_t> warned_; // prefabId 错绑去重告警

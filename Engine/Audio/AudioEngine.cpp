@@ -364,7 +364,15 @@ struct AudioEngine::Impl {
         std::memset(out, 0, sizeof(float) * frames * kMixChannels);
         mixFrames_ += frames; // 混音帧时钟（节流窗锚域；设备回调与离线同径）
         constexpr float kInvRate = 1.0f / static_cast<float>(kMixSampleRate);
+        // 批⑪ #M19：流式块级读缓冲（声部间复用——声部循环串行）。原帧循环内
+        // 每帧一次 ring.Read（acquire load + memcpy + release store），48kHz 每流式
+        // 声部每秒 4.8 万次原子发布；refill 一次供至多 256 帧（生产者按帧写 = 批读
+        // 字节序与逐帧读逐位同序，离线混音哈希不变）。流式恒 rate==1.0，块级读与
+        // 逐帧读行为完全等价。
+        constexpr uint32_t kStreamReadFrames = 256;
+        uint8_t sbuf[kStreamReadFrames * 4];
         for (Voice& v : voices) {
+            size_t sfill = 0, sgot = 0; // 本声部流式缓冲游标（帧）
             if (v.id == 0 || v.done || v.paused)
                 continue;
             const Clip& c = clips[v.clipRef - 1];
@@ -413,12 +421,22 @@ struct AudioEngine::Impl {
                 if (v.stream) { // 批①b：流式取帧——环空 = 欠载静音（failed 且枯竭 = 终结）
                     uint8_t fb[4] = {};
                     const size_t fbBytes = size_t(c.channels) * 2;
-                    if (v.stream->ring.Read(fb, fbBytes) != fbBytes) {
-                        if (v.stream->failed.load(std::memory_order_acquire)) {
+                    if (sfill >= sgot) { // 耗尽 → refill（#M19：一次 Read 供至多 256 帧；
+                        // 环空时 Read 只 acquire 比较 = 便宜，逐帧重试保持 pump 实时性）
+                        const size_t want = std::min<uint32_t>(kStreamReadFrames, frames - f);
+                        sgot = v.stream->ring.Read(sbuf, want * fbBytes) / fbBytes;
+                        sfill = 0;
+                        if (sgot == 0 &&
+                            v.stream->failed.load(std::memory_order_acquire)) {
                             v.done = true;
                             break;
                         }
-                        ++streamUnderrun;
+                    }
+                    if (sfill < sgot) {
+                        std::memcpy(fb, sbuf + sfill * fbBytes, fbBytes);
+                        ++sfill;
+                    } else {
+                        ++streamUnderrun; // 环空（failed 未置位）：本帧静音
                     }
                     const auto le16 = [](const uint8_t* p) {
                         return int16_t(uint16_t(p[0]) | (uint16_t(p[1]) << 8)) * kInv32768;
@@ -674,21 +692,31 @@ void AudioEngine::UnregisterClip(uint32_t clipId) {    std::lock_guard<std::mute
 }
 
 void AudioEngine::ResetClips() {
-    std::lock_guard<std::mutex> lk(impl_->mtx);
-    impl_->clips.clear();
-    for (auto& v : impl_->voices)
-        v.done = true;
+    // L22（review 2026-10-09）：全部 PCM 大块的 free/munmap（SFX 累计与 preload，
+    // 典型亚毫秒~毫秒级）挪锁外——MountAll 每次进 Play 首步即调，设备回调持同锁
+    // 混音会被边界性卡顿（M18 退役 stream 锁外析构同纪律）
+    decltype(impl_->clips) clips;
+    {
+        std::lock_guard<std::mutex> lk(impl_->mtx);
+        clips.swap(impl_->clips);
+        for (auto& v : impl_->voices)
+            v.done = true;
+    }
 }
 
 uint32_t AudioEngine::Play(uint32_t clipId, const PlayParams& p) {
     // 流式 clip 两阶段（批①b）：锁内取路径 → 锁外 open+头解析+预填（ADR-015 M2
     // "主线程只做 open + 头解析"；预填整环保首回调零欠载——256KiB 顺序读 ≈ 亚毫秒）
     std::string streamPath;
+    uint32_t regFrames = 0, regChans = 0;
     {
         std::lock_guard<std::mutex> lk(impl_->mtx);
         if (clipId == 0 || clipId > impl_->clips.size())
             return 0;
-        streamPath = impl_->clips[clipId - 1].streamPath;
+        const Impl::Clip& rc = impl_->clips[clipId - 1];
+        streamPath = rc.streamPath;
+        regFrames = rc.frameCount; // L23：注册期快照（重烤比对用）
+        regChans = rc.channels;
     }
     Impl::FeedRef feed;
     if (!streamPath.empty()) {
@@ -696,6 +724,18 @@ uint32_t AudioEngine::Play(uint32_t clipId, const PlayParams& p) {
         std::FILE* f = nullptr;
         if (!OpenBakedStream(streamPath.c_str(), info, f)) {
             LogMsg(LogLevel::Warn, "audio: 流式声部打开失败（.baked 缺失/头坏）：%s",
+                   streamPath.c_str());
+            return 0;
+        }
+        // L23（review 2026-10-09）：注册后重烤（编辑器后台 WarmAudioBakes 原地
+        // 覆盖同路径）= 静默劣化——变短逐帧计欠载、变长提前截断、变声道帧字节
+        // 错位；比对注册期快照（loop 域归 Play），不一致 = 拒播红字提示重注册
+        if (info.frameCount != regFrames || info.channels != regChans) {
+            std::fclose(f);
+            LogMsg(LogLevel::Error,
+                   "audio: 流式 clip 与注册期档案不符（已重烤？frameCount %u→%u / "
+                   "channels %u→%u）——拒播，需重进 Play 重注册：%s",
+                   regFrames, info.frameCount, regChans, info.channels,
                    streamPath.c_str());
             return 0;
         }

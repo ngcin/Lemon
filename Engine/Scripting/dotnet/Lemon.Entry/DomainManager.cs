@@ -109,6 +109,8 @@ internal static unsafe class DomainManager
                 Lemon.UI.Reset();
                 Lemon.Behaviours.Reset();
                 Lemon.SceneOps.Reset();
+                Lemon.Anim.ResetWarnTables(); // L17：告警去重表随域清
+                Lemon.Table.ResetWarnTables();
                 Lemon.Time.Reset(); // M5 清障①：新局归零（编辑器重进 Play 走 lemon_time_reset 同语义）
                 asm.GetType("GameMain")?.GetMethod("Configure", BindingFlags.Public | BindingFlags.Static)
                    ?.Invoke(null, null);
@@ -151,6 +153,8 @@ internal static unsafe class DomainManager
                 Lemon.UI.Reset();
                 Lemon.Behaviours.Reset();
                 Lemon.SceneOps.Reset();
+                Lemon.Anim.ResetWarnTables(); // L17：告警去重表随域清
+                Lemon.Table.ResetWarnTables();
                 Lemon.Time.Reset();
             });
             var weak = s_alcWeak;
@@ -202,6 +206,8 @@ internal static unsafe class DomainManager
                 Lemon.Events.Reset();
                 Lemon.UI.Reset();
                 Lemon.SceneOps.Reset();
+                Lemon.Anim.ResetWarnTables(); // L17：告警去重表随域清
+                Lemon.Table.ResetWarnTables();
                 Lemon.Time.Reset();
                 s_tickFn = null; s_asm = null; s_alc = null; s_loadedPath = null;
             });
@@ -349,6 +355,59 @@ internal static unsafe class DomainManager
         RunPooled(s_evtCmd);
         if (s_evtCmd.Error != null)
             Console.Error.WriteLine("[lemon] 事件派发异常（已拦，保进程）：" + s_evtCmd.Error.Message);
+    }
+
+    // ---- 脚本结构命令批量（review 2026-10-09 #M11）------------------------------
+    // attach/destroy/detach 原逐实体 PostBatch：每条 = new Command（含
+    // ManualResetEventSlim）+ 闭包 + 入队 + 一次同步跨线程往返——批量销毁（清屏）
+    // N 个带脚本实体 = N 次分配 + 2N 次上下文切换；GC 纪律原先只池化
+    // tick/events/UI 三通道。批量指针参数在 UCO 调用线程栈上，Done.Wait() 同步
+    // 等待期间存活（PostBatchTick 的 frames 同款前提）。
+    private static unsafe int* s_batchTypes;
+    private static unsafe Lemon.Interop.EntityHandle* s_batchEnts;
+    private static int s_batchCount;
+    private static readonly Action s_attachBody = AttachBody;
+    private static readonly Command s_attachCmd = new() { Run = s_attachBody };
+    private static readonly Action s_destroyBody = DestroyBody;
+    private static readonly Command s_destroyCmd = new() { Run = s_destroyBody };
+    private static readonly Action s_detachBody = DetachBody;
+    private static readonly Command s_detachCmd = new() { Run = s_detachBody };
+
+    private static unsafe void AttachBody()
+    {
+        for (int i = 0; i < s_batchCount; i++) Lemon.Behaviours.Attach(s_batchTypes[i], s_batchEnts[i]);
+    }
+
+    private static unsafe void DestroyBody()
+        => Lemon.Behaviours.DetachBatch(new ReadOnlySpan<Lemon.Interop.EntityHandle>(s_batchEnts, s_batchCount));
+
+    private static unsafe void DetachBody()
+    {
+        for (int i = 0; i < s_batchCount; i++) Lemon.Behaviours.DetachOne(s_batchTypes[i], s_batchEnts[i]);
+    }
+
+    internal static unsafe void PostScriptAttachBatch(int* typeIds, Lemon.Interop.EntityHandle* ents, int count)
+    {
+        s_batchTypes = typeIds; s_batchEnts = ents; s_batchCount = count;
+        RunPooled(s_attachCmd);
+        if (s_attachCmd.Error != null)
+            Console.Error.WriteLine("[lemon] 脚本挂载批异常（已拦，保进程）：" + s_attachCmd.Error.Message);
+    }
+
+    internal static unsafe void PostScriptDestroyBatch(Lemon.Interop.EntityHandle* ents, int count)
+    {
+        s_batchEnts = ents; s_batchCount = count;
+        RunPooled(s_destroyCmd);
+        if (s_destroyCmd.Error != null)
+            Console.Error.WriteLine("[lemon] 脚本销毁批异常（已拦，保进程）：" + s_destroyCmd.Error.Message);
+    }
+
+    internal static unsafe void PostScriptDetachBatch(int* typeIds, Lemon.Interop.EntityHandle* ents, int count)
+    {
+        s_batchTypes = typeIds; s_batchEnts = ents; s_batchCount = count;
+        RunPooled(s_detachCmd);
+        if (s_detachCmd.Error != null)
+            Console.Error.WriteLine("[lemon] 脚本卸载批异常（已拦，保进程）：" + s_detachCmd.Error.Message);
     }
 
     // ---- M3-2b 卸载 pin 诊断探针（长期保留：ADR-010 修订——runtime 升级复测用）---

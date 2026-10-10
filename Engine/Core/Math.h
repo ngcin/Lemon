@@ -182,7 +182,17 @@ inline const SinTable& GetSinTable() {
 }
 } // namespace detail
 
+// L29（review 2026-10-09）：|rad| ≳ 3.29e6 时 (int)x 截断 UB（x86 得 INT_MIN →
+// 插值产出垃圾值；Transform2D.Rot 脚本可写且全链无归一，增量品类挂机长跑可达）。
+// 稳态只付两次比较；出域才归一到 [0, τ)（该路径标称 15 万次/帧——fmod 不可无条件）
+inline float NormalizeRad(float rad) {
+    if (rad > -3.0e6f && rad < 3.0e6f) return rad; // 稳态快径
+    if (!std::isfinite(rad)) return 0.0f;          // R-b2（b11d review）：NaN/±inf 的
+    //（inf−inf）/（NaN 传播）仍进 (int) 截断 UB——哨兵 0 兜住（sin(0)=0 确定值）
+    return rad - kTau * std::floor(rad / kTau);
+}
 inline float FastSin(float rad) {
+    rad = NormalizeRad(rad);
     const float* t = detail::GetSinTable().v;
     float x = rad * (4096.0f / kTau);
     int i = (int)x;
@@ -193,6 +203,7 @@ inline float FastSin(float rad) {
 inline float FastCos(float rad) { return FastSin(rad + 1.5707963267948966f); }
 /// 同角 sin/cos 一次查表（共享索引/插值系数，比两次 FastSin 省 ~40%）
 inline void FastSinCos(float rad, float& s, float& c) {
+    rad = NormalizeRad(rad); // L29：同 FastSin
     const float* t = detail::GetSinTable().v;
     float x = rad * (4096.0f / kTau);
     int i = (int)x;

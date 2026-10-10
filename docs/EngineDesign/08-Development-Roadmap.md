@@ -173,6 +173,19 @@ Tilemap 数据 + chunk 烘焙渲染 → 碰撞层 → 自动瓦片 + TilePalette
 > - **#L34 Assets↔Renderer 头文件级双向依赖**：目录分层纪律注记维持。**触发 = M8 光照批需在 Renderer 内新增对 Assets 类型的包含时** → 抽共享叶子或倒置依赖。
 > - **#L39 World 通道聚合 hub**（15 头 / 按值持 8+ 非 ECS 通道）：**触发 = M9 需新增第 9 个通道或出现包含编译时长恶化可测** → 通道注册表/接口化。
 > 修复进度跟踪在 [M7c 批⑪](../Plans/M7c/2026-10-09-b11-engine-review-fixes.md)；三条债不随批⑪ 修码。
+>
+> **2026-10-10 扩充（b11d 收口，[DevLog](../DevLog/2026-10-10-m7c-b11d-lowfixes-and-reg.md)）**——评审 L 类评估后不修码的 10 项 + 1 验证项，各附触发条件（小修面已在 b11a–d 清完，以下为有余量再动项）：
+> - **#M4 批量纹理上传 Windows 验证**：UploadTextures API 已落地，mac/MoltenVK 实测负收益（单一大提交的编码器切换开销 > waitIdle 节省；dev 装载 111 张三态对比见 b11c DevLog）调用方保持单张。**触发 = M8 压测 A 前的 Windows 真机一轮** → 正收益则 TextureStore/AtlasStore 切批量。
+> - **#L3 DrawTextEx/TextWidthEx 每调用堆分配**：cps vector → 线程局部 scratch 复用。**触发 = M8 后处理批触碰 BitmapFont 或飘字压测显分配热点**。
+> - **#L5 ComputeStateHash 字段名重复哈希**：组件级预哈希（注意哈希流布局变更 = 既有回放文件不兼容，内部格式变更需迁移判据）。**触发 = M8 soak 前回放录制耗时成瓶颈**。
+> - **#L8 DDOL 幸存判定逐实体上行祖先链**：DDOL 根 DFS 标记幸存集合替代上行链（CollectTree 原语已有）。**触发 = 换场尖峰压测显示清场段占比可测**。
+> - **#L10 场景档案只增不减**：sceneRecords_ 句柄→下标哈希索引（复用句柄方案触碰回放发号语义，先只做索引）。**触发 = soak 2h 换场千次级场景的 FindSceneRecord 线性扫成点**。
+> - **#L16 飘字数字格式化分配**：真零分配需 native 表加 char*/float 直写变体（SDK string marshal 链改造）。**触发 = M8 GC 压测显示战斗飘字 Gen0 分配占比**。
+> - **#L20 PackAtlasPages 未关页弃用**：维护未关页列表重试装箱（现有 3 页断言需同步改）。**触发 = bindless 槽位（256）逼近实测占用 2/3**。
+> - **#L26 UI ops 逐参数物化 string**：arena 层 string_view 直读（与 Clone() 大头差 1–2 个数量级）。**触发 = UI 压测 op 段显式计时热点**。
+> - **#L32 ParallelFor packaged_task 开销**：现网块粒度（256–2048）下派发开销远小于块工作量。**触发 = M8 细粒度并行（<128 grain）实验**。
+> - **#L33 LogMsg 无级别门控**：LEMON_LOG_LEVEL 环境变量（LEMON_AUDIO 同款先例）。**触发 = soak/压测日志量影响观测或性能**。
+> - **#L38 AudioSystem::Tick bindings_ 线性扫描**：bindings_ 换 EnttIndex 位索引（SlotMap+version 校验先例）。**触发 = AudioSource 实体数百级且 tick 计时显热点**。
 
 ## 3. 性能验收场景（进 `Samples/`，CI 冒烟）
 
