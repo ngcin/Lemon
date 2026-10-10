@@ -114,7 +114,7 @@ void main() {
     // flags: bit0 flipX, bit1 flipY（UV 翻转）
 }
 
-// sprite.frag —— 路径 A（Lit 变体在 M8 增加法线采样分支）
+// sprite.frag —— 路径 A（光照不进精灵着色器——M8 光贴图合成方案，ADR-019；法线采样变体 = 二阶段触发项）
 layout(set=0, binding=0) uniform texture2D uAtlases[64];   // bindless 数组
 layout(set=0, binding=1) uniform sampler   uSamplers[8];
 layout(push_constant) uniform PCF { uint atlasIndex; uint samplerIndex; } pcf;
@@ -133,7 +133,7 @@ void main() { oColor = texture(sampler2D(uAtlases[pcf.atlasIndex], uSamplers[pcf
 
 ```
 [Game Pass]  不透明地形chunk → 不透明sprite → alpha sprite(排序) → 弹幕(additive可配) → 粒子(按BlendMode三条管线)
-[Light Pass] (M8) 法线RT → 光照合成RT（见 §8）
+[Light Pass] (M8) lightRT 光贴图合成（见 §8；2026-10-11 ADR-019 修订，法线 RT 路线已否决）
 [FX Pass]    后处理链（Med 以上开启）：Bloom(阈值1/4降采样) → HitFlash/Shockwave(UV扰动) → 色调曲线 → CRT/扫描线(可选风格)
 [UI Pass]    HUD（ImGui 视口直绘）+ 位图数字/血条（走路径 A，同为 sprite）
 [Editor Pass] 仅编辑器：网格/Gizmo/选择框/刷子预览（线与矩形批）
@@ -182,12 +182,17 @@ struct ParticleGPUData {                   // GPU 平行数组 = 4×vec4，上�
 
 ## 8. 2D 光照与阴影（M8，非阻塞增强）
 
-借鉴 Luma 延迟光照全套（`Renderer/DeferredRenderer`、`Systems/ShadowRenderer`、`Shaders/GBuffer/DeferredLighting/SDFShadow.wgsl`），但**裁剪到 2D 割草实际需要的子集**：
+> **（2026-10-11 修订，已由 [ADR-019](../ADR/ADR-019-Light2D-Lightmap-Component.md) 修订）**：原设计为 Luma 裁剪延迟（法线 RT + WGSL→GLSL 直译），因像素风素材基本无法线贴图（视觉收益不成立）且 MRT/变体管理成本高而**整体否决**——法线路径转为二阶段触发项（触发 = 素材带法线贴图的游戏立项，届时另立 ADR）。现设计 = **光贴图合成 + Light2D 组件模型**（架构思想参照 yami、组件粒度参照 Unity URP 2D；实现原创，不拷两家代码——07 §0 移植红线）。
 
-- GBuffer-lite：法线 RT（sprite 法线贴图通道，Prowl Sprite 的 `_NormalMap` 思想）+ 颜色 RT。
-- 光源：ambient + 点光/锥光（数量上限 64/帧，分档）；合成 pass 相乘+加法混合。
-- 阴影：**blob shadow**（椭圆暗斑，M8 必做）+ SDF 几何硬阴影（**可选**，Luma 的 SDFShadow.wgsl WGSL→GLSL 直译，成本高收益看美术风格）。
-- 光照全部在 `Light Pass`，关灯零成本（默认管线 = 无光照直出，符合像素风默认审美）。
+- **三段式合成**：场景段渲 `sceneRT` → 光照段渲 `lightRT`（CLEAR 为 ambient 底色，光源四边形按混合模式叠加）→ 合成段全屏四边形 `sceneRT × lightRT` → UI 段其后同块内画（不受光）。血条（层 251）/飘字（252）/位图文本（254）与 RmlUi 划入合成后段豁免。
+- **组件模型**：`Light2D`（type = Global/Point/Spot/SpriteMask；blend = Additive/Screen/Subtract；color/intensity/range/angle/innerRatio/maskSprite，POD ≤40B 冻结）+ `BlobShadow2D`（radius/aspect/offsetY/opacity → lightRT 上 Subtract 椭圆暗斑，无光源时白底仅暗斑仍生效）。SceneExtractor 加 `View<Transform2D, Light2D|BlobShadow2D>` 双缓冲提取通道，两壳共用 `LightCompositor` 装配（防第三套实现）。
+- **光源批量**：`LightBatcher`（实例环 SSBO + 按混合分 3 管线 + `light.frag`：点光 smoothstep 径向衰减 / 锥光（方向 = Transform 旋转）/ 蒙版光采样图集页 UV）；蒙版走现有图集绑定零新 bindless 类别；sceneRT/lightRT 各占 1 槽（+2，#L20 记账）。
+- **ambient/昼夜**：Global 灯（至多一个生效）颜色×强度 = lightRT 底色；昼夜循环 = 脚本补间该组件字段（可入回放）。
+- **质量分级**：lightRT 分辨率 Low=1/4 / Med=1/2 / High=全分辨率；光源数上限 64/帧（Low 32，超出截断 + 一次性 WARN）——QualityManager 首次接入编辑器/lemon-game 两壳。
+- **RT 格式与色彩空间（2026-10-11 评审拍板，批② 开工核证项）**：v1 = LDR（sceneRT/lightRT 均 RGBA8Unorm）+ **gamma 空间乘法合成**——像素风惯例（yami 同款），有意决策防后人当 bug 修；代价 = lightRT 叠加在 1.0 截断、bloom 只能做 LDR 阈值（近白像素）。**HDR bloom（16F RT）列 v1.1 触发项**——若翻案将牵动 lemon-game 双格式管线与批② 开灯帧断言基线，故格式批② 定死、批④ bloom 按本口径实现。
+- **关灯零成本**：场景零 Light2D 且零 BlobShadow2D ⇒ 三段链整体跳过，两壳路径与无光照版逐字节相同（默认管线 = 无光照直出，符合像素风默认审美；smoke-light 像素断言机器证）。
+- **逐对象采样**：v1 全局模式（全屏乘法覆盖层 0..250）；**anchor 锚点采样**（移动实体按锚点采样光值整体受光，CPU 染色 colorBits 零 shader 改动）列 v1.1 触发式（消费者出现即做）。
+- **不做**：法线贴图任何形式（二阶段触发）、SDF 几何硬阴影（砍单序列第 2 条维持）、Max 混合、逐精灵光照材质、阴影投射体、光照贴图烘焙（Non-goals 全表见 ADR-019）。
 
 ## 9. 渲染侧性能预算分解（压测 A：10k 怪 + 50k 弹 + 100k 粒）
 
@@ -211,7 +216,7 @@ struct ParticleGPUData {                   // GPU 平行数组 = 4×vec4，上�
 | per-instance SSBO + 脏更新 | Looper `engine/renderer/renderer.cpp` | 实现期对照（许可待核实，暂不拷贝） |
 | chunk 烘焙 + 相机剔除 margin | Editor-RPG2D `Chunk.cpp`/`Map.cpp` | 思想移植 + C++ 重写（可拷，注明出处） |
 | 顶点格式（32B/整数字节色） | yami `webgl.ts` | 仅借鉴格式思想 |
-| 2D 光照/SDF 阴影 | Luma `Renderer/DeferredRenderer` 等 + `Shaders/*.wgsl` | M8 裁剪移植（WGSL→GLSL 直译） |
+| 2D 光照/SDF 阴影 | Luma `Renderer/DeferredRenderer` 等 + `Shaders/*.wgsl` | **v1 未采用（2026-10-11 ADR-019 改光贴图合成）**；法线路径二阶段触发时再议直译 |
 
 ## 11. M1 实测（2026-09-18，RX 590 / MoltenVK 1.3.357，验证层全程开启）
 

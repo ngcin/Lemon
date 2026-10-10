@@ -25,7 +25,7 @@
 | **M6c 音频系统**（原 M6.5 → M6b 前移 → 2026-09-29 改号 M6c） | miniaudio 后端 + 2D 定位声源（SFX 一次性/BGM 循环）+ 音频资产（`.wav`/`.ogg` 导入 → `.baked`）+ C# `Lemon.Audio` + 编辑器试听/Inspector 槽 + 主/组音量 | 2–3 周 | VS/TD 模板全程有声（命中/击杀/拾取/升级/BGM/波次横幅）；100 并发 SFX 模拟侧 ≤ 0.5ms（解码不占主线程）；无音频设备/静音输出不崩（无头 CI 可跑） |
 | **M7 发布管线**（2026-09-30 拆 M7a/M7b，见 §2） | **M7a 独立运行时+最简出包**（`Engine/Assets` 运行时资产层 + GameEntry/lemon-game + 目录拷贝式 packager）→ **M7b 发行侧**（Steam/云档/安装器/资源校验，真包后再议） | 4 周（**M7a ✅ 全闭 2026-10-07**——代码面 2026-10-06 + 真人总成 V1–V3 2026-10-07 用户过：批⓪–批⑧ 三日全落 + 真机 W1–W4/W6/W7 + 模板真人验收两轮，[验收记录](../DevLog/2026-10-07-acceptance-m7a-b8-v1-v3.md)；W5 真机 GPU 移交物理机窗口；[M7a.md](../Plans/M7a/M7a.md)；M7b 移交清单见批⑧ 批文件 §2；**M7b 时点 2026-10-07 后移至 M9 之后（引擎优先重排，见文首注记）**） | M7a：干净 mac+Win 机 `lemon-game --project demo/svr-test` 跑满 60 帧全流程零 C++、`git clean -xfd` 后无需 `.lemon/` 缓存；M7b：depot 上传成功、安装即玩 |
 | **M7c 引擎与编辑器功能段**（2026-10-07 新增档位——M7b 后移后的引擎优先段，[Plans/M7c/M7c.md](../Plans/M7c/M7c.md)） | 批⓪ 工程卫生（AGENTS.md 瘦身/测试拆文件/ccache/.clang-format）＋ 批① Fx 表现升级（TTF→图集烘焙器/贴图血条+延迟条/飘字动效+中文字形）；批② 起随 svr-test 滚动登记 | 批⓪–⑪ 全落 2026-10-07–10-10（工程卫生/Fx 表现升级/per-资产音频参数/编辑器 i18n 605 key 双语/ADR-017 场景管理全链：SceneMembership+SceneSwitcher+SDK 门面+LoadSceneAsync 分帧管线/svr-test 多场景迁移+模板随迁/Play 态 Hierarchy 场景组/引擎评审修复 65 项——万 Flee 场 12.6×、单测 34,754/script-tests 1,834/金回放跨版本三档零重录）；**段收官 2026-10-10**——真人面②③⑤⑨⑩ 过、① 血条素材复验转移交（不设期）、i18n en 态越窗收口 + en 回归锚步（回归 full 22 步），[收官 DevLog](../DevLog/2026-10-10-m7c-closeout.md) | 批⓪：AGENTS.md <150 行、checks 34,346 不变、回归 full 20/20、干净重建计时入 DevLog；批①：svr-test 暴击中文弹跳/贴图血条/延迟条真人走查过 + hash 反例单测 + bench-survivor 门禁不降；批⑫ 收官判据见 [批文件](../Plans/M7c/2026-10-10-b12-closeout.md) |
-| **M8 光照与打磨** | 光照裁剪版 + 后处理 + 性能终测（压测 A + **2h soak 长时稳定**）+ incremental 模板（若余量） | 4 周 | 压测 A 全绿（10k 怪 + 50k 弹 + 100k 粒 @60fps）；soak 2 小时内存曲线平/零崩溃（崩溃转储登记） |
+| **M8 光照与打磨** | **光贴图光照**（ambient + 点/锥光/蒙版光 + blob 阴影；Light2D/BlobShadow2D 组件——**2026-10-11 改道**：原法线 RT 裁剪延迟否决，[ADR-019](../ADR/ADR-019-Light2D-Lightmap-Component.md)）+ 后处理链（bloom/冲击波/色调）+ 性能终测（压测 A + **2h soak 长时稳定**）+ 文档站 v1 + incremental 模板（若余量）；[M8.md](../Plans/M8/M8.md) | 4 周 | 压测 A 全绿（10k 怪 + 50k 弹 + 100k 粒 @60fps）；光照默认关闭零成本（关灯帧与无光照版逐字节同，smoke 机器证）；soak 2 小时内存曲线平/零崩溃（崩溃转储登记） |
 | **M9 Tilemap + TD 模板**（2026-09-30 自 M6d 后移新增档位） | Tilemap/自动瓦片/FlowField/A*/摆塔状态机 + tower-defense 模板（波次表编辑器并入 M6a 配置表 ADR 定形，本里程碑只消费产出）+ 图鉴/收集模板（M6b ③e 随迁） | 5–7 周 | TD 模板 10 波通关；千怪走流场 CPU ≤ 2ms；图鉴 500 条 ADR-008 预算内（随迁判据） |
 
 累计：**48–59 周（约 11–14 个月）**；用户游戏内容开发自 M6a 起与引擎并行，日历增量小于工时增量。M0–M3（内核+脚本）约 4 个月是硬风险区；M4–M7（编辑器+模板+产品化）是体验交付区。
@@ -166,13 +166,14 @@ Tilemap 数据 + chunk 烘焙渲染 → 碰撞层 → 自动瓦片 + TilePalette
 ### M8 光照与打磨（4 周）
 
 > **当前活跃段（M7c 收官 2026-10-10 起）**；批⑪ 设计债登记块（下）随本段按触发条件消费。
+> **2026-10-11 设计变更（用户拍板）**：光照实现路线由"法线 RT 裁剪延迟（Luma 直译）"改为**光贴图合成 + Light2D 组件模型**（yami 渲染架构 + Unity 组件粒度，实现原创不拷代码）——动因 = 像素风素材无法线贴图致法线方案视觉收益不成立 + MRT/变线管理成本高；法线路径转二阶段触发。D1–D8 全表与 Non-goals 见 [ADR-019](../ADR/ADR-019-Light2D-Lightmap-Component.md)，02 §8 已按此重写。
 
-光照裁剪版（法线 RT + 点/锥光 + blob 阴影）→ 后处理链（bloom/冲击波/色调）→ 性能终测（压测 A + **2h soak 长时稳定**：内存曲线平/零崩溃，崩溃转 dump 体系登记）→ 文档站 v1（使用手册，yami Documentation 对标的最小版）→ incremental 模板（若余量，否则移 v1.1）。
+光贴图光照（ambient + 点/锥光/蒙版光 + blob 阴影；Light2D/BlobShadow2D 组件，[ADR-019](../ADR/ADR-019-Light2D-Lightmap-Component.md)；批次拆解 [M8.md](../Plans/M8/M8.md)：⓪ 设计落账→① 组件→② 编辑器竖切→③ lemon-game+蒙版+blob+SDK→④ 后处理链）→ 后处理链（bloom/冲击波/色调，复用同一全屏 pass 设施）→ 性能终测（压测 A + **2h soak 长时稳定**：内存曲线平/零崩溃，崩溃转 dump 体系登记）→ 文档站 v1（使用手册，yami Documentation 对标的最小版）→ incremental 模板（若余量，否则移 v1.1）。
 **验收**：压测 A 全绿；光照默认关闭零成本；soak 达标。
 
 > **架构债登记（2026-10-09，[引擎评审](../Reports/2026-10-09-engine-code-review.md) M23/L34/L39；D4 追认）**——只登记不修码，触发条件成立即启动（届时按条目立 ADR）：
 > - **#M23 C++/C# 边界 vtable 59 槽 god-interface**（双侧手工逐字节镜像）：当前以表尾追加 + LegacyFrozenBytes 冻结区 + 判空降级纪律管理。**触发 = 槽位数 ≥ 72 或发生一次双侧不同步回归** → 启动按域拆表（分组 + 版本化），占位 [ADR-018](../ADR/ADR-018-Script-Boundary-Vtable-Split-Placeholder.md)。
-> - **#L34 Assets↔Renderer 头文件级双向依赖**：目录分层纪律注记维持。**触发 = M8 光照批需在 Renderer 内新增对 Assets 类型的包含时** → 抽共享叶子或倒置依赖。
+> - **#L34 Assets↔Renderer 头文件级双向依赖**：目录分层纪律注记维持。**触发 = M8 光照批需在 Renderer 内新增对 Assets 类型的包含时** → 抽共享叶子或倒置依赖。**（2026-10-11 注记：ADR-019 光贴图方案下蒙版光源走 spriteId/AtlasRegistry 先例，Renderer 预计无需包含 Assets 类型——本债预计不触发，登记保留。）**
 > - **#L39 World 通道聚合 hub**（15 头 / 按值持 8+ 非 ECS 通道）：**触发 = M9 需新增第 9 个通道或出现包含编译时长恶化可测** → 通道注册表/接口化。
 > 修复进度跟踪在 [M7c 批⑪](../Plans/M7c/2026-10-09-b11-engine-review-fixes.md)；三条债不随批⑪ 修码。
 >
@@ -210,7 +211,7 @@ CI 每日跑 bench-mow/bench-sim，数字写入构建报告（性能回退 > 10%
 ## 4. 砍单顺序（范围蔓延防线，按序砍、砍前记录 ADR）
 
 1. **可视化事件树编辑器**（yami 已证明最大成本单点；schema 已冻结，随时可后补）
-2. **2D 光照/SDF 阴影**（M8 整体；blob 阴影便宜可保）
+2. **2D 光照/SDF 阴影**（M8 整体；blob 阴影便宜可保）——**2026-10-11 注记：光照已改光贴图方案（[ADR-019](../ADR/ADR-019-Light2D-Lightmap-Component.md)），本条语义收窄为"光贴图光照整体（blob 可保）"；SDF 阴影与法线路径改由 ADR-019 D5/D6 触发条件治理（法线 = 素材带法线贴图的游戏立项，SDF = 不做），不再挂砍单位。**
 3. **incremental 模板**（核心系统（大数/离线结算）留钩子，模板移 v1.1）
 4. **运行时 UI 升级**（RmlUi/自研，v1 ImGui HUD 足够发布）——**2026-09-28 注记：触发条件已成立（用户游戏富排版 + 文本输入需求），转正式排期 [ADR-014](../ADR/ADR-014-Game-UI-RmlUi-Integration.md)（原 M6a 批③ 五子批，2026-09-29 迁 M6b）；本条自砍单序列退役，改由 ADR-014 D7 范围红线治理**
 5. **Play 中编辑回灌**（降级为"Stop 后保留 diff 报告"）
