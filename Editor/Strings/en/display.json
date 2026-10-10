@@ -178,5 +178,20 @@
   "display.AudioSource.refDist": "refDist",
   "display.AudioSource.maxDist": "maxDist",
   "display.AudioSource.flags": "flags",
-  "display.AudioSource.group": "group"
+  "display.AudioSource.group": "group",
+  "display.Light2D": "Light2D",
+  "display.Light2D.type": "type",
+  "display.Light2D.blend": "blend",
+  "display.Light2D.color": "color",
+  "display.Light2D.intensity": "intensity",
+  "display.Light2D.range": "range",
+  "display.Light2D.angle": "angle",
+  "display.Light2D.innerRatio": "innerRatio",
+  "display.Light2D.maskSprite": "maskSprite",
+  "display.Light2D.flags": "flags",
+  "display.BlobShadow2D": "BlobShadow2D",
+  "display.BlobShadow2D.radius": "radius",
+  "display.BlobShadow2D.aspect": "aspect",
+  "display.BlobShadow2D.offsetY": "offsetY",
+  "display.BlobShadow2D.opacity": "opacity"
 }

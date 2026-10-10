@@ -23,6 +23,7 @@
 #include "Components/BehaviorComponents.h"
 #include "Components/CoreComponents.h"
 #include "Components/GameplayComponents.h"
+#include "Components/LightComponents.h" // M8 批①：TestLightSdk 引擎侧对拍
 #include "Components/RenderComponents.h"
 #include "Audio/AudioEngine.h" // M6c 批②：TestAudioSdk 静音引擎
 #include "Core/Random.h"
@@ -90,14 +91,14 @@ int (*lemonEventPacketLayout)(uint16_t*, uint16_t*, uint16_t*, uint16_t*, uint16
 void TestLayoutAgainstRegistry() {
     lemon::ecs::RegisterAllComponents();
     auto& reg = lemon::ecs::ComponentRegistry::Instance();
-    Expect(reg.Count() == 32, "registry count 32（M5 批② WaveDirector + T3d AnimGraph/AnimParams + M6b 批③d 前置 UIDocument + M6c 批② AudioSource）");
+    Expect(reg.Count() == 34, "registry count 34（M5 批② WaveDirector + T3d AnimGraph/AnimParams + M6b 批③d 前置 UIDocument + M6c 批② AudioSource + M8 批① Light2D/BlobShadow2D）");
 
     std::vector<CompLayoutRow> comps(64);
     std::vector<FieldLayoutRow> fields(256);
     std::vector<SegLayoutRow> segs(8);
     int n = lemonSdkLayout(comps.data(), (int)comps.size(), fields.data(), (int)fields.size(),
                            segs.data(), (int)segs.size());
-    Expect(n == 32, "sdk layout comp count");
+    Expect(n == 34, "sdk layout comp count");
 
     uint32_t totalFields = 0;
     for (int i = 0; i < n; i++) {
@@ -333,11 +334,11 @@ void TestDomainManager() {
         Expect(d2 == (double)0.1f, "hot-reload new domain fresh state");
         Expect(leaks >= 0 && leaksFn && leaksFn() == leaks, "leak count visible + consistent");
         Expect(reloadsFn && reloadsFn() >= 1, "reload count visible");
-        // 换装后新域 GameMain.Configure 已跑：behaviours 列表可拉（17 个类型）
+        // 换装后新域 GameMain.Configure 已跑：behaviours 列表可拉（27 个类型）
         auto listFn = (int (*)(char*, int))GetExport("lemon_behaviours_list");
         char buf[4096];
         int n = listFn ? listFn(buf, (int)sizeof buf) : -1;
-        Expect(n == 26, "behaviours list after hot reload (+M11/M15/F-08.2/T3/b1/b2/T3c/T3d/A档tween/T5存档档/b3c UI/M6c b2 audio/M7c b1 fx/M7c b7 scene/M7c b8 async/b11 H1 stale/b11 R-a1 multi-slot probes)");
+        Expect(n == 27, "behaviours list after hot reload (+M11/M15/F-08.2/T3/b1/b2/T3c/T3d/A档tween/T5存档档/b3c UI/M6c b2 audio/M7c b1 fx/M7c b7 scene/M7c b8 async/b11 H1 stale/b11 R-a1 multi-slot/M8 b1 light probes)");
         // M4.6 回归（用户实测闪退根因）：相对路径进 dm_reload 曾抛 ArgumentException
         // 逃逸 UnmanagedCallersOnly → coreclr abort。拦截层必须转 0 返回且进程存活
         // （本断言能跑到 = 进程没死）。换装失败后旧域已弃——再换一次真路径恢复。
@@ -618,6 +619,76 @@ void TestMultiSlotDestroyOrder() {
     int sb = 0;
     for (auto [e, c] : s.View<lemon::scripting::ScriptBox>().each()) { (void)e; (void)c; ++sb; }
     Expect(sb == 0, "multi-slot: clean teardown (no residual ScriptBox)");
+}
+
+// M8 批①：Light2D/BlobShadow2D 数据面全链（LightProbeBehaviour typeId 26 装配
+// ——门面 Add/Get/Set/Remove + op2/op3 结构命令）。断言：C++ emplace 默认值到达
+// 池（引擎侧对拍 Point/白/enabled）/ op2 整写落地（Spot/染色/强度）/ op3 移除
+// 生效 / **ComputeStateHash 随光照数据入流出哈希**（组件注册入哈希流 ⇒ 三档
+// 金回放一次性重录口径的桥侧证据，ADR-019 后果与风险）+ 销毁后回空场基准。
+void TestLightSdk() {
+    using namespace lemon::ecs;
+    auto opsSubmit = (void (*)(unsigned char, unsigned char, uint64_t))GetExport("lemon_ops_submit");
+    auto timeResetFn = (void (*)())GetExport("lemon_time_reset");
+    Expect(opsSubmit && timeResetFn, "ops/time exports resolved (light)");
+    timeResetFn(); // LightProbe 按 FrameCount 分段
+
+    WorldDesc d;
+    d.threadCount = 1;
+    World w(d);
+    Scene& s = w.CreateScene("LightT");
+    w.SetActiveScene(&s);
+    w.SetScriptBackend(&g_sh);
+    w.Pipeline().AddSystem(std::make_unique<DestroyCommitSystem>());
+    w.Pipeline().AddSystem(std::make_unique<CSharpBatchSystem>());
+    w.Pipeline().AddSystem(std::make_unique<ScriptEventDispatchSystem>());
+    w.Pipeline().ResolveOrder();
+
+    const uint64_t h0 = ComputeStateHash(s);
+    int mark = 0;
+    w.SetEventSink([&](World&, const EventPacket& p) {
+        if (p.type == GameEvent::Custom && p.user >= 1900 && p.user < 1920)
+            mark = (int)p.user - 1900;
+    });
+    opsSubmit(0, 0, 0x800000000000C001ull);                 // Create
+    opsSubmit(2, 0 /*Transform2D*/, 0x800000000000C001ull); // 组件在场 = 哈希非平凡
+    opsSubmit(4, 26 /*LightProbeBehaviour*/, 0x800000000000C001ull);
+
+    w.Step(0.25f); // 帧1：Add 两组件（命令提交，帧2 首应用）
+    Expect(mark == 0, "probe f1 ran (add submitted)");
+    w.Step(0.25f); // 帧2：C++ 默认对拍（探针 C# 读回 mark 证）+ SetComponent 即时整写
+    // mark 值域：1910 + (cpp 默认对 1 / blob 默认对 2)——全对 = 13
+    Expect(mark == 13, "probe f2: cpp defaults read from C# (point/white/enabled + blob)");
+    {
+        // SetComponent = NativeWrite 即时 memcpy（ScriptHost NativeWrite）——帧2 末
+        // 池里已是显式整写值（镜像坑规避路径的引擎侧对拍；非暂存命令）
+        auto lv = s.View<Light2D>();
+        auto bv = s.View<BlobShadow2D>();
+        Expect(lv.size() == 1 && bv.size() == 1, "both components reached pools");
+        const Light2D* l = nullptr;
+        const BlobShadow2D* b = nullptr;
+        for (auto [e, c] : lv.each()) { (void)e; l = &c; }
+        for (auto [e, c] : bv.each()) { (void)e; b = &c; }
+        Expect(l && l->type == kLightTypeSpot && l->blend == kLightBlendScreen &&
+                   l->color == 0x66AAFFFFu && std::fabs(l->intensity - 2.5f) < 1e-6f &&
+                   (l->flags & kLightEnabled),
+               "immediate whole-write landed in pool (pitfall-avoiding path)");
+        Expect(b && std::fabs(b->radius - 48.0f) < 1e-6f &&
+                   std::fabs(b->aspect - 1.5f) < 1e-6f,
+               "blob whole-write landed in pool");
+    }
+    w.Step(0.25f); // 帧3：探针 C# 读回整写持久 + Remove 提交（op3 暂存，帧4 首应用）
+    // mark 值域：1912 + (整写落地 1 / remove 受理 2)——全对 = 15
+    Expect(mark == 15, "probe f3: op2 whole-write landed + remove submitted");
+    const uint64_t hLit = ComputeStateHash(s);
+    Expect(hLit != h0, "light component data enters state hash (re-record rationale)");
+    w.Step(0.25f); // 帧4：op3 应用（灯移除）+ 自毁提交
+    // mark 值域：1914 + (TryGet 假 1)——对 = 15
+    Expect(mark == 15, "probe f4: light gone after remove op");
+    Expect(s.View<Light2D>().size() == 0 && s.View<BlobShadow2D>().size() == 1,
+           "light removed, blob survives until entity destroy");
+    w.Step(0.25f); // 销毁落地
+    Expect(ComputeStateHash(s) == h0, "scene back to empty after destroy (light)");
 }
 
 void TestStaleHandleSdk() {
@@ -2243,6 +2314,7 @@ int main() {
     TestSceneAsyncSdk(); // M7c 批⑧：LoadSceneAsync 全链（契约/门控/await/取代取消）
     TestStaleHandleSdk(); // 批⑪ H1：失效句柄三闸（write/op2/op4）+ 无幽灵注入
     TestMultiSlotDestroyOrder(); // 批⑪ R-a1：多槽销毁序 = 槽注册序升序（M12 索引化防回归）
+    TestLightSdk();     // M8 批①：Light2D/BlobShadow2D 数据面 + 哈希入流证据
 
     // M4.6 探针（编辑器切项目场景）：同进程二次 ScriptHost 生命周期。CoreCLR 运行时
     // 进程单例——第二次 Initialize 的真实行为必须钉板（成功/失败都合法，崩 = 缺陷）。

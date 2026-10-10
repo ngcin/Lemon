@@ -11,7 +11,8 @@ add_executable(lemon-tests
   engine/GameplayTests.cpp
   engine/AssetsTests.cpp
   engine/EditorTests.cpp
-  engine/AudioTests.cpp)
+  engine/AudioTests.cpp
+  engine/LightTests.cpp)
 target_link_libraries(lemon-tests PRIVATE lemon-engine)
 # M7c 批①：字体烘焙 golden 单测的 TTF 源（引擎随仓 Noto Sans SC；编辑器字体链同源）
 target_compile_definitions(lemon-tests PRIVATE

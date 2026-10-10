@@ -33,3 +33,4 @@ void RunGameplayTests();
 void RunAssetsTests();
 void RunEditorTests();
 void RunAudioTests();
+void RunLightTests();

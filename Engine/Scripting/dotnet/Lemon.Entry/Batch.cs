@@ -63,6 +63,7 @@ internal static unsafe class Batch
         }
 
         bool badThisFrame = false;
+        byte* compIds = stackalloc byte[8]; // M8 批① 顺手清 CA2014：出帧循环（定长 8B 逐帧重用）
         for (int f = 0; f < count; f++) {
             BatchSystemFrame* fr = frames + f;
             int idx = fr->SystemIndex;
@@ -71,7 +72,6 @@ internal static unsafe class Batch
             var st = s_states[idx];
             if (st.Disabled) continue;
 
-            byte* compIds = stackalloc byte[8];
             int compCount = System.Math.Min(Lemon.Scripting.GetQuery(idx).Length, 8);
             for (int c = 0; c < compCount; c++) compIds[c] = Lemon.Scripting.GetQuery(idx)[c];
 

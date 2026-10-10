@@ -299,6 +299,25 @@ public static unsafe class LayoutTables
             F("flags", FieldTypeCode.UInt16, 0, O(p, &p->Flags)),
             F("group", FieldTypeCode.UInt8, 0, O(p, &p->Group)) }); }
 
+        // ---- M8 批①（id 32/33；登记表尾追加，禁重排）----
+        { Light2D t = default; Light2D* p = &t;
+          Add<Light2D>("Light2D", (uint)sizeof(Light2D), new[] {
+            F("type", FieldTypeCode.UInt32, 0, O(p, &p->Type)),
+            F("blend", FieldTypeCode.UInt32, 0, O(p, &p->Blend)),
+            F("color", FieldTypeCode.UInt32, 0, O(p, &p->Color)),
+            F("intensity", FieldTypeCode.Float, 0, O(p, &p->Intensity)),
+            F("range", FieldTypeCode.Float, 0, O(p, &p->Range)),
+            F("angle", FieldTypeCode.Float, 0, O(p, &p->Angle)),
+            F("innerRatio", FieldTypeCode.Float, 0, O(p, &p->InnerRatio)),
+            F("maskSprite", FieldTypeCode.UInt32, 0, O(p, &p->MaskSprite)),
+            F("flags", FieldTypeCode.UInt16, 0, O(p, &p->Flags)) }); }
+        { BlobShadow2D t = default; BlobShadow2D* p = &t;
+          Add<BlobShadow2D>("BlobShadow2D", (uint)sizeof(BlobShadow2D), new[] {
+            F("radius", FieldTypeCode.Float, 0, O(p, &p->Radius)),
+            F("aspect", FieldTypeCode.Float, 0, O(p, &p->Aspect)),
+            F("offsetY", FieldTypeCode.Float, 0, O(p, &p->OffsetY)),
+            F("opacity", FieldTypeCode.Float, 0, O(p, &p->Opacity)) }); }
+
         // ---- 数组段（元素字段行挂 Fields 尾部；对照 ArraySegMeta）----
         var segs = new List<SegLayoutRow>();
         { StatusEffects t = default; StatusEffects* p = &t;

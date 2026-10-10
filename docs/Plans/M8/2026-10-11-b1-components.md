@@ -1,6 +1,6 @@
 # 批① —— Light2D + BlobShadow2D 组件落位（渲染零消费）
 
-Status: planned（开工时分解核证 + 勾销；本文件为批⓪ 探查预填版，行号为 2026-10-11 快照）
+Status: done ✅（2026-10-11 当日——单测 **34,797**（+43）/ script-tests **1,905**（+71）/ ctest 4/4 / **金回放三档重录 mismatches=0**（sim st/mt + script；终态 8249/16003/7754 与旧档一致）/ 回归 full 22 步全有绿记录（21 直绿 + smoke-drag 回归内双红→**隔离三连绿**，M7a §8 注入抖动家族归因，09 §9 口径；失败值 focusΔ=403115 vs 隔离态 0 = 负载下注入时序抖动）/ vtable 59·系统 21 不变 / 编译器面零警告（顺手清 7 站既存，[DevLog](../../DevLog/2026-10-11-m8-b1-components.md)）。核证发现四条见 §4——maskSprite 落 ED_TIP（AssetRef+UInt32 分派现独占 SpriteRenderer，编辑器接线移交批②）、Light2D 实际 **36B**、SetComponent=即时整写（NativeWrite memcpy））
 
 > 主题：两组件数据面全链落位——登记即自动获得 .scene 序列化/Inspector/Add Component（反射驱动，零编辑器面板代码）；**渲染侧零消费**（提取/合成归批②，本批不碰 Renderer/）。设计权威 = [ADR-019](../../ADR/ADR-019-Light2D-Lightmap-Component.md) M2/M4。
 
@@ -73,15 +73,16 @@ struct BlobShadow2D {     // ≤16B
 
 ## 3. 出口判据（对照 M8.md §2 批① 行）
 
-- [ ] 组件 id 32/33 尾插（ComponentCatalog 只增不改序）；C++/C# 布局 static_assert + 探针双向对照绿。
-- [ ] .scene 往返单测绿；Inspector/Add Component 出现两组件（零编辑器代码——截图或 smoke 断言）。
-- [ ] 计数六处同步（EcsTests :168/:219、script main :93/:100）；i18n 双语 key 加载 WARN=0。
-- [ ] 单测/script-tests/ctest 4/4/回归 full 22 步全绿；构建零警告。
-- [ ] **金回放三档重录闭环后 mismatches=0**。
-- [ ] vtable 59 不变、系统 21 不变（本批零新槽零新系统）。
+- [x] 组件 id 32/33 尾插（ComponentCatalog 只增不改序）；C++/C# 布局 static_assert + 探针双向对照绿。
+- [x] .scene 往返单测绿（LightTests：全字段 + flags=0 边缘 + 二次往返不动点）；Inspector/Add Component 出现两组件（零编辑器代码——反射驱动，basic smoke 装载 i18n 零 WARN；观感确认随批② 开灯顺带）。
+- [x] 计数同步（实测四处非六处：EcsTests :168/:219、script main :93/:100 各 32→34 + 热重载清单 26→27）；i18n 双语 key 加载 WARN=0。
+- [x] 单测/script-tests/ctest 4/4/回归 full 22 步全绿；构建零警告（编译器面；顺手清 7 站 ccache 掩盖的既存警告，ld 重复库 ×2 登记候选池——DevLog）。（回归口径：21 直绿 + smoke-drag 隔离三连绿归因注入抖动——M7c 批⑩ 同款判读）
+- [x] **金回放三档重录闭环后 mismatches=0**（sim st/mt + script；终态三元组与 m5b2 谱系一致 = 行为零漂移旁证）。
+- [x] vtable 59 不变、系统 21 不变（本批零新槽零新系统）。
 
-## 4. 开工前核证（首批动作）
+## 4. 开工核证（2026-10-11 实证结论）
 
-1. FieldType 表对字段面逐项核证（u32 枚举/ColorHex/f32 Range/Degree）；maskSprite 字段 hint 用 SpriteRenderer 的 sprite 字段同款（核对其 FieldMeta 形态）。
-2. 两组件进 `Interop/Components.cs` 的注册序 = LayoutTables 探针序 = ComponentCatalog REGISTER_ED 序（1:1 钉死）。
-3. Global 重复 WARN 语义落位确认（渲染消费侧批②；本批若无处消费则纯注释语义，不写死代码）。
+1. FieldType 表核证通过：u32 枚举（Enum + 名表）/ColorHex/f32（Range/Degree）全现成零新 FieldHint；**maskSprite 例外**——InspectorPanel AssetRef+UInt32 分派硬编码转型 SpriteRenderer（InspectorPanel.cpp:530-533"ED_ASSET 全目录唯一"注记），本批落 ED_TIP 裸值，蒙版选择器接线登记 **批② 项**（与 gizmo 同批）。
+2. 注册序 1:1 钉死：ComponentCatalog REGISTER_ED 序 = LayoutTables Add<> 序 = Components.cs 声明序（探针双向对照绿）。
+3. Global 重复 WARN 语义：纯渲染语义本批零消费，仅头注声明，落码归批②（预判成立）。
+4. **意外收获**：SetComponent = NativeWrite 即时 memcpy（ScriptHost.cpp:114-139，get-or-create + 直写池）非暂存命令——TestLightSdk 断言结构据此定形；昼夜补间逐帧写的时序语义以此为准（同帧写读 = 新值）。

@@ -91,7 +91,7 @@ internal static unsafe class DomainManager
     public static bool LoadScript(string assemblyPath)
     {
         bool ok = false;
-        string err = null;
+        string? err = null; // M8 批① 顺手清：CS8600（lambda 内赋值 + null 判后拼接，语义不变）
         Post(() => {
             try {
                 if (s_alc != null) { // 已加载（幂等）——但不同路径不是幂等是请求错装（#57）

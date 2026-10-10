@@ -178,5 +178,20 @@
   "display.AudioSource.refDist": "最小距离",
   "display.AudioSource.maxDist": "最大距离",
   "display.AudioSource.flags": "标志位",
-  "display.AudioSource.group": "混音组"
+  "display.AudioSource.group": "混音组",
+  "display.Light2D": "2D 光源",
+  "display.Light2D.type": "光源类型",
+  "display.Light2D.blend": "混合模式",
+  "display.Light2D.color": "颜色",
+  "display.Light2D.intensity": "强度",
+  "display.Light2D.range": "范围半径",
+  "display.Light2D.angle": "锥光张角",
+  "display.Light2D.innerRatio": "内角占比",
+  "display.Light2D.maskSprite": "蒙版精灵",
+  "display.Light2D.flags": "标志位",
+  "display.BlobShadow2D": "Blob 阴影",
+  "display.BlobShadow2D.radius": "半径",
+  "display.BlobShadow2D.aspect": "纵横比",
+  "display.BlobShadow2D.offsetY": "Y 轴偏移",
+  "display.BlobShadow2D.opacity": "不透明度"
 }

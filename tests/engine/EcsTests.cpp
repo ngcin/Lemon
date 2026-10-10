@@ -165,9 +165,10 @@ void TestWorldServices() {
 void TestComponentRegistry() {
     RegisterAllComponents();
     auto& reg = ComponentRegistry::Instance();
-    Expect(reg.Count() == 32,
+    Expect(reg.Count() == 34,
            "catalog count (5 core + 4 render + 12 behavior + 6 gameplay + M5 批② WaveDirector + "
-           "T3d AnimGraph/AnimParams + M6b 批③d 前置 UIDocument + M6c 批② AudioSource)");
+           "T3d AnimGraph/AnimParams + M6b 批③d 前置 UIDocument + M6c 批② AudioSource + "
+           "M8 批① Light2D/BlobShadow2D)");
 
     // 按 name 可查、id 稳定
     const ComponentMeta* tf = reg.Find("Transform2D");
@@ -216,7 +217,7 @@ void TestVerifyWorldAutoRegistersCatalog() {
     // ISSUE-9 回归：World 构造即登记组件目录——bench-sim 曾漏调 RegisterAllComponents，
     // StateHash 遍历空注册表逐帧恒等，M2 回放验收恒真空转（M3-0 修复，2026-09-19）
     World world;
-    Expect(ComponentRegistry::Instance().Count() == 32, "world ctor auto-registers catalog");
+    Expect(ComponentRegistry::Instance().Count() == 34, "world ctor auto-registers catalog");
 }
 
 void TestSceneArchive() {

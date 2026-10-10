@@ -10,6 +10,7 @@
 #include "Components/BehaviorComponents.h"
 #include "Components/CoreComponents.h"
 #include "Components/GameplayComponents.h"
+#include "Components/LightComponents.h"
 #include "Components/RenderComponents.h"
 #include "Components/UiComponents.h"
 #include "ECS/ComponentRegistry.h"
@@ -152,6 +153,48 @@ constexpr FieldEditorMeta kEdAudioSource[] = {
     ED_TIP("bit0 循环 · bit1 进 Play 自动起播（默认开）"),
     {FieldHint::Enum, 0, 0, kAudioGroupNames, 3, "混音组（批② 起组音量引擎侧生效）"}};
 
+// ---- M8 批①（id 32/33；表尾追加，只增不改序）----
+// Unity Light2D 同构：光贴图合成的光源数据面（ADR-019 M2；渲染消费归批②
+// LightCompositor——本批渲染零消费）。Light2D 36B / BlobShadow2D 16B 冻结
+//（LightComponents.h 布局注记）。maskSprite 本批 ED_TIP 裸值：AssetRef+UInt32
+// 分派现独占 SpriteRenderer.spriteId（InspectorPanel "ED_ASSET 全目录唯一"注记），
+// 编辑器蒙版选择器接线归批②。
+static constexpr const char* kLightTypeNames[] = {"Global", "Point", "Spot", "SpriteMask"};
+static constexpr const char* kLightBlendNames[] = {"Additive", "Screen", "Subtract"};
+constexpr FieldMeta kLight2D[] = {
+    FIELD(Light2D, type, UInt32),
+    FIELD(Light2D, blend, UInt32),
+    FIELD(Light2D, color, UInt32),
+    FIELD(Light2D, intensity, Float),
+    FIELD(Light2D, range, Float),
+    FIELD(Light2D, angle, Float),
+    FIELD(Light2D, innerRatio, Float),
+    FIELD(Light2D, maskSprite, UInt32),
+    FIELD(Light2D, flags, UInt16)};
+constexpr FieldEditorMeta kEdLight2D[] = {
+    {FieldHint::Enum, 0, 0, kLightTypeNames, 4,
+     "光源类型：Global 环境光（至多一个生效）/ Point 径向 / Spot 锥光（方向 = "
+     "Transform 旋转）/ SpriteMask 蒙版光"},
+    {FieldHint::Enum, 0, 0, kLightBlendNames, 3,
+     "混合模式：Additive 叠加 / Screen 滤色 / Subtract 减光（blob 阴影同通道）"},
+    ED_COLOR,
+    ED_RANGE(0.0f, 16.0f),
+    ED_RANGE(0.0f, 8192.0f),
+    ED_DEG("锥光张角（Spot 用；弧度存储按角度编辑）"),
+    ED_RANGE(0.0f, 1.0f),
+    ED_TIP("蒙版精灵槽（SpriteMask 用；编辑器选择器批② 接通）"),
+    ED_TIP("bit0 enabled（默认开；C# 整写注意镜像默认值坑）")};
+constexpr FieldMeta kBlobShadow2D[] = {
+    FIELD(BlobShadow2D, radius, Float),
+    FIELD(BlobShadow2D, aspect, Float),
+    FIELD(BlobShadow2D, offsetY, Float),
+    FIELD(BlobShadow2D, opacity, Float)};
+constexpr FieldEditorMeta kEdBlobShadow2D[] = {
+    ED_RANGE(0.0f, 4096.0f),
+    ED_RANGE(0.0f, 10.0f),
+    ED,
+    ED_RANGE(0.0f, 1.0f)};
+
 // ---- Behavior（id 9..20）----
 constexpr FieldMeta kHealth[] = {FIELD(Health, max, Float), FIELD(Health, cur, Float),
                                  FIELD_RT(Health, iFrames, Float),
@@ -244,12 +287,11 @@ constexpr FieldEditorMeta kEdStats[] = {ED_RANGE(0.0f, 4096.0f), ED_RANGE(0.0f, 
                                         ED_RANGE(0.0f, 100.0f), ED_RANGE(0.0f, 4096.0f),
                                         ED_RANGE(-100.0f, 100.0f)};
 // StatusEffects/Inventory 的定长数组段由 codec 特判（按 count 截断），不逐槽登记
+//（M8 批① 顺手清：kEdStatusEffects/kEdInventory 两平行表自 M5 段登记化后无引用
+// ——注册走 REGISTER_SEG 无 ed 参——编译器 -Wunused-const-variable 实报，删）
 constexpr FieldMeta kStatusEffects[] = {FIELD(StatusEffects, count, UInt8)};
-constexpr FieldEditorMeta kEdStatusEffects[] = {
-    ED_TIP("活跃效果数（系统维护；条目见下方数组段）")};
 constexpr FieldMeta kInventory[] = {FIELD(Inventory, count, UInt8),
                                     FIELD(Inventory, gold, UInt32)};
-constexpr FieldEditorMeta kEdInventory[] = {ED_TIP("物品槽数（系统维护）"), ED};
 // relicIds 只由数组段 kEquipmentSeg 驱动（[ISSUE-8] 曾同时登记普通字段 →
 // 同名键读档时字段循环对数组抛 type_error → 每次必发假告警）
 constexpr FieldMeta kEquipment[] = {
@@ -490,6 +532,8 @@ void RegisterAllComponents() {
     REGISTER(AnimParams, kAnimParams)                // T3d 批②：id 29（全 RT 槽，无编辑面）
     REGISTER_ED(UIDocument, kUIDocument, kEdUIDocument) // M6b 批③d 前置：id 30（表尾追加）
     REGISTER_ED(AudioSource, kAudioSource, kEdAudioSource) // M6c 批②：id 31（表尾追加）
+    REGISTER_ED(Light2D, kLight2D, kEdLight2D)             // M8 批①：id 32（表尾追加）
+    REGISTER_ED(BlobShadow2D, kBlobShadow2D, kEdBlobShadow2D) // M8 批①：id 33（表尾追加）
 }
 
 } // namespace lemon::ecs

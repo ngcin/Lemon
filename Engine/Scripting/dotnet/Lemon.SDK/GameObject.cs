@@ -148,7 +148,8 @@ public abstract class LemonBehaviour
 
     // ---- 实例级事件订阅（M15）----
     // 惰性分配：订阅发生在挂载/构造期（非每帧），分配不入 GC 热路径纪律账。
-    private List<(GameEvent type, Action<GameEventMsg> handler)> _subscriptions;
+    //（M8 批①：`?` 可空标注——CS8618 零警告；??= 惰性初始化语义不变）
+    private List<(GameEvent type, Action<GameEventMsg> handler)>? _subscriptions;
 
     /// <summary>订阅事件，本实例 OnDestroy 时自动退订（M15：裸 Events.Subscribe 只增
     /// 不删，行为体按实例订阅（如构造器订阅波次横幅）反复生成/销毁 = 订阅表无界增长

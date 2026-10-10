@@ -1,4 +1,4 @@
-// Lemon.SDK — 31 组件镜像 struct（与 lemon::ecs 组件头逐字节对齐；M3-1 布局护栏锁定）。
+// Lemon.SDK — 33 组件镜像 struct（与 lemon::ecs 组件头逐字节对齐；M3-1 布局护栏锁定）。
 // 纪律：
 //   * 字段顺序/类型与 ComponentCatalog.cpp 登记表 1:1（改动 = 破回放，须两侧同步）；
 //   * 布局一致性由 lemon-script-tests 双向校验（C# 报告表 vs C++ ComponentMeta），
@@ -373,6 +373,38 @@ public struct AudioSource : IComponent  // 24B（u64+f32×3+u16+u8+u8 自然对�
                              // C# default = 0(Bgm)——整写须显式设组（Flags 同款镜像
                              // 默认值坑；漏设落 Bgm = 挂 BGM 组音量 + 暂停被挂起）
     internal byte _pad;      // C++ pad_ 衬齐（尾加纪律）
+}
+
+// ---- M8 批①（id 32/33；登记表尾追加，与 ComponentCatalog 同步）----
+
+[StructLayout(LayoutKind.Sequential)]
+public struct Light2D : IComponent  // 36B（u32×8 + u16×2 自然对齐）
+{
+    public uint Type;       // 0 Global/1 Point/2 Spot/3 SpriteMask。注意：C++ 默认
+                            // Point(1)（Unity URP 2D 同构），C# default = 0(Global)——
+                            // SetComponent 整写须显式置类型（镜像默认值坑三连之一）
+    public uint Blend;      // 0 Additive/1 Screen/2 Subtract（零值即默认，无坑）
+    public uint Color;      // RGBA。注意：C++ 默认 0xFFFFFFFF 白，C# default = 0
+                            //（透明黑）——整写须显式置色（坑之二）
+    public float Intensity;
+    public float Range;     // 点/锥光半径（px）
+    public float Angle;     // 锥光张角（弧度存储；Inspector 按角度编辑）
+    public float InnerRatio;// 锥光内角占比 [0,1]
+    public uint MaskSprite; // spriteId（SpriteMask 用；AtlasRegistry 查 UV）
+    public ushort Flags;    // bit0 enabled。注意：C++ 默认置位，C# default = 0 =
+                            // 禁用——整写须显式置位（坑之三；SpriteRenderer.Flags
+                            // /AudioSource.Flags 同款）
+    internal ushort _pad;   // C++ pad_ 衬齐（尾加纪律）
+}
+
+[StructLayout(LayoutKind.Sequential)]
+public struct BlobShadow2D : IComponent // 16B（f32×4）
+{
+    public float Radius;   // 椭圆暗斑半径（px）。注意：C++ 默认 32，C# default = 0——
+                           // 整写须显式置值（Light2D 同款镜像默认值坑）
+    public float Aspect;   // 椭圆纵横比（1 = 正圆；C++ 默认 1）
+    public float OffsetY;  // 沿 Y 偏移（角色脚下贴地）
+    public float Opacity;  // 暗斑强度 [0,1]（C++ 默认 0.5）
 }
 
 // ---- 事件包镜像（Events.h：48B 固定布局，桥侧 blittable）----

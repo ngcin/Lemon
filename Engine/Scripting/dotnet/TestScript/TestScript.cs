@@ -80,6 +80,10 @@ public static class GameMain
         Lemon.Behaviours.Register<MultiSlotOrderProbeA>();
         Lemon.Behaviours.Register<MultiSlotOrderProbeB>();
         Lemon.Behaviours.Register<MultiSlotOrderDriver>();
+        // M8 批①：Light2D/BlobShadow2D 数据面全链（typeId 26，表尾注册同上约定
+        // ——script-tests TestLightSdk 消费：门面 Add/Get/Set/Remove + C++ emplace
+        // 默认值对拍 + 镜像默认值坑实证（Type/Color/Flags 三连））
+        Lemon.Behaviours.Register<LightProbeBehaviour>();
         // 批⑦：换场三事件订阅（Configure 期静态订阅，跨局存活）——事件序记录
         // "U:<name>:<valid>:<loaded>" / "L:<name>:<path>:<mode>" / "A:<old>><new>"
         Lemon.SceneManager.sceneUnloaded += st => SceneLog.Add(
@@ -201,7 +205,7 @@ public sealed class AddVelocitySystem : IForEachSystem
 {
     public string Name => "AddVelocity";
     public Query Query => Query.With<Velocity>();
-    public unsafe void ForEach(in Chunk chunk)
+    public unsafe void ForEach(ref readonly Chunk chunk)
     {
         var v = chunk.Span<Velocity>();
         for (int i = 0; i < chunk.Length; i++) v[i].V.X += 60f * 0.25f;
@@ -213,7 +217,7 @@ public sealed class AgingSystem : IForEachSystem
 {
     public string Name => "Aging";
     public Query Query => Query.With<Projectile, Velocity>();
-    public unsafe void ForEach(in Chunk chunk)
+    public unsafe void ForEach(ref readonly Chunk chunk)
     {
         var p = chunk.Span<Projectile>();
         for (int i = 0; i < chunk.Length; i++) p[i].Age += 0.25f;
@@ -232,7 +236,7 @@ public sealed class BurstSpawnSystem : IForEachSystem
     public string Name => "BurstSpawn";
     public Query Query => Query.With<Transform2D, StatusEffects>();
 
-    public unsafe void ForEach(in Chunk chunk)
+    public unsafe void ForEach(ref readonly Chunk chunk)
     {
         if (_fired) return;
         _fired = true;
@@ -1076,6 +1080,55 @@ public sealed class MultiSlotOrderDriver : Lemon.LemonBehaviour
             _target.Destroy(); // op1 → 批量销毁段 → DetachBatch → OnDestroy×2
             _destroyAt = (int)fc;
         } else if (_destroyAt != 0) {
+            gameObject.Destroy();
+        }
+    }
+}
+
+/// <summary>M8 批①（typeId 26）：Light2D/BlobShadow2D 数据面全链（script-tests
+/// TestLightSdk 装配——门面 Add/Get/Set/Remove + op2/op3 结构命令 + C++ emplace
+/// 默认值对拍 + 镜像默认值坑实证）。帧1 = Add 两组件（结构命令，帧首应用）；
+/// 帧2 = 读回 C++ 默认（Type=Point/Color 白/Flags 启用——C# default 零值三坑的
+/// 反面证据）+ SetComponent 显式整写（Spot/染色/强度 + blob 四字段，坑规避示范）；
+/// 帧3 = 读回持久化 + RemoveComponent&lt;Light2D&gt;；帧4 = TryGet 假 + 自毁。
+/// 事件号段 1900..1919（Audio 1500 / Fx 1700 / Stale 1871 / MultiSlot 1881 互不
+/// 重叠）。C++ 侧断言 ComputeStateHash 随光照数据入流出哈希（加组件必重录口径
+/// 的桥侧证据，ADR-019 后果与风险）+ 引擎池对拍 + 销毁后回空场基准。</summary>
+public sealed class LightProbeBehaviour : Lemon.LemonBehaviour
+{
+    private void Mark(ushort id)
+        => Lemon.Events.Push(Lemon.Interop.GameEvent.Custom, id, default, default);
+
+    protected override void Update()
+    {
+        var fc = Lemon.Time.FrameCount;
+        if (fc == 1) {
+            gameObject.AddComponent<Light2D>();
+            gameObject.AddComponent<BlobShadow2D>();
+            Mark(1900);
+        } else if (fc == 2) {
+            bool cppDefaults = gameObject.TryGetComponent(out Light2D l)
+                && l.Type == 1 /*Point：C++ 默认，非 C# default 0(Global)*/
+                && l.Color == 0xFFFFFFFFu
+                && (l.Flags & 1) != 0;
+            bool blobDefaults = gameObject.TryGetComponent(out BlobShadow2D b0)
+                && b0.Radius == 32f && b0.Aspect == 1f && b0.Opacity == 0.5f;
+            // 整写显式置 Type/Color/Flags——镜像默认值坑规避（漏置 = Global/透明黑/禁用）
+            l.Type = 2; l.Blend = 1; l.Color = 0x66AAFFFFu;
+            l.Intensity = 2.5f; l.Flags = 1;
+            gameObject.SetComponent(l);
+            b0.Radius = 48f; b0.Aspect = 1.5f; b0.Opacity = 0.75f;
+            gameObject.SetComponent(b0);
+            Mark((ushort)(1910 + (cppDefaults ? 1 : 0) + (blobDefaults ? 2 : 0)));
+        } else if (fc == 3) {
+            bool landed = gameObject.TryGetComponent(out Light2D l2)
+                && l2.Type == 2 && l2.Color == 0x66AAFFFFu && l2.Intensity == 2.5f
+                && gameObject.TryGetComponent(out BlobShadow2D b2) && b2.Radius == 48f;
+            bool removed = gameObject.RemoveComponent<Light2D>(); // op3，帧首应用
+            Mark((ushort)(1912 + (landed ? 1 : 0) + (removed ? 2 : 0)));
+        } else if (fc == 4) {
+            bool gone = !gameObject.TryGetComponent(out Light2D _);
+            Mark((ushort)(1914 + (gone ? 1 : 0)));
             gameObject.Destroy();
         }
     }
