@@ -377,6 +377,8 @@ void ViewportRenderer::Init(rhi::Device& device, ImGuiBackend& ui) {
     // M8 批②：光贴图三段式编排器（实例环 slot 2；双 RT 格式拍板 RGBA8Unorm，02 §8）
     lightCompositor_.Init(device, /*ringSlot=*/2, kSceneRtTexSlot, kLightRtTexSlot,
                           /*samplerLinear=*/0, rtFormat, rtFormat);
+    // M8 批④：后处理链（显示终点 gameRT = RGBA8Unorm；管线/几何 init 期一次）
+    postFx_.Init(device, /*samplerLinear=*/0, rtFormat);
     sceneCam_.center = {640, 360};
     sceneCam_.halfHeight = 360.0f;
     gameCam_.center = {640, 360};
@@ -461,12 +463,14 @@ void ViewportRenderer::ExtractScene(EditorContext& ctx) {
 // ---------------------------------------------------------------- 渲染 ----
 void ViewportRenderer::Render(rhi::CommandList& cl, EditorContext& ctx, float simAlpha) {
     // M8 批②：质量 EMA 按渲染帧钟推进（编辑器壳首接，ADR-019 M5；只降不升，
-    // 降档联动 lightRT 缩放与光数上限——EnsureLightTargets 按档重建）
+    // 降档联动 lightRT 缩放与光数上限——EnsureLightTargets 按档重建）。批④ 起
+    // Low 档同时关 FX 链（QualityParams.fxChain——"关 FX 零成本"档位语义）
     const auto now = std::chrono::steady_clock::now();
     if (lastRenderTime_.time_since_epoch().count() != 0) {
         const float dt = std::clamp(
             std::chrono::duration<float>(now - lastRenderTime_).count(), 0.0f, 0.1f);
         quality_.Update(dt * 1000.0, dt);
+        postFx_.Simulate(dt); // M8 批④：冲击波生命推进（表现层，渲染帧钟）
     }
     lastRenderTime_ = now;
     ExtractScene(ctx);
@@ -549,13 +553,17 @@ void ViewportRenderer::RenderViewport(rhi::CommandList& cl, uint32_t idx, Sprite
     }
 
     const float clear[4] = {0.09f, 0.10f, 0.13f, 1.0f};
-    // M8 批② 光贴图三段式（ADR-019 M1；仅 GameView idx=1）：开灯帧 = 场景段
-    // sceneRT → 光照段 lightRT（CLEAR=ambient）→ 合成段 gameRT（composite → 豁免段
-    // → RmlUi 同块内）。关灯帧 = 零 Light2D 且零 BlobShadow2D 时走与无光照版
-    // **逐字节相同**的原路径（08 M8"光照默认关闭零成本"机械口径；批③ 起 blob
-    // 渲染在场——blob-only 场景（无灯）也走三段式，ambient=白乘法恒等 + 暗斑独扣）
-    if (idx == 1 && (rm_.AliveLightCount() > 0 || rm_.AliveBlobCount() > 0)) {
+    // M8 批④ GameView 三分支（02 §4 FX Pass；SceneView idx=0 恒走原路径——编辑视口
+    // 不吃光照/后处理，同因）：
+    //   开灯 + fxChain：sceneRT → lightRT → 合成 fxSceneRT（offscreen composite）
+    //     → FX 链（bloom 双滤波）→ gameRT 块（fxFinal + 豁免段 + RmlUi）
+    //   关灯 + fxChain：场景段 fxSceneRT → FX 链 → gameRT 块（同上，豁免段结构同构）
+    //   Low 档（fxChain=false）：批②③ 原路径逐字保留（关链零成本机械口径）
+    const bool lightsOn = idx == 1 && (rm_.AliveLightCount() > 0 || rm_.AliveBlobCount() > 0);
+    const bool fxOn = idx == 1 && quality_.Params().fxChain;
+    if (lightsOn) {
         EnsureLightTargets(rt.w, rt.h);
+        if (fxOn) postFx_.EnsureTargets(rt.w, rt.h);
         const auto lightItems = rm_.ExtractLights(simAlpha);
         const auto blobItems = rm_.ExtractBlobs(simAlpha);
         lightCompositor_.Prepare(lightItems, blobItems, quality_.Params().lightBudget,
@@ -574,16 +582,53 @@ void ViewportRenderer::RenderViewport(rhi::CommandList& cl, uint32_t idx, Sprite
         // 光照段：lightRT CLEAR = ambient 底色，光源四边形 + blob 椭圆暗斑按混合叠加
         lightCompositor_.RenderLightPass(cl, lightRt_.tex, &assets_.Registry(), vp, lightRt_.w,
                                          lightRt_.h);
-        // 合成段：全屏乘法 → 豁免段（ADR-019 M3：血条 251/飘字 252/位图文本 254
-        // 与 RmlUi 不受光——按产包通道切分：text/fxBar 走合成后追加烘焙）→ UI
-        cl.BeginOffscreenPass(rt.tex, clear);
-        cl.SetViewportScissor(rt.w, rt.h);
-        lightCompositor_.RenderComposite(cl);
+        // 合成段 + FX 链（M8 批④）：终点 fxSceneRT（RGBA8Unorm——02 §8 拍板）；
+        // Low 档 = 批②③ 原语义 gameRT 直写（豁免段后画）
+        if (fxOn) {
+            cl.BeginOffscreenPass(postFx_.SceneRt(), clear);
+            cl.SetViewportScissor(rt.w, rt.h);
+            lightCompositor_.RenderComposite(cl, /*offscreen=*/true);
+            cl.EndPass();
+            postFx_.RenderChain(cl); // bloom 五离屏块（extract→down×2→up×2）
+            cl.BeginOffscreenPass(rt.tex, clear);
+            cl.SetViewportScissor(rt.w, rt.h);
+            postFx_.RenderFinal(cl); // 显示终点 gameRT 块内：扰动+加色+色调
+        } else {
+            cl.BeginOffscreenPass(rt.tex, clear);
+            cl.SetViewportScissor(rt.w, rt.h);
+            lightCompositor_.RenderComposite(cl);
+        }
+        // 豁免段（ADR-019 M3：血条 251/飘字 252/位图文本 254 与 RmlUi 不受光不吃
+        // FX——按产包通道切分：text/fxBar 走 FX 后追加烘焙）→ UI
         const uint32_t headBatches = batcher.LastBatchCount();
         batcher.Bake(assets_.Registry(), {}, {}, textPackets,
                      std::span<const SpritePacket>(fxBarPackets), /*append=*/true);
         batcher.RecordRange(cl, vp, headBatches, batcher.LastBatchCount() - headBatches);
         // 批③a（ADR-014）：RmlUi 叠画于豁免段之上——同一 gameRT 块内、EndPass 之前
+        if (gameUi_ && ctx.Playing()) gameUi_(cl, rt.w, rt.h);
+        cl.EndPass();
+        return;
+    }
+    if (fxOn) {
+        // FX 开 + 关灯帧（M8 批④）：场景段渲 fxSceneRT → FX 链 → gameRT 块。豁免段
+        // 结构与开灯帧同构（text/fxBar 不吃 FX）；从原"一次全量 Bake"拆双段——
+        // Reserve 帧容量一次声明（append 契约同上）
+        postFx_.EnsureTargets(rt.w, rt.h);
+        const Mat3x2 vp = cam.ViewProj(aspect);
+        batcher.Reserve((uint32_t)(packets.size() + textPackets.size() + fxBarPackets.size()));
+        batcher.Bake(assets_.Registry(), packets);
+        cl.BeginOffscreenPass(postFx_.SceneRt(), clear);
+        cl.SetViewportScissor(rt.w, rt.h);
+        batcher.Record(cl, vp);
+        cl.EndPass();
+        postFx_.RenderChain(cl);
+        cl.BeginOffscreenPass(rt.tex, clear);
+        cl.SetViewportScissor(rt.w, rt.h);
+        postFx_.RenderFinal(cl);
+        const uint32_t headBatches = batcher.LastBatchCount();
+        batcher.Bake(assets_.Registry(), {}, {}, textPackets,
+                     std::span<const SpritePacket>(fxBarPackets), /*append=*/true);
+        batcher.RecordRange(cl, vp, headBatches, batcher.LastBatchCount() - headBatches);
         if (gameUi_ && ctx.Playing()) gameUi_(cl, rt.w, rt.h);
         cl.EndPass();
         return;

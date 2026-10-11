@@ -15,8 +15,9 @@
 namespace lemon::renderer {
 
 // ---- 光贴图 RT 的 bindless 槽位（M8 批③ 起两壳共用；建 RT 时绑一次，M4.7-P0）----
-// 顶部保留段由低到高：glow 程序化页（Atlas.h kGlowTexSlot=249）→ sceneRT → lightRT。
-// #L20 记账：顶部段 3 槽（249/250/251），远离资产页（2 起，分配上限 kAtlasSlotCeiling）
+// 顶部保留段由低到高：FX bloom 链（批④，Atlas.h 245-247）→ fxScene（248）→ glow 程序化页
+//（kGlowTexSlot=249）→ sceneRT → lightRT。#L20 记账：顶部段 7 槽（245..251），远离资产页
+//（2 起，分配上限 kAtlasSlotCeiling）
 inline constexpr uint32_t kSceneRtTexSlot = 250;
 inline constexpr uint32_t kLightRtTexSlot = 251;
 

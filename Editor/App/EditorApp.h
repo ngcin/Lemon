@@ -88,12 +88,16 @@ struct EditorLaunch {
     bool smokeLight = false;    // --smoke-light：M8 批② 光贴图冒烟（隐含 --smoke：
                                 // 三段式开灯帧 + 关灯帧逐位同 + SceneView gizmo + 三档 lightRT）
     bool benchLights = false;   // --bench-lights：M8 批② 64 灯场 fps 压测（BenchVerdict 聚合）
+    bool smokeFx = false;       // --smoke-fx：M8 批④ 后处理链冒烟（隐含 --smoke：bloom/
+                                // 色调/冲击波三断言 + 关链帧逐位同 + 档位切换）
+    bool benchSurvivorLit = false; // --bench-survivor-lit：M8 批④ 压测 A 干跑（survivor
+                                   // 全链 + 64 灯 + 8 blob + FX 链；fps≥60 门禁，终验归批⑥）
 
     /// 任一注入/冒烟族模式（语言钉定等「回归可复现」口径；不含 bench——纯性能
     /// 测量无 UI 文案断言，M7c 批④ §4 登记项随收官批收口）
     bool AnySmokeMode() const {
         return smoke || smokeUi || smokeDrag || smokeAnim || smokeTemplate ||
-               smokeGuid || smokeAudio || smokeUirml || smokeLight || playTest ||
+               smokeGuid || smokeAudio || smokeUirml || smokeLight || smokeFx || playTest ||
                finalTest || !smokeClose.empty();
     }
 };
@@ -339,6 +343,14 @@ private:
     void SmokeLightCapture(rhi::CommandList& cl, uint64_t frame);
     void SmokeLightSample(uint64_t frame);
     bool SmokeLightVerdict();
+    /// --smoke-fx 族五挂点（M8 批④；EditorAppSmokeFx.cpp）：预循环播种（FX 断言
+    /// 素材：暗背景 + 白亮块 + 棋盘条带 + Low 档落场）/ 帧链状态机（档位切换 +
+    /// SpawnShockwave）/ 渲染段捕获请求 / present 后采样断言 / 末帧裁决
+    void SmokeFxSeed();
+    void SmokeFxFrame(uint64_t frame);
+    void SmokeFxCapture(rhi::CommandList& cl, uint64_t frame);
+    void SmokeFxSample(uint64_t frame);
+    bool SmokeFxVerdict();
     /// --bench-survivor/--bench-scene 族三挂点（批③c-6 自 Run 外迁 EditorAppBench.cpp；
     /// 挂点原位逐位不变）：帧段累计（段界戳 Run 帧局部、十参数直传——结构体化
     /// 会跨帧残留）/ 停跑证据采集（返回 playAliveAtStop 等价增量）/ 末帧裁决
@@ -355,6 +367,9 @@ private:
     bool BenchVerdict(uint64_t frame, uint32_t playAliveAtStop);
     /// --bench-lights 场景播种（M8 批②；EditorAppBench.cpp：64 灯 + 精灵底）
     void SeedBenchLightsScene();
+    /// --bench-survivor-lit 灯场播种（M8 批④；EditorAppBench.cpp：64 灯 + 8 blob
+    /// 进 Play 场景——压测 A 干跑的含光照场）
+    void SeedBenchLitField();
     /// --final 终验族五挂点（批③c-6 自 Run 外迁 EditorAppFinal.cpp；挂点原位
     /// 逐位不变）：向导播种 / 场景开+判据播种（守卫留原位）/ Play 中热重载播种 /
     /// fps 采样 / 末帧验收（play 往返四量以参数过桥——Run 跨族共享态）
@@ -552,6 +567,25 @@ private:
                                          // blob 才走无光照原路径）
         uint64_t capFrame = 0;           // 捕获请求所属帧（仅该帧录制——fetch 帧重录 = 取回像素晚一帧）
     } light_;
+
+    // --smoke-fx 状态（M8 批④；EditorAppSmokeFx.cpp 单 TU 消费）
+    struct SmokeFxState {
+        std::vector<uint8_t> baseline;   // Low 档基线帧（gameRT 逐位对照源——关链零成本）
+        std::vector<uint8_t> chained;    // 链开无波帧（冲击波位移的差分对照）
+        uint32_t baseW = 0, baseH = 0;
+        int capReq = 0;                  // 0 无；1 gameRT（帧链置位）
+        uint64_t capFrame = 0;
+        bool sawWave = false;            // Spawn 已发（状态驱动寿终判据的前置）
+        bool waveProbed = false;         // 波窗口帧已捕获（只捕一次）
+        bool waveDiffDone = false;       // 波差分已断言（防通用 fetch 分支误吃后续捕获）
+        bool baseOk = false;             // 基线捕获已取回
+        bool chainOnOk = false;          // 链开帧 vs 基线有差（bloom/色调在跑）
+        bool bloomOk = false;            // 白亮块邻域加亮（bloom 光晕单调）
+        bool waveOk = false;             // 波环带内差分像素计数（位移可测）
+        bool waveGoneOk = false;         // 波寿终（ActiveWaves 归零）
+        bool chainPassOk = false;        // LastFrameInfo.chainPasses==5（全链五离屏块）
+        bool offIdenticalOk = false;     // 关链帧与基线逐位同（关 FX 零成本机器证）
+    } fx_;
 };
 
 } // namespace lemon::editor

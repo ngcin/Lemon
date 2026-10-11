@@ -62,7 +62,7 @@ bool TextureStore::LoadSprite(const IndexedEntry& e) {
         return false;
     }
 
-    // bindless 槽容量校验（上限 = renderer::kAtlasSlotCeiling：顶部 249..251 保留给 glow/
+    // bindless 槽容量校验（上限 = renderer::kAtlasSlotCeiling：顶部 245..251 保留给 FX 链/glow/
     // sceneRT/lightRT——M8 批③ 评审，防撞保留段触发 RegisterAtlas slot-reused 断言）
     if (firstSlot_ + pages_.size() >= renderer::kAtlasSlotCeiling) {
         LEMON_ERROR("bindless 纹理槽满（上限 %u，顶部保留段起）：'%s' 未导入——图集 .baked 归批⑥",

@@ -34,3 +34,4 @@ void RunAssetsTests();
 void RunEditorTests();
 void RunAudioTests();
 void RunLightTests();
+void RunPostFxTests();

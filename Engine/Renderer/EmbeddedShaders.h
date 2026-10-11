@@ -16,6 +16,16 @@ extern const unsigned int lemon_spv_composite_vert_count;
 extern const unsigned int lemon_spv_composite_frag[];
 extern const unsigned int lemon_spv_composite_frag_count;
 
+// 后处理链（M8 批④，02 §4 FX Pass；vert 复用 composite）
+extern const unsigned int lemon_spv_bloom_extract_frag[];
+extern const unsigned int lemon_spv_bloom_extract_frag_count;
+extern const unsigned int lemon_spv_bloom_down_frag[];
+extern const unsigned int lemon_spv_bloom_down_frag_count;
+extern const unsigned int lemon_spv_bloom_up_frag[];
+extern const unsigned int lemon_spv_bloom_up_frag_count;
+extern const unsigned int lemon_spv_fx_final_frag[];
+extern const unsigned int lemon_spv_fx_final_frag_count;
+
 // RmlUi 后端（M6b 批③a，ADR-014）
 extern const unsigned int lemon_spv_rmlui_vert[];
 extern const unsigned int lemon_spv_rmlui_vert_count;

@@ -30,6 +30,7 @@ void LightCompositor::Init(rhi::Device& device, uint32_t ringSlot, uint32_t scen
     recreateCbId_ = device.AddRecreateCallback("LightCompositor", [this](rhi::Device& d) {
         device_ = &d;
         compositePipeline_ = {};
+        compositeOffscreen_ = {};
         CreateCompositePipeline(); // 光源管线由 batcher_ 自登记回调重建
     });
 }
@@ -42,6 +43,11 @@ void LightCompositor::CreateCompositePipeline() {
     compositePipeline_ = device_->CreatePipeline(
         {.vs = vs, .fs = fs, .blend = rhi::BlendMode::Opaque, // 全屏不透明覆盖
          .colorFormat = compositeTargetFormat_});
+    // 批④：offscreen 变体（fxSceneRT 恒 RGBA8Unorm——02 §8 拍板；两格式相同也建
+    // 两份，代码路径统一，init 期一次性成本）
+    compositeOffscreen_ = device_->CreatePipeline(
+        {.vs = vs, .fs = fs, .blend = rhi::BlendMode::Opaque,
+         .colorFormat = rhi::Format::RGBA8Unorm});
 }
 
 const LightCompositor::Plan& LightCompositor::Prepare(std::span<const LightItem> items,
@@ -127,13 +133,13 @@ void LightCompositor::RenderLightPass(rhi::CommandList& cl, rhi::Texture lightRT
     cl.EndPass();
 }
 
-void LightCompositor::RenderComposite(rhi::CommandList& cl) {
+void LightCompositor::RenderComposite(rhi::CommandList& cl, bool offscreen) {
     cl.BindQuadGeometry(batcher_.CornerVB(), batcher_.IndexIB());
     cl.BindGlobalDescriptors();
     // 环绑定确定性（composite 不读实例——共享布局下绑定态显式化，免依赖前序 pass 残留）
     cl.BindStorageBuffer(batcher_.RingBuffer(), batcher_.RingSlot());
     CompositePushConstants pc{sceneTexSlot_, lightTexSlot_, samplerSlot_, 0u};
-    cl.BindPipeline(compositePipeline_);
+    cl.BindPipeline(offscreen ? compositeOffscreen_ : compositePipeline_);
     cl.PushConstants(&pc, sizeof(pc));
     cl.DrawQuadInstances(1, 0);
 }

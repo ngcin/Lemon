@@ -168,6 +168,11 @@ if [ "${MODE}" = "full" ]; then
             grep_step "light-smoke (lemon-game lightmap 3-stage: SpriteMask spot + blob ellipse + quality tiers + fps>=60; M8-b3)" \
                 "light-smoke: .* => OK" \
                 "${GAME}" --project "${TMP}/game" --frames 240 --smoke-light
+            # M8 批④：游戏壳后处理链（FX 链→交换链重构：bloom 分离差分/tone 全帧差/
+            # 冲击波位移+寿终 + 关链帧逐位同（与编辑器同款口径）+ fps≥60 门禁）
+            grep_step "fx-smoke (lemon-game postfx chain: bloom/tone/shockwave + chain-off bit-identical + fps>=60; M8-b4)" \
+                "fx-smoke: .* => OK" \
+                "${GAME}" --project "${TMP}/game" --frames 240 --smoke-fx
         else
             echo "  FAIL game-smoke (夹具 Game/ 编译失败：dotnet build ${TMP}/game)"
             fail=$((fail+1))
@@ -240,7 +245,12 @@ if [ "${MODE}" = "full" ]; then
     grep_step "smoke-light (lightmap 3-stage + lights-off bit-identical + gizmo + tier sizes; M8-b2)" \
         "smoke-light.* => PASS" \
         "${EDITOR}" --smoke-light --frames 240 --validate --no-reopen
-    # M7a 批⑧：性能基线门禁（回归第 24 步——批③ 起 full 24 步；09 §9/§10"对基线
+    # M8 批④：编辑器后处理链（GameView gameRT 终点照旧、合成终点前移 fxSceneRT：
+    # bloom 分离差分/tone 全帧差/冲击波位移+寿终 + chainPasses==5 + 关链帧逐位同）
+    grep_step "smoke-fx (editor postfx chain: bloom/tone/shockwave + chain-off bit-identical + tier switch; M8-b4)" \
+        "smoke-fx.* => PASS" \
+        "${EDITOR}" --smoke-fx --frames 240 --validate --no-reopen
+    # M7a 批⑧：性能基线门禁（回归第 26 步——批④ 起 full 26 步；09 §9/§10"对基线
     # 回退 >10% 标红"口径）。
     # bench-survivor 退出码自带 45fps 硬判据（BenchVerdict 聚合，08 §3），本步附加
     # 软门禁 fps >= 76.5 = 基线 85（批⑥ 2026-10-04 实测 85/87）× 0.9；基线刷新随批

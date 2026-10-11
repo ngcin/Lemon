@@ -155,6 +155,42 @@ void EditorApp::SeedBenchLightsScene() {
     LEMON_LOG("bench-lights: 播种 %u 灯 + 200 精灵 + 8 blob", (unsigned)kBenchLightsCount);
 }
 
+// ---- --bench-survivor-lit 灯场播种（M8 批④）：64 灯 + 8 blob 进 Play 场景
+//（survivor 怪海已由 Spawner 涨满——无精灵底需求；灯形态与 bench-lights 同构，
+// 压测 A 干跑口径 = ADR-019 M5 的 64 灯 + blob）。----
+void EditorApp::SeedBenchLitField() {
+    auto& s = ctx_.ActiveScene();
+    {
+        ecs::Entity g = ctx_.CreateEntity("BGlobal");
+        s.Get<ecs::Transform2D>(g).pos = Vec2{640, 360};
+        ecs::Light2D& lt = s.Emplace<ecs::Light2D>(g);
+        lt.type = ecs::kLightTypeGlobal;
+        lt.color = 0xFFD6F4FFu;
+    }
+    static constexpr uint32_t kBlendColors[3] = {0xFF0000FFu, 0xFFFFFF00u, 0xFF80A0FFu};
+    for (uint32_t i = 0; i < kBenchLightsCount - 1; ++i) {
+        ecs::Entity e = ctx_.CreateEntity("BLight");
+        s.Get<ecs::Transform2D>(e).pos =
+            Vec2{40.0f + (float)(i % 12) * 110.0f, 40.0f + (float)(i / 12) * 160.0f};
+        ecs::Light2D& lt = s.Emplace<ecs::Light2D>(e);
+        lt.type = ecs::kLightTypePoint;
+        lt.blend = i % 3;
+        lt.color = kBlendColors[i % 3];
+        lt.intensity = 1.5f;
+        lt.range = 220.0f;
+    }
+    for (uint32_t i = 0; i < 8; ++i) {
+        ecs::Entity e = ctx_.CreateEntity("BBlob");
+        s.Get<ecs::Transform2D>(e).pos = Vec2{120.0f + (float)i * 150.0f, 600.0f};
+        ecs::BlobShadow2D& bs = s.Emplace<ecs::BlobShadow2D>(e);
+        bs.radius = 42.0f;
+        bs.aspect = 1.3f;
+        bs.opacity = 0.5f;
+    }
+    LEMON_LOG("bench-survivor-lit: 播种 %u 灯 + 8 blob 进 Play 场景（FX 链 High 档）",
+              (unsigned)kBenchLightsCount);
+}
+
 void EditorApp::BenchSample(uint64_t frame,
                             std::chrono::steady_clock::time_point benchT0,
                             std::chrono::steady_clock::time_point bPump,
@@ -166,16 +202,18 @@ void EditorApp::BenchSample(uint64_t frame,
                             std::chrono::steady_clock::time_point bUiDraw,
                             std::chrono::steady_clock::time_point bPresent) {
     // --bench-lights（M8 批②）：编辑态三段式灯场单因子基准（无 Play 无 fx 灌入，
-    // 只吃帧时八段——与 survivor/scene 共用累计器，裁决分支独立）
+    // 只吃帧时八段——与 survivor/scene 共用累计器，裁决分支独立）。
+    // --bench-survivor-lit（M8 批④）：压测 A 干跑（survivor 全链 + 灯场 + FX）——
+    // 测量窗口与 survivor 同判据（Play 中 + 预热后）
     const bool lightsBench = Launch().benchLights && frame >= kBenchLightsWarmup;
     if (lightsBench ||
-        ((Launch().benchSurvivor || Launch().benchScene) && ctx_.Playing() &&
-         frame >= kBenchWarmup)) {
+        ((Launch().benchSurvivor || Launch().benchSurvivorLit || Launch().benchScene) &&
+         ctx_.Playing() && frame >= kBenchWarmup)) {
         // M6a 批①：fx 饱和灌入（survivor 专属口径：验收④ = 池满最坏情形，
         // 256 飘字 + 128 血条每帧全量在场）。飘字确定性网格撒玩家周边（渲染
         // 视口内）；血条挂前 128 只动画怪（each 早退收集；怪被击杀 = 渲染侧
         // resolve 跳过、槽位 sticky 到期次帧收集补位——计数恒 128）
-        if (Launch().benchSurvivor) {
+        if (Launch().benchSurvivor || Launch().benchSurvivorLit) {
             ecs::FxChannel& fx = ctx_.ActiveWorld().Fx();
             for (uint32_t i = 0; i < ecs::FxChannel::kMaxTexts; ++i)
                 fx.PopupText("12", -300.0f + (float)(i % 16) * 40.0f,
@@ -232,12 +270,14 @@ void EditorApp::BenchSample(uint64_t frame,
 // ---- --bench 停跑证据采集（ExitPlay 弃 Play 世界前留证；批③c-6 自 Run 外迁。
 // 返回 playAliveAtStop 等价增量：bench-scene = AliveCount，其余 0（原局部初值））----
 uint32_t EditorApp::BenchCaptureStop() {
-    if (!((Launch().benchSurvivor || Launch().benchScene) && ctx_.Playing())) return 0;
+    if (!((Launch().benchSurvivor || Launch().benchSurvivorLit || Launch().benchScene) &&
+          ctx_.Playing()))
+        return 0;
     uint32_t alive = 0;
     g_bench.benchPlayProfiles = ctx_.ActiveWorld().Pipeline().Profiles(); // ExitPlay 弃世界前留证
     if (Launch().benchScene)
         alive = ctx_.ActiveScene().AliveCount();
-    if (Launch().benchSurvivor) { // 以下证据采集 = survivor 专属（bench-scene 只取 profiles + alive）
+    if (Launch().benchSurvivor || Launch().benchSurvivorLit) { // 以下证据采集 = survivor 专属（bench-scene 只取 profiles + alive）
     ctx_.ActiveScene().View<ecs::XpProgress>().each([&](auto ent, ecs::XpProgress&) {
         if (const ecs::Health* hp = ctx_.ActiveScene().TryGet<ecs::Health>(
                 ecs::Scene::FromEntt(ent)))
@@ -316,6 +356,27 @@ bool EditorApp::BenchVerdict(uint64_t frame, uint32_t playAliveAtStop) {
                     g_bench.benchUiSum > 0.0 ? 100.0 * (hp.totalMs / (double)hp.frames) /
                                            (g_bench.benchUiSum / segN)
                                      : 0.0);
+        ok = pass;
+    }
+    // --bench-survivor-lit 裁决（M8 批④）：压测 A 干跑——survivor 全链 + 64 灯 +
+    // 8 blob + FX 链的组合验证（bench-lights 单因子之外的首个组合；终验归批⑥）。
+    // 门禁 fps≥60 = 08 M8"含光照场 @60fps"判据；alive/director 复用 survivor 证据
+    if (Launch().benchSurvivorLit) {
+        const double avg =
+            g_bench.benchFrameN ? g_bench.benchFrameSum / (double)g_bench.benchFrameN : 0.0;
+        const double fps = avg > 0.0 ? 1000.0 / avg : 0.0;
+        const uint32_t lights = Viewport().Renderables().AliveLightCount();
+        const uint32_t fxPass = Viewport().PostFx().LastFrameInfo().chainPasses;
+        const char* qTier = renderer::TierName(Viewport().Quality().Current());
+        const bool aliveOk = playAliveAtStop >= 10000;
+        const bool directorOk = g_bench.benchWavesStarted >= 3 && g_bench.benchTeam1Alive > 8000;
+        const bool litOk = lights >= kBenchLightsCount && fxPass == 5;
+        const bool pass = aliveOk && directorOk && litOk && avg > 0.0 && fps >= 60.0;
+        std::printf("[bench-survivor-lit] frames=%u warmup=%u alive=%u lights=%u tier=%s "
+                    "fxPass=%u/5 frameAvg=%.2fms frameMax=%.2fms fps=%.0f "
+                    "present=IMMEDIATE(请求) => %s\n",
+                    (unsigned)frame, (unsigned)kBenchWarmup, playAliveAtStop, lights, qTier,
+                    fxPass, avg, g_bench.benchFrameMax, fps, pass ? "PASS" : "FAIL");
         ok = pass;
     }
     // --bench-lights 裁决（M8 批②）：64 灯编辑态帧率单因子基准——压测 A 含光照场

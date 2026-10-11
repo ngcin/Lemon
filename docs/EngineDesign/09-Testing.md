@@ -445,7 +445,7 @@ Hierarchy 面板）。回归口径 = 本命令三跑稳定。
   异常禁用 → 对话框复活，帧下限 3000；批② T4 加**数值表**断言 tables=YES；T5 加
   **三档存档**断言——种子 meta.sav（vs.best 载入回显）+ 旧 game.sav（惰性迁移
   链）→ Stop 后 slot_0/meta 落盘 + 迁移内容回读 + 空档 settings 不落文件）/
-  `--final`（终验链）经 `tools/editor-regression.sh` 一键 **24 步**（M5 批⓪ 14 步
+  `--final`（终验链）经 `tools/editor-regression.sh` 一键 **26 步**（M5 批⓪ 14 步
   → M6c 17 → M7a 批④ 18（game-smoke）→ 批⑤ 19（pkg-smoke：lemon-packager 出包 +
   自检 + 包体零参 smoke + fps≥60 数值判）→ 批⑧ 20（bench-survivor 性能基线门禁
   fps≥76.5 + grep_step 退出码双判 + smoke-drag 两次取优，§9）→ M7c 批⑥b 21
@@ -455,7 +455,10 @@ Hierarchy 面板）。回归口径 = 本命令三跑稳定。
   与基线逐位同 + SceneView 灯 gizmo + 三档 lightRT 尺寸断言，02 §8/ADR-019）→
   M8 批③ 24（light-smoke：lemon-game `--smoke-light` 游戏壳三段式 + 蒙版光斑/
   blob 椭圆暗斑 lightRT 断言 + 三档尺寸 + QualityManager 游戏壳 + fps≥60 门禁
-  ——"干净包开灯场景跑满 60fps 零 C++"出口判据，02 §8/ADR-019））；
+  ——"干净包开灯场景跑满 60fps 零 C++"出口判据，02 §8/ADR-019）→ M8 批④
+  25/26（smoke-fx 编辑器后处理链：bloom 分离差分/tone 全帧差/冲击波位移+寿终 +
+  chainPasses==5 + 关链帧逐位同；fx-smoke 游戏壳同款——合成终点"→FX 链→交换链"
+  重构的两壳接线，02 §4 FX Pass））；
   **未脚本化**的纯观感路径
   （Inspector 控件手感、面板排版）仍靠 [Editor-Manual-Test-Guide.md](./Editor-Manual-Test-Guide.md) 真人清单。
 - M2：bench-sim 早期怪群聚拢阶段存在 max ~145ms 单步尖峰（avg 判据不受影响；哈希重建
@@ -481,10 +484,12 @@ Hierarchy 面板）。回归口径 = 本命令三跑稳定。
 > 本机 launchd + GitHub win scheduled）——**2026-10-07 用户改拍板 = 手动档**：
 > launchd 已卸载（模板留档 `Tools/com.lemon.ci-daily.plist` 含恢复配方）、
 > workflow schedule 已撤（dispatch-only）。现行口径：**门禁手动一键** =
-> `Tools/ci-daily.sh`（增量构建 → `editor-regression.sh full` **24 步**（M7c 批⑥b
+> `Tools/ci-daily.sh`（增量构建 → `editor-regression.sh full` **26 步**（M7c 批⑥b
 > 起 +scene-smoke 换场编排单跳；批⑫ +smoke-anim en 态锚步；M8 批② +smoke-light
 > 光贴图三段式/关灯逐位同/gizmo/三档 lightRT——02 §8/ADR-019；M8 批③
-> +light-smoke 游戏壳三段式（蒙版光斑/blob 暗斑/三档/fps≥60）；末步
+> +light-smoke 游戏壳三段式（蒙版光斑/blob 暗斑/三档/fps≥60）；M8 批④
+> +smoke-fx/fx-smoke 两壳后处理链（bloom/色调/冲击波 + 关链逐位同，02 §4
+> FX Pass 落地注）；末步
 > = bench-survivor 门禁 fps≥76.5 = 基线 85×0.9，§10">10% 回退标红"机器化；
 > 45fps 硬线在 `BenchVerdict` 退出码内）→ 追加 **bench-lights**（M8 批②：64 灯
 > 编辑态三段式单因子基准，软门禁 55fps；数字入本报告，硬验收归批⑥ 压测 A）→

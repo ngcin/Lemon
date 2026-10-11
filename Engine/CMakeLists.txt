@@ -52,6 +52,7 @@ add_library(lemon-engine STATIC
   Renderer/SpriteBatcher.cpp
   Renderer/LightBatcher.cpp
   Renderer/LightCompositor.cpp
+  Renderer/PostFx.cpp
   Renderer/Particles.cpp
   Renderer/BitmapFont.cpp
   Renderer/CameraFollow.cpp
@@ -96,6 +97,11 @@ lemon_embed_shader(lemon-engine Renderer/Shaders/light.vert)
 lemon_embed_shader(lemon-engine Renderer/Shaders/light.frag)
 lemon_embed_shader(lemon-engine Renderer/Shaders/composite.vert)
 lemon_embed_shader(lemon-engine Renderer/Shaders/composite.frag)
+# M8 批④ 后处理链（02 §4 FX Pass）：bloom 双滤波三级 + fxFinal 合并式终段
+lemon_embed_shader(lemon-engine Renderer/Shaders/bloom_extract.frag)
+lemon_embed_shader(lemon-engine Renderer/Shaders/bloom_down.frag)
+lemon_embed_shader(lemon-engine Renderer/Shaders/bloom_up.frag)
+lemon_embed_shader(lemon-engine Renderer/Shaders/fx_final.frag)
 # RmlUi 呈现后端三变体（M6a 批③a，ADR-014）
 lemon_embed_shader(lemon-engine Renderer/Shaders/rmlui.vert)
 lemon_embed_shader(lemon-engine Renderer/Shaders/rmlui_color.frag)
@@ -110,7 +116,7 @@ if(NOT CMAKE_MATCH_1)
   message(FATAL_ERROR "D10 guard: kMaxTextureSlots not found in RHI.h")
 endif()
 set(LEMON_ATLAS_N "${CMAKE_MATCH_1}")
-foreach(LEMON_FRAG IN ITEMS sprite light composite)
+foreach(LEMON_FRAG IN ITEMS sprite light composite bloom_extract bloom_down bloom_up fx_final)
   file(READ ${CMAKE_CURRENT_SOURCE_DIR}/Renderer/Shaders/${LEMON_FRAG}.frag LEMON_FRAG_SRC)
   string(REGEX MATCH "uAtlases\\[([0-9]+)\\]" LEMON_ATLAS_DECL "${LEMON_FRAG_SRC}")
   if(NOT CMAKE_MATCH_1)

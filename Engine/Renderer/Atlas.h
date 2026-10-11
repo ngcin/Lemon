@@ -15,14 +15,22 @@ namespace lemon::renderer {
 inline constexpr uint32_t kHoleAtlasIdx = 0xFFFFFFFFu;
 
 /// 程序化 glow 蒙版页槽（M8 批③：lemon-game BuildProceduralPages——白 RGB +
-/// alpha 径向渐变，SpriteMask 夹具/模板复用；顶部保留段 249/250/251 之下界，
-/// sceneRT/lightRT 槽见 LightTypes.h）
+/// alpha 径向渐变，SpriteMask 夹具/模板复用；顶部保留段见下，sceneRT/lightRT
+/// 槽见 LightTypes.h）
 inline constexpr uint32_t kGlowTexSlot = 249;
 
-/// 图集页槽位分配上限（M8 批③ 评审：顶部保留段 249/250/251 = glow/sceneRT/
-/// lightRT——TextureStore/AtlasStore 逐页分配到此为止，防撞保留段触发
-/// RegisterAtlas 的 slot-reused 断言；#L20 记账口径的硬执行面）
-inline constexpr uint32_t kAtlasSlotCeiling = kGlowTexSlot;
+/// 后处理链 RT 槽（M8 批④，02 §4 FX Pass）：fxSceneRT（合成/场景段终点）+
+/// bloomA/B/C（1/4·1/8·1/16 双滤波链）。顶部保留段由高到低：lightRT 251 →
+/// sceneRT 250 → glow 249 → fxScene 248 → bloomA/B/C 247-245（#L20 记账 +4）
+inline constexpr uint32_t kFxSceneTexSlot = 248;
+inline constexpr uint32_t kFxBloomATexSlot = 247;
+inline constexpr uint32_t kFxBloomBTexSlot = 246;
+inline constexpr uint32_t kFxBloomCTexSlot = 245;
+
+/// 图集页槽位分配上限（M8 批③ 评审：顶部保留段 = 上述 7 槽——TextureStore/
+/// AtlasStore 逐页分配到此为止，防撞保留段触发 RegisterAtlas 的 slot-reused
+/// 断言；#L20 记账口径的硬执行面。批④ 起下界 249→245）
+inline constexpr uint32_t kAtlasSlotCeiling = kFxBloomCTexSlot;
 
 struct SpriteInfo {
     uint32_t atlasIndex = 0;   // bindless 纹理槽位

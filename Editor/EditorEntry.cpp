@@ -28,7 +28,8 @@ int usageExit(const char* why) {
                 "[--no-reopen] [--smoke-close clean|dirty] [--smoke-drag] "
                 "[--smoke-ui] [--smoke-anim] [--bench-survivor] [--gen-vs-template dir] "
                 "[--smoke-template] [--smoke-guid] [--smoke-uirml] [--smoke-audio] "
-                "[--smoke-light] [--bench-lights] [--smoke-lang zh-CN|en]\n");
+                "[--smoke-light] [--bench-lights] [--smoke-fx] [--bench-survivor-lit] "
+                "[--smoke-lang zh-CN|en]\n");
     return 2;
 }
 
@@ -99,6 +100,12 @@ int main(int argc, char** argv) {
                                                      // + 关灯帧逐位同 + gizmo + 三档 lightRT
         else if (!std::strcmp(argv[i], "--bench-lights"))
             launch.benchLights = true; // M8 批②：64 灯场 fps 压测（BenchVerdict 聚合）
+        else if (!std::strcmp(argv[i], "--smoke-fx"))
+            launch.smokeFx = launch.smoke = true; // M8 批④ 后处理链冒烟：bloom/色调/
+                                                   // 冲击波三断言 + 关链帧逐位同 + 三档
+        else if (!std::strcmp(argv[i], "--bench-survivor-lit"))
+            launch.benchSurvivorLit = true; // M8 批④：压测 A 干跑（survivor 全链 +
+                                            // 64 灯 + 8 blob + FX；fps≥60 门禁，终验批⑥）
         else
             return usageExit((std::string("unknown arg: ") + argv[i]).c_str());
     }

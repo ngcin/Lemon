@@ -22,12 +22,13 @@
 // 直画 swapchain，spike-04 先例）→ present。
 //
 // CLI：lemon-game [--project <dir>] [--scene <rel>] [--frames N] [--smoke]
-//                 [--smoke-scene] [--smoke-light] [--validate]
+//                 [--smoke-scene] [--smoke-light] [--smoke-fx] [--validate]
 //   --project     项目根（含 project.lemon）；缺省 = exe 旁 data/（包形态零参启动）
 //   --scene       相对路径覆盖入口场景（缺省 = entryScene → 回退链）
 //   --frames      跑 N 帧退出（自动化；smoke 族要求 N≥240——帧机在 f200 后收尾）
 //   --smoke       机器判据：终帧 RESULT 行（回归口径，与编辑器各 smoke 链同款）
-//   --smoke-scene 换场编排冒烟（M7c 批⑥b）；--smoke-light 光贴图冒烟（M8 批③）
+//   --smoke-scene 换场编排冒烟（M7c 批⑥b）；--smoke-light 光贴图冒烟（M8 批③）；
+//   --smoke-fx 后处理链冒烟（M8 批④：bloom/色调/冲击波 + 关链逐位同）
 //                 ——三 smoke 旗标互斥使用（组合态未定义，装载期 WARN）
 //   --validate    Vulkan 验证层（开发自测）
 #include <SDL3/SDL.h>
@@ -68,6 +69,7 @@
 #include "Renderer/CameraFollow.h"
 #include "Renderer/GameFx.h"
 #include "Renderer/LightCompositor.h" // M8 批③ 光贴图三段式（游戏壳装配）
+#include "Renderer/PostFx.h"          // M8 批④ 后处理链（游戏壳装配）
 #include "Renderer/Quality.h"         // M8 批③ QualityManager 游戏壳首接
 #include "Renderer/Renderable.h"
 #include "Renderer/RHI.h"
@@ -440,13 +442,15 @@ constexpr uint64_t kSceneSmokeDdolGuid = 10963355455248361612ull;
 int main(int argc, char** argv) {
     std::string projectArg, sceneArg;
     long frames = 0;
-    bool smoke = false, smokeScene = false, smokeLight = false, validate = false;
+    bool smoke = false, smokeScene = false, smokeLight = false, smokeFx = false,
+         validate = false;
     // L31（review 2026-10-09）：未知/残缺参数原静默落空——`--frames abc` 经 atoi→0
     // 使 paced 反转为 true，自动化调用变交互模式无限挂住。未知/非数字 = 响亮退出。
     const auto usage = [] {
         std::fprintf(stderr,
                      "用法：lemon-game [--project <dir>] [--scene <name>] [--frames N] "
-                     "[--smoke] [--smoke-scene] [--smoke-light] [--validate]\n");
+                     "[--smoke] [--smoke-scene] [--smoke-light] [--smoke-fx] "
+                     "[--validate]\n");
     };
     for (int i = 1; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--project") && i + 1 < argc) projectArg = argv[++i];
@@ -462,6 +466,7 @@ int main(int argc, char** argv) {
         } else if (!std::strcmp(argv[i], "--smoke")) smoke = true;
         else if (!std::strcmp(argv[i], "--smoke-scene")) smokeScene = true;
         else if (!std::strcmp(argv[i], "--smoke-light")) smokeLight = true;
+        else if (!std::strcmp(argv[i], "--smoke-fx")) smokeFx = true;
         else if (!std::strcmp(argv[i], "--validate")) validate = true;
         else {
             LEMON_ERROR("lemon-game：未知/残缺参数：'%s'", argv[i]);
@@ -471,7 +476,8 @@ int main(int argc, char** argv) {
     }
     const std::string exeDir = ExeDir();
     // 交互 = 墙钟累加；自动化 = 每帧恰一步
-    const bool paced = frames == 0 && !smoke && !smokeScene && !smokeLight;
+    const bool paced =
+        frames == 0 && !smoke && !smokeScene && !smokeLight && !smokeFx;
 
     // ---- 项目根与入口场景（--project 缺省 = exe 旁 data/，包形态零参启动）----
     std::string root = projectArg.empty() ? (exeDir + "/data") : projectArg;
@@ -820,6 +826,35 @@ int main(int argc, char** argv) {
     if (smokeLight && (smoke || smokeScene))
         LEMON_WARN("lemon-game：--smoke-light 与 --smoke/--smoke-scene 组合态未定义"
                    "（回归恒单旗标使用）");
+    // ---- --smoke-fx 播种（M8 批④）：FX 断言素材（白亮块/暗对照/棋盘条带——
+    // bloom/色调/冲击波的像素断言源，引擎侧夹具项目无关）。guid 段 4740… 避开
+    // 4700/4710/4720/4730（smoke-scene/light 夹具段）。f30 按当帧相机布位
+    //（smoke-light 同款教训——菜单态相机随挂靠点漂移）----
+    ecs::Entity fxSmBright = ecs::Entity::Null(), fxSmDark = ecs::Entity::Null();
+    ecs::Entity fxSmStripe[6] = {};
+    if (smokeFx) {
+        auto seedQuad = [&](const char* tag, uint64_t guid, uint32_t rgba) {
+            ecs::Entity e = scene.Create();
+            ecs::Meta& m = scene.Emplace<ecs::Meta>(e);
+            m.guid = guid;
+            std::snprintf(m.tag, sizeof(m.tag), "%s", tag);
+            scene.Emplace<ecs::Transform2D>(e);
+            ecs::SpriteRenderer& sr = scene.Emplace<ecs::SpriteRenderer>(e);
+            sr.spriteId = whiteSprite;
+            sr.colorRGBA = rgba;
+            return e;
+        };
+        fxSmBright = seedQuad("SmFxBright", 4740000000000000001ull, 0xFFFFFFFFu);
+        fxSmDark = seedQuad("SmFxDark", 4740000000000000002ull, 0x46403C3Cu);
+        for (int i = 0; i < 6; ++i)
+            fxSmStripe[i] = seedQuad("SmFxStripe", 4740000000000000010ull + (uint64_t)i,
+                                     (i & 1) ? 0x46403C3Cu : 0xFFFFFFFFu);
+        ecs::StampSceneMembership(scene, world.ActiveSceneHandle()); // 组合 smoke 态防孤儿
+        LEMON_LOG("lemon-game smoke-fx: 播种 8 实体（白亮块/暗对照/棋盘×6）");
+    }
+    if (smokeFx && (smoke || smokeScene || smokeLight))
+        LEMON_WARN("lemon-game：--smoke-fx 与其他 smoke 族组合态未定义"
+                   "（回归恒单旗标使用）");
     hostState.world = &world;
 
     // ---- 四缓存 + 存档 + 脚本解析（编辑器 EnterPlay 装配清单同序）----
@@ -914,6 +949,12 @@ int main(int argc, char** argv) {
                          renderer::kLightRtTexSlot, /*samplerLinear=*/0,
                          rhi::Format::RGBA8Unorm, device->SwapchainFormat());
     renderer::QualityManager quality;
+    if (smokeFx) quality.SetTier(renderer::QualityTier::Low); // 基线帧走 FX 关原路径
+    // M8 批④ 后处理链（02 §4 FX Pass；编辑器 ViewportRenderer 同件镜像，防第三套
+    // 实现）。显示终点 = 交换链（finalTargetFormat 参数化——批③ composite 直写
+    // 同款语义）；RT 懒建（fxChain 开帧 EnsureTargets）+ 设备丢失回调自管
+    renderer::PostFx postFx;
+    postFx.Init(*device, /*samplerLinear=*/0, device->SwapchainFormat());
     std::chrono::steady_clock::time_point lastRenderTime{};
     struct GameLightRt {
         rhi::Texture tex;
@@ -1124,6 +1165,179 @@ int main(int argc, char** argv) {
             setLights(0, 0.0f); // 全关：含 blob opacity=0（提取滤除 → Alive 双零）
         }
     };
+    // --smoke-fx 帧机（M8 批④）：f30 布位锚当帧相机 → f59 预约 f60 基线捕获
+    //（Low 档原路径）→ f60 帧尾取回 → f70 SetTier(High)（链开）→ f99 预约 f100
+    // → f100 帧尾断言（全帧差 + chainPasses）存 chained → f104 bloomIntensity=0
+    // → f105 预约 f106 → f106 帧尾 bloom 分离差分（同 tone 两帧 = 纯光晕信号）
+    // + 参数恢复 → f120 SpawnShockwave（棋盘带中心）→ 波窗口状态驱动捕获
+    //（radius 首入 [0.08,0.25]）→ 捕获帧尾差分（vs chained）→ 波寿终状态判
+    // → f160 SetTier(Low)（链关）→ f219 预约 f220 → f220 帧尾**与基线逐位同**
+    //（关链零成本——编辑器 --smoke-fx 同款口径）。断言源 = 交换链截屏
+    //（DebugRecordCapture/DebugFetchCapture；BGRA→RGBA 已处理）。
+    int fxCapReq = 0; // 0 无；1 交换链捕获（渲染期录制、帧尾取回）
+    uint64_t fxCapFrame = 0;
+    int fxStage = 0;  // 捕获所属阶段：1 基线 / 2 链开 / 3 无 bloom / 4 波 / 5 关链
+    bool fxBaseOk = false, fxChainOnOk = false, fxBloomOk = false, fxWaveOk = false,
+         fxWaveGoneOk = false, fxChainPassOk = false, fxOffIdenticalOk = false,
+         fxSawWave = false, fxWaveProbed = false;
+    std::vector<uint8_t> fxBaseline, fxChained;
+    uint32_t fxBaseW = 0, fxBaseH = 0;
+    Vec2 fxBrightPos{}, fxWaveWorld{}; // f30 布位后锚（相机漂移免疫的断言采样点）
+    auto fxSmokeFrame = [&](uint64_t f) {
+        auto worldToPx = [&](Vec2 world, uint32_t w, uint32_t h) {
+            const float asp =
+                (float)device->SwapchainWidth() / (float)device->SwapchainHeight();
+            const Rect view = gameCam.ViewRect(asp);
+            const uint32_t x = (uint32_t)(((world.x - view.min.x) /
+                                           (view.max.x - view.min.x)) * (float)w);
+            const uint32_t y = (uint32_t)(((world.y - view.min.y) /
+                                           (view.max.y - view.min.y)) * (float)h);
+            return std::pair{x < w ? x : 0, y < h ? y : 0};
+        };
+        // 取回（本帧渲染期已录制的捕获；DebugFetchCapture 内部 WaitIdle）
+        if (fxCapReq == 1 && f == fxCapFrame) {
+            std::vector<uint8_t> px;
+            uint32_t w = 0, h = 0;
+            if (device->DebugFetchCapture(px, w, h) && !px.empty()) {
+                if (fxStage == 1) {
+                    fxBaseline = px;
+                    fxBaseW = w;
+                    fxBaseH = h;
+                    fxBaseOk = !fxBaseline.empty();
+                } else if (fxStage == 2 && px.size() == fxBaseline.size()) {
+                    size_t diff = 0;
+                    for (size_t i = 0; i < px.size(); ++i)
+                        if (px[i] != fxBaseline[i]) ++diff;
+                    fxChainOnOk = diff > 0; // tone S 曲线对非 0.5 值全动
+                    fxChainPassOk = postFx.LastFrameInfo().chainPasses == 5;
+                    fxChained = px; // 波差分对照（无波链开全效帧）
+                } else if (fxStage == 3 && px.size() == fxChained.size()) {
+                    // bloom 分离：全效 vs 无 bloom（同 tone）在白块右缘光晕点差分
+                    const auto [px_, py_] = worldToPx(
+                        fxBrightPos + Vec2{131.0f, 0.0f}, w, h); // 右缘外 3px
+                    int maxOn = 0, maxOff = 0;
+                    for (int c = 0; c < 3; ++c) {
+                        maxOn = std::max(
+                            maxOn, (int)fxChained[((uint64_t)py_ * w + px_) * 4 + c]);
+                        maxOff =
+                            std::max(maxOff, (int)px[((uint64_t)py_ * w + px_) * 4 + c]);
+                    }
+                    fxBloomOk = maxOn > maxOff + 8;
+                    LEMON_LOG("smoke-fx: bloomProbe 全效=%d 无bloom=%d → %s", maxOn, maxOff,
+                              fxBloomOk ? "OK" : "FAIL");
+                    // 参数恢复（波/关链帧回全效默认）
+                    renderer::PostFxParams p = postFx.Params();
+                    p.bloomIntensity = renderer::PostFxParams{}.bloomIntensity;
+                    postFx.SetParams(p);
+                } else if (fxStage == 4 && px.size() == fxChained.size()) {
+                    size_t diff = 0;
+                    for (size_t i = 0; i < px.size(); ++i)
+                        if (px[i] != fxChained[i]) ++diff;
+                    fxWaveOk = diff > 200; // 波环扫过棋盘带 = 大面积位移
+                    LEMON_LOG("smoke-fx: 波帧差分像素=%zu（阈值 200）→ %s", diff,
+                              fxWaveOk ? "OK" : "FAIL");
+                } else if (fxStage == 5 && px.size() == fxBaseline.size()) {
+                    fxOffIdenticalOk =
+                        std::memcmp(px.data(), fxBaseline.data(), px.size()) == 0;
+                    LEMON_LOG("smoke-fx: 关链帧逐位同 → %s",
+                              fxOffIdenticalOk ? "OK" : "FAIL");
+                }
+            } else {
+                LEMON_WARN("smoke-fx: 交换链捕获取回失败（stage=%d f=%llu）", fxStage,
+                           (unsigned long long)f);
+            }
+            fxCapReq = 0;
+        }
+        // 帧号动作（帧尾驱动 → 下一帧渲染生效；捕获预约 f+1）
+        if (f == 20 || f == 40) {
+            // 菜单 UI（main.rml 全屏背景）会盖住整个交换链——smoke-fx 的像素断言
+            // 域要求场景可见。隐藏之（装载保留；f20/f40 双保险——装载时序兜底）
+            if (ui.HasDocument("Assets/UI/main.rml") &&
+                ui.IsDocumentShown("Assets/UI/main.rml"))
+                ui.ShowDocument("Assets/UI/main.rml", false);
+        } else if (f == 30) {
+            const Vec2 c = gameCam.center;
+            auto place = [&](ecs::Entity e, Vec2 pos, Vec2 scale) {
+                if (scene.Alive(e)) {
+                    auto& tf = scene.Get<ecs::Transform2D>(e);
+                    tf.pos = pos;
+                    tf.scale = scale;
+                }
+            };
+            fxBrightPos = c + Vec2{-240.0f, -160.0f};
+            place(fxSmBright, fxBrightPos, {4.0f, 4.0f});    // 256×256 白亮块
+            place(fxSmDark, c + Vec2{240.0f, -160.0f}, {4.0f, 4.0f});
+            for (int i = 0; i < 6; ++i) // 棋盘带：1280×32 横条 ×6（波位移对照）
+                place(fxSmStripe[i], c + Vec2{0.0f, 60.0f + (float)i * 32.0f},
+                      {20.0f, 0.5f});
+            fxWaveWorld = c + Vec2{0.0f, 140.0f}; // 棋盘带中心（波锚）
+            LEMON_LOG("smoke-fx: f30 布位锚 %.0f,%.0f（Low 档基线态）", c.x, c.y);
+        } else if (f == 59) {
+            fxCapReq = 1;
+            fxCapFrame = 60;
+            fxStage = 1;
+        } else if (f == 70) {
+            quality.SetTier(renderer::QualityTier::High); // fxChain 开
+        } else if (f == 99) {
+            fxCapReq = 1;
+            fxCapFrame = 100;
+            fxStage = 2;
+        } else if (f == 104) {
+            renderer::PostFxParams p = postFx.Params();
+            p.bloomIntensity = 0.0f;
+            postFx.SetParams(p);
+        } else if (f == 105) {
+            fxCapReq = 1;
+            fxCapFrame = 106;
+            fxStage = 3;
+        } else if (f == 110) {
+            // 波中心 = 布位锚棋盘带中心的屏幕 UV（相机漂移免疫）。duration 0.1s
+            //（自动化帧率 ~490fps：0.2ms/帧 × 0.1s = 49 帧寿面，自然寿终落在
+            // f215 兜底前；60fps 机器 6 帧走完同样全链成立）
+            const float asp =
+                (float)device->SwapchainWidth() / (float)device->SwapchainHeight();
+            const Rect view = gameCam.ViewRect(asp);
+            const float u = (fxWaveWorld.x - view.min.x) / (view.max.x - view.min.x);
+            const float v = (fxWaveWorld.y - view.min.y) / (view.max.y - view.min.y);
+            postFx.SpawnShockwave(Vec2{u, v}, 0.35f, 0.025f, 0.1f);
+            fxSawWave = true;
+            LEMON_LOG("smoke-fx: f110 SpawnShockwave(%.2f,%.2f r=0.35)", u, v);
+        } else if (f == 160) {
+            quality.SetTier(renderer::QualityTier::Low); // 链关（关 FX 零成本）
+        } else if (f == 215) {
+            // 寿终兜底：自然寿终（高帧率下 0.1s 也可能未走完——帧率波动容忍）或
+            // 显式清空（ClearWaves = 场景重置同款正当路径）——两者皆证"波不永生"
+            if (fxSawWave && !fxWaveGoneOk) {
+                postFx.ClearWaves();
+                fxWaveGoneOk = postFx.ActiveWaves() == 0;
+                LEMON_LOG("smoke-fx: f215 寿终兜底 ClearWaves → ActiveWaves=%u",
+                          (unsigned)postFx.ActiveWaves());
+            }
+        } else if (f == 219) {
+            fxCapReq = 1;
+            fxCapFrame = 220;
+            fxStage = 5;
+        }
+        // 波窗口（状态驱动：radius 首入 [0.04,0.30] → 预约下一帧捕获；下界放宽
+        // = 高帧率机器（~400fps）波推进慢的窗口适配）
+        if (fxSawWave && !fxWaveProbed && quality.Params().fxChain) {
+            renderer::PostFx::WaveView waves[renderer::PostFx::kMaxWaves];
+            const uint32_t n = postFx.WavesSnapshot(waves);
+            for (uint32_t i = 0; i < n; ++i)
+                if (waves[i].radius >= 0.04f && waves[i].radius <= 0.30f) {
+                    fxCapReq = 1;
+                    fxCapFrame = f + 1;
+                    fxStage = 4;
+                    fxWaveProbed = true;
+                    break;
+                }
+        }
+        // 波寿终（曾活跃 → 归零）
+        if (fxSawWave && !fxWaveGoneOk && postFx.ActiveWaves() == 0) {
+            fxWaveGoneOk = true;
+            LEMON_LOG("smoke-fx: 波寿终回收（ActiveWaves=0）");
+        }
+    };
     bool running = true;
     while (running) {
         if (!window->PollEvents()) running = false; // 窗口关闭
@@ -1245,12 +1459,14 @@ int main(int argc, char** argv) {
         rhi::CommandList& cl = device->BeginFrame();
         // M8 批③：质量 EMA 按渲染帧钟推进（游戏壳首接，编辑器 ViewportRenderer
         // 同款；只降不升，降档联动 lightRT 缩放与光数上限——EnsureLightTargets 按档重建）
+        // 批④ 起 Low 档同时关 FX 链（QualityParams.fxChain）+ 冲击波生命推进（渲染帧钟）
         {
             const auto now = std::chrono::steady_clock::now();
             if (lastRenderTime.time_since_epoch().count() != 0) {
                 const float rdt = std::clamp(
                     std::chrono::duration<float>(now - lastRenderTime).count(), 0.0f, 0.1f);
                 quality.Update(rdt * 1000.0, rdt);
+                postFx.Simulate(rdt);
             }
             lastRenderTime = now;
         }
@@ -1275,16 +1491,17 @@ int main(int argc, char** argv) {
                                    fxDt, fxBarPackets, textPackets);
         }
         const float clear[4] = {0.09f, 0.10f, 0.13f, 1.0f};
-        // M8 批③ 光贴图三段式（ADR-019 M1；编辑器 GameView 同件镜像装配）：
-        // 开灯帧 = 场景段 sceneRT → 光照段 lightRT（CLEAR=ambient）→ 合成段直写
-        // 交换链（composite 全屏乘法——loadOp 恒 CLEAR 天然满足：全屏不透明四边形）
-        // → 豁免段（text/fxBar 层 252/251 与位图文本 254）+ RmlUi 同块内。关灯帧
-        //（零灯且零 blob）走与批③ 前逐字相同的原路径——零额外 pass（"光照默认
-        // 关闭零成本"机械口径）。双格式分工：场景段 = sceneBatcher（RGBA8Unorm
-        // sceneRT）；豁免段/关灯帧 = batcher（交换链格式）——帧内各 Bake 一次，
-        // 无 append/Reserve（编辑器单 batcher 双段不同：此处格式异必须两台）
+        // M8 批④ GameView 三分支（02 §4 FX Pass）：
+        //   开灯 + fxOn：批③ 前段照旧（sceneRT/lightRT）→ 合成段 fxSceneRT
+        //     （offscreen composite）→ FX 链（bloom 双滤波）→ 交换链块（fxFinal +
+        //     豁免段 + RmlUi）——"合成终点 →FX 链→ 交换链"重构位
+        //   关灯 + fxOn：场景段 fxSceneRT（sceneBatcher RGBA8Unorm 管线复用）→
+        //     FX 链 → 交换链块（同构豁免段）
+        //   Low 档（fxChain=false）：批③ 两分支逐字保留（关链零成本机械口径）
+        const bool fxOn = quality.Params().fxChain;
         if (rm.AliveLightCount() > 0 || rm.AliveBlobCount() > 0) {
             EnsureLightTargets(w, h);
+            if (fxOn) postFx.EnsureTargets(w, h);
             const auto lightItems = rm.ExtractLights(alpha);
             const auto blobItems = rm.ExtractBlobs(alpha);
             lightCompositor.Prepare(lightItems, blobItems, quality.Params().lightBudget,
@@ -1300,10 +1517,42 @@ int main(int argc, char** argv) {
             lightCompositor.RenderLightPass(cl, lightRt.tex, &atlas, vp, lightRt.w, lightRt.h);
             if (smokeLight && lightCapReq == 3 && frame == lightCapFrame)
                 cl.DebugRecordTextureCapture(lightRt.tex); // 光斑断言源（下一帧取回）
-            // 合成段：交换链块内全屏乘法 → 豁免段 → UI（块内唯一合法插入点）
+            // 合成段 + FX 链（M8 批④）：终点 fxSceneRT；Low 档 = 批③ 原语义直写交换链
+            if (fxOn) {
+                cl.BeginOffscreenPass(postFx.SceneRt(), clear);
+                cl.SetViewportScissor(w, h);
+                lightCompositor.RenderComposite(cl, /*offscreen=*/true);
+                cl.EndPass();
+                postFx.RenderChain(cl); // bloom 五离屏块
+                cl.BeginPass(device->SwapchainFormat(), w, h, clear);
+                cl.SetViewportScissor(w, h);
+                postFx.RenderFinal(cl); // 交换链块内：扰动 + 加色 + 色调
+            } else {
+                cl.BeginPass(device->SwapchainFormat(), w, h, clear);
+                cl.SetViewportScissor(w, h);
+                lightCompositor.RenderComposite(cl);
+            }
+            // 豁免段（text/fxBar 层 252/251 与位图文本 254 不受光不吃 FX）+ UI
+            batcher.Bake(atlas, {}, {}, textPackets,
+                         std::span<const SpritePacket>(fxBarPackets));
+            batcher.Record(cl, vp);
+            ui.Render(cl, w, h);
+            cl.EndPass();
+        } else if (fxOn) {
+            // FX 开 + 关灯帧（M8 批④）：场景段渲 fxSceneRT → FX 链 → 交换链块。
+            // 双格式分工维持（sceneBatcher RGBA8Unorm / batcher 交换链格式——帧内
+            // 各 Bake 一次无 append）
+            postFx.EnsureTargets(w, h);
+            const Mat3x2 vp = gameCam.ViewProj(aspect);
+            sceneBatcher.Bake(atlas, packets);
+            cl.BeginOffscreenPass(postFx.SceneRt(), clear);
+            cl.SetViewportScissor(w, h);
+            sceneBatcher.Record(cl, vp);
+            cl.EndPass();
+            postFx.RenderChain(cl);
             cl.BeginPass(device->SwapchainFormat(), w, h, clear);
             cl.SetViewportScissor(w, h);
-            lightCompositor.RenderComposite(cl);
+            postFx.RenderFinal(cl);
             batcher.Bake(atlas, {}, {}, textPackets,
                          std::span<const SpritePacket>(fxBarPackets));
             batcher.Record(cl, vp);
@@ -1318,6 +1567,9 @@ int main(int argc, char** argv) {
             ui.Render(cl, w, h); // sprite 之后、EndPass 之前（动态块内唯一合法插入点）
             cl.EndPass();
         }
+        // --smoke-fx 交换链捕获（M8 批④：仅捕获请求所属帧——EndPass 后 present 前，
+        // PRESENT_SRC 布局借道拷出；f61/f101/f107/f221 + 波窗口帧取回）
+        if (smokeFx && fxCapReq != 0 && frame == fxCapFrame) cl.DebugRecordCapture();
 
         bool needRe = false, lost = false;
         device->EndFrameAndPresent(needRe, lost);
@@ -1338,6 +1590,7 @@ int main(int argc, char** argv) {
             cardsShown = true; // 升级/死亡动态弹卡观察位（UI.Show 运行时装载链）
         // --smoke-light 帧机（状态区头注；帧尾驱动 → 下一帧 Step 生效）
         if (smokeLight) lightSmokeFrame(frame);
+        if (smokeFx) fxSmokeFrame(frame);
         // --smoke-scene：菜单态预置脏态 + DDOL 根位标记 + 首跳（帧尾 Request →
         // 下一帧 Essential #18 执行 = ADR-017"下一帧装载"时序）
         if (smokeScene && sceneHop == -1 && frame == 80) {
@@ -1562,6 +1815,24 @@ int main(int argc, char** argv) {
             (unsigned long long)frame, fps, plan.drawLights, plan.drawBlobs, smMaskOk ? 1 : 0,
             smBlobOk ? 1 : 0, smPlanOk ? 1 : 0, smTierW[0], smTierH[0], smTierW[1], smTierH[1],
             smTierW[2], smTierH[2], offPath ? 1 : 0, ok ? "OK" : "FAIL");
+        std::fflush(stdout);
+        g_host = nullptr;
+        ui.Shutdown();
+        return ok ? 0 : 1;
+    }
+    if (smokeFx) {
+        // RESULT 行（回归口径，M8 批④ 出口判据）：三效果断言（bloom 分离差分/
+        // tone 全帧差/冲击波位移 + 寿终）+ chainPasses 全链在场 + **关链帧与基线
+        // 逐位同**（FX 关零成本——编辑器 --smoke-fx 同款口径）+ fps≥60 门禁
+        const double fps = frameSec > 0 ? (double)statFrames / frameSec : 0.0;
+        const bool ok = fxBaseOk && fxChainOnOk && fxBloomOk && fxChainPassOk && fxWaveOk &&
+                        fxWaveGoneOk && fxOffIdenticalOk && fps >= 60.0;
+        std::printf(
+            "[lemon-game] RESULT fx-smoke: frames=%llu fps=%.1f chainOn=%d bloom=%d "
+            "chainPass=%d wave=%d waveGone=%d offIdentical=%d => %s\n",
+            (unsigned long long)frame, fps, fxChainOnOk ? 1 : 0, fxBloomOk ? 1 : 0,
+            fxChainPassOk ? 1 : 0, fxWaveOk ? 1 : 0, fxWaveGoneOk ? 1 : 0,
+            fxOffIdenticalOk ? 1 : 0, ok ? "OK" : "FAIL");
         std::fflush(stdout);
         g_host = nullptr;
         ui.Shutdown();

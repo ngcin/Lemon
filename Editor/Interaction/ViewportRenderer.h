@@ -19,6 +19,7 @@
 #include "Renderer/BitmapFont.h"
 #include "Renderer/Camera2D.h"
 #include "Renderer/LightCompositor.h"
+#include "Renderer/PostFx.h"
 #include "Renderer/Quality.h"
 #include "Renderer/Renderable.h"
 #include "Renderer/RHI.h"
@@ -174,6 +175,8 @@ public:
     renderer::QualityManager& Quality() { return quality_; }
     /// 光贴图编排器（M8 批②：smoke-light 断言 drawLights/ambient 用）
     renderer::LightCompositor& Light() { return lightCompositor_; }
+    /// 后处理链（M8 批④：smoke-fx 断言 SpawnShockwave/ActiveWaves/LastFrameInfo 用）
+    renderer::PostFx& PostFx() { return postFx_; }
     /// 游戏 UI 层挂接（批③a：null = 无 UI；EditorApp 在 UiSubsystem Init 成功后挂入）
     void SetGameUiLayer(GameUiLayerFn fn) { gameUi_ = std::move(fn); }
     /// 调色板页的 ImGui 纹理（AssetBrowser 非资产图标：色块 uv 子区）。null = 未注册
@@ -199,6 +202,7 @@ private:
     SpriteBatcher sceneBatcher_, gameBatcher_;
     renderer::LightCompositor lightCompositor_; // 三段式编排（仅 GameView 消费）
     renderer::QualityManager quality_;          // M8 批②：编辑器壳首接（EMA 自动降档）
+    renderer::PostFx postFx_;                   // M8 批④：后处理链（仅 GameView Med+ 档）
 
     Camera2D sceneCam_{}; // 编辑相机（02 §3.5：与游戏相机同类型双实例，输入来源分离 #13）
     Camera2D gameCam_{};  // 游戏相机（M4.3 Play 中可被脚本驱动；编辑态固定默认位）

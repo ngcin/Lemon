@@ -141,6 +141,8 @@ void main() { oColor = texture(sampler2D(uAtlases[pcf.atlasIndex], uSamplers[pcf
 
 后处理为"链式 full-screen pass 池"，每个 pass 双 RT ping-pong；关闭 FX 时 game pass 直接渲到 swapchain。**全屏 UV 扰动类特效**（冲击波/传送门）是割草手感的廉价大杀器，进 M5 首发特性集。
 
+**M8 批④ 落地注（2026-10-11）**：v1 形态 = `PostFx`（两壳共用，防第三套）——bloom 双滤波三级（extract 阈值提取 @1/4 → down 1/8 → down 1/16 → up 1/8 → up 1/4）+ **fxFinal 合并式终段**（冲击波 UV 扰动 + bloom 加色 + 色调曲线单 pass——02 §4 顺序语义保持：bloom 提取基于无扰动图、扰动在最终采样施加；无活跃波时扰动项为零 = 零额外 pass）。质量分级：`QualityParams.fxChain` 位 Low 关 / Med+ 开（EMA 自动降档 = FX 链先卸；**关链帧与无 FX 版路径逐位同**，两壳 `--smoke-fx` 机器证）。两壳接线：编辑器 GameView **显示终点 gameRT 照旧**（ImGui 采样不动），合成/场景段终点前移 `fxSceneRT`（RGBA8Unorm，02 §8 LDR 拍板）→ FX 链 → gameRT 块内 fxFinal + 豁免段 + RmlUi；lemon-game 合成终点由"→交换链"重构为"→FX 链→交换链"（显示块内 fxFinal + 豁免段 + UI）。RT 槽位顶部段 245–248（fxScene/bloomA/B/C，#L20 记账 +4）。冲击波 = 引擎侧 `PostFx::SpawnShockwave`（表现层、渲染帧钟 Simulate、不入 StateHash/回放；C# 门面触发式——消费者出现时随 World 非 ECS 通道议，ADR-019 M4 口径）。HDR bloom（16F RT）与 CRT/扫描线风格列 v1.1。
+
 ## 5. 帧内存与上传通路
 
 | 资源 | 策略 |

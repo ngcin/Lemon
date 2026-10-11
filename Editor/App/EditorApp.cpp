@@ -158,7 +158,8 @@ int EditorApp::Run(const EditorLaunch& launch) {
     device_ = rhi::Device::Create(dd);
     rhi::SwapchainDesc sd;
     sd.nativeWindow = window_->NativeHandle();
-    sd.present = (launch.benchSurvivor || launch.benchScene || launch.benchLights)
+    sd.present = (launch.benchSurvivor || launch.benchScene || launch.benchLights ||
+                  launch.benchSurvivorLit)
                      ? rhi::PresentModePref::Immediate // 压测口径：禁 vsync（否则帧时被 60Hz 钉住测不出真实档位）
                      : rhi::PresentModePref::Fifo;     // 编辑器 vsync（05 §9）
     if (!device_->CreateSwapchain(sd)) return 1;
@@ -370,6 +371,8 @@ int EditorApp::Run(const EditorLaunch& launch) {
     SmokeAnimSeed();
     // --smoke-light 预循环播种（M8 批②：灯实体 flags=0 落场，基线帧走关灯路径）
     SmokeLightSeed();
+    // --smoke-fx 预循环播种（M8 批④：FX 断言素材 + Low 档基线态落场）
+    SmokeFxSeed();
 
     // --play：Play 往返验收（§6 #4/#5）：进 Play → 中段编辑落 Play World → Stop 逐字节断言
     // --final 同样进 Play（终验 §6 #2/#6：Play 中热重载 + fps）
@@ -400,7 +403,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
     SmokeAnimPlaySetup();
     // --bench-survivor（M5 清障③）：播种压测场景（tempdir 项目 + 1 万怪 Spawner）并进
     // Play。无 Game/（tempdir）——无脚本属合法形态，不走 PlayBlockedByScripts 守卫。
-    if (launch.benchSurvivor) {
+    if (launch.benchSurvivor || launch.benchSurvivorLit) {
         // #84（review 2026-10-02）：基号与 OpenProjectPipeline 同式推导（程序化图集
         // 登记后首个可用号）——原硬编码 100 与图集页数隐性耦合
         if (!SeedBenchSurvivorScene(
@@ -411,6 +414,13 @@ int EditorApp::Run(const EditorLaunch& launch) {
         // #82：单源装配（含 UI 文档挂载——基准护栏活证：无 UIDocument 装载恒 0；
         // tempdir 无音频资产，MountPlayAudio 天然 no-op）
         if (!EnterPlayProgrammatic()) return 1;
+        // --bench-survivor-lit（M8 批④）：压测 A 干跑 = survivor 全链 + 64 灯 + 8
+        // blob + FX 链（High 档钉定——测量中真过载 EMA 仍会降档，裁决行回显 tier）
+        if (launch.benchSurvivorLit) {
+            SeedBenchLitField();
+            viewport_->Quality().SetTier(renderer::QualityTier::High);
+            forceDefaultLayout_ = true; // 双视口可见（GameView 三段式 + FX 在场前提）
+        }
     }
     // --bench-scene（2026-09-25 工具化）：--project/--scene 已开，进 Play 跑同款测量
     //（Immediate + 帧八段 + 逐系统分解）。不播种、无场景特定判据——RESULT 只报数，
@@ -463,6 +473,11 @@ int EditorApp::Run(const EditorLaunch& launch) {
                     " 110-150 + gizmo 185 + 关灯复原 220 + 余量）");
         return 2;
     }
+    if (launch.smokeFx && launch.frames < 240) {
+        LEMON_ERROR("--smoke-fx 需要 --frames N（N>=240：基线 60 + 链开 100 + 波窗口"
+                    "状态驱动 + 链关复原 220 + 余量）");
+        return 2;
+    }
     if (launch.benchLights && launch.frames < 480) {
         LEMON_ERROR("--bench-lights 需要 --frames N（N>=480：预热 120 + 测量窗 >=360）");
         return 2;
@@ -470,6 +485,10 @@ int EditorApp::Run(const EditorLaunch& launch) {
     if (launch.benchSurvivor && launch.frames < 600) {
         LEMON_ERROR("--bench-survivor 需要 --frames N（N>=600：怪海涨满 ~240 帧预热 + "
                     "测量窗 ≥360）");
+        return 2;
+    }
+    if (launch.benchSurvivorLit && launch.frames < 600) {
+        LEMON_ERROR("--bench-survivor-lit 需要 --frames N（N>=600：同 survivor 预热口径）");
         return 2;
     }
     if (launch.benchScene && launch.frames < 600) {
@@ -778,6 +797,9 @@ int EditorApp::Run(const EditorLaunch& launch) {
         // --smoke-light（M8 批②）——帧链状态机外迁 EditorAppSmokeLight.cpp（挂点原位）
         SmokeLightFrame(frame);
 
+        // --smoke-fx（M8 批④）——帧链状态机外迁 EditorAppSmokeFx.cpp（挂点原位）
+        SmokeFxFrame(frame);
+
 
         bUi0 = BenchClock::now(); // 段界：glue（相机跟随/冒烟注入选中）结束 = ImGui 开始
         ui_->BeginFrame(*window_);
@@ -859,6 +881,9 @@ int EditorApp::Run(const EditorLaunch& launch) {
         // --smoke-light 捕获请求（M8 批②：gameRT 基线/开灯/关灯 + sceneRT gizmo +
         // lightRT 光斑；仅 capFrame 帧录制——fetch 帧重录会让取回像素晚一帧）
         SmokeLightCapture(cl, frame);
+        // --smoke-fx 捕获请求（M8 批④：gameRT 基线/链开/波窗口/关链；同款仅
+        // capFrame 帧录制）
+        SmokeFxCapture(cl, frame);
 
         bool needRe = false, lost = false;
         device_->EndFrameAndPresent(needRe, lost);
@@ -880,6 +905,8 @@ int EditorApp::Run(const EditorLaunch& launch) {
         SmokeTplSample(frame);
         // --smoke-light 帧采样（M8 批②：捕获取回 + 断言）
         SmokeLightSample(frame);
+        // --smoke-fx 帧采样（M8 批④：捕获取回 + 差分断言）
+        SmokeFxSample(frame);
         if (firstFrameMs < 0.0)
             firstFrameMs = std::chrono::duration<double, std::milli>(
                                std::chrono::steady_clock::now() - tColdStart)
@@ -922,6 +949,8 @@ int EditorApp::Run(const EditorLaunch& launch) {
     if (launch.smokeDrag && !SmokeDragVerdict()) exitCode = 1;
     // --smoke-light 裁决（M8 批②：三段式/关灯逐位同/gizmo/三档 lightRT）
     if (launch.smokeLight && !SmokeLightVerdict()) exitCode = 1;
+    // --smoke-fx 裁决（M8 批④：bloom/色调/冲击波三断言 + 关链逐位同）
+    if (launch.smokeFx && !SmokeFxVerdict()) exitCode = 1;
     // --smoke-ui 裁决（裁决行已在帧 154 打印；此处只定退出码）
     // --smoke-ui 裁决（裁决行已在帧 154 打印；此处只定退出码）——外迁（批③c-2）
     if (launch.smokeUi && !SmokeUiVerdict()) exitCode = 1;

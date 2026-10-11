@@ -1,8 +1,10 @@
 // Lemon 引擎 — 质量分级（02 §2 纪律表：Low/Med/High 映射粒子预算倍率等）
 // 自动降级：帧时间 EMA 超阈值持续 N 秒 → 降一档（只降不升，避免抖动；手动可拉回）
 // M8 批② 兑现头注"M8 扩展"（ADR-019 M5）：lightRtScale + lightBudget——编辑器壳
-// 首接；批③ 游戏壳接入（GameEntry 渲染帧钟 EMA 同款——两壳齐）。M5+ 扩展：
-// MSAA on/off、后处理链长度（批④ Med+ 档）；粒子预算联动 02 §6 全局预算
+// 首接；批③ 游戏壳接入（GameEntry 渲染帧钟 EMA 同款——两壳齐）。批④ 兑现
+// "后处理链长度"（ADR-019 M5 尾注收口）：fxChain 位——Med+ 开、Low 关（含 EMA
+// 自动降档 = FX 链先卸，关链帧与无 FX 版路径逐位同）。M5+ 扩展：MSAA on/off；
+// 粒子预算联动 02 §6 全局预算
 #pragma once
 
 #include <cstdint>
@@ -18,14 +20,16 @@ struct QualityParams {
     float lightRtScale = 1.0f;  // M8 批②（ADR-019 M5/D8）：lightRT = gameRT × 此系数
                                 //（Low=1/4 / Med=1/2 / High=全分辨率）
     uint32_t lightBudget = 64;  // 光源数上限/帧（Low=32；超出截断 + 一次性 WARN）
-    // M5+：msaa / fxChain / shadowQuality ...
+    bool fxChain = true;        // M8 批④（ADR-019 M5 尾注）：后处理链开关（Low=false
+                                // ——关链帧与无 FX 版路径逐位同，"关 FX 零成本"机械口径）
+    // M5+：msaa / shadowQuality ...
 };
 
 constexpr QualityParams TierParams(QualityTier t) {
     switch (t) {
-        case QualityTier::Low: return {20000, 0.25f, 32};
-        case QualityTier::Med: return {50000, 0.5f, 64};
-        default: return {100000, 1.0f, 64};
+        case QualityTier::Low: return {20000, 0.25f, 32, false};
+        case QualityTier::Med: return {50000, 0.5f, 64, true};
+        default: return {100000, 1.0f, 64, true};
     }
 }
 inline const char* TierName(QualityTier t) {

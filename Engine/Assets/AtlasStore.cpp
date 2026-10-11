@@ -12,7 +12,7 @@ bool RegisterAtlasSprites(renderer::AtlasRegistry& atlas, const AssetIndex& inde
                           const BakedAtlasBuild& build, uint32_t firstSlot,
                           uint32_t& outRegistered) {
     outRegistered = 0;
-    if (firstSlot + build.pages.size() > renderer::kAtlasSlotCeiling) { // 顶部 249..251 保留（批③ 评审）
+    if (firstSlot + build.pages.size() > renderer::kAtlasSlotCeiling) { // 顶部 245..251 保留（批③ 起 glow/scene/light + 批④ FX 四槽）
         LEMON_ERROR("图集装载：页数 %zu 超 bindless 槽容量（首槽 %u 上限 %u，顶部保留段起）",
                     build.pages.size(), firstSlot, renderer::kAtlasSlotCeiling);
         return false;

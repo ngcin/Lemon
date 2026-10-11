@@ -1720,8 +1720,14 @@ void CommandList::BeginOffscreenPass(Texture target, const float clearColor[4]) 
     m->offscreenTarget = target;
     // 时间戳只记交换链 pass（查询池 = 2 槽/帧按单 pass 设计；离屏多 pass 会超写，
     // M4.2 口径：GPU ms = UI pass，视口 GPU 成本经 --stats 单独量）
+    // M1 获取屏障接线（review 2026-10-09 拍板、M8 批④ 评审轮补线）：持久离屏 RT
+    // 传 FRAGMENT_SHADER+SHADER_READ 首作用域——帧 N-1 的采样读（ImGui 采样 gameRT/
+    // FX 链采样 fxScene/bloom）可能仍在途，空首作用域 = WAR 竞态；跨 submit 的执行
+    // 依赖对先前提交的采样建立序（本批离屏 ping-pong + 跨帧 FX 采样为首个重消费面）
     BeginDynamicRendering(m->cmd, r.view, r.desc.width, r.desc.height, clearColor, r.image,
-                          VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+                          VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                          VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                          VK_ACCESS_SHADER_READ_BIT);
 }
 
 void CommandList::EndPass() {

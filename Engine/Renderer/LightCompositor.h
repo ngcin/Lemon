@@ -31,10 +31,11 @@ public:
         uint32_t droppedBlobs = 0;                   // 批③：超预算截除数
     };
 
-    /// preheat：光源 3 管线 + composite 管线。sceneTex/lightTex = bindless 槽
-    /// （建 RT 时绑一次，M4.7-P0）；lightRtFormat = lightRT 格式（拍板 RGBA8Unorm）；
-    /// compositeTargetFormat = 合成目标格式（编辑器 gameRT RGBA8Unorm；lemon-game
-    /// 批③ 传交换链格式）。
+    /// preheat：光源 3 管线 + composite 双目标管线（M8 批④：offscreen = fxSceneRT
+    /// 恒 RGBA8Unorm（02 §8 拍板）+ direct = 装配方显示目标格式（编辑器 gameRT
+    /// RGBA8Unorm；lemon-game 交换链格式）——FX 链开/关由档位切换，两管线 init
+    /// 期一次建齐）。sceneTex/lightTex = bindless 槽（建 RT 时绑一次，M4.7-P0）；
+    /// lightRtFormat = lightRT 格式（拍板 RGBA8Unorm）。
     void Init(rhi::Device& device, uint32_t ringSlot, uint32_t sceneTexSlot,
               uint32_t lightTexSlot, uint32_t samplerSlot, rhi::Format lightRtFormat,
               rhi::Format compositeTargetFormat);
@@ -54,8 +55,10 @@ public:
     void RenderLightPass(rhi::CommandList& cl, rhi::Texture lightRT, const AtlasRegistry* atlas,
                          const Mat3x2& viewProj, uint32_t rtW, uint32_t rtH);
 
-    /// 合成段：当前已 Begin 的 gameRT 块内录全屏乘法（调用方负责块与后续豁免段）
-    void RenderComposite(rhi::CommandList& cl);
+    /// 合成段：当前已 Begin 的目标块内录全屏乘法（调用方负责块与后续豁免段）。
+    /// offscreen=true 走 fxSceneRT 管线（批④：合成终点前移进 FX 链——目标恒
+    /// RGBA8Unorm）；false = direct 管线（显示目标直写——批②③ 原语义）
+    void RenderComposite(rhi::CommandList& cl, bool offscreen = false);
 
     void AdvanceFrame() { batcher_.AdvanceFrame(); }
     LightBatcher& Batcher() { return batcher_; }
@@ -69,7 +72,8 @@ private:
     rhi::Device* device_ = nullptr;
     rhi::Device::RecreateCallbackId recreateCbId_ = 0;
     LightBatcher batcher_;
-    rhi::Pipeline compositePipeline_{};
+    rhi::Pipeline compositePipeline_{};     // direct（装配方显示目标格式）
+    rhi::Pipeline compositeOffscreen_{};    // 批④：fxSceneRT（恒 RGBA8Unorm）
     rhi::Format compositeTargetFormat_ = rhi::Format::RGBA8Unorm;
     uint32_t sceneTexSlot_ = 0, lightTexSlot_ = 0, samplerSlot_ = 0;
 
