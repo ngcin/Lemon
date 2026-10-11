@@ -532,19 +532,24 @@ private:
     bool forceDefaultLayout_ = false;      // smoke-drag：下帧 BuildUI 强制默认布局
     bool playBlockedOpen_ = false;         // Play 阻断模态已请求开（脚本未装配）
 
-    // --smoke-light 状态（M8 批②；EditorAppSmokeLight.cpp 单 TU 消费）
+    // --smoke-light 状态（M8 批②；EditorAppSmokeLight.cpp 单 TU 消费；批③ 增蒙版
+    // 灯句柄与蒙版/暗斑两断言位）
     struct SmokeLightState {
-        ecs::Entity global{}, pointAdd{}, pointScr{}, spotSub{}, blob{}; // 灯实体句柄
+        ecs::Entity global{}, pointAdd{}, pointScr{}, spotSub{}, blob{}, mask{}; // 灯实体句柄
         std::vector<uint8_t> baseline;   // 关灯基线帧（gameRT 逐位对照源）
         uint32_t baseW = 0, baseH = 0;
         int capReq = 0;                  // 0 无；1 gameRT；2 sceneRT（帧链置位）
         bool baseOk = false;             // 基线捕获已取回
         bool onDiffOk = false;           // 开灯帧：灯下 vs 灯外像素差
         bool onVsBaseOk = false;         // 开灯帧 vs 基线帧有差（三段式在跑）
-        bool planOk = false;             // drawLights==3 + ambient≠白（Global 生效）
+        bool maskOk = false;             // 批③：蒙版光斑 g 通道 Δ（lightRT）
+        bool blobOk = false;             // 批③：blob 椭圆暗斑 Δ（lightRT）
+        bool planOk = false;             // drawLights==4 + drawBlobs==1 + ambient≠白
         bool tierOk = false;             // 三档 lightRT 尺寸实测（1/4·1/2·全）
         int gizmoN = 0;                  // gizmo 圈/楔形像素计数（sceneRT）
-        bool offIdenticalOk = false;     // 关灯帧与基线逐位同（关灯零成本机器证）
+        bool offIdenticalOk = false;     // 关灯帧与基线逐位同（关灯零成本机器证——
+                                         // 批③ 起 f200 连 blob opacity 归零：零灯零
+                                         // blob 才走无光照原路径）
         uint64_t capFrame = 0;           // 捕获请求所属帧（仅该帧录制——fetch 帧重录 = 取回像素晚一帧）
     } light_;
 };

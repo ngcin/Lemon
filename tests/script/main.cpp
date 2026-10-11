@@ -639,9 +639,12 @@ void TestLightSdk() {
     Scene& s = w.CreateScene("LightT");
     w.SetActiveScene(&s);
     w.SetScriptBackend(&g_sh);
-    w.Pipeline().AddSystem(std::make_unique<DestroyCommitSystem>());
+    // FixedTick 段注册序 = 执行序（TestTweenSdk 同款；批③ 增 TweenSystem——DayNight
+    // 双补间推进。DestroyCommit 为 Essential 段帧首跑，与本注册序无关）
     w.Pipeline().AddSystem(std::make_unique<CSharpBatchSystem>());
+    w.Pipeline().AddSystem(std::make_unique<TweenSystem>());
     w.Pipeline().AddSystem(std::make_unique<ScriptEventDispatchSystem>());
+    w.Pipeline().AddSystem(std::make_unique<DestroyCommitSystem>());
     w.Pipeline().ResolveOrder();
 
     const uint64_t h0 = ComputeStateHash(s);
@@ -682,12 +685,51 @@ void TestLightSdk() {
     Expect(mark == 15, "probe f3: op2 whole-write landed + remove submitted");
     const uint64_t hLit = ComputeStateHash(s);
     Expect(hLit != h0, "light component data enters state hash (re-record rationale)");
-    w.Step(0.25f); // 帧4：op3 应用（灯移除）+ 自毁提交
-    // mark 值域：1914 + (TryGet 假 1)——对 = 15
-    Expect(mark == 15, "probe f4: light gone after remove op");
+    w.Step(0.25f); // 帧4：op3 应用（灯移除）+ 批③ 门面拍一（SetOpacity 即时 / 环境光暂存）
+    // mark 值域：1914 + (SetOpacity 落 1 / 首拍暂存 2)——全对 = 17
+    Expect(mark == 17, "probe f4: blob opacity via facade + SetGlobalAmbient first beat staged");
     Expect(s.View<Light2D>().size() == 0 && s.View<BlobShadow2D>().size() == 1,
-           "light removed, blob survives until entity destroy");
-    w.Step(0.25f); // 销毁落地
+           "light removed, blob survives (facade opacity write in pool)");
+    {
+        // SetOpacity = 即时整写：池内 0.75 → 0.25（Lighting.BlobShadow 门面引擎侧对拍）
+        const BlobShadow2D* b = nullptr;
+        for (auto [e, c] : s.View<BlobShadow2D>().each()) { (void)e; b = &c; }
+        Expect(b && std::fabs(b->opacity - 0.25f) < 1e-6f,
+               "facade BlobShadow.SetOpacity landed immediately");
+    }
+    w.Step(0.25f); // 帧5：op2 应用（引擎 C++ 默认值落场：Point/白/启用）→ 门面拍二整写 + 开关翻转 + 昼夜发启
+    // mark 值域：1916 + (环境光落地 1 / 开关翻转 2)——全对 = 19
+    Expect(mark == 19, "probe f5: SetGlobalAmbient second beat landed + toggle bits");
+    {
+        // 门面整写的引擎侧对拍：Global/启用 + 强度已落地（0.4）且被昼夜补间当拍
+        // 首写推移（TweenSystem 同拍 >0.4——发启即生效语义的顺带证据）
+        const Light2D* l = nullptr;
+        for (auto [e, c] : s.View<Light2D>().each()) { (void)e; l = &c; }
+        Expect(l && l->type == kLightTypeGlobal && (l->flags & kLightEnabled) &&
+                   l->intensity > 0.4f && l->intensity <= 0.8f,
+               "facade ambient whole-write landed in pool (pitfalls avoided; tween in flight)");
+    }
+    w.Step(0.25f); // 帧6-7：昼夜双补间推进（当 tick 首写 + 每拍渐变；0.75s 在途）
+    w.Step(0.25f);
+    {
+        const Light2D* l = nullptr;
+        for (auto [e, c] : s.View<Light2D>().each()) { (void)e; l = &c; }
+        Expect(l && l->intensity > 0.4f && l->intensity < 0.8f,
+               "day-night tween in flight (partial intensity between beats)");
+    }
+    w.Step(0.25f); // 帧8：补间恰完（发启帧5 + 四拍 0.25 = 1.0s，终值本拍写入）
+    w.Step(0.25f); // 帧9：缓冲拍（探针无动作）
+    w.Step(0.25f); // 帧10：探针断言昼夜落地
+    // mark 值域：1918 + (落地 1)——对 = 19
+    Expect(mark == 19, "probe f10: day-night color+intensity tweens landed");
+    {
+        const Light2D* l = nullptr;
+        for (auto [e, c] : s.View<Light2D>().each()) { (void)e; l = &c; }
+        Expect(l && std::fabs(l->intensity - 0.8f) < 1e-4f && l->color == 0xFFFF8C78u,
+               "day-night final values in pool (color byte-channel tween exact)");
+    }
+    w.Step(0.25f); // 帧11：自毁提交 → 帧落地
+    w.Step(0.25f);
     Expect(ComputeStateHash(s) == h0, "scene back to empty after destroy (light)");
 }
 

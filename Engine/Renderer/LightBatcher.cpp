@@ -70,11 +70,15 @@ void LightBatcher::EnsureCapacity(uint32_t neededInstances) {
     ringMapped_ = (LightInstance*)device_->MapBuffer(instanceRing_);
 }
 
-void LightBatcher::Bake(std::span<const LightItem> items) {
-    EnsureCapacity((uint32_t)items.size());
+void LightBatcher::Bake(const AtlasRegistry* atlas, std::span<const LightItem> items,
+                        std::span<const BlobItem> blobs) {
+    EnsureCapacity((uint32_t)(items.size() + blobs.size()));
     LightInstance* seg = ringMapped_ + (uint64_t)ringFrame_ * capacity_;
 
-    // 桶计数 → 前缀偏移 → 单遍落位（稳定：桶内保持提取序）
+    // 桶计数 → 前缀偏移 → 单遍落位（稳定：桶内保持提取序）。批③ 两路扩展：
+    //   * SpriteMask 灯计数前先解析蒙版（无效 → 跳过 + 一次性 WARN，计数与落位
+    //     严格一致——Prepare 已滤一遍，此处是防御层）
+    //   * blob 全数计入 Subtract 桶尾部（暗斑最后扣，FillBlobInstance 映射）
     uint32_t counts[kBlendCount] = {0, 0, 0};
     for (const LightItem& it : items) {
         uint32_t b = it.blend;
@@ -85,8 +89,21 @@ void LightBatcher::Bake(std::span<const LightItem> items) {
             }
             b = kBlendCount - 1;
         }
+        if (it.type == 3u /* SpriteMask */) {
+            float uv[4];
+            uint32_t page = 0;
+            if (!ResolveLightMask(atlas, it.maskSprite, uv, page)) {
+                if (!maskFailWarned_) {
+                    maskFailWarned_ = true;
+                    LEMON_WARN("SpriteMask light has invalid maskSprite (%u) — light skipped",
+                               it.maskSprite);
+                }
+                continue;
+            }
+        }
         ++counts[b];
     }
+    counts[kBlendCount - 1] += (uint32_t)blobs.size();
     uint32_t off = 0;
     for (uint32_t b = 0; b < kBlendCount; ++b) {
         buckets_[b].instanceOffset = off;
@@ -97,12 +114,17 @@ void LightBatcher::Bake(std::span<const LightItem> items) {
                                     buckets_[2].instanceOffset};
     for (const LightItem& it : items) {
         uint32_t b = it.blend >= kBlendCount ? kBlendCount - 1 : it.blend;
-        LightInstance& inst = seg[cursor[b]++];
         // 四边形边长 = 2×range（SpritePacket.scale 世界像素边长同约定；light.frag 的
         // 归一化距离 dn = 2|corner| 与此对齐——四边形是 range 圆外接方）
         const float edge = 2.0f * it.range;
         float sinR, cosR;
         math::FastSinCos(it.rot, sinR, cosR);
+        // SpriteMask 的蒙版 UV/页槽（批③）：解析失败的灯在计数遍已跳过——落位遍
+        // 同判 continue（两遍不同步 = 桶计数与实际落位错位，实例串桶腐败）
+        uint32_t maskPage = 0;
+        float uv[4] = {0, 0, 0, 0};
+        if (it.type == 3u && !ResolveLightMask(atlas, it.maskSprite, uv, maskPage)) continue;
+        LightInstance& inst = seg[cursor[b]++];
         inst.a = cosR * edge;
         inst.b = sinR * edge;
         inst.c = -sinR * edge;
@@ -110,14 +132,20 @@ void LightBatcher::Bake(std::span<const LightItem> items) {
         inst.e = it.posX;
         inst.f = it.posY;
         inst.colorBits = it.color;
-        inst.typeBlend = PackLightTypeBlend(it.type, it.blend >= kBlendCount ? kBlendCount - 1
-                                                                             : it.blend);
+        inst.typeBlend =
+            PackLightTypeBlend(it.type, it.blend >= kBlendCount ? kBlendCount - 1 : it.blend,
+                               maskPage);
         inst.intensity = it.intensity;
         inst.range = it.range;
         inst.angle = it.angle;
         inst.innerRatio = it.innerRatio;
-        inst.maskU0 = inst.maskV0 = inst.maskU1 = inst.maskV1 = 0.0f; // SpriteMask 批③ 填
+        inst.maskU0 = uv[0];
+        inst.maskV0 = uv[1];
+        inst.maskU1 = uv[2];
+        inst.maskV1 = uv[3];
     }
+    for (const BlobItem& blob : blobs)
+        FillBlobInstance(seg[cursor[kBlendCount - 1]++], blob);
     lastInstanceCount_ = off;
 }
 

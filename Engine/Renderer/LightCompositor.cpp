@@ -45,9 +45,12 @@ void LightCompositor::CreateCompositePipeline() {
 }
 
 const LightCompositor::Plan& LightCompositor::Prepare(std::span<const LightItem> items,
-                                                      uint32_t lightBudget) {
+                                                      std::span<const BlobItem> blobs,
+                                                      uint32_t lightBudget,
+                                                      const AtlasRegistry* atlas) {
     plan_ = Plan{};
     filtered_.clear();
+    blobs_.clear();
     bool globalTaken = false;
     for (const LightItem& it : items) {
         if (it.type == 0u /* Global */) {
@@ -69,17 +72,25 @@ const LightCompositor::Plan& LightCompositor::Prepare(std::span<const LightItem>
                                        : col[i] * it.intensity; // LDR 钳 [0,1]
             continue; // Global 无几何（ambient 即底色）
         }
+        // 批③：SpriteMask 蒙版有效性把关（原批②无条件滤除作废）——无效 maskSprite
+        // 的灯不绘制（dropped 计数 + 一次性 WARN），drawLights 与 Bake 实际落位严格一致
         if (it.type == 3u /* SpriteMask */) {
-            if (!maskSkipWarned_) {
-                maskSkipWarned_ = true;
-                LEMON_WARN("SpriteMask light rendering lands in M8 b3 — skipped for now");
+            float uv[4];
+            uint32_t page = 0;
+            if (!ResolveLightMask(atlas, it.maskSprite, uv, page)) {
+                ++plan_.droppedLights;
+                if (!maskInvalidWarned_) {
+                    maskInvalidWarned_ = true;
+                    LEMON_WARN("SpriteMask light dropped — maskSprite %u not in atlas",
+                               it.maskSprite);
+                }
+                continue;
             }
-            continue;
         }
         if (plan_.drawLights >= lightBudget) {
             ++plan_.droppedLights;
-            if (!truncateWarned_) {
-                truncateWarned_ = true;
+            if (!lightTruncateWarned_) {
+                lightTruncateWarned_ = true;
                 LEMON_WARN("light budget exceeded (%u) — extras silently truncated",
                            lightBudget);
             }
@@ -88,12 +99,28 @@ const LightCompositor::Plan& LightCompositor::Prepare(std::span<const LightItem>
         ++plan_.drawLights;
         filtered_.push_back(it);
     }
+    // 批③：blob 独立截断（同 budget 数值、独立计数/WARN——灯满员不得挤掉暗斑，
+    // bench-lights 的 64 灯 + 8 blob 形态互不侵扰）
+    for (const BlobItem& b : blobs) {
+        if (plan_.drawBlobs >= lightBudget) {
+            ++plan_.droppedBlobs;
+            if (!blobTruncateWarned_) {
+                blobTruncateWarned_ = true;
+                LEMON_WARN("blob budget exceeded (%u) — extras silently truncated",
+                           lightBudget);
+            }
+            continue;
+        }
+        ++plan_.drawBlobs;
+        blobs_.push_back(b);
+    }
     return plan_;
 }
 
 void LightCompositor::RenderLightPass(rhi::CommandList& cl, rhi::Texture lightRT,
-                                      const Mat3x2& viewProj, uint32_t rtW, uint32_t rtH) {
-    batcher_.Bake(filtered_); // Prepare 的过滤产物（纯 CPU 决策与 GPU 烘焙分离）
+                                      const AtlasRegistry* atlas, const Mat3x2& viewProj,
+                                      uint32_t rtW, uint32_t rtH) {
+    batcher_.Bake(atlas, filtered_, blobs_); // Prepare 的过滤产物（纯 CPU 决策与 GPU 烘焙分离）
     cl.BeginOffscreenPass(lightRT, plan_.ambient); // loadOp 恒 CLEAR = ambient 底色
     cl.SetViewportScissor(rtW, rtH);
     batcher_.Record(cl, viewProj);

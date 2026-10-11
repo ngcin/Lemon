@@ -1,14 +1,17 @@
-// Lemon 编辑器 — --smoke-light 光贴图冒烟（M8 批②；ADR-019 M1/M3 + 02 §8）
+// Lemon 编辑器 — --smoke-light 光贴图冒烟（M8 批②；ADR-019 M1/M3 + 02 §8；
+// 批③ 增蒙版光斑/暗斑两断言 + blob 启停随灯）
 // 帧链状态机（N≥240）：
-//   f60  基线捕获（灯全禁用 = 关灯路径）→ f61 取回存 baseline
-//   f70  使能全灯（Global+Point×2 混合+Spot Subtract+blob 提取在场）
-//   f100 开灯帧捕获 → f101 断言：三段式在跑（vs 基线有差）/ Plan（drawLights==3 +
-//        ambient≠白）/ lightRT 全分辨率档尺寸
+//   f60  基线捕获（灯全禁用 + blob opacity=0 = 真无光照路径）→ f61 取回存 baseline
+//   f70  使能全灯（Global+Point×2 混合+Spot Subtract+MaskAdd 蒙版+blob 0.5）
+//   f100 开灯帧捕获 → f101 断言：三段式在跑（vs 基线有差）/ Plan（drawLights==4 +
+//        drawBlobs==1 + ambient≠白）/ lightRT 全分辨率档尺寸
 //   f102 lightRT 捕获 → f103 光斑 GPU 断言：lightRT 灯中心 vs 远角 maxΔ>30
 //        （lightRT 无场景内容——判据免疫场景污染；gameRT 同点位量的是精灵内容差，弃用）
+//        + 蒙版光斑 gΔ（批③）+ blob 椭圆暗斑 gΔ（批③）——同捕获三断言
 //   f110/126/142 SetTier Low/Med/High → f118/134/150 lightRT 尺寸实测（¼/½/全）
 //   f160 选中 Spot + Ctrl 加选 blob → f185 sceneRT 捕获 → f186 gizmo 圈/楔形/虚框像素
-//   f200 全灯禁用 → f220 关灯帧捕获 → f221 **与基线逐位同**（关灯零成本机器证）
+//   f200 全灯 + blob 禁用（opacity=0——批③"零灯零 blob"口径）→ f220 关灯帧捕获
+//        → f221 **与基线逐位同**（关灯零成本机器证）
 // 读回口 = ViewportRenderer Game/Scene/LightRenderTarget + DebugRecordTextureCapture
 //（ViewportRenderer.h:151-154 口径）；裁决只回退出码（证据行帧内打印）。
 #include <algorithm>
@@ -44,7 +47,9 @@ constexpr uint64_t kFOffCap = 220, kFOffFetch = 221;
 constexpr Vec2 kPosPointAdd{640, 360}; // 光斑断言点（lightRT 无场景内容，灯心即取）
 constexpr Vec2 kPosPointScr{880, 500};
 constexpr Vec2 kPosSpot{400, 180};
-constexpr Vec2 kPosBlob{760, 420};
+constexpr Vec2 kPosMask{200, 520};  // 批③ 蒙版灯（绿 Additive；距四光源影响域全外）
+constexpr Vec2 kPosBlob{1050, 200}; // 批③ 挪位：原 760,420 夹在 PointAdd/PointScr
+                                    // 两光域间——暗斑邻域对照点无净空（g 通道被青光污染）
 constexpr Vec2 kPosOutside{1240, 80}; // 远离全部光源（断言对照点）
 
 inline uint32_t PxAt(const std::vector<uint8_t>& px, uint32_t w, uint32_t x, uint32_t y,
@@ -103,31 +108,48 @@ void EditorApp::SmokeLightSeed() {
         lt.innerRatio = 0.5f;
         lt.flags = 0;
     }
+    light_.mask = addLight("MaskAdd", kPosMask); // 批③：蒙版光（白方块蒙版 = 视口
+    // 白精灵——编辑器无径向 glow 页，方形蒙版对像素断言同效：内亮外暗即证采样链）
+    {
+        ecs::Light2D& lt = s.Emplace<ecs::Light2D>(light_.mask);
+        lt.type = ecs::kLightTypeSpriteMask;
+        lt.blend = ecs::kLightBlendAdditive;
+        lt.color = 0xFF00FF00u; // 绿（g 通道断言——红/青灯与暗斑均不污染）
+        lt.intensity = 1.0f;
+        lt.range = 120.0f; // 蒙版四边形半边（贴图即造型、无径向衰减）
+        lt.maskSprite = Viewport().Assets().WhiteSprite();
+        lt.flags = 0;
+    }
     light_.blob = addLight("Blob", kPosBlob);
     {
         ecs::BlobShadow2D& bs = s.Emplace<ecs::BlobShadow2D>(light_.blob);
         bs.radius = 48.0f;
         bs.aspect = 1.4f;
-        bs.opacity = 0.5f;
+        bs.opacity = 0.0f; // 关落场（批③"opacity=0 = 关"——基线帧走真·无光照路径）
     }
     smokeSeeded_ = (uint32_t)s.AliveCount(); // 基础冒烟守恒断言基数（SeedSmokeScene 已置 5——灯播种后重定）
-    LEMON_LOG("smoke-light: 播种 5 实体（Global/PointAdd/PointScr/SpotSub/Blob，全禁用）");
+    LEMON_LOG("smoke-light: 播种 6 实体（Global/PointAdd/PointScr/SpotSub/MaskAdd/Blob，全关）");
 }
 
 void EditorApp::SmokeLightFrame(uint64_t frame) {
     if (!Launch().smokeLight) return;
     auto& s = ctx_.ActiveScene();
-    auto setLights = [&](uint16_t flags) {
-        for (ecs::Entity e : {light_.global, light_.pointAdd, light_.pointScr, light_.spotSub})
+    auto setLights = [&](uint16_t flags, float blobOpacity) {
+        for (ecs::Entity e : {light_.global, light_.pointAdd, light_.pointScr, light_.spotSub,
+                              light_.mask})
             if (s.Alive(e))
                 if (ecs::Light2D* lt = s.TryGet<ecs::Light2D>(e)) lt->flags = flags;
+        if (s.Alive(light_.blob))
+            if (ecs::BlobShadow2D* bs = s.TryGet<ecs::BlobShadow2D>(light_.blob))
+                bs->opacity = blobOpacity; // 批③：blob 启停随灯（opacity=0 = 关）
     };
     if (frame == kFBaseCap) {
         light_.capReq = 1; // gameRT 基线（关灯）
         light_.capFrame = frame;
     } else if (frame == kFLightsOn) {
-        setLights(ecs::kLightEnabled);
-        LEMON_LOG("smoke-light: f%llu 使能全灯（三段式开跑）", (unsigned long long)frame);
+        setLights(ecs::kLightEnabled, 0.5f);
+        LEMON_LOG("smoke-light: f%llu 使能全灯 + blob（三段式开跑）",
+                  (unsigned long long)frame);
     } else if (frame == kFOnCap) {
         light_.capReq = 1; // gameRT 开灯帧
         light_.capFrame = frame;
@@ -149,8 +171,9 @@ void EditorApp::SmokeLightFrame(uint64_t frame) {
         light_.capFrame = frame;
     } else if (frame == kFLightsOff) {
         ctx_.ClearSelection();
-        setLights(0);
-        LEMON_LOG("smoke-light: f%llu 全灯禁用（关灯路径复原）", (unsigned long long)frame);
+        setLights(0, 0.0f); // 批③：连 blob 一起关——零灯零 blob 才走无光照原路径
+        LEMON_LOG("smoke-light: f%llu 全灯 + blob 禁用（关灯路径复原）",
+                  (unsigned long long)frame);
     } else if (frame == kFOffCap) {
         light_.capReq = 1; // gameRT 关灯帧（逐位同断言源）
         light_.capFrame = frame;
@@ -186,19 +209,20 @@ void EditorApp::SmokeLightSample(uint64_t frame) {
         const bool ok = fetch(px, w, h);
         light_.capReq = 0;
         if (ok && light_.baseOk && w == light_.baseW && h == light_.baseH) {
-            // 三段式在跑：开灯帧 vs 基线有差（ambient 全局染色 + 局部光）
+            // 三段式在跑：开灯帧 vs 基线有差（ambient 全局染色 + 局部光 + 暗斑）
             size_t diff = 0;
             for (size_t i = 0; i < px.size(); ++i)
                 if (px[i] != light_.baseline[i]) ++diff;
             light_.onVsBaseOk = diff > 0;
-            // 编排决策：3 个可绘光源（Global 进 ambient、SpotSub 在场）+ ambient 非白
+            // 编排决策：4 个可绘光源（Global 进 ambient、SpotSub/MaskAdd 在场）
+            // + 1 暗斑 + ambient 非白（批③ 增蒙版与 blob 计数）
             const auto& plan = Viewport().Light().LastPlan();
-            light_.planOk = plan.drawLights == 3 &&
+            light_.planOk = plan.drawLights == 4 && plan.drawBlobs == 1 &&
                             (plan.ambient[0] != 1.0f || plan.ambient[1] != 1.0f ||
                              plan.ambient[2] != 1.0f);
-            LEMON_LOG("smoke-light: 开灯帧 diff=%zu bytes drawLights=%u "
+            LEMON_LOG("smoke-light: 开灯帧 diff=%zu bytes drawLights=%u drawBlobs=%u "
                       "ambient=(%.2f,%.2f,%.2f)",
-                      diff, plan.drawLights, plan.ambient[0], plan.ambient[1],
+                      diff, plan.drawLights, plan.drawBlobs, plan.ambient[0], plan.ambient[1],
                       plan.ambient[2]);
         }
         // lightRT 尺寸（High 档 = 全分辨率；此刻未动档）
@@ -209,6 +233,9 @@ void EditorApp::SmokeLightSample(uint64_t frame) {
         // 光斑 GPU 断言：lightRT 灯心 vs 远角。lightRT 只含 ambient+光源四边形
         //（无场景内容）——差值纯由局部光四边形产生，光源段整体不渲则 Δ=0 必红。
         // 期望：红光心 r = clamp(0.35 + 2.0·att) ≈ 1.0 vs 远角 ambient 0.35 → Δ≈166
+        // 批③ 两断言同捕获：蒙版光斑（g 通道，kPosMask vs 远角——蒙版不渲则绿恒
+        // 为 ambient 底 85）/ blob 暗斑（g 通道，椭圆外 +90px vs 心——Subtract 白×
+        // 0.5 清到 0 → Δ≈85）
         std::vector<uint8_t> px;
         uint32_t w = 0, h = 0;
         const bool ok = fetch(px, w, h);
@@ -228,7 +255,17 @@ void EditorApp::SmokeLightSample(uint64_t frame) {
                                     std::abs((int)PxAt(px, w, ux, uy, c) -
                                              (int)PxAt(px, w, ox, oy, c)));
             light_.onDiffOk = maxDelta > 30;
-            LEMON_LOG("smoke-light: lightRT 灯心/远角 maxΔ=%d（光斑 GPU 在渲）", maxDelta);
+            const auto gAt = [&](Vec2 world) {
+                const Vec2 scr = Viewport().WorldToScreen(Viewport().GameCam(), world, w, h);
+                return (int)PxAt(px, w, std::clamp((int)scr.x, 0, (int)w - 1),
+                                 std::clamp((int)scr.y, 0, (int)h - 1), 1);
+            };
+            const int maskD = gAt(kPosMask) - gAt(kPosOutside);
+            light_.maskOk = maskD > 30;
+            const int blobD = gAt(kPosBlob + Vec2{90.0f, 0.0f}) - gAt(kPosBlob);
+            light_.blobOk = blobD > 30;
+            LEMON_LOG("smoke-light: lightRT 灯心/远角 maxΔ=%d 蒙版Δ=%d 暗斑Δ=%d（光斑 GPU 在渲）",
+                      maxDelta, maskD, blobD);
         }
     } else if (frame == kFTierLowChk || frame == kFTierMedChk || frame == kFTierHighChk) {
         const float scale = frame == kFTierLowChk ? 0.25f : frame == kFTierMedChk ? 0.5f : 1.0f;
@@ -267,13 +304,14 @@ void EditorApp::SmokeLightSample(uint64_t frame) {
 }
 
 bool EditorApp::SmokeLightVerdict() {
-    const bool ok = light_.baseOk && light_.onVsBaseOk && light_.onDiffOk && light_.planOk &&
-                    light_.tierOk && light_.gizmoN > 0 && light_.offIdenticalOk;
-    std::printf("[smoke-light] base=%d onVsBase=%d onDiff=%d plan=%d tier=%d gizmo=%d "
-                "offIdentical=%d => %s\n",
+    const bool ok = light_.baseOk && light_.onVsBaseOk && light_.onDiffOk && light_.maskOk &&
+                    light_.blobOk && light_.planOk && light_.tierOk && light_.gizmoN > 0 &&
+                    light_.offIdenticalOk;
+    std::printf("[smoke-light] base=%d onVsBase=%d onDiff=%d mask=%d blob=%d plan=%d tier=%d "
+                "gizmo=%d offIdentical=%d => %s\n",
                 (int)light_.baseOk, (int)light_.onVsBaseOk, (int)light_.onDiffOk,
-                (int)light_.planOk, (int)light_.tierOk, light_.gizmoN,
-                (int)light_.offIdenticalOk, ok ? "PASS" : "FAIL");
+                (int)light_.maskOk, (int)light_.blobOk, (int)light_.planOk, (int)light_.tierOk,
+                light_.gizmoN, (int)light_.offIdenticalOk, ok ? "PASS" : "FAIL");
     return ok;
 }
 

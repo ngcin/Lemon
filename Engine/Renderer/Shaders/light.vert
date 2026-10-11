@@ -2,7 +2,7 @@
 // Lemon 光贴图顶点着色器（M8 批②，ADR-019 M1）：光源四边形 per-instance 环形 SSBO。
 // 实例 64B = 4×vec4（与 CPU 侧 LightInstance 逐字段对应，LightTypes.h）：
 //   A.xy = 仿射行0(a,b)   A.zw = 行1(c,d)     —— scale = 四边形世界边长（2×range）
-//   B.xy = 平移(e,f)      B.z = colorBits     B.w = type<<16|blend
+//   B.xy = 平移(e,f)      B.z = colorBits     B.w = type<<28|blend<<24|蒙版页槽(24b)
 //   C    = intensity, range, angle, innerRatio
 //   D    = 蒙版 UV（SpriteMask 用，批③ 消费；Point/Spot 弃）
 layout(push_constant, std430) uniform PC {
@@ -23,7 +23,7 @@ layout(location = 0) in vec2 aCorner; // 单位四边形角点 [-0.5, 0.5]
 
 layout(location = 0) out vec2 vLocal;           // 角点原值（径向/角向计算坐标系）
 layout(location = 1) flat out vec4 vParams;     // C（intensity/range/angle/innerRatio）
-layout(location = 2) flat out uint vTypeBlend;  // type<<16|blend
+layout(location = 2) flat out uint vTypeBlend;  // type<<28|blend<<24|蒙版页槽
 layout(location = 3) flat out vec4 vColor;      // unpack 后颜色
 layout(location = 4) out vec2 vMaskUV;          // 蒙版插值 UV（批③ SpriteMask 消费）
 

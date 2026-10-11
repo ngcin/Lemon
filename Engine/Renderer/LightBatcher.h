@@ -24,9 +24,13 @@ public:
     /// RGBA8Unorm，02 §8）；ringSlot = 实例环数组槽（编辑器 = 2，sprite 0/1 已占）。
     void Init(rhi::Device& device, rhi::Format colorFormat, uint32_t ringSlot);
 
-    /// Bake：items（compositor 已滤 Global/SpriteMask）→ 3 桶实例 + 批表。
-    /// blend 越界值钳回合法域（序列化数据驱动，Renderable sanitize 同款一次性 WARN）
-    void Bake(std::span<const LightItem> items);
+    /// Bake：items（compositor 已滤 Global/无效蒙版）+ blobs（批③：椭圆暗斑，
+    /// 映射见 FillBlobInstance）→ 3 桶实例 + 批表。blob 计入 Subtract 桶尾部
+    /// （暗斑最后扣）。blend 越界值钳回合法域（序列化数据驱动，Renderable
+    /// sanitize 同款一次性 WARN）。atlas = 蒙版 UV/页槽解析源（无蒙版灯可为
+    /// nullptr——但含 SpriteMask 灯时传 null = 该灯跳过 + WARN）
+    void Bake(const AtlasRegistry* atlas, std::span<const LightItem> items,
+              std::span<const BlobItem> blobs = {});
 
     /// Record：每非空桶一次绑定 + draw（桶序 = Additive→Screen→Subtract）
     void Record(rhi::CommandList& cl, const Mat3x2& viewProj);
@@ -69,7 +73,8 @@ private:
     rhi::Pipeline pipelines_[kBlendCount] = {};
     Bucket buckets_[kBlendCount] = {};
     uint32_t lastInstanceCount_ = 0;
-    bool blendWarned_ = false; // blend 钳制告警只响一次
+    bool blendWarned_ = false;   // blend 钳制告警只响一次
+    bool maskFailWarned_ = false; // 蒙版解析失败告警只响一次（批③）
 };
 
 } // namespace lemon::renderer

@@ -1,7 +1,9 @@
 // Lemon 引擎单测 — LightTests — 光照组件域（M8 批①：Light2D + BlobShadow2D
-// 数据面——登记/默认值/生命周期/.scene 往返/哈希流；渲染消费归批② 不在本域）。
+// 数据面——登记/默认值/生命周期/.scene 往返/哈希流）。
 // M8 批② 增渲染域四组：衰减/角向纯函数（02 §8 定形）、提取通道双缓冲、
-// Compositor CPU 编排决策（Global 去重/SpriteMask 滤除/预算截断）。
+// Compositor CPU 编排决策（Global 去重/预算截断）。
+// M8 批③ 增：蒙版解析纯函数、blob 椭圆实例映射、blob opacity 滤除、
+// SpriteMask 有效性把关与新 typeBlend 打包。
 #include "TestFramework.h"
 
 #include "Components/CoreComponents.h"
@@ -217,10 +219,14 @@ void TestLightExtractionChannel() {
     Entity blobEnt = s.Create();
     s.Emplace<Transform2D>(blobEnt).pos = Vec2{50, 50};
     s.Emplace<BlobShadow2D>(blobEnt);
+    Entity blobOff = s.Create(); // 批③：opacity=0 = 关（无 flags 字段的关灯口径）
+    s.Emplace<Transform2D>(blobOff).pos = Vec2{60, 60};
+    BlobShadow2D& bs = s.Emplace<BlobShadow2D>(blobOff);
+    bs.opacity = 0.0f;
 
     ex.Extract(s, atlas, rm);
     Expect(rm.AliveLightCount() == 1, "enabled light extracted, disabled skipped");
-    Expect(rm.AliveBlobCount() == 1, "blob extracted (render lands in b3)");
+    Expect(rm.AliveBlobCount() == 1, "blob extracted; opacity=0 blob filtered (b3 toggle)");
 
     // 双缓冲插值：模拟 BeginSimTick 后移动（prev=100,100 → cur=200,100）
     s.Get<Transform2D>(lit).pos = Vec2{200, 100};
@@ -257,34 +263,113 @@ void TestLightExtractionChannel() {
 }
 
 // Compositor CPU 编排（Prepare 纯 CPU）：Global 去重取首个（ambient=其色）、
-// SpriteMask 滤除（批③ 前跳过）、预算截断计数
+// SpriteMask 有效性把关（批③：无效 maskSprite dropped、有效放行）、光/blob
+// 预算独立截断计数
 void TestLightCompositorPlan() {
     using namespace lemon::renderer;
+    // 哑图集（RegisterAtlas 不校验纹理句柄——单测无设备可构造）：页 7 上登记
+    // spriteId 1 = 有效蒙版；其余号全悬空
+    AtlasRegistry atlas;
+    atlas.RegisterAtlas(7, lemon::rhi::Texture{}, 128, 128);
+    Expect(atlas.AddSpriteAt(1, 7, 0, 0, 64, 64), "seed valid mask sprite");
+
     LightCompositor comp;
-    auto mkLight = [](uint32_t type, uint32_t blend, uint32_t color, float range) {
+    auto mkLight = [](uint32_t type, uint32_t blend, uint32_t color, float range,
+                      uint32_t maskSprite) {
         LightItem it{};
         it.type = type;
         it.blend = blend;
         it.color = color;
         it.intensity = 1.0f;
         it.range = range;
+        it.maskSprite = maskSprite;
         return it;
     };
     std::vector<LightItem> items;
-    items.push_back(mkLight(kLightTypeGlobal, 0, 0xFFD6F4FFu, 0));   // 首个 Global（胜出）
-    items.push_back(mkLight(kLightTypeGlobal, 0, 0xFF0000FFu, 0));   // 重复（取首）
-    items.push_back(mkLight(kLightTypeSpriteMask, 0, 0xFFFFFFFFu, 64)); // 批③ 前滤除
-    items.push_back(mkLight(kLightTypePoint, 0, 0xFF0000FFu, 64));
-    items.push_back(mkLight(kLightTypePoint, 1, 0xFFFFFF00u, 64));
-    items.push_back(mkLight(kLightTypePoint, 2, 0xFFFFFFFFu, 64));
-    const auto& plan = comp.Prepare(items, /*lightBudget=*/2);
-    Expect(plan.drawLights == 2, "budget truncates 3 drawable lights to 2");
-    Expect(plan.droppedLights == 1, "one light dropped over budget");
+    items.push_back(mkLight(kLightTypeGlobal, 0, 0xFFD6F4FFu, 0, 0)); // 首个 Global（胜出）
+    items.push_back(mkLight(kLightTypeGlobal, 0, 0xFF0000FFu, 0, 0)); // 重复（取首）
+    items.push_back(mkLight(kLightTypeSpriteMask, 0, 0xFFFFFFFFu, 64, 999)); // 悬空蒙版 → dropped
+    items.push_back(mkLight(kLightTypeSpriteMask, 0, 0xFFFFFFFFu, 64, 1));   // 有效蒙版 → 放行
+    items.push_back(mkLight(kLightTypePoint, 0, 0xFF0000FFu, 64, 0));
+    items.push_back(mkLight(kLightTypePoint, 1, 0xFFFFFF00u, 64, 0));
+    items.push_back(mkLight(kLightTypePoint, 2, 0xFFFFFFFFu, 64, 0));
+    std::vector<BlobItem> blobs(2);
+    blobs[0].radius = 48.0f;
+    blobs[1].radius = 32.0f;
+    // 可绘制候选 = 有效蒙版 + 3 点光 = 4，budget=3 → draw 3 / drop 1（超限）+1（悬空蒙版）
+    const auto& plan = comp.Prepare(items, blobs, /*lightBudget=*/3, &atlas);
+    Expect(plan.drawLights == 3, "budget truncates 4 drawable lights (incl valid mask) to 3");
+    Expect(plan.droppedLights == 2, "dropped = invalid mask + over-budget");
     Expect(plan.ambient[0] == 1.0f && std::fabs(plan.ambient[1] - 244.0f / 255.0f) < 1e-5f,
            "ambient = FIRST Global color x intensity (dup ignored)");
     const auto& filtered = comp.FilteredItems();
-    Expect(filtered.size() == 2 && filtered[0].blend == 0 && filtered[1].blend == 1,
-           "filtered = drawable only, stable order, mask excluded");
+    Expect(filtered.size() == 3 && filtered[0].type == kLightTypeSpriteMask &&
+               filtered[0].maskSprite == 1 && filtered[1].blend == 0 && filtered[2].blend == 1,
+           "filtered = drawable only, stable order (mask head, over-budget point tail-cut)");
+    Expect(plan.drawBlobs == 2 && plan.droppedBlobs == 0 && comp.FilteredBlobs().size() == 2,
+           "blobs pass within budget (independent counter)");
+
+    // blob 独立截断：灯满员不得挤掉暗斑（bench-lights 64 灯 + 8 blob 形态互不侵扰）
+    std::vector<BlobItem> many(5);
+    const auto& plan2 = comp.Prepare({}, many, /*lightBudget=*/3, &atlas);
+    Expect(plan2.drawBlobs == 3 && plan2.droppedBlobs == 2,
+           "blob budget truncates independently of lights");
+
+    // 无图集壳：所有 SpriteMask 判无效（防御口径）
+    const std::vector<LightItem> maskOnly{
+        mkLight(kLightTypeSpriteMask, 0, 0xFFFFFFFFu, 64, 1)};
+    const auto& plan3 = comp.Prepare(maskOnly, {}, 64, nullptr);
+    Expect(plan3.drawLights == 0 && plan3.droppedLights == 1,
+           "null atlas = all SpriteMask lights dropped");
+}
+
+// 蒙版解析纯函数（批③）：有效号出 UV/页槽、悬空/零号/null 图集 false
+void TestLightMaskResolve() {
+    using namespace lemon::renderer;
+    AtlasRegistry atlas;
+    atlas.RegisterAtlas(7, lemon::rhi::Texture{}, 128, 128);
+    Expect(atlas.AddSpriteAt(1, 7, 8, 16, 64, 32), "seed sprite at (8,16) 64x32");
+    float uv[4] = {-1, -1, -1, -1};
+    uint32_t page = 0xFFFFFFFFu;
+    Expect(ResolveLightMask(&atlas, 1, uv, page), "valid sprite resolves");
+    ExpectNear(uv[0], 8.0f / 128.0f, 1e-6f, "mask u0");
+    ExpectNear(uv[1], 16.0f / 128.0f, 1e-6f, "mask v0");
+    ExpectNear(uv[2], 72.0f / 128.0f, 1e-6f, "mask u1 (px+w)");
+    ExpectNear(uv[3], 48.0f / 128.0f, 1e-6f, "mask v1 (py+h)");
+    Expect(page == 7, "mask atlas page slot");
+    Expect(!ResolveLightMask(&atlas, 999, uv, page), "dangling spriteId false");
+    Expect(!ResolveLightMask(&atlas, 0, uv, page), "spriteId 0 false");
+    Expect(!ResolveLightMask(nullptr, 1, uv, page), "null atlas false");
+}
+
+// blob → 光照实例映射（批③）：Point|Subtract 打包、白×opacity、椭圆仿射、
+// offsetY 平移；typeBlend 新打包位段（type<<28|blend<<24|page）
+void TestBlobInstanceMapping() {
+    using namespace lemon::renderer;
+    BlobItem b{};
+    b.posX = 100.0f;
+    b.posY = 200.0f;
+    b.radius = 48.0f;
+    b.aspect = 1.5f;
+    b.offsetY = -6.0f;
+    b.opacity = 0.6f;
+    LightInstance inst{};
+    FillBlobInstance(inst, b);
+    ExpectNear(inst.a, 2.0f * 48.0f * 1.5f, 1e-6f, "blob affine edgeX = 2·radius·aspect");
+    ExpectNear(inst.d, 2.0f * 48.0f, 1e-6f, "blob affine edgeY = 2·radius");
+    Expect(inst.b == 0.0f && inst.c == 0.0f, "blob has no rotation");
+    ExpectNear(inst.e, 100.0f, 1e-6f, "blob translate x = pos");
+    ExpectNear(inst.f, 194.0f, 1e-6f, "blob translate y = pos + offsetY");
+    Expect(inst.colorBits == 0xFFFFFFFFu, "blob color white (dst − white·op·att)");
+    ExpectNear(inst.intensity, 0.6f, 1e-6f, "blob intensity = opacity");
+    Expect((inst.typeBlend >> 28) == 1u && ((inst.typeBlend >> 24) & 0xFu) == 2u,
+           "blob packs Point-path | Subtract");
+
+    // 新打包位段：type/blend/page 三段各自无损往返
+    const uint32_t packed = PackLightTypeBlend(3u, 1u, 249u);
+    Expect((packed >> 28) == 3u && ((packed >> 24) & 0xFu) == 1u && (packed & 0xFFFFFFu) == 249u,
+           "PackLightTypeBlend roundtrip type/blend/atlasIdx");
+    Expect(PackLightTypeBlend(1u, 2u, 0u) >> 28 == 1u, "non-mask lights page bits zero-safe");
 }
 
 void RunLightTests() {
@@ -296,4 +381,6 @@ void RunLightTests() {
     TestLightSpotAngular();
     TestLightExtractionChannel();
     TestLightCompositorPlan();
+    TestLightMaskResolve();
+    TestBlobInstanceMapping();
 }

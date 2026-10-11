@@ -162,6 +162,12 @@ if [ "${MODE}" = "full" ]; then
             grep_step "scene-smoke (engine scene-switch orchestration: group sweep + ddol survivor + stamp + ui origin unload + audio unpaused + fx clear; M7c-b6b)" \
                 "scene-smoke: .* => OK" \
                 "${GAME}" --project "${TMP}/game" --frames 240 --smoke-scene
+            # M8 批③：游戏壳光贴图竖切（三段式 sceneRT→lightRT→composite 直写交换链 +
+            # 蒙版光斑/blob 椭圆暗斑 lightRT 断言 + 三档 lightRT 尺寸 + QualityManager
+            # 游戏壳 + fps≥60 门禁 = "干净包开灯场景跑满 60fps 零 C++"出口判据）
+            grep_step "light-smoke (lemon-game lightmap 3-stage: SpriteMask spot + blob ellipse + quality tiers + fps>=60; M8-b3)" \
+                "light-smoke: .* => OK" \
+                "${GAME}" --project "${TMP}/game" --frames 240 --smoke-light
         else
             echo "  FAIL game-smoke (夹具 Game/ 编译失败：dotnet build ${TMP}/game)"
             fail=$((fail+1))
@@ -234,7 +240,8 @@ if [ "${MODE}" = "full" ]; then
     grep_step "smoke-light (lightmap 3-stage + lights-off bit-identical + gizmo + tier sizes; M8-b2)" \
         "smoke-light.* => PASS" \
         "${EDITOR}" --smoke-light --frames 240 --validate --no-reopen
-    # M7a 批⑧：性能基线门禁（回归第 20 步；09 §9/§10"对基线回退 >10% 标红"口径）。
+    # M7a 批⑧：性能基线门禁（回归第 24 步——批③ 起 full 24 步；09 §9/§10"对基线
+    # 回退 >10% 标红"口径）。
     # bench-survivor 退出码自带 45fps 硬判据（BenchVerdict 聚合，08 §3），本步附加
     # 软门禁 fps >= 76.5 = 基线 85（批⑥ 2026-10-04 实测 85/87）× 0.9；基线刷新随批
     # DevLog 人工更新本常量。--frames 900 = 批⓪ 基线刷新先例口径（怪海涨满 ~240 帧

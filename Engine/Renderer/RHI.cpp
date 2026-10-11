@@ -406,8 +406,10 @@ struct Device::Impl {
         }
         LEMON_ASSERT(sup12.descriptorIndexing && sup12.descriptorBindingPartiallyBound &&
                          sup12.descriptorBindingSampledImageUpdateAfterBind &&
-                         sup12.descriptorBindingStorageBufferUpdateAfterBind,
-                     "device lacks descriptorIndexing subset (bindless)");
+                         sup12.descriptorBindingStorageBufferUpdateAfterBind &&
+                         sup12.shaderSampledImageArrayNonUniformIndexing,
+                     "device lacks descriptorIndexing subset (bindless; nonuniform sampled "
+                     "array = M8 批③ SpriteMask 蒙版按实例取页前提)");
         LEMON_ASSERT(sup12.hostQueryReset, "device lacks hostQueryReset (timestamps)");
 
         float prio = 1.0f;
@@ -421,6 +423,8 @@ struct Device::Impl {
         want12.descriptorBindingPartiallyBound = VK_TRUE;
         want12.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
         want12.descriptorBindingStorageBufferUpdateAfterBind = VK_TRUE;
+        // M8 批③：蒙版光在 light.frag 按实例索引 uAtlases[]（draw 内不动态一致）
+        want12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
         want12.hostQueryReset = VK_TRUE;
 
         VkPhysicalDeviceDynamicRenderingFeatures wantDyn{

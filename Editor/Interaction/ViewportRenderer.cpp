@@ -551,12 +551,15 @@ void ViewportRenderer::RenderViewport(rhi::CommandList& cl, uint32_t idx, Sprite
     const float clear[4] = {0.09f, 0.10f, 0.13f, 1.0f};
     // M8 批② 光贴图三段式（ADR-019 M1；仅 GameView idx=1）：开灯帧 = 场景段
     // sceneRT → 光照段 lightRT（CLEAR=ambient）→ 合成段 gameRT（composite → 豁免段
-    // → RmlUi 同块内）。关灯帧 = 零 Light2D 时走与无光照版**逐字节相同**的原路径
-    // （08 M8"光照默认关闭零成本"机械口径；blob 渲染归批③，本批条件只看灯）
-    if (idx == 1 && rm_.AliveLightCount() > 0) {
+    // → RmlUi 同块内）。关灯帧 = 零 Light2D 且零 BlobShadow2D 时走与无光照版
+    // **逐字节相同**的原路径（08 M8"光照默认关闭零成本"机械口径；批③ 起 blob
+    // 渲染在场——blob-only 场景（无灯）也走三段式，ambient=白乘法恒等 + 暗斑独扣）
+    if (idx == 1 && (rm_.AliveLightCount() > 0 || rm_.AliveBlobCount() > 0)) {
         EnsureLightTargets(rt.w, rt.h);
         const auto lightItems = rm_.ExtractLights(simAlpha);
-        lightCompositor_.Prepare(lightItems, quality_.Params().lightBudget);
+        const auto blobItems = rm_.ExtractBlobs(simAlpha);
+        lightCompositor_.Prepare(lightItems, blobItems, quality_.Params().lightBudget,
+                                 &assets_.Registry());
 
         const Mat3x2 vp = cam.ViewProj(aspect);
         // 分段帧容量一次声明（两段总量；段间扩容会重建实例环，首段已录命令引用
@@ -568,8 +571,9 @@ void ViewportRenderer::RenderViewport(rhi::CommandList& cl, uint32_t idx, Sprite
         cl.SetViewportScissor(sceneRt_.w, sceneRt_.h);
         batcher.Record(cl, vp);
         cl.EndPass();
-        // 光照段：lightRT CLEAR = ambient 底色，光源四边形按混合叠加
-        lightCompositor_.RenderLightPass(cl, lightRt_.tex, vp, lightRt_.w, lightRt_.h);
+        // 光照段：lightRT CLEAR = ambient 底色，光源四边形 + blob 椭圆暗斑按混合叠加
+        lightCompositor_.RenderLightPass(cl, lightRt_.tex, &assets_.Registry(), vp, lightRt_.w,
+                                         lightRt_.h);
         // 合成段：全屏乘法 → 豁免段（ADR-019 M3：血条 251/飘字 252/位图文本 254
         // 与 RmlUi 不受光——按产包通道切分：text/fxBar 走合成后追加烘焙）→ UI
         cl.BeginOffscreenPass(rt.tex, clear);

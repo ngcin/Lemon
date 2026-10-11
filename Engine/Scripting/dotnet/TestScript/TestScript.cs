@@ -1093,7 +1093,12 @@ public sealed class MultiSlotOrderDriver : Lemon.LemonBehaviour
 /// 帧3 = 读回持久化 + RemoveComponent&lt;Light2D&gt;；帧4 = TryGet 假 + 自毁。
 /// 事件号段 1900..1919（Audio 1500 / Fx 1700 / Stale 1871 / MultiSlot 1881 互不
 /// 重叠）。C++ 侧断言 ComputeStateHash 随光照数据入流出哈希（加组件必重录口径
-/// 的桥侧证据，ADR-019 后果与风险）+ 引擎池对拍 + 销毁后回空场基准。</summary>
+/// 的桥侧证据，ADR-019 后果与风险）+ 引擎池对拍 + 销毁后回空场基准。
+/// M8 批③ 扩（自毁挪帧11）：帧4 = Lighting.BlobShadow.SetOpacity（在场即时写）
+/// + Lighting.SetGlobalAmbient 首拍 false（灯已被帧3 移除 → op2 暂存实证）；
+/// 帧5 = SetGlobalAmbient 第二拍落地（Global/暖色/启用三坑正面解法）+ Enable/
+/// Disable/Toggle/IsEnabled + DayNight 双补间发启；帧10 = 昼夜落地（intensity
+/// 0.4→0.8 + color 补变——可回放流证据）。</summary>
 public sealed class LightProbeBehaviour : Lemon.LemonBehaviour
 {
     private void Mark(ushort id)
@@ -1127,8 +1132,35 @@ public sealed class LightProbeBehaviour : Lemon.LemonBehaviour
             bool removed = gameObject.RemoveComponent<Light2D>(); // op3，帧首应用
             Mark((ushort)(1912 + (landed ? 1 : 0) + (removed ? 2 : 0)));
         } else if (fc == 4) {
-            bool gone = !gameObject.TryGetComponent(out Light2D _);
-            Mark((ushort)(1914 + (gone ? 1 : 0)));
+            // 批③：BlobShadow.SetOpacity 在场即时写；SetGlobalAmbient 首拍 = false
+            //（灯已被帧3 移除 → AddComponent 走 op2 暂存，值本 tick 不落——语义实证）
+            bool blobSet = Lemon.Lighting.BlobShadow.SetOpacity(gameObject, 0.25f);
+            bool firstBeatStaged = !Lemon.Lighting.SetGlobalAmbient(
+                gameObject, Lemon.Lighting.Rgba(255, 244, 214), 0.4f);
+            Mark((ushort)(1914 + (blobSet ? 1 : 0) + (firstBeatStaged ? 2 : 0)));
+        } else if (fc == 5) {
+            // 批③：第二拍整写落地 + 开关位翻转 + 昼夜双补间发启（1s = 帧6-9 各 0.25）
+            bool secondBeat = Lemon.Lighting.SetGlobalAmbient(
+                gameObject, Lemon.Lighting.Rgba(255, 244, 214), 0.4f);
+            bool ambientLanded = secondBeat && gameObject.TryGetComponent(out Light2D ga)
+                && ga.Type == 0 /*Global*/ && ga.Color == Lemon.Lighting.Rgba(255, 244, 214)
+                && ga.Intensity == 0.4f && (ga.Flags & Lemon.Lighting.Enabled) != 0;
+            // Disable 返回操作后启用态（false = 已禁用，幂等查询语义非成功布尔）
+            bool toggled = !Lemon.Lighting.Disable(gameObject)
+                           && !Lemon.Lighting.IsEnabled(gameObject)
+                           && Lemon.Lighting.Toggle(gameObject)
+                           && Lemon.Lighting.IsEnabled(gameObject);
+            Lemon.Lighting.DayNight(gameObject, Lemon.Lighting.Rgba(120, 140, 255), 0.8f,
+                                   1.0f);
+            Mark((ushort)(1916 + (ambientLanded ? 1 : 0) + (toggled ? 2 : 0)));
+        } else if (fc == 10) {
+            // 昼夜落地：双补间完（发启帧5 起四拍 0.25s——TweenSystem 逐帧同拍推进，
+            // 帧8 恰满 1.0s 终值写入，本帧读即到位——color 字节通道插值精确到值）
+            bool dayNight = gameObject.TryGetComponent(out Light2D dn)
+                            && dn.Intensity > 0.79f && dn.Intensity < 0.81f
+                            && dn.Color == Lemon.Lighting.Rgba(120, 140, 255);
+            Mark((ushort)(1918 + (dayNight ? 1 : 0)));
+        } else if (fc == 11) {
             gameObject.Destroy();
         }
     }

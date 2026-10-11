@@ -125,7 +125,7 @@ public:
     std::span<const LightItem> ExtractLights(float alpha);
     uint32_t AliveLightCount() const { return lightAlive_; }
 
-    // ---- blob 阴影通道（数据面批② 先行；渲染消费归批③）----
+    // ---- blob 阴影通道（数据面批② 先行；批③ 起渲染消费 = FillBlobInstance）----
     uint32_t CreateBlob();
     void DestroyBlob(uint32_t id);
     void SetBlobAll(uint32_t id, const BlobItem& snapshot);

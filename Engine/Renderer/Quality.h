@@ -1,8 +1,8 @@
 // Lemon 引擎 — 质量分级（02 §2 纪律表：Low/Med/High 映射粒子预算倍率等）
 // 自动降级：帧时间 EMA 超阈值持续 N 秒 → 降一档（只降不升，避免抖动；手动可拉回）
-// M8 批② 兑现头注"M8 扩展"（ADR-019 M5）：lightRtScale + lightBudget——QualityManager
-// 首次接入编辑器壳（lemon-game 壳随批③ 光照装配）。M5+ 扩展：MSAA on/off、
-// 后处理链长度（批④ Med+ 档）；粒子预算联动 02 §6 全局预算
+// M8 批② 兑现头注"M8 扩展"（ADR-019 M5）：lightRtScale + lightBudget——编辑器壳
+// 首接；批③ 游戏壳接入（GameEntry 渲染帧钟 EMA 同款——两壳齐）。M5+ 扩展：
+// MSAA on/off、后处理链长度（批④ Med+ 档）；粒子预算联动 02 §6 全局预算
 #pragma once
 
 #include <cstdint>

@@ -68,8 +68,9 @@ inline constexpr uint32_t kBlobGizmoColor = Pack(200, 200, 210, 255);
 
 // 光贴图 RT 的 bindless 槽（M8 批②，ADR-019 M1：建 RT 时绑一次、帧内不改写
 // ——M4.7-P0 语义；取高位段避让导入图集页。#L20 记账 +2）
-inline constexpr uint32_t kSceneRtTexSlot = 250;
-inline constexpr uint32_t kLightRtTexSlot = 251;
+// M8 批③ 起常量移入引擎侧 LightTypes.h（lemon-game 装配共用），此处别名兼容
+inline constexpr uint32_t kSceneRtTexSlot = renderer::kSceneRtTexSlot;
+inline constexpr uint32_t kLightRtTexSlot = renderer::kLightRtTexSlot;
 
 using renderer::AtlasRegistry;
 using renderer::BitmapFont;

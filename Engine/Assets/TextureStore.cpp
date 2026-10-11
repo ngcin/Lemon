@@ -62,10 +62,11 @@ bool TextureStore::LoadSprite(const IndexedEntry& e) {
         return false;
     }
 
-    // bindless 槽容量校验（kMaxTextureSlots 是硬上限）
-    if (firstSlot_ + pages_.size() >= rhi::kMaxTextureSlots) {
-        LEMON_ERROR("bindless 纹理槽满（%u）：'%s' 未导入——图集 .baked 归批⑥",
-                    rhi::kMaxTextureSlots, e.relPath.c_str());
+    // bindless 槽容量校验（上限 = renderer::kAtlasSlotCeiling：顶部 249..251 保留给 glow/
+    // sceneRT/lightRT——M8 批③ 评审，防撞保留段触发 RegisterAtlas slot-reused 断言）
+    if (firstSlot_ + pages_.size() >= renderer::kAtlasSlotCeiling) {
+        LEMON_ERROR("bindless 纹理槽满（上限 %u，顶部保留段起）：'%s' 未导入——图集 .baked 归批⑥",
+                    renderer::kAtlasSlotCeiling, e.relPath.c_str());
         stbi_image_free(px);
         return false;
     }

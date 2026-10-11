@@ -222,6 +222,20 @@ public readonly struct Transform               // 视图结构：逐属性访问
 > origin=CSharp 跨场幸存 + DDOL 驱动 + 引擎段×0.8/游戏自报段×0.2 权重混合 +
 > holdGate 门控形态）。
 
+> **Lighting 门面（M8 批③ 已落地 2026-10-11；[ADR-019](../ADR/ADR-019-Light2D-Lightmap-Component.md) M4 纯 C# sugar）**：
+> `Lemon.Lighting`（flat static，Tween/Fx 同款）——**零 vtable 新槽、零引擎改动**：
+> 全部走既有通道（Native.Read/Write 即时整写 + op2/op3 结构命令 + Native.TweenTo
+> （Native.TweenTo）。API 面：`SetGlobalAmbient`（整写 Type=Global+Flags 启用+全
+> 字段显式——镜像默认值坑三连的正面解法；组件缺失走 op2 暂存返回 false，**两拍
+> 时序**：下一 tick 再调即落值）、`Enable/Disable/Toggle/IsEnabled`（返回**操作后
+> 启用态**，幂等查询语义非成功布尔）、`SetColor/SetIntensity/SetRange`（读改写
+> 整写）、`DayNight`（= `Tween.To<Light2D>("color"|"intensity")` 双补间，返回
+> intensity 句柄；字段入 StateHash ⇒ 昼夜可回放）、`BlobShadow.Set/SetOpacity`
+> （opacity=0 = 关，渲染侧提取滤除口径）、`Rgba` 色值打包助手 + `Kind/Blend`
+> 枚举。定位灯实体 = 调用方职责（序列化引用/Query 扫描——SDK 无按组件反查 API，
+> v1 不加，anchor 同款触发式纪律）。script-tests TestLightSdk 帧链实证（号段
+> 1900..1919：op2 两拍/整写落地/开关翻转/昼夜双补间逐拍与终值）。
+
 ### 3.1 协程替代：async/await + C++ 定时器（ADR-009 基调——表面像 Unity，机器走 C++）
 
 - Unity `StartCoroutine/WaitForSeconds` → C# `async/await` + **Lemon 主线程同步上下文**（Prowl2D `Tasks/MainThreadContext` 思想）：

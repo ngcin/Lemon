@@ -21,12 +21,15 @@
 // → UI 喂入/Update → 直渲染（D8 A 案：sprite pass + RmlUi pass 同一动态渲染块内
 // 直画 swapchain，spike-04 先例）→ present。
 //
-// CLI：lemon-game [--project <dir>] [--scene <rel>] [--frames N] [--smoke] [--validate]
-//   --project  项目根（含 project.lemon）；缺省 = exe 旁 data/（包形态零参启动）
-//   --scene    相对路径覆盖入口场景（缺省 = entryScene → 回退链）
-//   --frames   跑 N 帧退出（自动化）
-//   --smoke    机器判据：终帧 RESULT 行（回归口径，与编辑器各 smoke 链同款）
-//   --validate Vulkan 验证层（开发自测）
+// CLI：lemon-game [--project <dir>] [--scene <rel>] [--frames N] [--smoke]
+//                 [--smoke-scene] [--smoke-light] [--validate]
+//   --project     项目根（含 project.lemon）；缺省 = exe 旁 data/（包形态零参启动）
+//   --scene       相对路径覆盖入口场景（缺省 = entryScene → 回退链）
+//   --frames      跑 N 帧退出（自动化；smoke 族要求 N≥240——帧机在 f200 后收尾）
+//   --smoke       机器判据：终帧 RESULT 行（回归口径，与编辑器各 smoke 链同款）
+//   --smoke-scene 换场编排冒烟（M7c 批⑥b）；--smoke-light 光贴图冒烟（M8 批③）
+//                 ——三 smoke 旗标互斥使用（组合态未定义，装载期 WARN）
+//   --validate    Vulkan 验证层（开发自测）
 #include <SDL3/SDL.h>
 
 #include <algorithm>
@@ -51,6 +54,7 @@
 #include "Audio/AudioMount.h"
 #include "Audio/Spatial2D.h"
 #include "Components/CoreComponents.h" // Meta（smoke-scene DDOL 定位）
+#include "Components/LightComponents.h" // Light2D/BlobShadow2D（M8 批③ smoke-light 播种）
 #include "Core/Log.h"
 #include "Core/Math.h"
 #include "ECS/Scene.h"
@@ -63,6 +67,8 @@
 #include "Renderer/Camera2D.h"
 #include "Renderer/CameraFollow.h"
 #include "Renderer/GameFx.h"
+#include "Renderer/LightCompositor.h" // M8 批③ 光贴图三段式（游戏壳装配）
+#include "Renderer/Quality.h"         // M8 批③ QualityManager 游戏壳首接
 #include "Renderer/Renderable.h"
 #include "Renderer/RHI.h"
 #include "Renderer/SceneExtractor.h"
@@ -434,13 +440,13 @@ constexpr uint64_t kSceneSmokeDdolGuid = 10963355455248361612ull;
 int main(int argc, char** argv) {
     std::string projectArg, sceneArg;
     long frames = 0;
-    bool smoke = false, smokeScene = false, validate = false;
+    bool smoke = false, smokeScene = false, smokeLight = false, validate = false;
     // L31（review 2026-10-09）：未知/残缺参数原静默落空——`--frames abc` 经 atoi→0
     // 使 paced 反转为 true，自动化调用变交互模式无限挂住。未知/非数字 = 响亮退出。
     const auto usage = [] {
         std::fprintf(stderr,
                      "用法：lemon-game [--project <dir>] [--scene <name>] [--frames N] "
-                     "[--smoke] [--smoke-scene] [--validate]\n");
+                     "[--smoke] [--smoke-scene] [--smoke-light] [--validate]\n");
     };
     for (int i = 1; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--project") && i + 1 < argc) projectArg = argv[++i];
@@ -455,6 +461,7 @@ int main(int argc, char** argv) {
             }
         } else if (!std::strcmp(argv[i], "--smoke")) smoke = true;
         else if (!std::strcmp(argv[i], "--smoke-scene")) smokeScene = true;
+        else if (!std::strcmp(argv[i], "--smoke-light")) smokeLight = true;
         else if (!std::strcmp(argv[i], "--validate")) validate = true;
         else {
             LEMON_ERROR("lemon-game：未知/残缺参数：'%s'", argv[i]);
@@ -464,7 +471,7 @@ int main(int argc, char** argv) {
     }
     const std::string exeDir = ExeDir();
     // 交互 = 墙钟累加；自动化 = 每帧恰一步
-    const bool paced = frames == 0 && !smoke && !smokeScene;
+    const bool paced = frames == 0 && !smoke && !smokeScene && !smokeLight;
 
     // ---- 项目根与入口场景（--project 缺省 = exe 旁 data/，包形态零参启动）----
     std::string root = projectArg.empty() ? (exeDir + "/data") : projectArg;
@@ -562,6 +569,7 @@ int main(int argc, char** argv) {
     renderer::AtlasRegistry atlas;
     renderer::BitmapFont font;
     uint32_t whiteSprite = 0;
+    uint32_t glowSprite = 0; // M8 批③：径向渐变蒙版页（SpriteMask 蒙版光夹具/模板复用）
     auto BuildProceduralPages = [&](rhi::Device& d) {
         std::vector<uint8_t> px((size_t)kWhiteCellPx * kWhiteCellPx * 4, 0xFF);
         rhi::Texture tex = d.CreateTexture(
@@ -575,6 +583,25 @@ int main(int argc, char** argv) {
         d.BindSamplerToSlot(d.CreateSampler({.min = rhi::FilterMode::Point,
                                              .mag = rhi::FilterMode::Point}),
                             1);
+        // M8 批③ glow 页：白 RGB + alpha 径向渐变（LightRadialAttenuation 同式——
+        // 蒙版因子 = rgb×a 的 alpha 造型类素材）。顶部槽段（资产页 2 起不冲突，
+        // #L20 记账 +1 = 顶部段 249/250/251 三槽）
+        constexpr uint32_t kGlowPx = 128;
+        px.assign((size_t)kGlowPx * kGlowPx * 4, 0xFF);
+        for (uint32_t y = 0; y < kGlowPx; ++y)
+            for (uint32_t x = 0; x < kGlowPx; ++x) {
+                const float dx = ((float)x + 0.5f) / (float)kGlowPx - 0.5f;
+                const float dy = ((float)y + 0.5f) / (float)kGlowPx - 0.5f;
+                const float dn = std::sqrt(dx * dx + dy * dy) * 2.0f; // 边缘半宽 = 0.5 → dn=1
+                const float a = renderer::LightRadialAttenuation(dn);
+                px[((size_t)y * kGlowPx + x) * 4 + 3] = (uint8_t)(a * 255.0f + 0.5f);
+            }
+        rhi::Texture glowTex = d.CreateTexture(
+            {.width = kGlowPx, .height = kGlowPx, .debugName = "gameGlowMask"});
+        d.UploadTexture(glowTex, px.data(), px.size());
+        d.BindTextureToSlot(glowTex, renderer::kGlowTexSlot);
+        atlas.RegisterAtlas(renderer::kGlowTexSlot, glowTex, kGlowPx, kGlowPx);
+        glowSprite = atlas.AddSprite(renderer::kGlowTexSlot, 0, 0, kGlowPx, kGlowPx);
     };
     BuildProceduralPages(*device);
 
@@ -733,6 +760,66 @@ int main(int argc, char** argv) {
         ecs::StampSceneMembership(scene, entryHandle);
         world.SetActiveSceneHandle(entryHandle);
     }
+
+    // ---- --smoke-light 播种（M8 批③）：蒙版灯 + 点光 + blob 引擎侧夹具（项目
+    // 无关——"干净包零 C++"口径的机器证：场景组件驱动光照，游戏代码零参与）。
+    // guid 段 4730… 避开 4700/4710/4720（--smoke-scene 夹具段）。全禁用落场 =
+    // 前段帧走关灯原路径；f70 使能（smoke-light 帧机见主循环）----
+    ecs::Entity lightSmGlobal = ecs::Entity::Null(), lightSmMask = ecs::Entity::Null(),
+                lightSmPoint = ecs::Entity::Null(), lightSmBlob = ecs::Entity::Null();
+    if (smokeLight) {
+        auto seedEnt = [&](const char* tag, uint64_t guid, Vec2 pos) {
+            ecs::Entity e = scene.Create();
+            ecs::Meta& m = scene.Emplace<ecs::Meta>(e);
+            m.guid = guid;
+            std::snprintf(m.tag, sizeof(m.tag), "%s", tag);
+            scene.Emplace<ecs::Transform2D>(e).pos = pos;
+            return e;
+        };
+        lightSmGlobal = seedEnt("SmLightGlobal", 4730000000000000001ull, Vec2{640, 360});
+        {
+            ecs::Light2D& lt = scene.Emplace<ecs::Light2D>(lightSmGlobal);
+            lt.type = ecs::kLightTypeGlobal;
+            lt.color = 0xFFD6F4FFu; // 暖白（编辑器 smoke-light 同款）
+            lt.intensity = 0.35f;   // 留暗——ambient 不得饱和（LDR 钳 1，b2 观感轮教训）
+            lt.flags = 0;
+        }
+        lightSmMask = seedEnt("SmLightMask", 4730000000000000002ull, Vec2{640, 360});
+        {
+            ecs::Light2D& lt = scene.Emplace<ecs::Light2D>(lightSmMask);
+            lt.type = ecs::kLightTypeSpriteMask;
+            lt.blend = ecs::kLightBlendAdditive;
+            lt.color = 0xFF0000FFu; // 纯红（r|g<<8|b<<16|a<<24）
+            lt.intensity = 1.0f;
+            lt.range = 160.0f; // 蒙版四边形半边 = range（贴图即造型、无径向衰减）
+            lt.maskSprite = glowSprite;
+            lt.flags = 0;
+        }
+        lightSmPoint = seedEnt("SmLightPoint", 4730000000000000003ull, Vec2{980, 520});
+        {
+            ecs::Light2D& lt = scene.Emplace<ecs::Light2D>(lightSmPoint);
+            lt.type = ecs::kLightTypePoint;
+            lt.blend = ecs::kLightBlendAdditive;
+            lt.color = 0xFFFF0000u; // 蓝
+            lt.intensity = 1.2f;
+            lt.range = 200.0f;
+            lt.flags = 0;
+        }
+        lightSmBlob = seedEnt("SmBlob", 4730000000000000004ull, Vec2{900, 300});
+        {
+            ecs::BlobShadow2D& bs = scene.Emplace<ecs::BlobShadow2D>(lightSmBlob);
+            bs.radius = 48.0f;
+            bs.aspect = 1.4f;
+            bs.opacity = 0.0f; // 关落场（opacity=0 = 不存在——提取侧滤除，批③口径）
+        }
+        // 盖章归并入场景组（评审 P2：播种于 StampSceneMembership 之后——补章防
+        // kSceneHandleUnassigned 孤儿污染组合 smoke 态的组计数断言；幂等：已指派不动）
+        ecs::StampSceneMembership(scene, world.ActiveSceneHandle());
+        LEMON_LOG("lemon-game smoke-light: 播种 4 实体（Global/蒙版红/点光蓝/blob，全关）");
+    }
+    if (smokeLight && (smoke || smokeScene))
+        LEMON_WARN("lemon-game：--smoke-light 与 --smoke/--smoke-scene 组合态未定义"
+                   "（回归恒单旗标使用）");
     hostState.world = &world;
 
     // ---- 四缓存 + 存档 + 脚本解析（编辑器 EnterPlay 装配清单同序）----
@@ -813,6 +900,57 @@ int main(int argc, char** argv) {
         },
     });
 
+    // ---- M8 批③ 光贴图装配（ADR-019 M1；编辑器 ViewportRenderer 同件镜像，
+    // 防第三套实现）。双格式管线：sceneBatcher = RGBA8Unorm 渲 sceneRT（场景段）；
+    // batcher（交换链格式，下节）承担合成后豁免段与关灯帧——关灯帧零额外 pass、
+    // 命令流与批③ 前逐字相同（08 M8"光照默认关闭零成本"机械口径）。合成目标 =
+    // 交换链格式（LightCompositor 头注预留位兑现）。sceneRT/lightRT 懒建（首帧
+    // 见灯才建）+ 按质量档重建——QualityManager 游戏壳首接（EMA 渲染帧钟，只降
+    // 不升；Quality.h 头注兑现）。声明序先于 RecreateGuard：其回调引用 RT 句柄 ----
+    renderer::SpriteBatcher sceneBatcher;
+    sceneBatcher.Init(*device, 0, 1, rhi::Format::RGBA8Unorm, /*ringSlot=*/1);
+    renderer::LightCompositor lightCompositor;
+    lightCompositor.Init(*device, /*ringSlot=*/2, renderer::kSceneRtTexSlot,
+                         renderer::kLightRtTexSlot, /*samplerLinear=*/0,
+                         rhi::Format::RGBA8Unorm, device->SwapchainFormat());
+    renderer::QualityManager quality;
+    std::chrono::steady_clock::time_point lastRenderTime{};
+    struct GameLightRt {
+        rhi::Texture tex;
+        uint32_t w = 0, h = 0;
+    } sceneRt, lightRt;
+    auto EnsureLightTargets = [&](uint32_t sw, uint32_t sh) {
+        // sceneRT 全分辨率跟交换链（resize 后尺寸变 = 自然重建）；lightRT 按质量档
+        // 缩放（ADR-019 M5/D8：Low=1/4·Med=1/2·High=全；档变 = 重建，≥8px 防极小）
+        if (!sceneRt.tex.IsValid() || sceneRt.w != sw || sceneRt.h != sh) {
+            if (sceneRt.tex.IsValid()) {
+                device->WaitIdle(); // 低频重建停稳语义（编辑器 EnsureLightTargets 同款）
+                device->DestroyTexture(sceneRt.tex);
+            }
+            sceneRt.w = sw;
+            sceneRt.h = sh;
+            sceneRt.tex = device->CreateTexture({.width = sw, .height = sh,
+                                                 .renderTarget = true,
+                                                 .debugName = "gameSceneRT"});
+            device->BindTextureToSlot(sceneRt.tex, renderer::kSceneRtTexSlot);
+        }
+        const float scale = quality.Params().lightRtScale;
+        const uint32_t lw = std::max(8u, (uint32_t)std::lroundf((float)sw * scale));
+        const uint32_t lh = std::max(8u, (uint32_t)std::lroundf((float)sh * scale));
+        if (!lightRt.tex.IsValid() || lightRt.w != lw || lightRt.h != lh) {
+            if (lightRt.tex.IsValid()) {
+                device->WaitIdle();
+                device->DestroyTexture(lightRt.tex);
+            }
+            lightRt.w = lw;
+            lightRt.h = lh;
+            lightRt.tex = device->CreateTexture({.width = lw, .height = lh,
+                                                 .renderTarget = true,
+                                                 .debugName = "gameLightRT"});
+            device->BindTextureToSlot(lightRt.tex, renderer::kLightRtTexSlot);
+        }
+    };
+
     // ---- 设备丢失重建（resize 触发整设备重建：程序化页 → 资产页 → UI 全量重载，
     // 编辑器 "editor-viewport"→"asset-gpu" 两段式同序）----
     // L37（review 2026-10-09）：token 持有 + 作用域尾反注册——回调按引用捕获
@@ -825,6 +963,8 @@ int main(int argc, char** argv) {
             if (device) device->RemoveRecreateCallback(id);
         }
     } recreateGuard{device.get(), device->AddRecreateCallback("game-assets", [&](rhi::Device& d) {
+        sceneRt.tex = {}; // 光贴图 RT 句柄随设备亡（懒建口径：下次开灯帧重建重绑）
+        lightRt.tex = {};
         atlas.Reset();
         BuildProceduralPages(d);
         if (atlasPages) bakedAtlas.RebuildAll(d);
@@ -885,6 +1025,105 @@ int main(int argc, char** argv) {
     std::vector<ecs::Entity> sceneDdolBaseline; // 首跳前 DDOL 系快照（精确清单对照）
     std::vector<SpritePacket> textPackets, fxBarPackets;
     std::chrono::steady_clock::time_point lastFxTime{};
+    // --smoke-light 帧机（M8 批③）：f70 使能（含 blob opacity=0.5）→ f100 捕获
+    // lightRT → f102 取回断言（蒙版红光斑 r 通道 Δ / blob 椭圆暗斑 Δ / plan 计数）
+    // → f110/126/142 三档 SetTier + f118/134/150 lightRT 尺寸 → f200 全关（blob
+    // opacity=0——"opacity=0 = 关"口径，f200 后帧回关灯原路径）。帧尾驱动 → 下一帧
+    // Step（RenderExtractSystem）生效。
+    int lightCapReq = 0; // 3 = lightRT（编辑器 smoke-light 同编码）
+    uint64_t lightCapFrame = 0;
+    bool smPlanOk = false, smMaskOk = false, smBlobOk = false, smTierOk = false;
+    uint32_t smTierW[3] = {0, 0, 0}, smTierH[3] = {0, 0, 0};
+    auto lightSmokeFrame = [&](uint64_t f) {
+        auto setLights = [&](uint16_t flags, float blobOpacity) {
+            for (ecs::Entity e : {lightSmGlobal, lightSmMask, lightSmPoint})
+                if (scene.Alive(e))
+                    if (ecs::Light2D* lt = scene.TryGet<ecs::Light2D>(e)) lt->flags = flags;
+            if (scene.Alive(lightSmBlob))
+                if (ecs::BlobShadow2D* bs = scene.TryGet<ecs::BlobShadow2D>(lightSmBlob))
+                    bs->opacity = blobOpacity;
+        };
+        if (f == 70) {
+            // 布位跟随当帧相机（菜单态相机随场景挂靠点漂移——实测中心 0,0 而非
+            // 初值 640,360；固定世界坐标会整体出视野）。布局：蒙版灯 = C；点光 =
+            // C+(-340,160)；blob = C+(260,-60)；远角对照 = C+(560,-280)（三光源
+            // 影响域全外——纯 ambient 底）
+            const Vec2 c = gameCam.center;
+            auto place = [&](ecs::Entity e, Vec2 pos) {
+                if (scene.Alive(e)) scene.Get<ecs::Transform2D>(e).pos = pos;
+            };
+            place(lightSmMask, c + Vec2{0.0f, 0.0f});
+            place(lightSmPoint, c + Vec2{-340.0f, 160.0f});
+            place(lightSmBlob, c + Vec2{260.0f, -60.0f});
+            setLights(ecs::kLightEnabled, 0.5f);
+            LEMON_LOG("smoke-light: f%llu 使能全灯 + blob（三段式开跑，布位锚 %.0f,%.0f）",
+                      (unsigned long long)f, c.x, c.y);
+        } else if (f == 99) {
+            // 帧尾驱动 → 预约下一帧（f100 渲染期录制；编辑器帧头驱动 vs 此处帧尾，
+            // 差一帧对齐）
+            lightCapReq = 3;
+            lightCapFrame = f + 1;
+        } else if (f == 102) {
+            // lightRT 取回 + 断言（无场景内容——判据免疫场景污染，编辑器 b2 评审同款）。
+            // planOk 独立于取回（计数与像素判据解耦——取回失败只红像素面）
+            const auto& plan = lightCompositor.LastPlan();
+            smPlanOk = plan.drawLights == 2 && plan.drawBlobs == 1 &&
+                       plan.ambient[0] < 0.99f; // Global 生效（暖白 ×0.35 底）
+            std::vector<uint8_t> px;
+            uint32_t pw = 0, ph = 0;
+            if (!device->DebugFetchTextureCapture(px, pw, ph) || px.empty() || pw == 0 ||
+                ph == 0) {
+                LEMON_WARN("smoke-light: lightRT 取回失败");
+                return;
+            }
+            const float asp = (float)device->SwapchainWidth() / (float)device->SwapchainHeight();
+            const Rect view = gameCam.ViewRect(asp);
+            auto chan = [&](float wx, float wy, int c) {
+                const uint32_t x = (uint32_t)(((wx - view.min.x) /
+                                               (view.max.x - view.min.x)) * (float)pw);
+                const uint32_t y = (uint32_t)(((wy - view.min.y) /
+                                               (view.max.y - view.min.y)) * (float)ph);
+                if (x >= pw || y >= ph) return 0;
+                return (int)px[((uint64_t)y * pw + x) * 4 + (uint32_t)c];
+            };
+            // 采样点取实体实际变换（布位锚 + f70 布局常量——相机漂移免疫）
+            const Vec2 maskPos = scene.Alive(lightSmMask)
+                                     ? scene.Get<ecs::Transform2D>(lightSmMask).pos
+                                     : Vec2{0.0f, 0.0f};
+            const Vec2 blobPos = scene.Alive(lightSmBlob)
+                                     ? scene.Get<ecs::Transform2D>(lightSmBlob).pos
+                                     : Vec2{0.0f, 0.0f};
+            const Vec2 farCorner = maskPos + Vec2{560.0f, -280.0f};
+            const Vec2 blobOut = blobPos + Vec2{0.0f, -90.0f}; // 椭圆外 90px（ay=48）
+            // 蒙版红光斑：灯心（glow alpha 中心 1）Additive r 饱和 vs 远角纯 ambient
+            const int maskD = (int)chan(maskPos.x, maskPos.y, 0) - (int)chan(farCorner.x, farCorner.y, 0);
+            smMaskOk = maskD > 30;
+            // blob 椭圆暗斑：心（Subtract 白×0.5 清到 ~0）vs 椭圆外（纯 ambient 底）
+            const int blobD = (int)chan(blobOut.x, blobOut.y, 1) - (int)chan(blobPos.x, blobPos.y, 1);
+            smBlobOk = blobD > 30;
+            LEMON_LOG("smoke-light: f102 断言 maskD=%d blobD=%d drawLights=%u drawBlobs=%u "
+                      "[dbg view=%.0f,%.0f-%.0f,%.0f pw=%u ph=%u mask=(%.0f,%.0f)]",
+                      maskD, blobD, plan.drawLights, plan.drawBlobs, view.min.x, view.min.y,
+                      view.max.x, view.max.y, pw, ph, maskPos.x, maskPos.y);
+        } else if (f == 110) {
+            quality.SetTier(renderer::QualityTier::Low);
+        } else if (f == 118) {
+            smTierW[0] = lightRt.w;
+            smTierH[0] = lightRt.h;
+        } else if (f == 126) {
+            quality.SetTier(renderer::QualityTier::Med);
+        } else if (f == 134) {
+            smTierW[1] = lightRt.w;
+            smTierH[1] = lightRt.h;
+        } else if (f == 142) {
+            quality.SetTier(renderer::QualityTier::High);
+        } else if (f == 150) {
+            smTierW[2] = lightRt.w;
+            smTierH[2] = lightRt.h;
+        } else if (f == 200) {
+            setLights(0, 0.0f); // 全关：含 blob opacity=0（提取滤除 → Alive 双零）
+        }
+    };
     bool running = true;
     while (running) {
         if (!window->PollEvents()) running = false; // 窗口关闭
@@ -1004,6 +1243,17 @@ int main(int argc, char** argv) {
             continue;
         }
         rhi::CommandList& cl = device->BeginFrame();
+        // M8 批③：质量 EMA 按渲染帧钟推进（游戏壳首接，编辑器 ViewportRenderer
+        // 同款；只降不升，降档联动 lightRT 缩放与光数上限——EnsureLightTargets 按档重建）
+        {
+            const auto now = std::chrono::steady_clock::now();
+            if (lastRenderTime.time_since_epoch().count() != 0) {
+                const float rdt = std::clamp(
+                    std::chrono::duration<float>(now - lastRenderTime).count(), 0.0f, 0.1f);
+                quality.Update(rdt * 1000.0, rdt);
+            }
+            lastRenderTime = now;
+        }
         const uint32_t w = device->SwapchainWidth(), h = device->SwapchainHeight();
         const float aspect = (float)w / (float)h;
         const Rect view = gameCam.ViewRect(aspect);
@@ -1024,15 +1274,50 @@ int main(int argc, char** argv) {
             renderer::AppendGameFx(world.Fx(), scene, view, whiteSprite, font, atlas,
                                    fxDt, fxBarPackets, textPackets);
         }
-        batcher.Bake(atlas, packets, {}, textPackets,
-                     std::span<const SpritePacket>(fxBarPackets));
-
         const float clear[4] = {0.09f, 0.10f, 0.13f, 1.0f};
-        cl.BeginPass(device->SwapchainFormat(), w, h, clear);
-        cl.SetViewportScissor(w, h);
-        batcher.Record(cl, gameCam.ViewProj(aspect));
-        ui.Render(cl, w, h); // sprite 之后、EndPass 之前（动态块内唯一合法插入点）
-        cl.EndPass();
+        // M8 批③ 光贴图三段式（ADR-019 M1；编辑器 GameView 同件镜像装配）：
+        // 开灯帧 = 场景段 sceneRT → 光照段 lightRT（CLEAR=ambient）→ 合成段直写
+        // 交换链（composite 全屏乘法——loadOp 恒 CLEAR 天然满足：全屏不透明四边形）
+        // → 豁免段（text/fxBar 层 252/251 与位图文本 254）+ RmlUi 同块内。关灯帧
+        //（零灯且零 blob）走与批③ 前逐字相同的原路径——零额外 pass（"光照默认
+        // 关闭零成本"机械口径）。双格式分工：场景段 = sceneBatcher（RGBA8Unorm
+        // sceneRT）；豁免段/关灯帧 = batcher（交换链格式）——帧内各 Bake 一次，
+        // 无 append/Reserve（编辑器单 batcher 双段不同：此处格式异必须两台）
+        if (rm.AliveLightCount() > 0 || rm.AliveBlobCount() > 0) {
+            EnsureLightTargets(w, h);
+            const auto lightItems = rm.ExtractLights(alpha);
+            const auto blobItems = rm.ExtractBlobs(alpha);
+            lightCompositor.Prepare(lightItems, blobItems, quality.Params().lightBudget,
+                                    &atlas);
+            const Mat3x2 vp = gameCam.ViewProj(aspect);
+            // 场景段：精灵/粒子（受光层 ≤250；text/fxBar 走豁免通道不在此段）
+            sceneBatcher.Bake(atlas, packets);
+            cl.BeginOffscreenPass(sceneRt.tex, clear);
+            cl.SetViewportScissor(w, h);
+            sceneBatcher.Record(cl, vp);
+            cl.EndPass();
+            // 光照段：lightRT CLEAR = ambient 底色，光源四边形 + blob 椭圆暗斑
+            lightCompositor.RenderLightPass(cl, lightRt.tex, &atlas, vp, lightRt.w, lightRt.h);
+            if (smokeLight && lightCapReq == 3 && frame == lightCapFrame)
+                cl.DebugRecordTextureCapture(lightRt.tex); // 光斑断言源（下一帧取回）
+            // 合成段：交换链块内全屏乘法 → 豁免段 → UI（块内唯一合法插入点）
+            cl.BeginPass(device->SwapchainFormat(), w, h, clear);
+            cl.SetViewportScissor(w, h);
+            lightCompositor.RenderComposite(cl);
+            batcher.Bake(atlas, {}, {}, textPackets,
+                         std::span<const SpritePacket>(fxBarPackets));
+            batcher.Record(cl, vp);
+            ui.Render(cl, w, h);
+            cl.EndPass();
+        } else {
+            batcher.Bake(atlas, packets, {}, textPackets,
+                         std::span<const SpritePacket>(fxBarPackets));
+            cl.BeginPass(device->SwapchainFormat(), w, h, clear);
+            cl.SetViewportScissor(w, h);
+            batcher.Record(cl, gameCam.ViewProj(aspect));
+            ui.Render(cl, w, h); // sprite 之后、EndPass 之前（动态块内唯一合法插入点）
+            cl.EndPass();
+        }
 
         bool needRe = false, lost = false;
         device->EndFrameAndPresent(needRe, lost);
@@ -1040,6 +1325,8 @@ int main(int argc, char** argv) {
             if (lost || !device->RecreateSwapchain()) continue;
         }
         batcher.AdvanceFrame();
+        sceneBatcher.AdvanceFrame();
+        lightCompositor.AdvanceFrame();
 
         if (frame > 0) {
             frameSec += NowS() - t0;
@@ -1049,6 +1336,8 @@ int main(int argc, char** argv) {
             hudShown = true; // 进局观察位（点击→流程→HUD 显示链）
         if (frame > 200 && !cardsShown && ui.IsDocumentShown("Assets/UI/cards.rml"))
             cardsShown = true; // 升级/死亡动态弹卡观察位（UI.Show 运行时装载链）
+        // --smoke-light 帧机（状态区头注；帧尾驱动 → 下一帧 Step 生效）
+        if (smokeLight) lightSmokeFrame(frame);
         // --smoke-scene：菜单态预置脏态 + DDOL 根位标记 + 首跳（帧尾 Request →
         // 下一帧 Essential #18 执行 = ADR-017"下一帧装载"时序）
         if (smokeScene && sceneHop == -1 && frame == 80) {
@@ -1237,6 +1526,42 @@ int main(int argc, char** argv) {
             ui.IsDocumentShown("Assets/UI/cards.rml") ? 1 : 0,
             audio.IsPaused() ? 0 : 1, world.Fx().TextCount() == 0 ? 1 : 0,
             ui.ContractErrorCount(), ok ? "OK" : "FAIL");
+        std::fflush(stdout);
+        g_host = nullptr;
+        ui.Shutdown();
+        return ok ? 0 : 1;
+    }
+    if (smokeLight) {
+        // RESULT 行（回归口径，M8 批③ 出口判据）：三段式在游戏壳渲染（蒙版光斑/
+        // blob 暗斑 lightRT 断言）+ plan 计数 + 三档 lightRT 尺寸 + f200 后回关灯
+        // 原路径（Alive 双零——"光照默认关闭零成本"游戏壳机械口径）+ fps≥60 门禁
+        //（干净包开灯场景跑满 60fps 零 C++，镜像 pkg-smoke 口径）
+        const double fps = frameSec > 0 ? (double)statFrames / frameSec : 0.0;
+        // 期望值由 TierParams 派生（评审：勿复制档位常量——重调 TierParams 时免假红）
+        const uint32_t sw = device->SwapchainWidth(), sh = device->SwapchainHeight();
+        const float scale[3] = {
+            renderer::TierParams(renderer::QualityTier::Low).lightRtScale,
+            renderer::TierParams(renderer::QualityTier::Med).lightRtScale,
+            renderer::TierParams(renderer::QualityTier::High).lightRtScale};
+        uint32_t expW[3], expH[3];
+        for (int i = 0; i < 3; ++i) {
+            expW[i] = std::max(8u, (uint32_t)std::lroundf((float)sw * scale[i]));
+            expH[i] = std::max(8u, (uint32_t)std::lroundf((float)sh * scale[i]));
+        }
+        smTierOk = smTierW[0] > 0 && smTierW[1] > 0;
+        for (int i = 0; i < 3; ++i)
+            smTierOk = smTierOk && std::abs((int)smTierW[i] - (int)expW[i]) <= 2 &&
+                       std::abs((int)smTierH[i] - (int)expH[i]) <= 2;
+        const bool offPath = rm.AliveLightCount() == 0 && rm.AliveBlobCount() == 0;
+        const auto& plan = lightCompositor.LastPlan();
+        const bool ok = smPlanOk && smMaskOk && smBlobOk && smTierOk && offPath && fps >= 60.0;
+        std::printf(
+            "[lemon-game] RESULT light-smoke: frames=%llu fps=%.1f drawLights=%u "
+            "drawBlobs=%u maskOk=%d blobOk=%d planOk=%d tier=%ux%u/%ux%u/%ux%u "
+            "offPath=%d => %s\n",
+            (unsigned long long)frame, fps, plan.drawLights, plan.drawBlobs, smMaskOk ? 1 : 0,
+            smBlobOk ? 1 : 0, smPlanOk ? 1 : 0, smTierW[0], smTierH[0], smTierW[1], smTierH[1],
+            smTierW[2], smTierH[2], offPath ? 1 : 0, ok ? "OK" : "FAIL");
         std::fflush(stdout);
         g_host = nullptr;
         ui.Shutdown();

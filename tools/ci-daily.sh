@@ -3,7 +3,7 @@
 # 手动档**——launchd 定时未装载（模板留档 Tools/com.lemon.ci-daily.plist），要跑
 # 门禁手动执行本脚本）
 # 用法：tools/ci-daily.sh [--skip-build]
-# 编排：增量构建 → editor-regression.sh full（23 步，含 bench-survivor 门禁步）
+# 编排：增量构建 → editor-regression.sh full（24 步，含 bench-survivor 门禁步）
 #        + bench-lights（M8 批②：64 灯编辑态三段式基准，数字入本报告）
 # 报告：build/ci-reports/YYYY-MM-DD.log（HEAD/日期/逐步/汇总；连续看 = flake 观察面）
 # 纪律：不 git pull、不动工作树——WIP 半成品编译失败 = 报告标 BUILD-FAIL（环境

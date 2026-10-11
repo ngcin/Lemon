@@ -89,7 +89,7 @@ void SceneExtractor::Extract(ecs::Scene& s, const AtlasRegistry& atlas,
 
     // ---- 光/blob 通道（M8 批②，ADR-019 M1：镜像 sprite 槽位语义——位索引 +
     //      version 防回收串槽 + 纪元差集释放；悬空 maskSprite 不阻断提取——
-    //      蒙版渲染归批③，届时再走红显/回退）----
+    //      渲染期回退 = Prepare dropped + 一次性 WARN，批③ 落地）----
     for (auto [ent, tf, lt] : s.View<ecs::Transform2D, ecs::Light2D>().each()) {
         if (!(lt.flags & ecs::kLightEnabled)) continue;
         ecs::Entity e = ecs::Scene::FromEntt(ent);
@@ -133,6 +133,10 @@ void SceneExtractor::Extract(ecs::Scene& s, const AtlasRegistry& atlas,
     }
 
     for (auto [ent, tf, bs] : s.View<ecs::Transform2D, ecs::BlobShadow2D>().each()) {
+        // opacity≤0 = 关（M8 批③）：BlobShadow2D 无 flags 字段，opacity 归零即
+        // "本 blob 不存在"——镜像 kLightEnabled 滤除；blob-only 场景全归零 ⇒ 关灯
+        // 帧 gate（AliveBlobCount==0）正确回落无光照原路径
+        if (bs.opacity <= 0.0f) continue;
         (void)tf;
         ecs::Entity e = ecs::Scene::FromEntt(ent);
         ecs::WorldTransform2D wt{};

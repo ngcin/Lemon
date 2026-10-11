@@ -14,6 +14,16 @@ namespace lemon::renderer {
 /// 空洞哨兵：AddSpriteAt/SetSpriteAt 中间空洞占位用的 atlasIndex（渲染侧据此过滤）
 inline constexpr uint32_t kHoleAtlasIdx = 0xFFFFFFFFu;
 
+/// 程序化 glow 蒙版页槽（M8 批③：lemon-game BuildProceduralPages——白 RGB +
+/// alpha 径向渐变，SpriteMask 夹具/模板复用；顶部保留段 249/250/251 之下界，
+/// sceneRT/lightRT 槽见 LightTypes.h）
+inline constexpr uint32_t kGlowTexSlot = 249;
+
+/// 图集页槽位分配上限（M8 批③ 评审：顶部保留段 249/250/251 = glow/sceneRT/
+/// lightRT——TextureStore/AtlasStore 逐页分配到此为止，防撞保留段触发
+/// RegisterAtlas 的 slot-reused 断言；#L20 记账口径的硬执行面）
+inline constexpr uint32_t kAtlasSlotCeiling = kGlowTexSlot;
+
 struct SpriteInfo {
     uint32_t atlasIndex = 0;   // bindless 纹理槽位
     float u0 = 0, v0 = 0, u1 = 1, v1 = 1; // 归一化 UV（左上/右下）
