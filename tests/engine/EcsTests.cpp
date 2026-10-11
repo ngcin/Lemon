@@ -1957,6 +1957,43 @@ void TestPoolDataStable() {
 
 } // namespace
 
+// Meta.tag[24] UTF-8 边界对齐截断（CopyTag24）：长中文名按字节裸截断会留半字符，
+// 存档期 nlohmann 316 崩（2026-10-11 light.scene 实抓；读档/建实体/改名三链路共用）
+void TestMetaTagUtf8Truncation() {
+    // 前向解码器：走到串尾恰好对齐 = 无半字符
+    const auto noPartialTail = [](const std::string& s) {
+        size_t i = 0;
+        while (i < s.size()) {
+            const unsigned char c = (unsigned char)s[i];
+            const size_t need = (c & 0xE0) == 0xC0   ? 2
+                                : (c & 0xF0) == 0xE0 ? 3
+                                : (c & 0xF8) == 0xF0 ? 4
+                                                     : 1;
+            if (need == 1 ? c >= 0x80 : false) return false; // 孤立续字节
+            if (i + need > s.size()) return false;           // 半字符在尾部
+            i += need;
+        }
+        return true;
+    };
+    char tag[24] = {};
+    // 恰好装下：不截断
+    ecs::CopyTag24(tag, "L_Red_Add");
+    Expect(std::strcmp(tag, "L_Red_Add") == 0, "short ASCII tag kept verbatim");
+    // 超长纯中文：截到字符边界
+    ecs::CopyTag24(tag, "一二三四五六七八九十甲乙丙丁戊己庚辛壬癸");
+    Expect(std::strlen(tag) <= 23 && noPartialTail(tag),
+           "long CJK tag truncated at char boundary");
+    // 混合名（重现位：13B ASCII 前缀 + 中文，23B 裸截断留 0xE8 半字符）
+    ecs::CopyTag24(tag, "L_Global_OFF_试试染色"); // 25B 源
+    const std::string mixed = tag;
+    Expect(mixed.rfind("L_Global_OFF_", 0) == 0 && mixed.size() < 25,
+           "mixed tag truncated but ASCII prefix kept");
+    Expect(noPartialTail(mixed), "mixed tag has no partial UTF-8 tail");
+    // 孤立 lead 收尾（单字节 0xE8 打头再截）也归位
+    ecs::CopyTag24(tag, "试");
+    Expect(std::strcmp(tag, "试") == 0, "single CJK char fits (3B)");
+}
+
 void RunEcsTests() {
     TestSceneLifecycle();
     TestWorldServices();
@@ -1998,6 +2035,7 @@ void RunEcsTests() {
     TestVerifyFullChainFollowsAfterRoundtrip();
 #ifdef LEMON_EDITOR_CORE
     TestSaveChannelSplits();
+    TestMetaTagUtf8Truncation();
 #endif
 #ifdef LEMON_EDITOR_CORE
     TestPoolDataStable();

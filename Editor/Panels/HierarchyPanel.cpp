@@ -76,9 +76,10 @@ void HierarchyPanel::CommitRename(EditorApp& app, ecs::Entity e, bool apply) {
     if (apply && !renameBuf_.empty()) {
         ecs::Scene& s = ctx.ActiveScene();
         if (ecs::Meta* m = s.TryGet<ecs::Meta>(e)) {
-            // tag[24] 截断保护 + 变更才落（避免空操作进 Undo/置脏）
+            // tag[24] 截断保护（CopyTag24 = UTF-8 边界对齐——半字符会存档期 316 崩）
+            // + 变更才落（避免空操作进 Undo/置脏）
             char next[24] = {};
-            std::snprintf(next, sizeof(next), "%s", renameBuf_.c_str());
+            ecs::CopyTag24(next, renameBuf_);
             if (std::strcmp(next, m->tag) != 0) {
                 const ecs::ComponentMeta* cm = ecs::ComponentRegistry::Instance().Find("Meta");
                 std::vector<uint8_t> before =

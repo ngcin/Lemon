@@ -374,6 +374,9 @@ void ViewportRenderer::Init(rhi::Device& device, ImGuiBackend& ui) {
     const rhi::Format rtFormat = rhi::Format::RGBA8Unorm; // 与 EnsureRenderTarget 一致
     sceneBatcher_.Init(device, 0, 1, rtFormat, /*ringSlot=*/0); // 实例环各占一槽
     gameBatcher_.Init(device, 0, 1, rtFormat, /*ringSlot=*/1);  // （M4.7-P0 竞态修复）
+    // M8 批②：光贴图三段式编排器（实例环 slot 2；双 RT 格式拍板 RGBA8Unorm，02 §8）
+    lightCompositor_.Init(device, /*ringSlot=*/2, kSceneRtTexSlot, kLightRtTexSlot,
+                          /*samplerLinear=*/0, rtFormat, rtFormat);
     sceneCam_.center = {640, 360};
     sceneCam_.halfHeight = 360.0f;
     gameCam_.center = {640, 360};
@@ -383,6 +386,8 @@ void ViewportRenderer::Init(rhi::Device& device, ImGuiBackend& ui) {
             rt.tex = {};
             rt.imguiTexId = nullptr;
         }
+        sceneRt_.tex = {}; // 光贴图 RT 同随资源表销毁（bindless 槽重建时重绑）
+        lightRt_.tex = {};
         OnDeviceRecreated(d);
     });
 }
@@ -455,6 +460,15 @@ void ViewportRenderer::ExtractScene(EditorContext& ctx) {
 
 // ---------------------------------------------------------------- 渲染 ----
 void ViewportRenderer::Render(rhi::CommandList& cl, EditorContext& ctx, float simAlpha) {
+    // M8 批②：质量 EMA 按渲染帧钟推进（编辑器壳首接，ADR-019 M5；只降不升，
+    // 降档联动 lightRT 缩放与光数上限——EnsureLightTargets 按档重建）
+    const auto now = std::chrono::steady_clock::now();
+    if (lastRenderTime_.time_since_epoch().count() != 0) {
+        const float dt = std::clamp(
+            std::chrono::duration<float>(now - lastRenderTime_).count(), 0.0f, 0.1f);
+        quality_.Update(dt * 1000.0, dt);
+    }
+    lastRenderTime_ = now;
     ExtractScene(ctx);
     RenderViewport(cl, 0, sceneBatcher_, sceneCam_, /*withOverlay=*/true, ctx, simAlpha);
     RenderViewport(cl, 1, gameBatcher_, gameCam_, /*withOverlay=*/false, ctx, simAlpha);
@@ -534,14 +548,47 @@ void ViewportRenderer::RenderViewport(rhi::CommandList& cl, uint32_t idx, Sprite
         lastFxTime_ = {}; // 出 Play 复位（重进 Play 首帧 dt=0）
     }
 
-    // 包合成 → Bake 尾段（2026-09-26 渲染提取批）：精灵主段直传 Extract span，
-    // fxBar/overlay 走 tailPackets——段拼接序 = 原"合成一个 vector"的序（绘制输出
-    // 同构），免每帧堆分配 + 50k 级包拷贝（双视口 ×56B/包）
+    const float clear[4] = {0.09f, 0.10f, 0.13f, 1.0f};
+    // M8 批② 光贴图三段式（ADR-019 M1；仅 GameView idx=1）：开灯帧 = 场景段
+    // sceneRT → 光照段 lightRT（CLEAR=ambient）→ 合成段 gameRT（composite → 豁免段
+    // → RmlUi 同块内）。关灯帧 = 零 Light2D 时走与无光照版**逐字节相同**的原路径
+    // （08 M8"光照默认关闭零成本"机械口径；blob 渲染归批③，本批条件只看灯）
+    if (idx == 1 && rm_.AliveLightCount() > 0) {
+        EnsureLightTargets(rt.w, rt.h);
+        const auto lightItems = rm_.ExtractLights(simAlpha);
+        lightCompositor_.Prepare(lightItems, quality_.Params().lightBudget);
+
+        const Mat3x2 vp = cam.ViewProj(aspect);
+        // 分段帧容量一次声明（两段总量；段间扩容会重建实例环，首段已录命令引用
+        // 旧 buffer = 提交期 UAF——Bake append 头注契约）
+        batcher.Reserve((uint32_t)(packets.size() + textPackets.size() + fxBarPackets.size()));
+        // 场景段：精灵/粒子（受光层 ≤250；text/fxBar 走豁免通道不在此段）
+        batcher.Bake(assets_.Registry(), packets);
+        cl.BeginOffscreenPass(sceneRt_.tex, clear);
+        cl.SetViewportScissor(sceneRt_.w, sceneRt_.h);
+        batcher.Record(cl, vp);
+        cl.EndPass();
+        // 光照段：lightRT CLEAR = ambient 底色，光源四边形按混合叠加
+        lightCompositor_.RenderLightPass(cl, lightRt_.tex, vp, lightRt_.w, lightRt_.h);
+        // 合成段：全屏乘法 → 豁免段（ADR-019 M3：血条 251/飘字 252/位图文本 254
+        // 与 RmlUi 不受光——按产包通道切分：text/fxBar 走合成后追加烘焙）→ UI
+        cl.BeginOffscreenPass(rt.tex, clear);
+        cl.SetViewportScissor(rt.w, rt.h);
+        lightCompositor_.RenderComposite(cl);
+        const uint32_t headBatches = batcher.LastBatchCount();
+        batcher.Bake(assets_.Registry(), {}, {}, textPackets,
+                     std::span<const SpritePacket>(fxBarPackets), /*append=*/true);
+        batcher.RecordRange(cl, vp, headBatches, batcher.LastBatchCount() - headBatches);
+        // 批③a（ADR-014）：RmlUi 叠画于豁免段之上——同一 gameRT 块内、EndPass 之前
+        if (gameUi_ && ctx.Playing()) gameUi_(cl, rt.w, rt.h);
+        cl.EndPass();
+        return;
+    }
+
     batcher.Bake(assets_.Registry(), packets, {},
                  textPackets, withOverlay ? std::span<const SpritePacket>(overlay_)
                                           : std::span<const SpritePacket>(fxBarPackets));
 
-    const float clear[4] = {0.09f, 0.10f, 0.13f, 1.0f};
     cl.BeginOffscreenPass(rt.tex, clear); // RT 显式声明（#11）；EndPass 转 SHADER_READ
     cl.SetViewportScissor(rt.w, rt.h);
     batcher.Record(cl, cam.ViewProj(aspect));
@@ -549,6 +596,38 @@ void ViewportRenderer::RenderViewport(rhi::CommandList& cl, uint32_t idx, Sprite
     // EndPass 之前（离屏块 loadOp 恒 CLEAR，块后另开块会清内容；此为唯一合法插入点）
     if (idx == 1 && gameUi_ && ctx.Playing()) gameUi_(cl, rt.w, rt.h);
     cl.EndPass();
+}
+
+void ViewportRenderer::EnsureLightTargets(uint32_t gameW, uint32_t gameH) {
+    // sceneRT 全分辨率跟随 gameRT（其重建已被面板侧尺寸稳定节流约束——漂移期
+    // gameRT 尺寸不动，此处用实际尺寸保证合成 1:1 采样）
+    if (!sceneRt_.tex.IsValid() || sceneRt_.w != gameW || sceneRt_.h != gameH) {
+        if (sceneRt_.tex.IsValid()) {
+            device_->WaitIdle(); // 低频重建（gameRT 同款停稳语义）
+            device_->DestroyTexture(sceneRt_.tex);
+        }
+        sceneRt_.w = gameW;
+        sceneRt_.h = gameH;
+        sceneRt_.tex = device_->CreateTexture({.width = gameW, .height = gameH,
+                                               .renderTarget = true, .debugName = "gameSceneRT"});
+        device_->BindTextureToSlot(sceneRt_.tex, kSceneRtTexSlot); // 建时绑一次（M4.7-P0）
+    }
+    // lightRT 按质量档缩放（ADR-019 M5/D8：Low=1/4·Med=1/2·High=全分辨率；档变 =
+    // scale 变 = 尺寸变 → 自然重建；≥8px 防面板极小）
+    const float scale = quality_.Params().lightRtScale;
+    const uint32_t lw = std::max(8u, (uint32_t)std::lroundf((float)gameW * scale));
+    const uint32_t lh = std::max(8u, (uint32_t)std::lroundf((float)gameH * scale));
+    if (!lightRt_.tex.IsValid() || lightRt_.w != lw || lightRt_.h != lh) {
+        if (lightRt_.tex.IsValid()) {
+            device_->WaitIdle();
+            device_->DestroyTexture(lightRt_.tex);
+        }
+        lightRt_.w = lw;
+        lightRt_.h = lh;
+        lightRt_.tex = device_->CreateTexture({.width = lw, .height = lh,
+                                               .renderTarget = true, .debugName = "gameLightRT"});
+        device_->BindTextureToSlot(lightRt_.tex, kLightRtTexSlot);
+    }
 }
 
 // ------------------------------------------------------------- overlay ----

@@ -188,7 +188,7 @@
   "display.Light2D.angle": "angle",
   "display.Light2D.innerRatio": "innerRatio",
   "display.Light2D.maskSprite": "maskSprite",
-  "display.Light2D.flags": "flags",
+  "display.Light2D.flags": "Enabled",
   "display.BlobShadow2D": "BlobShadow2D",
   "display.BlobShadow2D.radius": "radius",
   "display.BlobShadow2D.aspect": "aspect",

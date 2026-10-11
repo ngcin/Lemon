@@ -80,12 +80,19 @@ static VkFormat ToVk(Format f) {
 static VkBlendFactor BlendSrcColor(BlendMode m) {
     if (m == BlendMode::Additive) return VK_BLEND_FACTOR_SRC_ALPHA;
     if (m == BlendMode::Multiply) return VK_BLEND_FACTOR_DST_COLOR;
+    // Screen/Subtract 消费预乘贡献（M8 光贴图 light.frag：衰减/强度已乘进 rgb）
+    if (m == BlendMode::Screen || m == BlendMode::Subtract) return VK_BLEND_FACTOR_ONE;
     return VK_BLEND_FACTOR_SRC_ALPHA;
 }
 static VkBlendFactor BlendDstColor(BlendMode m) {
     if (m == BlendMode::Additive) return VK_BLEND_FACTOR_ONE;
     if (m == BlendMode::Multiply) return VK_BLEND_FACTOR_ZERO;
+    if (m == BlendMode::Screen) return VK_BLEND_FACTOR_ONE_MINUS_SRC_COLOR;
+    if (m == BlendMode::Subtract) return VK_BLEND_FACTOR_ONE;
     return VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+}
+static VkBlendOp BlendColorOp(BlendMode m) {
+    return m == BlendMode::Subtract ? VK_BLEND_OP_REVERSE_SUBTRACT : VK_BLEND_OP_ADD;
 }
 
 // ---------------------------------------------------------- CommandList::Impl
@@ -1249,11 +1256,14 @@ Pipeline Device::CreatePipeline(const PipelineDesc& desc) {
     blend.blendEnable = desc.blend == BlendMode::Opaque ? VK_FALSE : VK_TRUE;
     blend.srcColorBlendFactor = BlendSrcColor(desc.blend);
     blend.dstColorBlendFactor = BlendDstColor(desc.blend);
-    blend.colorBlendOp = VK_BLEND_OP_ADD;
+    blend.colorBlendOp = BlendColorOp(desc.blend);
     blend.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    // Screen/Subtract（光贴图）：alpha 通道加法累积即可——composite 只消费 rgb
     blend.dstAlphaBlendFactor =
-        desc.blend == BlendMode::Opaque ? VK_BLEND_FACTOR_ZERO
-                                        : VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        (desc.blend == BlendMode::Opaque || desc.blend == BlendMode::Screen ||
+         desc.blend == BlendMode::Subtract)
+            ? VK_BLEND_FACTOR_ZERO
+            : VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
     blend.alphaBlendOp = VK_BLEND_OP_ADD;
     blend.colorWriteMask = 0xF;
     VkPipelineColorBlendStateCreateInfo cb{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};

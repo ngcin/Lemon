@@ -32,13 +32,24 @@ public:
     /// 跨段同键不合并（批数上限误差 +1，语义无损）。tailPackets = 尾段（视口专属
     /// overlay/血条等，段序 = 原"合成一个 vector"的拼接序）——大场免每帧堆分配
     /// 与全量拷贝（2026-09-26 渲染提取批）。
+    /// append（M8 批② 光贴图分段）：不清批表、实例偏移自本帧已烘数续接——开灯帧
+    /// 两段烘焙两段录制（sceneRT 段 + 合成后豁免段）。**分段帧必须先 Reserve
+    /// 两段总量**（段间扩容会重建实例环，首段已录命令引用旧 buffer = 提交期 UAF）。
     void Bake(const AtlasRegistry& atlas, std::span<const SpritePacket> packets,
               std::span<const SpritePacket> particlePackets = {},
               std::span<const SpritePacket> textPackets = {},
-              std::span<const SpritePacket> tailPackets = {});
+              std::span<const SpritePacket> tailPackets = {}, bool append = false);
 
     /// Record：按批录制命令（每批一次 push constant + 一次 draw）
     void Record(rhi::CommandList& cl, const Mat3x2& viewProj);
+
+    /// RecordRange：只录批表区间 [beginBatch, beginBatch+batchCount)（M8 批② 光贴图
+    /// 分段——豁免段在 gameRT 块内二段录制；批表按段追加序，区间 = 段边界）
+    void RecordRange(rhi::CommandList& cl, const Mat3x2& viewProj, size_t beginBatch,
+                     size_t batchCount);
+
+    /// 分段帧前置容量声明（两段总量一次 EnsureCapacity——见 Bake append 注）
+    void Reserve(uint32_t totalInstances) { EnsureCapacity(totalInstances); }
 
     /// 帧推进（EndFrameAndPresent 之后调用；下帧 Bake 写下一段）
     void AdvanceFrame();
@@ -82,6 +93,7 @@ private:
 
     rhi::Pipeline pipelines_[4] = {}; // 按 BlendKind 索引（Opaque/Alpha/Additive/Multiply）
     std::vector<Batch> batches_;
+    uint32_t appendWritten_ = 0;      // 本帧已烘实例数（append Bake 续接基；帧/非追加复位）
     uint32_t lastInstanceCount_ = 0;
     Stats stats_;
 };

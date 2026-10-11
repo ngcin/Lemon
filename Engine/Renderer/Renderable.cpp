@@ -99,6 +99,13 @@ void RenderableManager::BeginSimTick() {
             e.prevRot = e.curRot;
             e.prevScale = e.curScale;
         }
+    for (auto& e : lightEntries_) // 光通道同款双缓冲（M8 批②；脚本驱动的移动灯
+        if (e.alive) {            // 与精灵同插值语义）
+            e.prevPos = e.curPos;
+            e.prevRot = e.curRot;
+        }
+    for (auto& e : blobEntries_)
+        if (e.alive) e.prevPos = e.curPos;
     ++simVersion_;
 }
 
@@ -262,6 +269,147 @@ std::span<const SpritePacket> RenderableManager::Extract(const AtlasRegistry& at
     builtViewportVersion_ = viewportVersion_;
     builtAlpha_ = alpha;
     return packets_;
+}
+
+// ------------------------------------------------------ 光/blob 通道（M8 批②）--
+uint32_t RenderableManager::CreateLight() {
+    uint32_t id;
+    if (!lightFree_.empty()) {
+        id = lightFree_.back();
+        lightFree_.pop_back();
+    } else {
+        lightEntries_.emplace_back();
+        id = (uint32_t)lightEntries_.size();
+    }
+    LightEntry& e = lightEntries_[id - 1];
+    e = LightEntry{}; // 槽位复用回默认快照（字段由 SetLightAll 全量覆盖）
+    e.alive = 1;
+    ++lightAlive_;
+    return id;
+}
+
+void RenderableManager::DestroyLight(uint32_t id) {
+    if (id == kInvalid || id > lightEntries_.size()) return;
+    LightEntry& e = lightEntries_[id - 1];
+    LEMON_ASSERT(e.alive, "double destroy light");
+    e.alive = 0;
+    lightFree_.push_back(id);
+    --lightAlive_;
+}
+
+void RenderableManager::SetLightAll(uint32_t id, const LightItem& it) {
+    LightEntry& e = lightEntries_[id - 1];
+    LEMON_ASSERT(e.alive, "dead light");
+    e.type = it.type;
+    e.blend = it.blend;
+    e.color = it.color;
+    e.intensity = it.intensity;
+    e.range = it.range;
+    e.angle = it.angle;
+    e.innerRatio = it.innerRatio;
+    e.maskSprite = it.maskSprite;
+    e.curPos = Vec2{it.posX, it.posY};
+    e.curRot = it.rot;
+}
+
+void RenderableManager::SnapPrevLight(uint32_t id) {
+    LightEntry& e = lightEntries_[id - 1];
+    LEMON_ASSERT(e.alive, "dead light");
+    e.prevPos = e.curPos;
+    e.prevRot = e.curRot;
+}
+
+std::span<const LightItem> RenderableManager::ExtractLights(float alpha) {
+    lightItems_.clear();
+    for (const LightEntry& e : lightEntries_) {
+        if (!e.alive) continue;
+        LightItem it{};
+        it.type = e.type;
+        it.blend = e.blend;
+        it.color = e.color;
+        it.intensity = e.intensity;
+        it.range = e.range;
+        it.angle = e.angle;
+        it.innerRatio = e.innerRatio;
+        it.maskSprite = e.maskSprite;
+        it.enabled = true;
+        const Vec2 pos = math::Lerp(e.prevPos, e.curPos, alpha);
+        it.posX = pos.x;
+        it.posY = pos.y;
+        it.rot = math::Lerp(e.prevRot, e.curRot, alpha);
+        // Global = ambient 底色源，无几何无范围——恒参与（合成要它的颜色）
+        if (e.type != 0u /* Global */ && hasViewport_) {
+            if (pos.x + e.range < viewport_.min.x || pos.x - e.range > viewport_.max.x ||
+                pos.y + e.range < viewport_.min.y || pos.y - e.range > viewport_.max.y)
+                continue;
+        }
+        lightItems_.push_back(it);
+    }
+    return lightItems_;
+}
+
+uint32_t RenderableManager::CreateBlob() {
+    uint32_t id;
+    if (!blobFree_.empty()) {
+        id = blobFree_.back();
+        blobFree_.pop_back();
+    } else {
+        blobEntries_.emplace_back();
+        id = (uint32_t)blobEntries_.size();
+    }
+    BlobEntry& e = blobEntries_[id - 1];
+    e = BlobEntry{};
+    e.alive = 1;
+    ++blobAlive_;
+    return id;
+}
+
+void RenderableManager::DestroyBlob(uint32_t id) {
+    if (id == kInvalid || id > blobEntries_.size()) return;
+    BlobEntry& e = blobEntries_[id - 1];
+    LEMON_ASSERT(e.alive, "double destroy blob");
+    e.alive = 0;
+    blobFree_.push_back(id);
+    --blobAlive_;
+}
+
+void RenderableManager::SetBlobAll(uint32_t id, const BlobItem& it) {
+    BlobEntry& e = blobEntries_[id - 1];
+    LEMON_ASSERT(e.alive, "dead blob");
+    e.radius = it.radius;
+    e.aspect = it.aspect;
+    e.offsetY = it.offsetY;
+    e.opacity = it.opacity;
+    e.curPos = Vec2{it.posX, it.posY};
+}
+
+void RenderableManager::SnapPrevBlob(uint32_t id) {
+    BlobEntry& e = blobEntries_[id - 1];
+    LEMON_ASSERT(e.alive, "dead blob");
+    e.prevPos = e.curPos;
+}
+
+std::span<const BlobItem> RenderableManager::ExtractBlobs(float alpha) {
+    blobItems_.clear();
+    for (const BlobEntry& e : blobEntries_) {
+        if (!e.alive) continue;
+        BlobItem it{};
+        it.radius = e.radius;
+        it.aspect = e.aspect;
+        it.offsetY = e.offsetY;
+        it.opacity = e.opacity;
+        const Vec2 pos = math::Lerp(e.prevPos, e.curPos, alpha);
+        it.posX = pos.x;
+        it.posY = pos.y;
+        const float r = e.radius * (e.aspect >= 1.0f ? e.aspect : 1.0f);
+        if (hasViewport_) {
+            if (pos.x + r < viewport_.min.x || pos.x - r > viewport_.max.x ||
+                pos.y + r < viewport_.min.y || pos.y - r > viewport_.max.y)
+                continue;
+        }
+        blobItems_.push_back(it);
+    }
+    return blobItems_;
 }
 
 } // namespace lemon::renderer

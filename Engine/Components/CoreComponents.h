@@ -2,6 +2,8 @@
 // 全部纯数据（POD，trivially copyable——状态哈希/序列化的前提）；行为在系统。
 #pragma once
 
+#include <cstring>
+#include <string>
 #include <type_traits>
 
 #include "Core/Math.h"
@@ -37,6 +39,29 @@ struct Meta {
                              // Prefab 回链共用；0 = 运行时生成实体（脚本 Spawn 等），编辑器
                              // 创建的实体恒非 0。Core/Guid.h 生成）
 };
+
+/// tag[24] 定长拷贝（**UTF-8 边界对齐截断**，tag 写入三链路共用：SceneArchive
+/// 读档 / EditorContext 建实体 / Hierarchy 改名）。裸按字节截断会把多字节中文
+/// 切成半字符驻留内存——JSON 序列化时 nlohmann 抛 type_error.316 崩编辑器
+///（2026-10-11 light.scene 超 24B 中文 tag 实抓）。超限时回退到尾字符起始字节。
+inline void CopyTag24(char (&dst)[24], const char* src) {
+    size_t n = 0;
+    while (n < 23 && src[n] != '\0') ++n; // min(strlen, 23)——末字节保 \0
+    while (n > 0 && (unsigned char)src[n - 1] >= 0x80) {
+        size_t lead = n - 1;
+        while (lead > 0 && ((unsigned char)src[lead] & 0xC0) == 0x80) --lead; // 续字节回溯
+        const unsigned char b = (unsigned char)src[lead];
+        const size_t need = (b & 0xE0) == 0xC0   ? 2
+                            : (b & 0xF0) == 0xE0 ? 3
+                            : (b & 0xF8) == 0xF0 ? 4
+                                                 : 1;
+        if (n - lead >= need) break; // 尾字符完整（≥0x80 但成序列）
+        n = lead;                    // 半字符：截到该字符之前
+    }
+    std::memcpy(dst, src, n);
+    dst[n] = '\0';
+}
+inline void CopyTag24(char (&dst)[24], const std::string& s) { CopyTag24(dst, s.c_str()); }
 
 /// 帧末销毁标记（Destroy 入队时打标，提取/查询按需过滤）
 struct DestroyQueueTag {};

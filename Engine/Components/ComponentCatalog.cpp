@@ -154,11 +154,10 @@ constexpr FieldEditorMeta kEdAudioSource[] = {
     {FieldHint::Enum, 0, 0, kAudioGroupNames, 3, "混音组（批② 起组音量引擎侧生效）"}};
 
 // ---- M8 批①（id 32/33；表尾追加，只增不改序）----
-// Unity Light2D 同构：光贴图合成的光源数据面（ADR-019 M2；渲染消费归批②
-// LightCompositor——本批渲染零消费）。Light2D 36B / BlobShadow2D 16B 冻结
-//（LightComponents.h 布局注记）。maskSprite 本批 ED_TIP 裸值：AssetRef+UInt32
-// 分派现独占 SpriteRenderer.spriteId（InspectorPanel "ED_ASSET 全目录唯一"注记），
-// 编辑器蒙版选择器接线归批②。
+// Unity Light2D 同构：光贴图合成的光源数据面（ADR-019 M2；渲染消费 = 批②
+// LightCompositor）。Light2D 36B / BlobShadow2D 16B 冻结（LightComponents.h 布局
+// 注记）。maskSprite 批② 起 ED_ASSET（蒙版选择器已接线：Light2D 分派走纯
+// spriteId 写入，无 guid 双写面——与 SpriteRenderer.spriteId 同一 picker）
 static constexpr const char* kLightTypeNames[] = {"Global", "Point", "Spot", "SpriteMask"};
 static constexpr const char* kLightBlendNames[] = {"Additive", "Screen", "Subtract"};
 constexpr FieldMeta kLight2D[] = {
@@ -182,8 +181,8 @@ constexpr FieldEditorMeta kEdLight2D[] = {
     ED_RANGE(0.0f, 8192.0f),
     ED_DEG("锥光张角（Spot 用；弧度存储按角度编辑）"),
     ED_RANGE(0.0f, 1.0f),
-    ED_TIP("蒙版精灵槽（SpriteMask 用；编辑器选择器批② 接通）"),
-    ED_TIP("bit0 enabled（默认开；C# 整写注意镜像默认值坑）")};
+    ED_ASSET("蒙版精灵槽（SpriteMask 用；渲染消费归批③）"),
+    ED_TIP("启用此灯（禁用 = 不进光照段合成；C# 整写须显式置位 bit0——镜像默认值坑）")};
 constexpr FieldMeta kBlobShadow2D[] = {
     FIELD(BlobShadow2D, radius, Float),
     FIELD(BlobShadow2D, aspect, Float),

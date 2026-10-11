@@ -11,6 +11,7 @@
 #include "App/EditorApp.h"
 #include "App/ImGuiBackend.h"
 #include "Core/Math.h"
+#include "Components/LightComponents.h"
 #include "Components/RenderComponents.h"
 #include "ECS/Hierarchy.h"
 #include "EditorContext.h"
@@ -38,6 +39,8 @@ const uint32_t kGridColor = overlay::kGridColor;       // 网格
 const uint32_t kAxisColor = overlay::kAxisColor;       // 主轴稍亮
 const uint32_t kHandleColor = overlay::kHandleColor;   // Gizmo 手柄黄
 const uint32_t kHoverColor = math::PackRGBA(235, 235, 235, 90); // hover 轮廓（白淡）
+const uint32_t kLightGizmoColor = overlay::kLightGizmoColor; // 灯范围圈/楔形（M8 批②）
+const uint32_t kBlobGizmoColor = overlay::kBlobGizmoColor;   // blob 椭圆虚框（M8 批②）
 // Move 轴向色（Unity 语义：X 红 / Y 绿；hover 提亮）
 inline uint32_t AxisColor(bool xAxis, bool hovered) {
     return xAxis ? math::PackRGBA(235, 90, 80, hovered ? 255 : 220)
@@ -290,6 +293,7 @@ void SceneViewPanel::OnGui(EditorApp& app) {
             DrawGizmoHandles(app, vr, p, cam, c, s, rot); // Play 中也可编辑（落 Play 世界；Undo 侧已守卫）
         }
     }
+    DrawLightGizmos(app, vr, cam); // M8 批②：选中灯的范围圈/楔形/blob 虚框
     if (drag_ == DragMode::None && canInteract && !ctx.Primary().IsNull()) {
         // 手柄 hover 高亮 + 光标（Move 轴：EW/NS；Select 8 向：NS/EW/NWSE/NESW；旋转：手型）
         Vec2 c, s;
@@ -770,6 +774,62 @@ void SceneViewPanel::DrawGizmoHandles(EditorApp& app, ViewportRenderer& vr, ecs:
             vr.PushOverlayQuad(k, Vec2{hs, hs}, rot, kHandleColor, 901);
     }
     (void)e;
+}
+
+// --------------------------------------------------------- 灯 gizmo（M8 批②）--
+void SceneViewPanel::DrawLightGizmos(EditorApp& app, ViewportRenderer& vr,
+                                      const Camera2D& cam) {
+    // ADR-019 M2 + 2026-10-11 拍板：Point/Spot 画 range 折线圈（32 段，旋转圈先例
+    // 748-759）；Spot 加锥光楔形两边线（张角/朝向直观性，内角软边不画——楔形给外缘）；
+    // Global 无 range 不画；BlobShadow2D 椭圆虚框（半轴 radius×aspect / radius、
+    // offsetY 贴地偏移，隔段虚线）。SceneView 恒不渲光照（ADR-019 Non-goal——
+    // gizmo 圈代替实时预览，开灯观感看 GameView）
+    auto& ctx = app.Ctx();
+    auto& s = ctx.ActiveScene();
+    const float lineW = 1.6f / cam.zoom;
+    for (Entity e : ctx.Selection()) {
+        if (!s.Alive(e)) continue;
+        const ecs::Transform2D* t = s.TryGet<ecs::Transform2D>(e);
+        if (!t) continue;
+        ecs::WorldTransform2D wt{};
+        if (!ecs::ComputeWorldTransform(s, e, wt)) {
+            wt.pos = t->pos;
+            wt.rot = t->rot;
+            wt.scale = t->scale;
+        }
+        if (const ecs::Light2D* lt = s.TryGet<ecs::Light2D>(e);
+            lt && (lt->flags & ecs::kLightEnabled) &&
+            lt->type != ecs::kLightTypeGlobal) {
+            const float r = lt->range;
+            Vec2 prev = wt.pos + Vec2{r, 0};
+            for (int i = 1; i <= 32; ++i) {
+                const float a = (float)i / 32.0f * math::kTau;
+                const Vec2 cur = wt.pos + Vec2{std::cos(a) * r, std::sin(a) * r};
+                vr.PushOverlayLine(prev, cur, kLightGizmoColor, lineW, 905);
+                prev = cur;
+            }
+            if (lt->type == ecs::kLightTypeSpot) {
+                const float half = lt->angle * 0.5f;
+                for (int side = -1; side <= 1; side += 2) {
+                    const float a = wt.rot + (float)side * half;
+                    vr.PushOverlayLine(wt.pos,
+                                       wt.pos + Vec2{std::cos(a) * r, std::sin(a) * r},
+                                       kLightGizmoColor, lineW, 906);
+                }
+            }
+        }
+        if (const ecs::BlobShadow2D* bs = s.TryGet<ecs::BlobShadow2D>(e)) {
+            const Vec2 c{wt.pos.x, wt.pos.y + bs->offsetY};
+            const float ax = bs->radius * bs->aspect, ay = bs->radius;
+            Vec2 prev = c + Vec2{ax, 0};
+            for (int i = 1; i <= 32; ++i) {
+                const float a = (float)i / 32.0f * math::kTau;
+                const Vec2 cur = c + Vec2{std::cos(a) * ax, std::sin(a) * ay};
+                if (i % 3 != 0) vr.PushOverlayLine(prev, cur, kBlobGizmoColor, lineW, 907);
+                prev = cur;
+            }
+        }
+    }
 }
 
 // -------------------------------------------------------------- GameView --

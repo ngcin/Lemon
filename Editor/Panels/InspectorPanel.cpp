@@ -12,6 +12,7 @@
 #include "Assets/AssetDatabase.h"
 #include "Components/BehaviorComponents.h"
 #include "Components/CoreComponents.h"
+#include "Components/LightComponents.h"
 #include "Components/RenderComponents.h"
 #include "Core/Log.h"
 #include "ECS/ComponentRegistry.h"
@@ -181,9 +182,11 @@ bool DrawEnumControl(const FieldMeta& f, const FieldEditorMeta& ed, uint8_t* p) 
 /// 值 = AtlasRegistry spriteId；UI 反查资产（guid 名/缩略图）。拖 AssetBrowser
 /// sprite 进来 = 设引用；下拉全列；右键清空。最后绘制的控件是 combo →
 /// DrawComponent 的 IsItemDeactivated 属性轨照常捕获。
-/// 赋值同时置 flags.enabled——「指定了图片 = 要显示」（也救旧档 flags=0 的禁用实例；
-/// 2026-09-21：默认禁用 + 提取静默跳过曾使 Add Component 路径完全不显示）。
-bool DrawSpriteSlot(EditorApp& app, uint8_t* p, ecs::SpriteRenderer& sr) {
+/// sr 非空（SpriteRenderer.spriteId）：赋值同时双写 guid + 置 flags.enabled——
+/// 「指定了图片 = 要显示」（也救旧档 flags=0 的禁用实例；2026-09-21：默认禁用 +
+/// 提取静默跳过曾使 Add Component 路径完全不显示）。sr = null（M8 批②
+/// Light2D.maskSprite）：纯 spriteId 写入（蒙版光无 guid 面，渲染消费归批③）。
+bool DrawSpriteSlot(EditorApp& app, uint8_t* p, ecs::SpriteRenderer* sr) {
     using lemon::editor::loc::tr;
     using lemon::editor::loc::trFmt;
     EditorContext& ctx = app.Ctx();
@@ -221,8 +224,10 @@ bool DrawSpriteSlot(EditorApp& app, uint8_t* p, ecs::SpriteRenderer& sr) {
                           e.relPath.c_str());
             if (ImGui::Selectable(item, e.spriteId == id)) {
                 id = e.spriteId;
-                sr.spriteGuid = e.guid; // M6a 批⓪ T2：guid/id 双写（guid 真源）
-                sr.flags |= ecs::kSrEnabled;
+                if (sr) {
+                    sr->spriteGuid = e.guid; // M6a 批⓪ T2：guid/id 双写（guid 真源）
+                    sr->flags |= ecs::kSrEnabled;
+                }
                 ctx.dirty = true;
             }
         }
@@ -235,8 +240,10 @@ bool DrawSpriteSlot(EditorApp& app, uint8_t* p, ecs::SpriteRenderer& sr) {
             std::memcpy(&d, pay->Data, sizeof(d));
             if (d.kind == 0 && d.spriteId != 0) {
                 id = d.spriteId;
-                sr.spriteGuid = d.guid; // M6a 批⓪ T2：拖入载荷带 guid（AssetBrowser）
-                sr.flags |= ecs::kSrEnabled;
+                if (sr) {
+                    sr->spriteGuid = d.guid; // M6a 批⓪ T2：拖入载荷带 guid（AssetBrowser）
+                    sr->flags |= ecs::kSrEnabled;
+                }
                 ctx.dirty = true;
             }
         }
@@ -245,7 +252,7 @@ bool DrawSpriteSlot(EditorApp& app, uint8_t* p, ecs::SpriteRenderer& sr) {
     if (ImGui::BeginPopupContextItem("slot_ctx")) {
         if (ImGui::MenuItem(tr("insp.clear_ref"))) {
             id = 0;
-            sr.spriteGuid = 0; // M6a 批⓪ T2：双清（防残留 guid 在下轮装载复活旧引用）
+            if (sr) sr->spriteGuid = 0; // 双清（防残留 guid 在下轮装载复活旧引用）
             ctx.dirty = true;
         }
         ImGui::EndPopup();
@@ -451,7 +458,12 @@ FieldResult DrawField(EditorApp& app, const ecs::ComponentMeta& meta, ecs::Entit
     // label-scrub（M4.7d）：数值字段的名字可拖（hover 下划线 + 双向箭头光标）；
     // dx 由下方数值分支消费，Shift = 浮点 ×0.1 微调。开始/结束沿经
     // g_scrubActive/g_scrubEnded 汇入 DrawComponent 属性轨（拖拽天然合并）。
+    // M8 批② 观感支持：Light2D.flags 裸位域行升级为启用复选框（值列同判），
+    // 不可拖拽调值
+    const bool lightFlagsRow =
+        std::strcmp(compName, "Light2D") == 0 && std::strcmp(f.name, "flags") == 0;
     const bool scrubbable =
+        !lightFlagsRow &&
         !ecs::HasHint(ed.hints, FieldHint::Hide) &&
         !ecs::HasHint(ed.hints, FieldHint::AssetRef) &&
         !ecs::HasHint(ed.hints, FieldHint::ClipRef) &&
@@ -528,9 +540,13 @@ FieldResult DrawField(EditorApp& app, const ecs::ComponentMeta& meta, ecs::Entit
     if (ecs::HasHint(ed.hints, FieldHint::Hide)) {
         ImGui::TextDisabled("%s", tr("insp.internal"));
     } else if (ecs::HasHint(ed.hints, FieldHint::AssetRef) && f.type == FieldType::UInt32) {
-        // AssetRef 槽当前仅 SpriteRenderer.spriteId（ED_ASSET 全目录唯一）→ 可取整组件
-        // 写入就地完成（combo 尾置 → 属性轨由 Deactivated 捕获）
-        DrawSpriteSlot(app, p, *static_cast<ecs::SpriteRenderer*>(comp));
+        // AssetRef+UInt32 槽（M8 批② 起两类）：SpriteRenderer.spriteId = guid 双写 +
+        // 置 enabled（就地完成 → 属性轨由 Deactivated 捕获）；Light2D.maskSprite =
+        // 纯 spriteId（蒙版光无 guid 面，渲染消费归批③）
+        if (std::strcmp(meta.name, "Light2D") == 0)
+            DrawSpriteSlot(app, p, nullptr);
+        else
+            DrawSpriteSlot(app, p, static_cast<ecs::SpriteRenderer*>(comp));
     } else if (ecs::HasHint(ed.hints, FieldHint::ClipRef) && f.type == FieldType::UInt32) {
         DrawClipSlot(app, p); // M5 批③：Animator2D.clipId（写入就地完成）
     } else if (ecs::HasHint(ed.hints, FieldHint::AnimSetRef) && f.type == FieldType::UInt64) {
@@ -554,6 +570,15 @@ FieldResult DrawField(EditorApp& app, const ecs::ComponentMeta& meta, ecs::Entit
                               ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaBar)) {
             *(uint32_t*)p = (uint32_t)(col[0] * 255) | ((uint32_t)(col[1] * 255) << 8) |
                             ((uint32_t)(col[2] * 255) << 16) | ((uint32_t)(col[3] * 255) << 24);
+            changed = true;
+        }
+    } else if (lightFlagsRow) {
+        // 启用开关（bit0 = kLightEnabled）：Bool 复选框同款就地写 + Deactivated
+        // 属性轨捕获 Undo；其余位现无定义，位域直改归 C#/存档侧
+        uint16_t& fl = *(uint16_t*)p;
+        bool on = (fl & ecs::kLightEnabled) != 0;
+        if (ImGui::Checkbox("##v", &on)) {
+            fl = on ? uint16_t(fl | ecs::kLightEnabled) : uint16_t(fl & ~ecs::kLightEnabled);
             changed = true;
         }
     } else {

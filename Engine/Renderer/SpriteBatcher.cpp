@@ -85,14 +85,22 @@ void SpriteBatcher::EnsureCapacity(uint32_t neededInstances) {
 void SpriteBatcher::Bake(const AtlasRegistry& atlas, std::span<const SpritePacket> packets,
                          std::span<const SpritePacket> particlePackets,
                          std::span<const SpritePacket> textPackets,
-                         std::span<const SpritePacket> tailPackets) {
+                         std::span<const SpritePacket> tailPackets, bool append) {
     auto t0 = std::chrono::steady_clock::now();
     EnsureCapacity((uint32_t)(packets.size() + particlePackets.size() + textPackets.size() +
                               tailPackets.size()));
+    // append 容量契约（头注 Reserve）：追加段 + 已写偏移必须整体在环容量内——
+    // 违反即写越段界（ringFrame 末段 = 越整环堆）或触发段间扩容重建（提交期 UAF）
+    LEMON_ASSERT(!append || (uint64_t)appendWritten_ + packets.size() +
+                                     particlePackets.size() + textPackets.size() +
+                                     tailPackets.size() <= (uint64_t)capacity_,
+                 "append Bake exceeds ring capacity (missing/under Reserve?)");
 
     SpriteInstance* seg = ringMapped_ + (uint64_t)ringFrame_ * capacity_;
-    batches_.clear();
-    uint32_t written = 0;
+    if (!append) batches_.clear();
+    // append：自本帧已烘实例数续接（M8 批② 光贴图豁免段——首段实例已随首段
+    // Record 进命令流，段基偏移连续才能被同一 ring 段寻址）
+    uint32_t written = append ? appendWritten_ : 0;
 
     auto bakeSpan = [&](std::span<const SpritePacket> ps) {
         uint32_t i = 0;
@@ -136,6 +144,7 @@ void SpriteBatcher::Bake(const AtlasRegistry& atlas, std::span<const SpritePacke
     bakeSpan(particlePackets);
     bakeSpan(textPackets);
     bakeSpan(tailPackets);
+    appendWritten_ = written; // 分段续接基（AdvanceFrame / 非追加 Bake 复位）
     lastInstanceCount_ = written;
 
     auto t1 = std::chrono::steady_clock::now();
@@ -143,6 +152,11 @@ void SpriteBatcher::Bake(const AtlasRegistry& atlas, std::span<const SpritePacke
 }
 
 void SpriteBatcher::Record(rhi::CommandList& cl, const Mat3x2& viewProj) {
+    RecordRange(cl, viewProj, 0, batches_.size());
+}
+
+void SpriteBatcher::RecordRange(rhi::CommandList& cl, const Mat3x2& viewProj, size_t beginBatch,
+                                size_t batchCount) {
     auto t0 = std::chrono::steady_clock::now();
 
     cl.BindQuadGeometry(cornerVB_, indexIB_);
@@ -158,7 +172,12 @@ void SpriteBatcher::Record(rhi::CommandList& cl, const Mat3x2& viewProj) {
     pc.vpR1[1] = viewProj.m[5];
     // 段基 = ringFrame_ * capacity_；每批再加批内偏移
     const uint32_t segBase = ringFrame_ * capacity_;
-    for (const Batch& b : batches_) {
+    const size_t endBatch = beginBatch + batchCount;
+    // 批区间防御（M8 批② 分段录制新增）：越界读 Batch = 垃圾偏移/管线索引进 vkCmd
+    LEMON_ASSERT(beginBatch <= batches_.size() && batchCount <= batches_.size() - beginBatch,
+                 "RecordRange out of bounds");
+    for (size_t bi = beginBatch; bi < endBatch; ++bi) {
+        const Batch& b = batches_[bi];
         // 位宽防御（M5）：键里 blend/filter 位宽大于数组尺寸，入口已钳（Renderable
         // Create/粒子 Emit），此处断言兜底——越界读 pipelines_[15] 是垃圾句柄进 vkCmd
         LEMON_ASSERT(b.key.blend < 4 && b.key.filter < 2, "batch key blend/filter out of range");
@@ -177,6 +196,7 @@ void SpriteBatcher::Record(rhi::CommandList& cl, const Mat3x2& viewProj) {
 
 void SpriteBatcher::AdvanceFrame() {
     ringFrame_ = (ringFrame_ + 1) % kRingFrames;
+    appendWritten_ = 0; // 分段基随帧复位
 }
 
 } // namespace lemon::renderer

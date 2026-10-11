@@ -37,6 +37,9 @@ private:
         uint64_t lastSeen = 0;
     };
     std::vector<SlotMap> ridBySlot_;
+    // 光/blob 同款槽位映射（M8 批②：rid 复用为 lightId/blobId——各自独立号池）
+    std::vector<SlotMap> lightBySlot_;
+    std::vector<SlotMap> blobBySlot_;
     uint64_t lastSceneStamp_ = 0;
     uint64_t extractEpoch_ = 0; // 提取调用计数（差集判定：lastSeen != 当前纪元 → 释放）
 };

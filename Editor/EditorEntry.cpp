@@ -28,7 +28,7 @@ int usageExit(const char* why) {
                 "[--no-reopen] [--smoke-close clean|dirty] [--smoke-drag] "
                 "[--smoke-ui] [--smoke-anim] [--bench-survivor] [--gen-vs-template dir] "
                 "[--smoke-template] [--smoke-guid] [--smoke-uirml] [--smoke-audio] "
-                "[--smoke-lang zh-CN|en]\n");
+                "[--smoke-light] [--bench-lights] [--smoke-lang zh-CN|en]\n");
     return 2;
 }
 
@@ -94,6 +94,11 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--smoke-uirml"))
             launch.smokeUirml = launch.playTest = true; // RmlUi 呈现地基冒烟（M6b 批③a：
                                                          // gameRT 像素断言 + 独立裁决链）
+        else if (!std::strcmp(argv[i], "--smoke-light"))
+            launch.smokeLight = launch.smoke = true; // M8 批② 光贴图冒烟：三段式开灯帧
+                                                     // + 关灯帧逐位同 + gizmo + 三档 lightRT
+        else if (!std::strcmp(argv[i], "--bench-lights"))
+            launch.benchLights = true; // M8 批②：64 灯场 fps 压测（BenchVerdict 聚合）
         else
             return usageExit((std::string("unknown arg: ") + argv[i]).c_str());
     }

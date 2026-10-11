@@ -62,9 +62,8 @@ bool ReadField(const Json& src, const FieldMeta& f, char* comp, const Entity* re
     case FieldType::Blob24: {
         char* dst = comp + f.offset;
         std::string s = src.get<std::string>();
-        size_t n = s.size() < 23 ? s.size() : 23; // 末字节保 \0
-        std::memcpy(dst, s.data(), n);
-        dst[n] = '\0';
+        // UTF-8 边界对齐截断（裸字节截断的半字符会让存档期 nlohmann 316 崩）
+        ecs::CopyTag24(reinterpret_cast<char(&)[24]>(*dst), s);
         return true;
     }
     }

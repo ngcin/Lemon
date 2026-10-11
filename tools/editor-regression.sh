@@ -228,6 +228,12 @@ if [ "${MODE}" = "full" ]; then
         "${EDITOR}" --smoke --frames 60 --save-scene "${TMP}/rt.scene"
     grep_step "scene CLI roundtrip: --scene reopen" "editor-smoke PASS" \
         "${EDITOR}" --smoke --frames 60 --scene "${TMP}/rt.scene"
+    # M8 批②：光贴图冒烟（三段式开灯帧 + 关灯帧逐位同 + SceneView gizmo + 三档
+    # lightRT 尺寸；--validate = Vulkan 改动纪律）。选择注入为程序化（非事件注入
+    # 抖动族），grep_step 单跑双判。
+    grep_step "smoke-light (lightmap 3-stage + lights-off bit-identical + gizmo + tier sizes; M8-b2)" \
+        "smoke-light.* => PASS" \
+        "${EDITOR}" --smoke-light --frames 240 --validate --no-reopen
     # M7a 批⑧：性能基线门禁（回归第 20 步；09 §9/§10"对基线回退 >10% 标红"口径）。
     # bench-survivor 退出码自带 45fps 硬判据（BenchVerdict 聚合，08 §3），本步附加
     # 软门禁 fps >= 76.5 = 基线 85（批⑥ 2026-10-04 实测 85/87）× 0.9；基线刷新随批

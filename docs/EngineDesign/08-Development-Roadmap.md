@@ -184,7 +184,7 @@ Tilemap 数据 + chunk 烘焙渲染 → 碰撞层 → 自动瓦片 + TilePalette
 > - **#L8 DDOL 幸存判定逐实体上行祖先链**：DDOL 根 DFS 标记幸存集合替代上行链（CollectTree 原语已有）。**触发 = 换场尖峰压测显示清场段占比可测**。
 > - **#L10 场景档案只增不减**：sceneRecords_ 句柄→下标哈希索引（复用句柄方案触碰回放发号语义，先只做索引）。**触发 = soak 2h 换场千次级场景的 FindSceneRecord 线性扫成点**。
 > - **#L16 飘字数字格式化分配**：真零分配需 native 表加 char*/float 直写变体（SDK string marshal 链改造）。**触发 = M8 GC 压测显示战斗飘字 Gen0 分配占比**。
-> - **#L20 PackAtlasPages 未关页弃用**：维护未关页列表重试装箱（现有 3 页断言需同步改）。**触发 = bindless 槽位（256）逼近实测占用 2/3**。
+> - **#L20 PackAtlasPages 未关页弃用**：维护未关页列表重试装箱（现有 3 页断言需同步改）。**触发 = bindless 槽位（256）逼近实测占用 2/3**。**（2026-10-11 M8 批② 记账：光贴图 sceneRT/lightRT 占高位槽 250/251（+2，建 RT 时绑一次）——编辑器壳实测占用仍远低于 2/3 线，未近界继续记账。）**
 > - **#L26 UI ops 逐参数物化 string**：arena 层 string_view 直读（与 Clone() 大头差 1–2 个数量级）。**触发 = UI 压测 op 段显式计时热点**。
 > - **#L32 ParallelFor packaged_task 开销**：现网块粒度（256–2048）下派发开销远小于块工作量。**触发 = M8 细粒度并行（<128 grain）实验**。
 > - **#L33 LogMsg 无级别门控**：LEMON_LOG_LEVEL 环境变量（LEMON_AUDIO 同款先例）。**触发 = soak/压测日志量影响观测或性能**。

@@ -85,13 +85,16 @@ struct EditorLaunch {
                                 // ExitPlay 兜底回写 .lemon/saves/ 三档）
     bool smokeUirml = false;    // --smoke-uirml：M6b 批③a RmlUi 呈现地基冒烟（隐含
                                 // --play；gameRT 像素断言 + 独立裁决链，不并 editor-smoke 门）
+    bool smokeLight = false;    // --smoke-light：M8 批② 光贴图冒烟（隐含 --smoke：
+                                // 三段式开灯帧 + 关灯帧逐位同 + SceneView gizmo + 三档 lightRT）
+    bool benchLights = false;   // --bench-lights：M8 批② 64 灯场 fps 压测（BenchVerdict 聚合）
 
     /// 任一注入/冒烟族模式（语言钉定等「回归可复现」口径；不含 bench——纯性能
     /// 测量无 UI 文案断言，M7c 批④ §4 登记项随收官批收口）
     bool AnySmokeMode() const {
         return smoke || smokeUi || smokeDrag || smokeAnim || smokeTemplate ||
-               smokeGuid || smokeAudio || smokeUirml || playTest || finalTest ||
-               !smokeClose.empty();
+               smokeGuid || smokeAudio || smokeUirml || smokeLight || playTest ||
+               finalTest || !smokeClose.empty();
     }
 };
 
@@ -328,6 +331,14 @@ private:
     bool SmokeUirmlEnterPlay();
     void SmokeUirmlFrame(uint64_t frame);
     bool SmokeUirmlVerdict();
+    /// --smoke-light 族五挂点（M8 批② 自 Run 外迁 EditorAppSmokeLight.cpp；挂点
+    /// 原位）：预循环播种（灯实体 flags=0 基线态）/ 帧链状态机 / 渲染段捕获请求
+    /// / present 后采样断言 / 末帧裁决
+    void SmokeLightSeed();
+    void SmokeLightFrame(uint64_t frame);
+    void SmokeLightCapture(rhi::CommandList& cl, uint64_t frame);
+    void SmokeLightSample(uint64_t frame);
+    bool SmokeLightVerdict();
     /// --bench-survivor/--bench-scene 族三挂点（批③c-6 自 Run 外迁 EditorAppBench.cpp；
     /// 挂点原位逐位不变）：帧段累计（段界戳 Run 帧局部、十参数直传——结构体化
     /// 会跨帧残留）/ 停跑证据采集（返回 playAliveAtStop 等价增量）/ 末帧裁决
@@ -342,6 +353,8 @@ private:
                      std::chrono::steady_clock::time_point bPresent);
     uint32_t BenchCaptureStop();
     bool BenchVerdict(uint64_t frame, uint32_t playAliveAtStop);
+    /// --bench-lights 场景播种（M8 批②；EditorAppBench.cpp：64 灯 + 精灵底）
+    void SeedBenchLightsScene();
     /// --final 终验族五挂点（批③c-6 自 Run 外迁 EditorAppFinal.cpp；挂点原位
     /// 逐位不变）：向导播种 / 场景开+判据播种（守卫留原位）/ Play 中热重载播种 /
     /// fps 采样 / 末帧验收（play 往返四量以参数过桥——Run 跨族共享态）
@@ -518,6 +531,22 @@ private:
     bool noProjectCardDismissed_ = false;  // 无项目中央卡已关（会话内；卡会截走视口点击）
     bool forceDefaultLayout_ = false;      // smoke-drag：下帧 BuildUI 强制默认布局
     bool playBlockedOpen_ = false;         // Play 阻断模态已请求开（脚本未装配）
+
+    // --smoke-light 状态（M8 批②；EditorAppSmokeLight.cpp 单 TU 消费）
+    struct SmokeLightState {
+        ecs::Entity global{}, pointAdd{}, pointScr{}, spotSub{}, blob{}; // 灯实体句柄
+        std::vector<uint8_t> baseline;   // 关灯基线帧（gameRT 逐位对照源）
+        uint32_t baseW = 0, baseH = 0;
+        int capReq = 0;                  // 0 无；1 gameRT；2 sceneRT（帧链置位）
+        bool baseOk = false;             // 基线捕获已取回
+        bool onDiffOk = false;           // 开灯帧：灯下 vs 灯外像素差
+        bool onVsBaseOk = false;         // 开灯帧 vs 基线帧有差（三段式在跑）
+        bool planOk = false;             // drawLights==3 + ambient≠白（Global 生效）
+        bool tierOk = false;             // 三档 lightRT 尺寸实测（1/4·1/2·全）
+        int gizmoN = 0;                  // gizmo 圈/楔形像素计数（sceneRT）
+        bool offIdenticalOk = false;     // 关灯帧与基线逐位同（关灯零成本机器证）
+        uint64_t capFrame = 0;           // 捕获请求所属帧（仅该帧录制——fetch 帧重录 = 取回像素晚一帧）
+    } light_;
 };
 
 } // namespace lemon::editor

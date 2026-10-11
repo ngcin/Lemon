@@ -13,8 +13,10 @@
 #include "Components/BehaviorComponents.h"
 #include "Components/CoreComponents.h"
 #include "Components/GameplayComponents.h"
+#include "Components/LightComponents.h"
 #include "Components/RenderComponents.h"
 #include "EditorContext.h"
+#include "Interaction/ViewportRenderer.h"
 #include "Panels/BuiltInPanels.h" // UiPanelProbe/HierarchyPanelProbe（ui 段归因探针；标记表漏 PanelProbe 族故删后编译器抓住）
 
 namespace lemon::editor {
@@ -23,6 +25,8 @@ namespace {
 
 using BenchClock = std::chrono::steady_clock; // 段界戳类型（Run 帧局部同型）
 constexpr uint64_t kBenchWarmup = 240; // 预热帧剔除（Spawner ~156 帧涨满 1 万 + 稳态余量）
+constexpr uint64_t kBenchLightsWarmup = 120; // --bench-lights 预热（RT/管线就绪 + 稳态）
+constexpr uint32_t kBenchLightsCount = 64;   // 灯数 = 压测 A 含光照场口径（ADR-019 M5）
 constexpr int kSegN = 8;
 // --bench-survivor 帧时统计（M5 清障③）：全帧耗时含渲染提交与 present 等待——
 // Immediate 呈现下 = 真实负载；Play Step 分段计时同步累计（诊断细分）。
@@ -110,6 +114,47 @@ void BenchPrintSpikeAttribution(const char* tag) {
 
 // ---- --bench 帧段累计（M5 清障③/M6a 批①：fx 饱和灌入 + 八段累计 + 尖刺归因；
 // 批③c-6 自 Run 外迁，挂点原位（firstFrameMs 块后））----
+// ---- --bench-lights 场景播种（M8 批②）：200 精灵底 + 64 灯（Global 1 + Point 63
+// 混合轮转）+ 8 blob 提取在场（blob 几何归批③）。编辑态三段式全开 = 压测 A
+// 含光照场的编辑器侧单因子基准。----
+void EditorApp::SeedBenchLightsScene() {
+    auto& s = ctx_.ActiveScene();
+    for (uint32_t gy = 0; gy < 10; ++gy)
+        for (uint32_t gx = 0; gx < 20; ++gx) {
+            ecs::Entity e = ctx_.CreateSpriteEntity("B", (uint32_t)(5 + ((gx + gy) % 3)));
+            s.Get<ecs::Transform2D>(e).pos = Vec2{64.0f + gx * 64.0f, 36.0f + gy * 64.0f};
+        }
+    {
+        ecs::Entity g = ctx_.CreateEntity("BGlobal");
+        s.Get<ecs::Transform2D>(g).pos = Vec2{640, 360};
+        ecs::Light2D& lt = s.Emplace<ecs::Light2D>(g);
+        lt.type = ecs::kLightTypeGlobal;
+        lt.color = 0xFFD6F4FFu; // 暖白（r|g<<8|b<<16|a<<24）
+    }
+    static constexpr uint32_t kBlendColors[3] = {0xFF0000FFu, 0xFFFFFF00u, 0xFF80A0FFu};
+    for (uint32_t i = 0; i < kBenchLightsCount - 1; ++i) {
+        ecs::Entity e = ctx_.CreateEntity("BLight");
+        s.Get<ecs::Transform2D>(e).pos =
+            Vec2{40.0f + (float)(i % 12) * 110.0f, 40.0f + (float)(i / 12) * 160.0f};
+        ecs::Light2D& lt = s.Emplace<ecs::Light2D>(e);
+        lt.type = ecs::kLightTypePoint;
+        lt.blend = i % 3; // Additive/Screen/Subtract 轮转（三管线全在场）
+        lt.color = kBlendColors[i % 3];
+        lt.intensity = 1.5f;
+        lt.range = 220.0f;
+    }
+    for (uint32_t i = 0; i < 8; ++i) {
+        ecs::Entity e = ctx_.CreateEntity("BBlob");
+        s.Get<ecs::Transform2D>(e).pos = Vec2{120.0f + (float)i * 150.0f, 600.0f};
+        ecs::BlobShadow2D& bs = s.Emplace<ecs::BlobShadow2D>(e);
+        bs.radius = 42.0f;
+        bs.aspect = 1.3f;
+        bs.opacity = 0.5f;
+    }
+    forceDefaultLayout_ = true; // 双视口可见（GameView 三段式在场 = 测量口径前提）
+    LEMON_LOG("bench-lights: 播种 %u 灯 + 200 精灵 + 8 blob", (unsigned)kBenchLightsCount);
+}
+
 void EditorApp::BenchSample(uint64_t frame,
                             std::chrono::steady_clock::time_point benchT0,
                             std::chrono::steady_clock::time_point bPump,
@@ -120,8 +165,12 @@ void EditorApp::BenchSample(uint64_t frame,
                             std::chrono::steady_clock::time_point bScene,
                             std::chrono::steady_clock::time_point bUiDraw,
                             std::chrono::steady_clock::time_point bPresent) {
-    if ((Launch().benchSurvivor || Launch().benchScene) && ctx_.Playing() &&
-        frame >= kBenchWarmup) {
+    // --bench-lights（M8 批②）：编辑态三段式灯场单因子基准（无 Play 无 fx 灌入，
+    // 只吃帧时八段——与 survivor/scene 共用累计器，裁决分支独立）
+    const bool lightsBench = Launch().benchLights && frame >= kBenchLightsWarmup;
+    if (lightsBench ||
+        ((Launch().benchSurvivor || Launch().benchScene) && ctx_.Playing() &&
+         frame >= kBenchWarmup)) {
         // M6a 批①：fx 饱和灌入（survivor 专属口径：验收④ = 池满最坏情形，
         // 256 飘字 + 128 血条每帧全量在场）。飘字确定性网格撒玩家周边（渲染
         // 视口内）；血条挂前 128 只动画怪（each 早退收集；怪被击杀 = 渲染侧
@@ -267,6 +316,27 @@ bool EditorApp::BenchVerdict(uint64_t frame, uint32_t playAliveAtStop) {
                     g_bench.benchUiSum > 0.0 ? 100.0 * (hp.totalMs / (double)hp.frames) /
                                            (g_bench.benchUiSum / segN)
                                      : 0.0);
+        ok = pass;
+    }
+    // --bench-lights 裁决（M8 批②）：64 灯编辑态帧率单因子基准——压测 A 含光照场
+    // 的先行哨（终验归批⑥）；门禁 55fps = 新基准初始口径（基线随批 DevLog 刷新）
+    if (Launch().benchLights) {
+        const double lAvg =
+            g_bench.benchFrameN ? g_bench.benchFrameSum / (double)g_bench.benchFrameN : 0.0;
+        const double lFps = lAvg > 0.0 ? 1000.0 / lAvg : 0.0;
+        const uint32_t lights = Viewport().Renderables().AliveLightCount();
+        const bool pass = lights >= kBenchLightsCount && lFps >= 55.0;
+        // 档位/lightRT 回显（评审轮：EMA 自动降档会让基准测到 ¼ 档 + 32 灯截断的
+        // 缩水负载而不自觉——数字读法先看这两字段）
+        const char* qTier = renderer::TierName(Viewport().Quality().Current());
+        const uint32_t lrw = Viewport().LightRenderTargetWidth();
+        const uint32_t lrh = Viewport().LightRenderTargetHeight();
+        // 编辑态八段戳不全（非 Play 帧的段界不打——pump/glue 出天文数字），只报
+        // 全帧口径；GPU 分解归批⑥ 压测 A 终测
+        std::printf("[bench-lights] frames=%u warmup=%u lights=%u tier=%s lightRT=%ux%u "
+                    "frameAvg=%.2fms frameMax=%.2fms fps=%.0f present=IMMEDIATE(请求) => %s\n",
+                    (unsigned)frame, (unsigned)kBenchLightsWarmup, lights, qTier, lrw, lrh,
+                    lAvg, g_bench.benchFrameMax, lFps, pass ? "PASS" : "FAIL");
         ok = pass;
     }
     // --bench-scene 裁决（2026-09-25）：无场景特定判据——只报数，退出码恒 0

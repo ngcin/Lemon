@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "Core/Math.h"
+#include "Renderer/LightTypes.h"
 
 namespace lemon::renderer {
 
@@ -112,6 +113,26 @@ public:
     /// 渲染提取批；搬运序与字段值逐位不变，绘制输出同构）。
     std::span<const SpritePacket> Extract(const AtlasRegistry& atlas, float alpha);
 
+    // ---- 光贴图通道（M8 批②，ADR-019 M1：镜像 sprite 双缓冲，光/blob 不入批键
+    //      体系——LightCompositor 按 blend 分组、无排序契约；消费方仅 GameView）----
+    /// 建光槽（字段由 SetLightAll 整包推送；禁用灯由提取侧滤除不建槽）
+    uint32_t CreateLight();
+    void DestroyLight(uint32_t id);
+    /// 整包推送：组件快照 + cur 变换一次寻址写全（SetAll 同款语义）
+    void SetLightAll(uint32_t id, const LightItem& snapshot);
+    void SnapPrevLight(uint32_t id); // 新建/换代槽首帧基线对齐（防原点拉丝）
+    /// 插值 + 视口剔除（Global 恒可见——ambient 计算需要）；返回项在下次提取前有效
+    std::span<const LightItem> ExtractLights(float alpha);
+    uint32_t AliveLightCount() const { return lightAlive_; }
+
+    // ---- blob 阴影通道（数据面批② 先行；渲染消费归批③）----
+    uint32_t CreateBlob();
+    void DestroyBlob(uint32_t id);
+    void SetBlobAll(uint32_t id, const BlobItem& snapshot);
+    void SnapPrevBlob(uint32_t id);
+    std::span<const BlobItem> ExtractBlobs(float alpha);
+    uint32_t AliveBlobCount() const { return blobAlive_; }
+
     // 帧版本：sim 版本变化或视口变化时才可能复用缓存（Luma frameVersion/lastBuiltAlpha 思想）
     uint64_t SimFrameVersion() const { return simVersion_; }
     size_t AliveCount() const { return alive_; }
@@ -137,6 +158,31 @@ private:
     uint32_t alive_ = 0;
     uint32_t nextSeq_ = 0;
     uint64_t simVersion_ = 0;
+
+    // 光/blob 通道（M8 批②）：组件快照 + 双缓冲平移/旋转（无 scale——四边形尺寸
+    // 由 range 承担；blob 椭圆由 aspect 承担）
+    struct LightEntry {
+        uint32_t type = 1, blend = 0, color = 0xFFFFFFFFu;
+        float intensity = 1.0f, range = 256.0f, angle = 1.57079632f, innerRatio = 0.5f;
+        uint32_t maskSprite = 0;
+        uint32_t alive = 0;
+        Vec2 prevPos, curPos;
+        float prevRot = 0, curRot = 0;
+    };
+    std::vector<LightEntry> lightEntries_;
+    std::vector<uint32_t> lightFree_;
+    uint32_t lightAlive_ = 0;
+    std::vector<LightItem> lightItems_; // 提取复用（零分配）
+
+    struct BlobEntry {
+        float radius = 32.0f, aspect = 1.0f, offsetY = 0.0f, opacity = 0.5f;
+        uint32_t alive = 0;
+        Vec2 prevPos, curPos;
+    };
+    std::vector<BlobEntry> blobEntries_;
+    std::vector<uint32_t> blobFree_;
+    uint32_t blobAlive_ = 0;
+    std::vector<BlobItem> blobItems_;
 
     Rect viewport_{Vec2{0, 0}, Vec2{0, 0}};
     bool hasViewport_ = false;

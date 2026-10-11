@@ -186,8 +186,10 @@ struct ParticleGPUData {                   // GPU 平行数组 = 4×vec4，上�
 
 - **三段式合成**：场景段渲 `sceneRT` → 光照段渲 `lightRT`（CLEAR 为 ambient 底色，光源四边形按混合模式叠加）→ 合成段全屏四边形 `sceneRT × lightRT` → UI 段其后同块内画（不受光）。血条（层 251）/飘字（252）/位图文本（254）与 RmlUi 划入合成后段豁免。
 - **组件模型**：`Light2D`（type = Global/Point/Spot/SpriteMask；blend = Additive/Screen/Subtract；color/intensity/range/angle/innerRatio/maskSprite，POD ≤40B 冻结）+ `BlobShadow2D`（radius/aspect/offsetY/opacity → lightRT 上 Subtract 椭圆暗斑，无光源时白底仅暗斑仍生效）。SceneExtractor 加 `View<Transform2D, Light2D|BlobShadow2D>` 双缓冲提取通道，两壳共用 `LightCompositor` 装配（防第三套实现）。
+- **衰减定形（2026-10-11 批② 拍板，ADR-019 M2 遗留收口）**：径向 `t = clamp(1 − d/range)`，`att = t²(3−2t)`（smoothstep 端点零导数——range 边界无亮环/硬切）；Spot 角向 = `cos(外半角) → cos(外半角×innerRatio)` 的 smoothstep 软边（方向 = Transform 旋转、local +X）；blob 暗斑复用同径向公式（椭圆半轴 = radius×aspect / radius，Subtract 白贡献 ×opacity）。CPU 纯函数（LightTypes.h，单测锚）与 light.frag 两处同式，改动须同步。
+- **SceneView gizmo 形态（批② 落地）**：选中含 Light2D 的实体画 range 折线圈（32 段，Point/Spot）；Spot 额外画锥光楔形两边线（张角/朝向直观性）；Global 不画（range 无意义）；BlobShadow2D 椭圆虚框（隔段虚线、offsetY 贴地偏移）。SceneView 恒不渲光照（gizmo 圈代替实时预览——ADR-019 Non-goal）。
 - **光源批量**：`LightBatcher`（实例环 SSBO + 按混合分 3 管线 + `light.frag`：点光 smoothstep 径向衰减 / 锥光（方向 = Transform 旋转）/ 蒙版光采样图集页 UV）；蒙版走现有图集绑定零新 bindless 类别；sceneRT/lightRT 各占 1 槽（+2，#L20 记账）。
-- **ambient/昼夜**：Global 灯（至多一个生效）颜色×强度 = lightRT 底色；昼夜循环 = 脚本补间该组件字段（可入回放）。
+- **ambient/昼夜**：Global 灯（至多一个生效）颜色×强度 = lightRT 底色；昼夜循环 = 脚本补间该组件字段（可入回放）。**使用注意（批② 真人观感期实证）**：无 Global 灯 = ambient 白，LDR 光贴图钳 1.0 下 Additive/Screen 对满值只加不亮（数学空操作）、唯 Subtract 显形——摆加亮类灯的场景 ambient 须留暗（<1）；ambient=白是「全亮无影」语义而非中性底。
 - **质量分级**：lightRT 分辨率 Low=1/4 / Med=1/2 / High=全分辨率；光源数上限 64/帧（Low 32，超出截断 + 一次性 WARN）——QualityManager 首次接入编辑器/lemon-game 两壳。
 - **RT 格式与色彩空间（2026-10-11 评审拍板，批② 开工核证项）**：v1 = LDR（sceneRT/lightRT 均 RGBA8Unorm）+ **gamma 空间乘法合成**——像素风惯例（yami 同款），有意决策防后人当 bug 修；代价 = lightRT 叠加在 1.0 截断、bloom 只能做 LDR 阈值（近白像素）。**HDR bloom（16F RT）列 v1.1 触发项**——若翻案将牵动 lemon-game 双格式管线与批② 开灯帧断言基线，故格式批② 定死、批④ bloom 按本口径实现。
 - **关灯零成本**：场景零 Light2D 且零 BlobShadow2D ⇒ 三段链整体跳过，两壳路径与无光照版逐字节相同（默认管线 = 无光照直出，符合像素风默认审美；smoke-light 像素断言机器证）。

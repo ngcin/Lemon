@@ -5,6 +5,7 @@
 #include <algorithm>
 
 #include "Components/CoreComponents.h"
+#include "Components/LightComponents.h"
 #include "Components/RenderComponents.h"
 #include "Core/Log.h"
 #include "ECS/Hierarchy.h"
@@ -20,6 +21,12 @@ void SceneExtractor::Extract(ecs::Scene& s, const AtlasRegistry& atlas,
         for (SlotMap& sl : ridBySlot_)
             if (sl.rid) rm.Destroy(sl.rid);
         std::fill(ridBySlot_.begin(), ridBySlot_.end(), SlotMap{});
+        for (SlotMap& sl : lightBySlot_) // 光/blob 通道同款失效（M8 批②）
+            if (sl.rid) rm.DestroyLight(sl.rid);
+        std::fill(lightBySlot_.begin(), lightBySlot_.end(), SlotMap{});
+        for (SlotMap& sl : blobBySlot_)
+            if (sl.rid) rm.DestroyBlob(sl.rid);
+        std::fill(blobBySlot_.begin(), blobBySlot_.end(), SlotMap{});
         lastSceneStamp_ = stamp;
     }
 
@@ -28,6 +35,8 @@ void SceneExtractor::Extract(ecs::Scene& s, const AtlasRegistry& atlas,
     // 容量随实体池只增（entt index < 池 capacity；回收槽 tombstone 留池内）
     const size_t wantSlots = s.Pool<entt::entity>().capacity() + 1;
     if (ridBySlot_.size() < wantSlots) ridBySlot_.resize(wantSlots);
+    if (lightBySlot_.size() < wantSlots) lightBySlot_.resize(wantSlots);
+    if (blobBySlot_.size() < wantSlots) blobBySlot_.resize(wantSlots);
     for (auto [ent, tf, sr] : s.View<ecs::Transform2D, ecs::SpriteRenderer>().each()) {
         (void)tf;
         ecs::Entity e = ecs::Scene::FromEntt(ent);
@@ -74,6 +83,88 @@ void SceneExtractor::Extract(ecs::Scene& s, const AtlasRegistry& atlas,
     for (SlotMap& slot : ridBySlot_) {
         if (slot.rid && slot.lastSeen != epoch) {
             rm.Destroy(slot.rid);
+            slot = SlotMap{};
+        }
+    }
+
+    // ---- 光/blob 通道（M8 批②，ADR-019 M1：镜像 sprite 槽位语义——位索引 +
+    //      version 防回收串槽 + 纪元差集释放；悬空 maskSprite 不阻断提取——
+    //      蒙版渲染归批③，届时再走红显/回退）----
+    for (auto [ent, tf, lt] : s.View<ecs::Transform2D, ecs::Light2D>().each()) {
+        if (!(lt.flags & ecs::kLightEnabled)) continue;
+        ecs::Entity e = ecs::Scene::FromEntt(ent);
+        ecs::WorldTransform2D wt{};
+        if (!ecs::ComputeWorldTransform(s, e, wt)) {
+            wt.pos = tf.pos;
+            wt.rot = tf.rot;
+            wt.scale = tf.scale;
+        }
+        const uint32_t idx = ecs::Scene::EnttIndex(e);
+        LEMON_ASSERT(idx < lightBySlot_.size(), "slot array must cover entity pool");
+        const uint32_t ver = ecs::Scene::EnttVersion(e);
+        SlotMap& slot = lightBySlot_[idx];
+        const bool freshSlot = slot.rid == 0 || slot.version != ver;
+        if (freshSlot) {
+            if (slot.rid) rm.DestroyLight(slot.rid);
+            slot.rid = rm.CreateLight();
+            slot.version = ver;
+        }
+        slot.lastSeen = epoch;
+        LightItem it{};
+        it.posX = wt.pos.x;
+        it.posY = wt.pos.y;
+        it.rot = wt.rot;
+        it.type = lt.type;
+        it.blend = lt.blend;
+        it.color = lt.color;
+        it.intensity = lt.intensity;
+        it.range = lt.range;
+        it.angle = lt.angle;
+        it.innerRatio = lt.innerRatio;
+        it.maskSprite = lt.maskSprite;
+        rm.SetLightAll(slot.rid, it);
+        if (freshSlot) rm.SnapPrevLight(slot.rid);
+    }
+    for (SlotMap& slot : lightBySlot_) {
+        if (slot.rid && slot.lastSeen != epoch) {
+            rm.DestroyLight(slot.rid);
+            slot = SlotMap{};
+        }
+    }
+
+    for (auto [ent, tf, bs] : s.View<ecs::Transform2D, ecs::BlobShadow2D>().each()) {
+        (void)tf;
+        ecs::Entity e = ecs::Scene::FromEntt(ent);
+        ecs::WorldTransform2D wt{};
+        if (!ecs::ComputeWorldTransform(s, e, wt)) {
+            wt.pos = tf.pos;
+            wt.rot = tf.rot;
+            wt.scale = tf.scale;
+        }
+        const uint32_t idx = ecs::Scene::EnttIndex(e);
+        LEMON_ASSERT(idx < blobBySlot_.size(), "slot array must cover entity pool");
+        const uint32_t ver = ecs::Scene::EnttVersion(e);
+        SlotMap& slot = blobBySlot_[idx];
+        const bool freshSlot = slot.rid == 0 || slot.version != ver;
+        if (freshSlot) {
+            if (slot.rid) rm.DestroyBlob(slot.rid);
+            slot.rid = rm.CreateBlob();
+            slot.version = ver;
+        }
+        slot.lastSeen = epoch;
+        BlobItem it{};
+        it.posX = wt.pos.x;
+        it.posY = wt.pos.y;
+        it.radius = bs.radius;
+        it.aspect = bs.aspect;
+        it.offsetY = bs.offsetY;
+        it.opacity = bs.opacity;
+        rm.SetBlobAll(slot.rid, it);
+        if (freshSlot) rm.SnapPrevBlob(slot.rid);
+    }
+    for (SlotMap& slot : blobBySlot_) {
+        if (slot.rid && slot.lastSeen != epoch) {
+            rm.DestroyBlob(slot.rid);
             slot = SlotMap{};
         }
     }

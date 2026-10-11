@@ -18,6 +18,8 @@
 #include "Renderer/Atlas.h"
 #include "Renderer/BitmapFont.h"
 #include "Renderer/Camera2D.h"
+#include "Renderer/LightCompositor.h"
+#include "Renderer/Quality.h"
 #include "Renderer/Renderable.h"
 #include "Renderer/RHI.h"
 #include "Renderer/SceneExtractor.h" // extractor_（M7a 批③ 下沉引擎件）
@@ -57,7 +59,17 @@ inline constexpr uint32_t kGridColor = Pack(120, 140, 150, 110);
 inline constexpr uint32_t kAxisColor = Pack(150, 175, 185, 150);
 inline constexpr uint32_t kHandleColor = Pack(250, 220, 90, 255);
 inline constexpr uint32_t kLabelInk = Pack(240, 255, 200, 230);
+// 灯 gizmo 特征色（M8 批②）：范围圈/楔形用暖黄（与手柄黄区分——灯圈是
+// "灯的语义"不是"可拖手柄"；b 通道距手柄黄 40 = 冒烟 tol 20 可分离）。全不透明
+// ——Alpha 混合会向背景拉暗致 CountPixelsNear 按原色匹配不上（手柄黄同款全 opaque）
+inline constexpr uint32_t kLightGizmoColor = Pack(255, 235, 130, 255);
+inline constexpr uint32_t kBlobGizmoColor = Pack(200, 200, 210, 255);
 } // namespace overlay
+
+// 光贴图 RT 的 bindless 槽（M8 批②，ADR-019 M1：建 RT 时绑一次、帧内不改写
+// ——M4.7-P0 语义；取高位段避让导入图集页。#L20 记账 +2）
+inline constexpr uint32_t kSceneRtTexSlot = 250;
+inline constexpr uint32_t kLightRtTexSlot = 251;
 
 using renderer::AtlasRegistry;
 using renderer::BitmapFont;
@@ -144,6 +156,7 @@ public:
     void AdvanceFrame() {
         sceneBatcher_.AdvanceFrame();
         gameBatcher_.AdvanceFrame();
+        lightCompositor_.AdvanceFrame(); // M8 批②：光实例环同帧推进
     }
 
     uint32_t LastSceneVisible() const { return lastSceneVisible_; }
@@ -152,6 +165,14 @@ public:
     rhi::Texture SceneRenderTarget() const { return rts_[0].tex; }
     /// 游戏视口 RT（批③a smoke-uirml 像素断言回读用；对照 SceneRenderTarget）
     rhi::Texture GameRenderTarget() const { return rts_[1].tex; }
+    /// 光照段 RT 与尺寸（M8 批②：smoke-light 三档尺寸断言；无效 = 未建/关灯帧）
+    rhi::Texture LightRenderTarget() const { return lightRt_.tex; }
+    uint32_t LightRenderTargetWidth() const { return lightRt_.w; }
+    uint32_t LightRenderTargetHeight() const { return lightRt_.h; }
+    /// 质量管理器（M8 批②：编辑器壳接入；smoke-light SetTier 实测用）
+    renderer::QualityManager& Quality() { return quality_; }
+    /// 光贴图编排器（M8 批②：smoke-light 断言 drawLights/ambient 用）
+    renderer::LightCompositor& Light() { return lightCompositor_; }
     /// 游戏 UI 层挂接（批③a：null = 无 UI；EditorApp 在 UiSubsystem Init 成功后挂入）
     void SetGameUiLayer(GameUiLayerFn fn) { gameUi_ = std::move(fn); }
     /// 调色板页的 ImGui 纹理（AssetBrowser 非资产图标：色块 uv 子区）。null = 未注册
@@ -167,12 +188,16 @@ private:
     void RenderViewport(rhi::CommandList& cl, uint32_t idx, SpriteBatcher& batcher,
                         const Camera2D& cam, bool withOverlay, EditorContext& ctx,
                         float simAlpha);
+    /// GameView 光贴图 sceneRT/lightRT 懒建/跟随重建（M8 批②；lightRT 按质量档缩放）
+    void EnsureLightTargets(uint32_t gameW, uint32_t gameH);
 
     rhi::Device* device_ = nullptr;
     ImGuiBackend* ui_ = nullptr;
     ProceduralAtlas assets_;
     RenderableManager rm_;
     SpriteBatcher sceneBatcher_, gameBatcher_;
+    renderer::LightCompositor lightCompositor_; // 三段式编排（仅 GameView 消费）
+    renderer::QualityManager quality_;          // M8 批②：编辑器壳首接（EMA 自动降档）
 
     Camera2D sceneCam_{}; // 编辑相机（02 §3.5：与游戏相机同类型双实例，输入来源分离 #13）
     Camera2D gameCam_{};  // 游戏相机（M4.3 Play 中可被脚本驱动；编辑态固定默认位）
@@ -193,7 +218,9 @@ private:
         uint32_t pendW = 0, pendH = 0, pendFrames = 0;
     };
     RT rts_[2];
+    RT sceneRt_, lightRt_; // GameView 光贴图三段式（M8 批②；仅 idx=1，无 ImGui 注册）
     uint32_t lastSceneVisible_ = 0;
+    std::chrono::steady_clock::time_point lastRenderTime_{}; // quality_ EMA 帧钟（批②）
     std::chrono::steady_clock::time_point lastFxTime_{}; // Fx Simulate 自计时（GameView；
                                                           // epoch 0 = 首帧/出 Play 复位）
     void* paletteIconTex_ = nullptr; // 调色板页 ImTextureID（图标源；设备丢失重注册）

@@ -263,7 +263,7 @@ ecs::Entity EditorContext::CreateEntity(const char* tag) {
     s.Emplace<ecs::Transform2D>(e);
     ecs::Meta& m = s.Emplace<ecs::Meta>(e);
     m.guid = GenerateGuid();
-    std::snprintf(m.tag, sizeof(m.tag), "%s", tag);
+    ecs::CopyTag24(m.tag, tag); // UTF-8 边界对齐（长中文名半字符 = 存档期 316 崩）
     dirty = true;
     return e;
 }

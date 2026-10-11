@@ -6,6 +6,16 @@ extern const unsigned int lemon_spv_sprite_vert_count;
 extern const unsigned int lemon_spv_sprite_frag[];
 extern const unsigned int lemon_spv_sprite_frag_count;
 
+// 光贴图（M8 批②，ADR-019）
+extern const unsigned int lemon_spv_light_vert[];
+extern const unsigned int lemon_spv_light_vert_count;
+extern const unsigned int lemon_spv_light_frag[];
+extern const unsigned int lemon_spv_light_frag_count;
+extern const unsigned int lemon_spv_composite_vert[];
+extern const unsigned int lemon_spv_composite_vert_count;
+extern const unsigned int lemon_spv_composite_frag[];
+extern const unsigned int lemon_spv_composite_frag_count;
+
 // RmlUi 后端（M6b 批③a，ADR-014）
 extern const unsigned int lemon_spv_rmlui_vert[];
 extern const unsigned int lemon_spv_rmlui_vert_count;

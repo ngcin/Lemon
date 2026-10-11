@@ -123,6 +123,8 @@ private:
     void DrawGrid(ViewportRenderer& vr, const Camera2D& cam, uint32_t rtW, uint32_t rtH);
     void DrawGizmoHandles(EditorApp& app, ViewportRenderer& vr, ecs::Entity e,
                           const Camera2D& cam, Vec2 c, Vec2 s, float rot);
+    /// M8 批②（ADR-019 M2）：选中实体的灯范围圈/Spot 楔形/Blob 椭圆虚框
+    void DrawLightGizmos(EditorApp& app, ViewportRenderer& vr, const Camera2D& cam);
 
     DragMode drag_ = DragMode::None;
     bool dragActive_ = false;      // 位移超 4px 阈值后才真正改 Transform（D5 防误触）

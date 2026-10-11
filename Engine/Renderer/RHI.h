@@ -34,7 +34,15 @@ struct Pipeline { uint32_t id = kInvalid; bool IsValid() const { return id != kI
 
 // ---------------------------------------------------------------- 枚举 ----
 enum class Format : uint8_t { Undefined, RGBA8Unorm, BGRA8UnormSrgb, RGBA8UnormSrgb, RGBA16Float };
-enum class BlendMode : uint8_t { Opaque, Alpha, Additive, Multiply, Count };
+enum class BlendMode : uint8_t {
+    Opaque,
+    Alpha,
+    Additive,
+    Multiply,
+    Screen,   // M8 批② 光贴图：out = src + dst·(1−src)（shader 出预乘贡献）
+    Subtract, // M8 批② 光贴图：out = dst − src（REVERSE_SUBTRACT，blob 暗斑/减光）
+    Count
+};
 enum class FilterMode : uint8_t { Point, Linear };
 enum class AddressMode : uint8_t { Repeat, ClampToEdge, MirrorRepeat };
 enum class PresentModePref : uint8_t { Fifo, AutoBest, Immediate }; // IMMEDIATE 仅 bench（02 §3.5）

@@ -188,7 +188,7 @@
   "display.Light2D.angle": "锥光张角",
   "display.Light2D.innerRatio": "内角占比",
   "display.Light2D.maskSprite": "蒙版精灵",
-  "display.Light2D.flags": "标志位",
+  "display.Light2D.flags": "启用",
   "display.BlobShadow2D": "Blob 阴影",
   "display.BlobShadow2D.radius": "半径",
   "display.BlobShadow2D.aspect": "纵横比",
