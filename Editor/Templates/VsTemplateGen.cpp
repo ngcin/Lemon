@@ -8,6 +8,7 @@
 // project.lemon 的项目 GUID 由向导复制时重生成 = 存档隔离键）。
 #include "Templates/VsTemplateGen.h"
 
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -25,6 +26,7 @@
 #include "Components/BehaviorComponents.h" // Health/Shooter/WaveDirector/WaveDef
 #include "Components/CoreComponents.h"
 #include "Components/GameplayComponents.h"
+#include "Components/LightComponents.h" // Light2D/BlobShadow2D（M8 批⑤ 夜战场）
 #include "Components/RenderComponents.h"
 #include "Components/UiComponents.h"
 #include "Core/Log.h"
@@ -483,9 +485,10 @@ body {
   <div id="main-title" class="menu-title">LEMON SURVIVORS</div>
   <div id="main-list" class="menu-list">
     <button id="btn-start" class="btn-lg" data-event="start">开始游戏</button>
+    <button id="btn-night" class="btn-lg" data-event="start-night">夜战</button>
     <button id="btn-msettings" class="btn-lg" data-event="settings">设置</button>
   </div>
-  <div id="main-hint" class="hint">开始/重开 R · 移动 WASD · 攻击 自动 · 暂停 Esc/P</div>
+  <div id="main-hint" class="hint">开始/重开 R · 夜战 点按钮 · 移动 WASD · 攻击 自动 · 暂停 Esc/P</div>
 </div>
 </body>
 </rml>
@@ -818,6 +821,7 @@ public sealed class GameFlow : LemonBehaviour
     private const string kBgm = "{GUID:kBgmOgg}";
     private const string kMenuScene = "MainMenu";
     private const string kBattleScene = "Grass";
+    private const string kNightScene = "Night"; // M8 批⑤：夜战场（灯池/聚光/blob）
 
     internal enum State { Menu, Loading, Run, Paused, Results, Settings }
 
@@ -825,6 +829,7 @@ public sealed class GameFlow : LemonBehaviour
     internal static State St = State.Menu;
     private static State settingsFrom = State.Menu; // 设置屏返回目标（入口双源）
     private static bool prevPause, prevConfirm;     // 边沿（按住只触发一次）
+    private static string battleScene = kBattleScene; // 当前战斗场（结算重开用；批⑤ 起 Grass/Night 双场）
 
     // 跨场种子守卫（批⑨ D1）：MainMenu 重装的新种子标记 dup、首 Update 自毁。
     // 跨局复位：静态随域存活（Stop→Play 不清）——经 Events.PlayResetHook 每局清
@@ -856,6 +861,7 @@ public sealed class GameFlow : LemonBehaviour
         //（RefreshSettingsUi 首帧即写 settings DOM——③d-2 先例语义保持）
         Time.Scale = 0f;
         St = State.Menu;
+        battleScene = kBattleScene;
         UI.Show(GameMain.MainDoc);
         UI.Show(GameMain.PauseDoc);     UI.Hide(GameMain.PauseDoc);
         UI.Show(GameMain.SettingsDoc);  UI.Hide(GameMain.SettingsDoc);
@@ -882,7 +888,7 @@ public sealed class GameFlow : LemonBehaviour
             if (pauseEdge) SetPaused(false);
             break;
         case State.Results:
-            if (confirmEdge) EnterRun();       // R = 重开
+            if (confirmEdge) EnterRun(battleScene);  // R = 重开当前战斗场
             else if (pauseEdge) ReturnToMenu(); // Esc = 回菜单
             break;
         }
@@ -893,11 +899,12 @@ public sealed class GameFlow : LemonBehaviour
     // ---- 流程原语（PlayerCombat 死亡分叉 / UI 事件调用）----
 
     /// <summary>开始/重开一局：隐入口屏 + 加载屏 + 异步装载（激活帧引擎清场接管
-    /// RunSweeper 职责；sceneLoaded(Grass) → 重置 Run → Run 态）。Loading 中重入
-    /// 忽略。</summary>
-    internal static void EnterRun()
+    /// RunSweeper 职责；sceneLoaded(战斗场) → 重置 Run → Run 态）。Loading 中重入
+    /// 忽略。批⑤：场景参数化（Grass 白天基准 / Night 夜战——菜单按钮路径）。</summary>
+    internal static void EnterRun(string scene = kBattleScene)
     {
         if (St == State.Loading) return;
+        battleScene = scene;
         St = State.Loading;
         Time.Scale = 0f; // 装载期冻结（sceneLoaded 置 1）
         UI.Hide(GameMain.MainDoc);
@@ -908,7 +915,7 @@ public sealed class GameFlow : LemonBehaviour
         GameMain.HideCardsDoc(); // 在途动态屏一并收
         // review F1：场景不可解析（改名/删档）= op 无效且 Begin 未挂屏——不回滚
         // 则 St 恒 Loading、入口屏已隐、BGM 在播 = 软锁；回菜单态 + 静场自愈
-        if (!LoadingScreen.Begin(kBattleScene).isValid) {
+        if (!LoadingScreen.Begin(scene).isValid) {
             Audio.StopBgm(0.5f);
             St = State.Menu;
             UI.Show(GameMain.MainDoc);
@@ -926,7 +933,7 @@ public sealed class GameFlow : LemonBehaviour
             Time.Scale = 0f;
             UI.Show(GameMain.MainDoc); // 重装副本种子已自毁——DDOL 壳独占流程
             UI.Apply();
-        } else if (scene.name == kBattleScene) {
+        } else if (scene.name == kBattleScene || scene.name == kNightScene) {
             GameMain.Run.Time = 0f;    // 一局共享态随装载归零（原 Spawning 段迁移）
             GameMain.Run.Kills = 0;
             GameMain.Run.Dead = false;
@@ -1000,6 +1007,7 @@ public sealed class GameFlow : LemonBehaviour
     {
         if (e.DocStr == GameMain.MainDoc) {
             if (e.EvStr == "start") EnterRun();
+            else if (e.EvStr == "start-night") EnterRun(kNightScene); // 批⑤ 夜战（点击路径）
             else if (e.EvStr == "settings") OpenSettings(State.Menu);
         } else if (e.DocStr == GameMain.PauseDoc) {
             if (e.EvStr == "resume") SetPaused(false);
@@ -1012,7 +1020,7 @@ public sealed class GameFlow : LemonBehaviour
             else return;
             SaveSettings(); // 开关翻转即持久化 + 刷新标签
         } else if (e.DocStr == GameMain.ResultsDoc) {
-            if (e.EvStr == "restart") EnterRun();
+            if (e.EvStr == "restart") EnterRun(battleScene);
             else if (e.EvStr == "tomenu") ReturnToMenu();
         }
     }
@@ -1162,6 +1170,7 @@ public sealed class GameFlow : LemonBehaviour
         bag.Set("vsfx", GameMain.Settings.SfxVol);
         bag.Set("vui", GameMain.Settings.UiVol);
         bag.Set("booted", Booted); // 批⑨：种子守卫随包（域重建静态复位后恢复）
+        bag.Set("battle", battleScene == kNightScene ? 1 : 0); // 批⑤：当前战斗场（StateBag 只收值类型）
     }
 
     protected override void OnHotReloadIn(Lemon.StateBag bag)
@@ -1175,6 +1184,7 @@ public sealed class GameFlow : LemonBehaviour
         if (bag.TryGet("vsfx", out float vs)) GameMain.Settings.SfxVol = vs;
         if (bag.TryGet("vui", out float vu)) GameMain.Settings.UiVol = vu;
         if (bag.TryGet("booted", out bool bo)) Booted = bo;
+        if (bag.TryGet("battle", out int bs)) battleScene = bs == 1 ? kNightScene : kBattleScene;
         ApplyVolumes(); // 引擎侧随域重建归默认——热进即回设
     }
 }
@@ -2038,6 +2048,15 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
              "**死亡策略归游戏侧**（模板示例 = 每局一次复活，见 PlayerCombat.Die\n"
              "分叉——改复活道具/表驱动只动那一处）。键盘位（入 InputState = 可回\n"
              "放）：菜单 R = 开始；结算 R = 重开 / Esc = 回菜单。\n"
+             "- 夜战场（M8 批⑤ 光照模板消费）：`Night.scene` = Grass 同構战斗场 +\n"
+             "  灯组——Global 冷蓝暗环境 ×0.30 + 火把 Point 暖橙灯池（内圈 4 出生\n"
+             "  暖池 + 外圈 6 战域引导）+ Spot 楔形聚光 ×2；Player/Mob 挂\n"
+             "  BlobShadow2D 贴地椭圆暗斑。入口 = 主菜单「夜战」按钮（start-night\n"
+             "  事件，点击路径——键盘不加第三语义位，光照全走场景数据 + 组件，引擎\n"
+             "  零 C++）；Med+ 质量档 FX 链在场（火把 × bloom 合成观感）。改灯 =\n"
+             "  编辑器选中灯实体 Inspector 调 Light2D（Global/Point/Spot 三型 ×\n"
+             "  Additive/Screen/Subtract 三混合）；脚本控灯/昼夜循环样例见\n"
+             "  demo/svr-test 的 `Game/DayNightCycle.cs`（`Lemon.Lighting` 门面）。\n"
              "- 玩家：`Player.prefab` 挂三脚本（M6a 批⓪ scripts[]：流程 → 移动 →\n"
              "战斗 → HUD 注册序 = 跨类型 Update 执行序）；一局共享态在 GameMain.Run。\n"
              "（批⑨ 起战斗场内联同構实体——prefab 留作参考资产/拖放入场用。）\n"
@@ -2110,6 +2129,12 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
         ctx.AttachScript(e, 0, "PlayerMovement");
         ctx.AttachScript(e, 0, "PlayerCombat");
         ctx.AttachScript(e, 0, "PlayerHud");
+        // M8 批⑤：贴地椭圆暗斑（lightRT Subtract；light.scene BlobHero 参照）——
+        // prefab 导出与 Grass/Night 场内联三路同享。offsetY = 半身高贴脚（走查
+        // 实报：0 = 椭圆居精灵中心，观感"黑斑贴身上"）
+        sc.Emplace<ecs::BlobShadow2D>(e,
+            ecs::BlobShadow2D{.radius = 44.0f, .aspect = 1.35f,
+                              .offsetY = 14.0f, .opacity = 0.6f});
     };
     auto buildDirector = [&](ecs::Entity e) {
         ecs::Scene& sc = ctx.EditScene();
@@ -2143,6 +2168,9 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
             s.Emplace<ecs::Knockback>(e);
             s.Emplace<ecs::Velocity>(e);
             s.Emplace<ecs::Animator2D>(e).clipId = (uint32_t)kMonsterClip;
+            s.Emplace<ecs::BlobShadow2D>(e, // M8 批⑤：贴地暗斑（小一号；offsetY 贴脚）
+                ecs::BlobShadow2D{.radius = 24.0f, .aspect = 1.2f,
+                                  .offsetY = 10.0f, .opacity = 0.5f});
             ecs::Chase& ch = s.Emplace<ecs::Chase>(e);
             ch.speed = 60.0f;
             ch.aggroRange = 2500.0f;
@@ -2224,9 +2252,61 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
         std::ofstream f(root / "Scenes" / "Grass.scene", std::ios::trunc);
         f << ecs::SceneArchive::Save(gs);
     }
+    // Night = 夜战战斗场（M8 批⑤ 光照模板消费）：Grass 同構 + 灯组。Global 暗环境
+    // （冷蓝 ×0.30）压全场，火把 Point 暖橙灯池（内圈 4 玩家出生暖池 + 外圈 6 战域
+    // 引导）+ Spot 楔形聚光 ×2 自底部两角打向出生区（方向 = (cos rot, sin rot)，Y
+    // 向下——light.frag local +X 旋转约定）。蒙版光（SpriteMask）场景化无先例不入
+    // 模板（批⑤ 裁决 §3.2）；灯实体自动 guid（无 C# 引用锚点）。
+    {
+        ctx.NewScene();
+        ecs::Scene& ns = ctx.EditScene();
+        ns.SetName("Night"); // 同上：C# scene.name 匹配面（GameFlow 夜战路由）
+        buildPlayer(ctx.CreateSpriteEntityByGuid("Player", kHeroSheet));
+        buildDirector(ctx.CreateEntity("Director"));
+        auto addLight = [&](const char* tag, float x, float y, float rotDeg,
+                            const ecs::Light2D& lt) {
+            ecs::Entity e = ctx.CreateEntity(tag);
+            ecs::Transform2D& tf = ns.Get<ecs::Transform2D>(e);
+            tf.pos = {x, y};
+            tf.rot = rotDeg * 3.14159265f / 180.0f;
+            ns.Emplace<ecs::Light2D>(e, lt);
+        };
+        // 环境光：Global 至多一个生效（冷蓝夜色 = lightRT 底色）
+        addLight("NightAmbient", 0.0f, 0.0f, 0.0f,
+                 ecs::Light2D{.type = ecs::kLightTypeGlobal,
+                              .blend = ecs::kLightBlendAdditive,
+                              .color = 0xFFC88060u, // RGBA (96,128,200) 冷蓝
+                              .intensity = 0.30f});
+        // 火把灯池（暖橙 (255,170,96)；点光 smoothstep 径向衰减——range 边界无硬切）
+        const ecs::Light2D kTorch{.type = ecs::kLightTypePoint,
+                                  .blend = ecs::kLightBlendAdditive,
+                                  .color = 0xFF60AAFFu,
+                                  .intensity = 2.4f,
+                                  .range = 240.0f};
+        for (int i = 0; i < 4; ++i) { // 内圈：45°+90°i @ r180
+            const float a = 0.78539816f + (float)i * 1.57079632f;
+            addLight("TorchInner", 180.0f * std::cos(a), 180.0f * std::sin(a), 0.0f, kTorch);
+        }
+        for (int i = 0; i < 6; ++i) { // 外圈：60°i @ r340
+            const float a = (float)i * 1.04719755f;
+            addLight("TorchOuter", 340.0f * std::cos(a), 340.0f * std::sin(a), 0.0f, kTorch);
+        }
+        // 楔形聚光（暖白 (255,220,170)；朝向角 = atan2 对出生区，Y 向下取负）
+        const ecs::Light2D kSpot{.type = ecs::kLightTypeSpot,
+                                 .blend = ecs::kLightBlendAdditive,
+                                 .color = 0xFFAADCFFu,
+                                 .intensity = 2.2f,
+                                 .range = 420.0f,
+                                 .angle = 1.0f,
+                                 .innerRatio = 0.35f};
+        addLight("SpotLeft", -300.0f, 260.0f, -41.0f, kSpot);
+        addLight("SpotRight", 300.0f, 260.0f, -139.0f, kSpot);
+        std::ofstream f(root / "Scenes" / "Night.scene", std::ios::trunc);
+        f << ecs::SceneArchive::Save(ns);
+    }
     ctx.Assets().Rescan();
     ctx.Assets().SaveManifest();
-    LEMON_LOG("gen-vs-template：OK → %s（Grass %zuB；MainMenu/Grass 拆场）",
+    LEMON_LOG("gen-vs-template：OK → %s（Grass %zuB；MainMenu/Grass/Night 拆场）",
               root.string().c_str(),
               ecs::SceneArchive::Save(ctx.EditScene()).size());
     return true;

@@ -30,6 +30,15 @@ code-mount（`UI.Show` 通道 B 现载，origin=CSharp 跨场幸存——场景�
 **死亡策略归游戏侧**（模板示例 = 每局一次复活，见 PlayerCombat.Die
 分叉——改复活道具/表驱动只动那一处）。键盘位（入 InputState = 可回
 放）：菜单 R = 开始；结算 R = 重开 / Esc = 回菜单。
+- 夜战场（M8 批⑤ 光照模板消费）：`Night.scene` = Grass 同構战斗场 +
+  灯组——Global 冷蓝暗环境 ×0.30 + 火把 Point 暖橙灯池（内圈 4 出生
+  暖池 + 外圈 6 战域引导）+ Spot 楔形聚光 ×2；Player/Mob 挂
+  BlobShadow2D 贴地椭圆暗斑。入口 = 主菜单「夜战」按钮（start-night
+  事件，点击路径——键盘不加第三语义位，光照全走场景数据 + 组件，引擎
+  零 C++）；Med+ 质量档 FX 链在场（火把 × bloom 合成观感）。改灯 =
+  编辑器选中灯实体 Inspector 调 Light2D（Global/Point/Spot 三型 ×
+  Additive/Screen/Subtract 三混合）；脚本控灯/昼夜循环样例见
+  demo/svr-test 的 `Game/DayNightCycle.cs`（`Lemon.Lighting` 门面）。
 - 玩家：`Player.prefab` 挂三脚本（M6a 批⓪ scripts[]：流程 → 移动 →
 战斗 → HUD 注册序 = 跨类型 Update 执行序）；一局共享态在 GameMain.Run。
 （批⑨ 起战斗场内联同構实体——prefab 留作参考资产/拖放入场用。）

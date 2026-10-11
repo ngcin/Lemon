@@ -2,7 +2,8 @@
 // 职责边界：Renderable 是渲染层最小单位（sprite/text/particle-chunk/line），不知道实体为何物。
 //   * 模拟侧（60Hz 固定 tick）：BeginSimTick() 翻转双缓冲 → SetTransform/SetColor 写当前帧
 //   * 渲染侧（每渲染帧）：SetViewport(世界矩形+margin) → Extract(alpha) 得到剔除+插值后的
-//     有序 SpritePacket 视图（排序：SortingLayer → 批键 → order → seq，稳定）
+//     有序 SpritePacket 视图（排序：SortingLayer → orderTier(=order>>12 分段) →
+//     批键 hash → order → seq，稳定——tier 使跨纹理页负序背景可整批垫底，M8 批⑤）
 // M2 的 ECS 提取系统把 Transform2D/SpriteRenderer 组件灌进本管理器；bench 直接驱动。
 #pragma once
 
@@ -25,27 +26,36 @@ struct SpriteBatchKey {
     uint32_t filter : 2;
     uint32_t wrap : 2;      // M1 恒 Clamp；进键保语义完整
     uint32_t layer : 10;    // SortingLayer id（≤1024 层）
-    uint32_t _pad : 14;
+    uint32_t orderTier : 6; // order>>12 偏移 +16（0..31；M8 批⑤：跨批绘制序语义位）
+    uint32_t _pad : 8;
     uint64_t hash;          // 构造时预计算（boost hash_combine 0x9e3779b9）
 
     constexpr bool SameBatch(const SpriteBatchKey& r) const {
         return hash == r.hash && textureAtlas == r.textureAtlas && blend == r.blend &&
-               filter == r.filter && wrap == r.wrap && layer == r.layer;
+               filter == r.filter && wrap == r.wrap && layer == r.layer &&
+               orderTier == r.orderTier;
     }
 };
 static_assert(sizeof(SpriteBatchKey) == 24 && __is_trivially_copyable(SpriteBatchKey),
               "POD 批键 24B（02 §3.1）");
 
+/// orderTier = order>>12 + 16（int16 order → 0..31；16 = tier 0 中值）
+constexpr uint32_t OrderTierOf(int16_t order) {
+    return (uint32_t)((order >> 12) + 16);
+}
+
 constexpr SpriteBatchKey MakeBatchKey(uint32_t atlasIndex, BlendKind blend, FilterKind filter,
-                                      uint32_t layer) {
+                                      uint32_t layer, uint32_t orderTier = 16u) {
     SpriteBatchKey k{};
     k.textureAtlas = atlasIndex;
     k.blend = (uint32_t)blend;
     k.filter = (uint32_t)filter;
     k.wrap = 0;
     k.layer = layer;
+    k.orderTier = orderTier;
     uint64_t h = 0x9e3779b97f4a7c15ull ^ (uint64_t)atlasIndex;
-    h ^= (uint64_t)((uint32_t)blend | ((uint32_t)filter << 4) | (layer << 8)) + 0x9e3779b9 +
+    h ^= (uint64_t)((uint32_t)blend | ((uint32_t)filter << 4) | (layer << 8) |
+                    (orderTier << 14)) + 0x9e3779b9 +
          (h << 6) + (h >> 2);
     k.hash = h;
     return k;
@@ -53,7 +63,8 @@ constexpr SpriteBatchKey MakeBatchKey(uint32_t atlasIndex, BlendKind blend, Filt
 
 // ------------------------------------------------------------ 提取产物 ----
 struct SpritePacket {
-    uint64_t sortKey; // layer<<56 | keyHash 摘要<<40 | order<<24 | seq（稳定全序）
+    uint64_t sortKey; // layer<<56 | keyHash 摘要<<40 | order<<24 | seq（槽内稳定全序；
+                   //  跨批序归槽比较器 layer→orderTier→hash，见 Extract）
     SpriteBatchKey key;
     uint32_t spriteId;
     uint32_t colorBits;

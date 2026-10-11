@@ -21,6 +21,7 @@ public sealed class GameFlow : LemonBehaviour
     private const string kBgm = "7e57400000000001";
     private const string kMenuScene = "MainMenu";
     private const string kBattleScene = "Grass";
+    private const string kNightScene = "Night"; // M8 批⑤：夜战场（灯池/聚光/blob）
 
     internal enum State { Menu, Loading, Run, Paused, Results, Settings }
 
@@ -28,6 +29,7 @@ public sealed class GameFlow : LemonBehaviour
     internal static State St = State.Menu;
     private static State settingsFrom = State.Menu; // 设置屏返回目标（入口双源）
     private static bool prevPause, prevConfirm;     // 边沿（按住只触发一次）
+    private static string battleScene = kBattleScene; // 当前战斗场（结算重开用；批⑤ 起 Grass/Night 双场）
 
     // 跨场种子守卫（批⑨ D1）：MainMenu 重装的新种子标记 dup、首 Update 自毁。
     // 跨局复位：静态随域存活（Stop→Play 不清）——经 Events.PlayResetHook 每局清
@@ -59,6 +61,7 @@ public sealed class GameFlow : LemonBehaviour
         //（RefreshSettingsUi 首帧即写 settings DOM——③d-2 先例语义保持）
         Time.Scale = 0f;
         St = State.Menu;
+        battleScene = kBattleScene;
         UI.Show(GameMain.MainDoc);
         UI.Show(GameMain.PauseDoc);     UI.Hide(GameMain.PauseDoc);
         UI.Show(GameMain.SettingsDoc);  UI.Hide(GameMain.SettingsDoc);
@@ -85,7 +88,7 @@ public sealed class GameFlow : LemonBehaviour
             if (pauseEdge) SetPaused(false);
             break;
         case State.Results:
-            if (confirmEdge) EnterRun();       // R = 重开
+            if (confirmEdge) EnterRun(battleScene);  // R = 重开当前战斗场
             else if (pauseEdge) ReturnToMenu(); // Esc = 回菜单
             break;
         }
@@ -96,11 +99,12 @@ public sealed class GameFlow : LemonBehaviour
     // ---- 流程原语（PlayerCombat 死亡分叉 / UI 事件调用）----
 
     /// <summary>开始/重开一局：隐入口屏 + 加载屏 + 异步装载（激活帧引擎清场接管
-    /// RunSweeper 职责；sceneLoaded(Grass) → 重置 Run → Run 态）。Loading 中重入
-    /// 忽略。</summary>
-    internal static void EnterRun()
+    /// RunSweeper 职责；sceneLoaded(战斗场) → 重置 Run → Run 态）。Loading 中重入
+    /// 忽略。批⑤：场景参数化（Grass 白天基准 / Night 夜战——菜单按钮路径）。</summary>
+    internal static void EnterRun(string scene = kBattleScene)
     {
         if (St == State.Loading) return;
+        battleScene = scene;
         St = State.Loading;
         Time.Scale = 0f; // 装载期冻结（sceneLoaded 置 1）
         UI.Hide(GameMain.MainDoc);
@@ -111,7 +115,7 @@ public sealed class GameFlow : LemonBehaviour
         GameMain.HideCardsDoc(); // 在途动态屏一并收
         // review F1：场景不可解析（改名/删档）= op 无效且 Begin 未挂屏——不回滚
         // 则 St 恒 Loading、入口屏已隐、BGM 在播 = 软锁；回菜单态 + 静场自愈
-        if (!LoadingScreen.Begin(kBattleScene).isValid) {
+        if (!LoadingScreen.Begin(scene).isValid) {
             Audio.StopBgm(0.5f);
             St = State.Menu;
             UI.Show(GameMain.MainDoc);
@@ -129,7 +133,7 @@ public sealed class GameFlow : LemonBehaviour
             Time.Scale = 0f;
             UI.Show(GameMain.MainDoc); // 重装副本种子已自毁——DDOL 壳独占流程
             UI.Apply();
-        } else if (scene.name == kBattleScene) {
+        } else if (scene.name == kBattleScene || scene.name == kNightScene) {
             GameMain.Run.Time = 0f;    // 一局共享态随装载归零（原 Spawning 段迁移）
             GameMain.Run.Kills = 0;
             GameMain.Run.Dead = false;
@@ -203,6 +207,7 @@ public sealed class GameFlow : LemonBehaviour
     {
         if (e.DocStr == GameMain.MainDoc) {
             if (e.EvStr == "start") EnterRun();
+            else if (e.EvStr == "start-night") EnterRun(kNightScene); // 批⑤ 夜战（点击路径）
             else if (e.EvStr == "settings") OpenSettings(State.Menu);
         } else if (e.DocStr == GameMain.PauseDoc) {
             if (e.EvStr == "resume") SetPaused(false);
@@ -215,7 +220,7 @@ public sealed class GameFlow : LemonBehaviour
             else return;
             SaveSettings(); // 开关翻转即持久化 + 刷新标签
         } else if (e.DocStr == GameMain.ResultsDoc) {
-            if (e.EvStr == "restart") EnterRun();
+            if (e.EvStr == "restart") EnterRun(battleScene);
             else if (e.EvStr == "tomenu") ReturnToMenu();
         }
     }
@@ -365,6 +370,7 @@ public sealed class GameFlow : LemonBehaviour
         bag.Set("vsfx", GameMain.Settings.SfxVol);
         bag.Set("vui", GameMain.Settings.UiVol);
         bag.Set("booted", Booted); // 批⑨：种子守卫随包（域重建静态复位后恢复）
+        bag.Set("battle", battleScene == kNightScene ? 1 : 0); // 批⑤：当前战斗场（StateBag 只收值类型）
     }
 
     protected override void OnHotReloadIn(Lemon.StateBag bag)
@@ -378,6 +384,7 @@ public sealed class GameFlow : LemonBehaviour
         if (bag.TryGet("vsfx", out float vs)) GameMain.Settings.SfxVol = vs;
         if (bag.TryGet("vui", out float vu)) GameMain.Settings.UiVol = vu;
         if (bag.TryGet("booted", out bool bo)) Booted = bo;
+        if (bag.TryGet("battle", out int bs)) battleScene = bs == 1 ? kNightScene : kBattleScene;
         ApplyVolumes(); // 引擎侧随域重建归默认——热进即回设
     }
 }

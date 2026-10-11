@@ -87,6 +87,35 @@ PlayerBehaviour.cs 或场景后重新生成，勿手改 .prefab 内 guid）。
 - 调参入口：`Game/GameFlow.cs`（流程态机/键盘位）、`Game/LoadingScreen.cs`
   （加载屏权重与文案）。
 
+## 夜战场与昼夜循环（M8 批⑤ 光照消费）
+
+- **`Scenes/Night.scene` 夜战战斗场**（与模板 `Templates/vs-survivor` 同構生成
+  后按 svr-test 实体拼装）：svr-test 版 Player（PlayerBehaviour/HUD/受击）+
+  Director（WaveTableLoader 读 waves.tab 原表）+ 灯组——Global 冷蓝暗环境
+  ×0.30 + 火把 Point 暖橙灯池（内圈 4 出生暖池 @r180 + 外圈 6 战域引导
+  @r340）+ Spot 楔形聚光 ×2 自底部两角打向出生区；Player/Mob/FastMob 挂
+  BlobShadow2D 贴地椭圆暗斑（Grass 的 Player 同款）。**入口 = 主菜单「夜战
+  （灯池）」按钮**（start-night 事件，点击路径——键盘不加第三语义位，光照全
+  走场景数据 + 组件，引擎零 C++）；Med+ 质量档 FX 链在场（火把 × bloom 合成
+  观感——M8 批④ 真人观感归本批组合走查）。
+- **`Scenes/Grass.scene` 昼夜循环**：`DayNight` 实体（Global 灯 + Light2D）
+  挂 `Game/DayNightCycle.cs`——`Lighting.DayNight` 首个真实消费者：晨暖白
+  0.55 → 昼正白 0.75 → 暮橙红 0.45 → 夜深蓝 0.30 四关键帧环形补间（每段
+  20s，InOutQuad；Once 补间 + Tween.Alive 轮询接力）。Light2D 字段入
+  StateHash ⇒ 昼夜补间可回放（ADR-019 M4；#L5 回放耗时检查挂批⑥ soak 前）。
+  模板 Grass 保持白天基准零改动（昼夜 = svr-test 模板外扩展，与 Volcano
+  同口径）。**调参**：`DayNightCycle.cs` 顶部 kColors/kIntensity/kSeconds
+  （改后热重载即从当前色值重发起，无视觉跳变）。
+- **无头验证**（svr.* 家族，`--smoke --play` 跑完读 `.lemon/saves/game.sav`）：
+
+  ```
+  lemon-editor --project demo/svr-test --scene <绝对路径>/Scenes/Grass.scene \
+    --smoke --play --frames 1600 --no-reopen   # ≈26s 游戏时 → svr.daynight ≥ 2
+  lemon-editor --project demo/svr-test --scene <绝对路径>/Scenes/Night.scene \
+    --smoke --play --frames 600 --no-reopen    # 夜战裸战斗零崩口径
+  ```
+
+
 ## 受击表现（M6a 批①引擎能力的项目侧接线）
 
 - **资产**：`Assets/hero-hit.clip`（guid `5bd31a7c20000003`）与 `monster-hit.clip`

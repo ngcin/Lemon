@@ -12,7 +12,7 @@
 
 ```
 ① 提取 Extract     ：从双缓冲帧数据（S_n-1/S_n）按 alpha 插值出本帧 Renderable 列表（视口剔除 + margin）
-② 排序 Sort        ：SortingLayer → 批键 → Z/序号，稳定排序
+② 排序 Sort        ：SortingLayer → orderTier(order>>12 分段) → 批键 → order(+32768) → 创建序，稳定排序（M8 批⑤：tier 使跨纹理页负序背景整批垫底——原「层→批键」跨页先后由 hash 伪随机定，独立图集页背景 sortOrder 再小也压不到别页实体之下）
 ③ 合批 Batch       ：POD 批键哈希分桶 → 顶点/实例写入帧环形缓冲 → 生成 RenderPacket
 ④ 录制/提交 Record ：按 pass 录制次级命令缓冲，主命令缓冲只做 pass 间依赖，提交队列
 ```

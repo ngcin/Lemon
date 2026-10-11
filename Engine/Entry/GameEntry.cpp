@@ -81,6 +81,11 @@
 #include "Ui/UiMount.h"
 #include "Ui/UiSubsystem.h"
 
+// --screenshot（M8 批⑤）：stbi_write_png 符号在 lemon-engine（Assets/StbImage.cpp
+// 实现 TU）——stb 头包含域不外扩（CMake 纪律"只供实现 TU"），此处前向声明
+extern "C" int stbi_write_png(char const* filename, int w, int h, int comp,
+                              const void* data, int stride_in_bytes);
+
 #if defined(__APPLE__)
 #include <mach-o/dyld.h> // _NSGetExecutablePath
 #elif defined(_WIN32)
@@ -440,7 +445,7 @@ constexpr uint64_t kSceneSmokeDdolGuid = 10963355455248361612ull;
 } // namespace
 
 int main(int argc, char** argv) {
-    std::string projectArg, sceneArg;
+    std::string projectArg, sceneArg, screenshotArg;
     long frames = 0;
     bool smoke = false, smokeScene = false, smokeLight = false, smokeFx = false,
          validate = false;
@@ -468,6 +473,8 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--smoke-light")) smokeLight = true;
         else if (!std::strcmp(argv[i], "--smoke-fx")) smokeFx = true;
         else if (!std::strcmp(argv[i], "--validate")) validate = true;
+        else if (!std::strcmp(argv[i], "--screenshot") && i + 1 < argc)
+            screenshotArg = argv[++i]; // 末帧交换链 PNG（调试判据；须配 --frames N）
         else {
             LEMON_ERROR("lemon-game：未知/残缺参数：'%s'", argv[i]);
             usage();
@@ -1570,6 +1577,8 @@ int main(int argc, char** argv) {
         // --smoke-fx 交换链捕获（M8 批④：仅捕获请求所属帧——EndPass 后 present 前，
         // PRESENT_SRC 布局借道拷出；f61/f101/f107/f221 + 波窗口帧取回）
         if (smokeFx && fxCapReq != 0 && frame == fxCapFrame) cl.DebugRecordCapture();
+        // --screenshot：末帧捕获（同款借道；帧尾循环外取回落盘）
+        if (!screenshotArg.empty() && frame + 1 == frames) cl.DebugRecordCapture();
 
         bool needRe = false, lost = false;
         device->EndFrameAndPresent(needRe, lost);
@@ -1725,6 +1734,20 @@ int main(int argc, char** argv) {
     for (uint8_t ch = 0; ch < kSaveChannelCount; ++ch)
         assets::SaveStore::Write(root, ch, world.Saves(ch));
     audio.StopAll();
+
+    // --screenshot（M8 批⑤）：末帧交换链 PNG 落盘（走查调试判据——干净游戏画面）
+    if (!screenshotArg.empty()) {
+        std::vector<uint8_t> px;
+        uint32_t sw = 0, sh = 0;
+        if (device->DebugFetchCapture(px, sw, sh) && !px.empty()) {
+            const int ok = stbi_write_png(screenshotArg.c_str(), (int)sw, (int)sh, 4,
+                                          px.data(), (int)sw * 4);
+            std::printf("[lemon-game] screenshot: %s %ux%u => %s\n",
+                        screenshotArg.c_str(), sw, sh, ok ? "written" : "FAILED");
+        } else {
+            std::printf("[lemon-game] screenshot: capture FAILED（须配 --frames N）\n");
+        }
+    }
 
     if (smoke) {
         // RESULT 行（回归口径）：装载链在场（uidoc/audio/脚本系统）+ 进局成功

@@ -129,7 +129,8 @@ public sealed class GameFlow : LemonBehaviour
             Time.Scale = 0f;
             UI.Show(GameMain.MainDoc); // 重装副本种子已自毁——DDOL 壳独占流程
             UI.Apply();
-        } else if (scene.name == "Grass" || scene.name == "Volcano") {
+        } else if (scene.name == "Grass" || scene.name == "Volcano" ||
+                   scene.name == "Night") { // 夜战（M8 批⑤ 模板同構场）
             Time.Scale = 1f;
             St = State.Run; // 战斗场自含 Player/Director（D2）——装载即开局
         } else {
@@ -200,6 +201,7 @@ public sealed class GameFlow : LemonBehaviour
         if (e.DocStr == GameMain.MainDoc) {
             if (e.EvStr == "start") EnterRun("Grass");
             else if (e.EvStr == "start-volcano") EnterRun("Volcano");
+            else if (e.EvStr == "start-night") EnterRun("Night"); // M8 批⑤ 夜战（点击路径）
             else if (e.EvStr == "settings") OpenSettings(State.Menu);
         } else if (e.DocStr == GameMain.PauseDoc) {
             if (e.EvStr == "resume") SetPaused(false);
@@ -361,7 +363,7 @@ public sealed class GameFlow : LemonBehaviour
         bag.Set("vsfx", GameMain.Settings.SfxVol);
         bag.Set("vui", GameMain.Settings.UiVol);
         bag.Set("booted", Booted); // 批⑨：种子守卫随包（域重建静态复位后恢复）
-        bag.Set("battle", battleScene == "Volcano" ? 1 : 0); // StateBag 只收值类型
+        bag.Set("battle", battleScene == "Volcano" ? 1 : battleScene == "Night" ? 2 : 0); // StateBag 只收值类型
     }
 
     protected override void OnHotReloadIn(Lemon.StateBag bag)
@@ -375,7 +377,8 @@ public sealed class GameFlow : LemonBehaviour
         if (bag.TryGet("vsfx", out float vs)) GameMain.Settings.SfxVol = vs;
         if (bag.TryGet("vui", out float vu)) GameMain.Settings.UiVol = vu;
         if (bag.TryGet("booted", out bool bo)) Booted = bo;
-        if (bag.TryGet("battle", out int bs)) battleScene = bs == 1 ? "Volcano" : "Grass";
+        if (bag.TryGet("battle", out int bs))
+            battleScene = bs == 1 ? "Volcano" : bs == 2 ? "Night" : "Grass";
         ApplyVolumes(); // 引擎侧随域重建归默认——热进即回设
     }
 }

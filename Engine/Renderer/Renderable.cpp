@@ -174,7 +174,8 @@ std::span<const SpritePacket> RenderableManager::Extract(const AtlasRegistry& at
                     continue;
                 }
                 slots_[si].key = MakeBatchKey(spr.atlasIndex, (BlendKind)e.desc.blend,
-                                              (FilterKind)e.desc.filter, e.desc.sortingLayer);
+                                              (FilterKind)e.desc.filter, e.desc.sortingLayer,
+                                              OrderTierOf(e.desc.order));
                 slots_[si].atlasIndex = spr.atlasIndex;
                 slots_[si].count = 0;
                 ++slotCount_;
@@ -184,7 +185,10 @@ std::span<const SpritePacket> RenderableManager::Extract(const AtlasRegistry& at
             Prepared pr;
             // L1（review 2026-10-09）：order 域 +32768 偏移打包——原 (uint16_t) 直转
             // 把 -1 变 65535 排到 0 之上（与 Unity「负 order 在下层」心智相反）；
-            // 偏移后 -32768→0、32767→65535，升降序 painter 序两向都恢复代数序
+            // 偏移后 -32768→0、32767→65535，升降序 painter 序两向都恢复代数序。
+            // 注：sortKey 只决**槽内**序——跨批绘制序 = 槽比较器（layer →
+            // orderTier → hash，M8 批⑤）；orderTier 使跨纹理页的负序背景可整批
+            // 垫底（批连续性约束下单包 sortKey 做不到跨批排序）
             pr.p.sortKey = ((uint64_t)e.desc.sortingLayer << 56) |
                            ((slots_[si].key.hash >> 45) & 0xFFFFull) << 40 |
                            ((uint64_t)(uint32_t)(e.desc.order + 32768) << 24) |
@@ -229,15 +233,19 @@ std::span<const SpritePacket> RenderableManager::Extract(const AtlasRegistry& at
         slotOf_.push_back(pr.slot);
     }
 
-    // 桶序即绘制序（Bake 按连续同键段录制，下游无重排）：偏移须按（layer, hash）
-    // 分配——首遇序会把先创建的高层整桶画到低层下面，违背排序契约
+    // 桶序即绘制序（Bake 按连续同键段录制，下游无重排）：偏移须按（layer,
+    // orderTier, hash）分配——首遇序会把先创建的高层整桶画到低层下面，违背排序
+    // 契约。orderTier（M8 批⑤）：order>>12 分段——跨纹理页的负序背景整批垫底
+    // （批连续性约束下单包排序无法跨批插序；tier 间不混批 = 同批内序不受扰）
     uint8_t order[kMaxSpriteKeys];
     for (uint32_t si = 0; si < slotCount_; ++si) order[si] = (uint8_t)si;
     std::sort(order, order + slotCount_, [&](uint8_t a, uint8_t b) {
         const KeySlot& sa = slots_[a];
         const KeySlot& sb = slots_[b];
-        return sa.key.layer != sb.key.layer ? sa.key.layer < sb.key.layer
-                                            : sa.key.hash < sb.key.hash;
+        return sa.key.layer != sb.key.layer   ? sa.key.layer < sb.key.layer
+               : sa.key.orderTier != sb.key.orderTier
+                   ? sa.key.orderTier < sb.key.orderTier
+                   : sa.key.hash < sb.key.hash;
     });
 
     // 纯搬运分桶（不重算剔除/插值；slots 原地不动，slotOf_ 存的槽下标仍有效）
