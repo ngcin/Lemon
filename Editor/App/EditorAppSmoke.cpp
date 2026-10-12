@@ -1056,9 +1056,11 @@ void EditorApp::SmokeUiFrame(uint64_t frame) {
             g_uiSmoke.parentUndoOk = !h || h->parent.IsNull();
         }
         // ---- 诊断（LEMON_SMOKE_UI_DEBUG=1）：关键帧 dump 登记表与 dock 态 ----
+        //（f114 曾在表内 = 双击第二按下帧（§I）会被本分支无条件吞掉 → hold 死
+        // 代码、双击不成立——review 轮修 2026-10-13；旧表值是单击流观察点）
         else if (frame == 45 || frame == 55 || frame == 57 || frame == 65 ||
                  frame == 71 || frame == 97 || frame == 107 || frame == 109 ||
-                 frame == 114 || frame == 145 || frame == 150) {
+                 frame == 145 || frame == 150) {
             if (std::getenv("LEMON_SMOKE_UI_DEBUG")) {
                 ImVec2 mn, mx;
                 const bool hasRot = testhooks::Find("Transform2D.rot", mn, mx);
