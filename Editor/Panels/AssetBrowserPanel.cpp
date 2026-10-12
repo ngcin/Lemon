@@ -421,22 +421,14 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
 
     ImGui::PushID((int)e.guid);
     ImGui::BeginGroup();
-    // 缩略图 / 类型图标：sprite = 纹理页缩略；其余 = 形状页类型图标（M4.7b，
-    // 替代旧调色板色块——prefab 蓝调 / script 墨绿 / generic 次级灰，ImageButton tint 染色）。
-    // sprite 缩略（用户实测四轮口径"占满格子"，与选择器瓦片同构）：格子恒
-    // kThumb 见方（固定卡片尺寸——网格整齐、选中框统一），图**整幅拉伸铺满**；
-    // 网格切片 sprite（序列帧图）取**第一帧**子矩形（UV (0,0)-(cw,ch)）——整页
-    // 拉伸会把 8 帧压扁成糊（最初"拉升"报障根结），帧级铺满轻度变形但内容完整
-    // 可辨（缩略图的职责）。类型图标无宽高比问题，满格方图。
-    ImVec2 uv0(0, 0), uv1(1, 1);
+    // 缩略卡片——**照选择图片对话框（FilePicker::DrawIconEntries）同款实现**
+    //（用户实测五轮定论：整幅图、不裁、不拉，等比居中在固定方格内 = 选择器
+    // 的"完美显示"）：固定尺寸 Button 当卡片（总尺寸 = kThumb + 2×FramePadding，
+    // 与文件夹 ImageButton 足迹一致 → 网格统一），图用 drawlist AddImage 等比
+    // fit 双向居中贴在卡内。sprite = 纹理页整幅（PageInfo 取宽高）；其余 =
+    // 形状页类型图标（M4.7b，UV 子矩形 + tint 染色，近方形满贴）。
     void* tex = isSprite ? app.AssetGpu().Thumbnail(e.guid) : app.Viewport().IconTex();
-    if (isSprite && tex) {
-        uint32_t pw = 0, ph = 0;
-        if (app.AssetGpu().PageInfo(e.guid, pw, ph) && pw > 0 && ph > 0 &&
-            e.cellW > 0 && e.cellH > 0 && e.cellW <= pw && e.cellH <= ph)
-            uv1 = ImVec2((float)e.cellW / (float)pw, (float)e.cellH / (float)ph);
-    }
-    const ImVec2 size(kThumb, kThumb);
+    ImVec2 uv0(0, 0), uv1(1, 1);
     ImVec4 tint(1, 1, 1, 1);
     if (!isSprite && tex) {
         float u0, v0, u1, v1;
@@ -462,11 +454,33 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
                : e.type == AssetType::Audio ? kAudioTint
                                             : theme::kTextDim;
     }
+    uint32_t pw = 0, ph = 0; // sprite 导入页宽高（等比 fit 基准；图标满贴无需）
+    if (isSprite && tex) app.AssetGpu().PageInfo(e.guid, pw, ph);
+
     const bool selected = e.guid == selectedGuid_; // 单击选中（M6a 批②：表格区锚点）
-    if (tex)
-        ImGui::ImageButton("##thumb", tex, size, uv0, uv1,
-                           selected ? theme::kAccentDim : theme::kBgMid, tint);
-    else ImGui::Button("?", size);
+    const float fpx = ImGui::GetStyle().FramePadding.x;
+    const ImVec2 cardSize(kThumb + fpx * 2.0f, kThumb + fpx * 2.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button, selected ? theme::kAccentDim : theme::kBgMid);
+    ImGui::Button("##thumb", cardSize);
+    ImGui::PopStyleColor();
+    if (tex) {
+        float dw = kThumb, dh = kThumb;
+        if (isSprite && pw > 0 && ph > 0) {
+            const float s = std::min(kThumb / (float)pw, kThumb / (float)ph);
+            dw = (float)pw * s;
+            dh = (float)ph * s;
+        }
+        const ImVec2 b = ImGui::GetItemRectMin();
+        const ImVec2 c{b.x + fpx + (kThumb - dw) * 0.5f, b.y + fpx + (kThumb - dh) * 0.5f};
+        ImGui::GetWindowDrawList()->AddImage(tex, c, ImVec2{c.x + dw, c.y + dh}, uv0, uv1,
+                                             ImGui::ColorConvertFloat4ToU32(tint));
+    } else { // 未导入：卡内居中 "?"（同旧占位语义）
+        const ImVec2 b = ImGui::GetItemRectMin();
+        const ImVec2 ts = ImGui::CalcTextSize("?");
+        ImGui::GetWindowDrawList()->AddText(
+            ImVec2(b.x + fpx + (kThumb - ts.x) * 0.5f, b.y + fpx + (kThumb - ts.y) * 0.5f),
+            ImGui::GetColorU32(ImGuiCol_Text, 0.5f), "?");
+    }
     const bool hovered = ImGui::IsItemHovered();
     const bool doubleClicked = hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
     if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) selectedGuid_ = e.guid;
