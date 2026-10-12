@@ -422,11 +422,14 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
     ImGui::PushID((int)e.guid);
     ImGui::BeginGroup();
     const float cellX = ImGui::GetCursorPosX(); // 单元格左缘：等比缩略水平居中基准
+    const float cellY = ImGui::GetCursorPosY(); // 单元格顶缘：竖向居中基准（用户
+    // 实测条图"只占顶部一点"——v1 顶对齐 + 底部垫高；选择器瓦片是图区双向居中
     // 缩略图 / 类型图标：sprite = 纹理页缩略；其余 = 形状页类型图标（M4.7b，
     // 替代旧调色板色块——prefab 蓝调 / script 墨绿 / generic 次级灰，ImageButton tint 染色）。
-    // sprite 等比缩略（用户实测：序列帧长条图被拉成正方形）：按导入页宽高比 fit
-    // 进 kThumb 见方区，按钮在单元格内水平居中 + 竖向 Dummy 垫满方格高（行高
-    // 恒定，网格不参差）；类型图标无宽高比问题，保持满格方图。
+    // sprite 等比缩略（用户实测：序列帧长条图被拉成正方形 → 顶对齐"只占顶部
+    // 一点"）：按导入页宽高比 fit 进 kThumb 见方区，按钮在方格内**双向居中**
+    //（选择器瓦片同语言），标签钉固定单元格相对 Y → 行高恒等于方格单元格；
+    // 类型图标无宽高比问题，保持满格方图。
     float imgW = kThumb, imgH = kThumb;
     void* tex = isSprite ? app.AssetGpu().Thumbnail(e.guid) : app.Viewport().IconTex();
     if (isSprite && tex) {
@@ -466,8 +469,10 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
     }
     const bool selected = e.guid == selectedGuid_; // 单击选中（M6a 批②：表格区锚点）
     if (tex) {
-        if (imgW < kThumb) // 等比缩窄 → 按钮帧（imgW+2×FramePadding）水平居中
-            ImGui::SetCursorPosX(cellX + (kThumb - imgW) * 0.5f);
+        // 等比缩窄/矮 → 按钮帧（图 + 2×FramePadding）在方格内双向居中（选择器
+        // 瓦片同语言）；帧 padding 双向对称抵消，偏移 = (kThumb - img)/2 精确
+        if (imgW < kThumb) ImGui::SetCursorPosX(cellX + (kThumb - imgW) * 0.5f);
+        if (imgH < kThumb) ImGui::SetCursorPosY(cellY + (kThumb - imgH) * 0.5f);
         ImGui::ImageButton("##thumb", tex, size, uv0, uv1,
                            selected ? theme::kAccentDim : theme::kBgMid, tint);
     } else ImGui::Button("?", size);
@@ -594,8 +599,15 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
     if (doubleClicked && e.type == AssetType::Audio) app.TogglePreviewAudio(e.guid);
 
     // 文件名（居中省略号单行；单元格宽 = kThumb+2×FramePadding，列距公式前提；
-    // 右键菜单已上移绑缩略图）。等比缩略竖向欠高先用 Dummy 垫满方格 → 行齐
-    if (imgH < kThumb) ImGui::Dummy(ImVec2(0.0f, kThumb - imgH));
+    // 右键菜单已上移绑缩略图）。标签 Y 钉到与满格方图完全相同的单元格相对位
+    //（方图帧底 + 一行距）——替代 Dummy 垫高（Dummy 会多出一个行距，混合行
+    // 行高漂移）；行高逐位 == 方格单元格，网格恒齐
+    if (imgH < kThumb) {
+        const float labelY = cellY + kThumb +
+                             ImGui::GetStyle().FramePadding.x * 2.0f + // 帧高 = 图 + 双侧 pad
+                             ImGui::GetStyle().ItemSpacing.y;
+        ImGui::SetCursorPosY(std::max(ImGui::GetCursorPosY(), labelY));
+    }
     DrawCenteredLabel(e.FileName().c_str(),
                       kThumb + ImGui::GetStyle().FramePadding.x * 2.0f);
     ImGui::EndGroup();
