@@ -362,20 +362,37 @@ void FilePicker::DrawIconEntries(PickerResult& out) {
         const bool inMulti = multi_ && std::find(multiSel_.begin(), multiSel_.end(),
                                                  full) != multiSel_.end();
         const bool sel = multi_ ? inMulti : selected_ == full;
-        if (ImGui::InvisibleButton("tile", ImVec2(tileW, tileH))) {
-            if (e.isDir) { // 单击高亮 / 双击进入（与列表同口径）
-                if (ImGui::IsMouseDoubleClicked(0)) NavigateTo(full);
-                else selected_ = full;
-            } else if (multi_) {
-                ApplyMultiClick(i, ImGui::GetIO().KeyCtrl, ImGui::GetIO().KeyShift);
-                if (ImGui::IsMouseDoubleClicked(0)) ConfirmMulti(out);
-            } else {
-                selected_ = full;
-                if (ImGui::IsMouseDoubleClicked(0)) {
-                    out = {PickerAction::Open, full.string()};
-                    open_ = false;
-                }
+        // 双击 = 按下帧检测：InvisibleButton 返回值在释放帧才为真，而
+        // IsMouseDoubleClicked（= MouseClickedCount==2）只在按下帧为真 → 原来在
+        // 返回值分支里查双击永远错过——图标视图进不了子文件夹、双击选不了文件
+        //（列表视图 Selectable+AllowDoubleClick 走 PressedOnDoubleClick 按下即
+        // 触发，故正常）。选择同改按下口径（IsItemClicked）与双击同拍；双击导航/
+        // 确认后 entries_ 已重建，余下瓦片本帧不再提交（return 前 PopID 配对 +
+        // e 引用已失效）。
+        ImGui::InvisibleButton("tile", ImVec2(tileW, tileH));
+        const bool dbl = ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0);
+        const bool pressed = ImGui::IsItemClicked();
+        if (e.isDir) { // 单击高亮 / 双击进入（与列表同口径）
+            if (dbl) {
+                ImGui::PopID(); // 早退也须配对（imgui End() 校验 ID 栈）
+                NavigateTo(full);
+                return;
             }
+            if (pressed) selected_ = full;
+        } else if (multi_) {
+            if (dbl) {
+                ImGui::PopID();
+                ConfirmMulti(out);
+                return;
+            }
+            if (pressed) ApplyMultiClick(i, ImGui::GetIO().KeyCtrl, ImGui::GetIO().KeyShift);
+        } else if (dbl) {
+            ImGui::PopID();
+            out = {PickerAction::Open, full.string()};
+            open_ = false;
+            return;
+        } else if (pressed) {
+            selected_ = full;
         }
         const bool hovered = ImGui::IsItemHovered();
 

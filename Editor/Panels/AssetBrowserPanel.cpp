@@ -48,6 +48,25 @@ uint8_t KindOf(AssetType t) {
     }
 }
 
+// 居中省略号单行标签（单元格文件名/文件夹名共用）：截到 avail 宽——退字符时
+// 连带退掉 UTF-8 连续字节（0x80–0xBF）防切半字符——再水平居中（用户实测
+// "名称没有居中"；完整名走缩略图/图标悬停 tooltip）。单行钉宽 = 单元格宽
+// 确定，OnGui 网格列距公式前提保持（旧 PushTextWrapPos 多行同此效果）。
+void DrawCenteredLabel(const char* text, float avail) {
+    std::string shown = text;
+    if (ImGui::CalcTextSize(shown.c_str()).x > avail) {
+        while (!shown.empty() && ImGui::CalcTextSize((shown + "…").c_str()).x > avail) {
+            do { shown.pop_back(); }
+            while (!shown.empty() && (unsigned char)shown.back() >= 0x80 &&
+                   (unsigned char)shown.back() < 0xC0);
+        }
+        shown += "…"; // 空串 + 省略号 = avail 容不下任何整字符的兜底
+    }
+    const float tw = ImGui::CalcTextSize(shown.c_str()).x;
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, (avail - tw) * 0.5f));
+    ImGui::TextUnformatted(shown.c_str());
+}
+
 // C3 同类：过滤忽略大小写（与 Hierarchy 搜索同语义）
 const char* StrIStr(const char* hay, const char* needle) {
     if (!needle[0]) return hay;
@@ -167,8 +186,8 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
     // 列距按主题实测而非固定值：主题度量随 displayScale 缩放（FramePadding.x =
     // ItemSpacing.x = 8k → 节距 72+24k，k≥1 时超旧硬码 92）→ 旧公式列数偏多，
     // 每行末列溢出右缘被裁——子窗口只保留竖向滚动条，溢出部分无横向滚动可达
-    // （用户实测"素材一多显示不完整"）。配套 DrawItem/文件夹名 PushTextWrapPos
-    // 钉宽 → 单元格宽确定，本公式精确成立。
+    // （用户实测"素材一多显示不完整"）。配套 DrawItem/文件夹名居中省略号
+    // 单行标签钉宽（DrawCenteredLabel）→ 单元格宽确定，本公式精确成立。
     const ImGuiStyle& st = ImGui::GetStyle();
     const float cellW = kThumb + st.FramePadding.x * 2.0f;
     const int cols =
@@ -218,13 +237,8 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
                     app.OpenAnimationCreateFromFolder(d);
                 ImGui::EndPopup();
             }
-            char dirName[16];
-            std::snprintf(dirName, sizeof(dirName), "%.12s%s", rest.c_str(),
-                          rest.size() > 12 ? "…" : "");
-            // 名字钉到按钮宽（TextWrapped 相对窗口右缘 → 行中单元格宽随位置漂移）
-            ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + cellW);
-            ImGui::TextUnformatted(dirName);
-            ImGui::PopTextWrapPos();
+            // 名字：居中省略号单行（宽 = 单元格宽——列距公式前提保持）
+            DrawCenteredLabel(rest.c_str(), cellW);
             const bool labelHover = ImGui::IsItemHovered();
             testhooks::Stash(("assets.folder." + rest).c_str(), ImGui::GetItemRectMin(),
                              ImGui::GetItemRectMax());
@@ -407,10 +421,23 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
 
     ImGui::PushID((int)e.guid);
     ImGui::BeginGroup();
+    const float cellX = ImGui::GetCursorPosX(); // 单元格左缘：等比缩略水平居中基准
     // 缩略图 / 类型图标：sprite = 纹理页缩略；其余 = 形状页类型图标（M4.7b，
-    // 替代旧调色板色块——prefab 蓝调 / script 墨绿 / generic 次级灰，ImageButton tint 染色）
-    const ImVec2 size(kThumb, kThumb);
+    // 替代旧调色板色块——prefab 蓝调 / script 墨绿 / generic 次级灰，ImageButton tint 染色）。
+    // sprite 等比缩略（用户实测：序列帧长条图被拉成正方形）：按导入页宽高比 fit
+    // 进 kThumb 见方区，按钮在单元格内水平居中 + 竖向 Dummy 垫满方格高（行高
+    // 恒定，网格不参差）；类型图标无宽高比问题，保持满格方图。
+    float imgW = kThumb, imgH = kThumb;
     void* tex = isSprite ? app.AssetGpu().Thumbnail(e.guid) : app.Viewport().IconTex();
+    if (isSprite && tex) {
+        uint32_t pw = 0, ph = 0;
+        if (app.AssetGpu().PageInfo(e.guid, pw, ph) && pw > 0 && ph > 0) {
+            const float s = std::min(kThumb / (float)pw, kThumb / (float)ph);
+            imgW = std::max(1.0f, (float)pw * s);
+            imgH = std::max(1.0f, (float)ph * s);
+        }
+    }
+    const ImVec2 size(imgW, imgH);
     ImVec2 uv0(0, 0), uv1(1, 1);
     ImVec4 tint(1, 1, 1, 1);
     if (!isSprite && tex) {
@@ -438,10 +465,12 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
                                             : theme::kTextDim;
     }
     const bool selected = e.guid == selectedGuid_; // 单击选中（M6a 批②：表格区锚点）
-    if (tex)
+    if (tex) {
+        if (imgW < kThumb) // 等比缩窄 → 按钮帧（imgW+2×FramePadding）水平居中
+            ImGui::SetCursorPosX(cellX + (kThumb - imgW) * 0.5f);
         ImGui::ImageButton("##thumb", tex, size, uv0, uv1,
                            selected ? theme::kAccentDim : theme::kBgMid, tint);
-    else ImGui::Button("?", size);
+    } else ImGui::Button("?", size);
     const bool hovered = ImGui::IsItemHovered();
     const bool doubleClicked = hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
     if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) selectedGuid_ = e.guid;
@@ -564,15 +593,11 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
     // 双击音频 = 试听/停止切换（批①；Edit 态也可响——EnsureClipLoaded 按需现烤现载）
     if (doubleClicked && e.type == AssetType::Audio) app.TogglePreviewAudio(e.guid);
 
-    // 文件名（截断 12 字符；钉到按钮宽换行——单元格宽确定，网格列距公式才精确；
-    // 右键菜单已上移绑缩略图）
-    char shortName[16];
-    std::snprintf(shortName, sizeof(shortName), "%.12s%s", e.FileName().c_str(),
-                  e.FileName().size() > 12 ? "…" : "");
-    const ImGuiStyle& st = ImGui::GetStyle();
-    ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + kThumb + st.FramePadding.x * 2.0f);
-    ImGui::TextUnformatted(shortName);
-    ImGui::PopTextWrapPos();
+    // 文件名（居中省略号单行；单元格宽 = kThumb+2×FramePadding，列距公式前提；
+    // 右键菜单已上移绑缩略图）。等比缩略竖向欠高先用 Dummy 垫满方格 → 行齐
+    if (imgH < kThumb) ImGui::Dummy(ImVec2(0.0f, kThumb - imgH));
+    DrawCenteredLabel(e.FileName().c_str(),
+                      kThumb + ImGui::GetStyle().FramePadding.x * 2.0f);
     ImGui::EndGroup();
     ImGui::PopID();
 }
