@@ -1137,7 +1137,11 @@ void EditorApp::SmokeUiFrame(uint64_t frame) {
             if (g_uiSmoke.uiPt0.x > -1.0e8f) hold(g_uiSmoke.uiPt0);
         } else if (frame == 113) {
             release(g_uiSmoke.uiPt0);
-        } else if (frame == 115) {
+        } else if (frame == 114) { // 双击进入（2026-10-13 语义改：单击选中/双击
+            hold(g_uiSmoke.uiPt0); // 进入——f112-115 两对按下/释放，33ms 间隔 <
+        } else if (frame == 115) { // MouseDoubleClickTime 0.30s 判双击）
+            release(g_uiSmoke.uiPt0);
+        } else if (frame == 116) {
             g_uiSmoke.folderOk = assetPanel_ && assetPanel_->CurrentDir() == "Assets/sub";
         } else if (frame == 117) {
             g_uiSmoke.uiPt0 = rectCenter("crumbAssets");

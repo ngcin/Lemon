@@ -185,6 +185,7 @@ private:
     void DrawTableEditorWindow(EditorApp& app); // .tab 浮动放大编辑器（按需工具窗）
 
     std::string currentDir_ = ""; // "" = Assets/ 根
+    std::string selectedDir_;     // 文件夹单击选中（双击进入；2026-10-13 用户口径）
     std::string filter_;
     int typeFilter_ = 0;          // 类型过滤（T3b-9）：0 全部/1 图/2 动画/3 Prefab/4 表/5 脚本
     uint64_t renamingGuid_ = 0;   // 0 = 无重命名进行中

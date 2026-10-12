@@ -196,7 +196,8 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
 
     // 子目录文件夹单元格（M4.7d 补全：面包屑只向上，向下进子目录靠这里——
     // 旧目录下拉删除后曾出现"子目录进不去"的导航缺口，smoke-ui 真人链路抓到）。
-    // 单击进入；currentDir_ 语义 = "Assets/相对路径"（同 Directories()/面包屑）。
+    // 单击选中 / 双击进入（2026-10-13 用户口径：与系统文件管理器一致；原"单击
+    // 进入"退役）；currentDir_ 语义 = "Assets/相对路径"（同 Directories()/面包屑）。
     // M4.7 手测修复：currentDir_=""（根）= Assets/ 本身——此前 EntriesInDir("") 列
     // 的是项目根散文件（浏览器里只剩 project.lemon，导入进 Assets/ 的素材因
     // "Assets" 这层没有文件夹单元格而不可见）；根级目录（06 §1 Prefabs/）也补
@@ -224,9 +225,11 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
             float u0 = 0, v0 = 0, u1 = 1, v1 = 1;
             if (tex) app.Viewport().Assets().IconUV(IconKind::AssetGeneric, u0, v0, u1, v1);
             const ImVec2 size(kThumb, kThumb);
+            const bool dirSelected = selectedDir_ == d; // 单击选中高亮（同条目选中色）
             if (tex)
                 ImGui::ImageButton("##dir", tex, size, ImVec2(u0, v0), ImVec2(u1, v1),
-                                   theme::kBgMid, theme::kAccent);
+                                   dirSelected ? theme::kAccentDim : theme::kBgMid,
+                                   theme::kAccent);
             else
                 ImGui::Button("/", size);
             const bool iconHover = ImGui::IsItemHovered();
@@ -244,7 +247,6 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
             const bool labelHover = ImGui::IsItemHovered();
             testhooks::Stash(("assets.folder." + rest).c_str(), ImGui::GetItemRectMin(),
                              ImGui::GetItemRectMax());
-            // 图标或名字任一处单击进入（v1 只挂图标 → 点名字无反应，smoke-ui 抓到）
             if (std::getenv("LEMON_SMOKE_UI_DEBUG") && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                 ImVec2 rmin = ImGui::GetItemRectMin(), rmax = ImGui::GetItemRectMax();
                 ImGuiContext* gc = ImGui::GetCurrentContext();
@@ -255,8 +257,18 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
                             gc->HoveredWindow ? gc->HoveredWindow->Name : "(null)",
                             ImGui::GetCurrentWindow()->Name);
             }
-            if ((iconHover || labelHover) && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
-                currentDir_ = d; // 单击进入（面包屑返回）
+            // 图标或名字任一处：单击选中 / 双击进入（图标热区 72×72 大目标——
+            // v1 只挂图标点名字无反应，smoke-ui 抓到）。双击 = 按下帧检测
+            //（IsMouseDoubleClicked 同帧语义，else-if 防第二击再选一次）；
+            // 进入/选中互斥清对侧选集（条目选中 ↔ 文件夹选中）
+            const bool dirHot = iconHover || labelHover;
+            if (dirHot && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                currentDir_ = d; // 双击进入（面包屑返回）
+                selectedDir_.clear();
+            } else if (dirHot && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                selectedDir_ = d; // 单击选中
+                selectedGuid_ = 0;
+            }
             ImGui::EndGroup();
             ImGui::PopID();
             if (col >= cols) col = 0;
@@ -485,7 +497,10 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
     }
     const bool hovered = ImGui::IsItemHovered();
     const bool doubleClicked = hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
-    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) selectedGuid_ = e.guid;
+    if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        selectedGuid_ = e.guid;
+        selectedDir_.clear(); // 选中互斥（条目 ↔ 文件夹）
+    }
 
     // 右键菜单绑缩略图（72×72 大目标）：绑在下方 12 字符文件名上时几乎点不中——
     // NoOpenOverItems 修复后右键缩略图不再弹空白菜单，成了"无菜单"（G4–G6 手测）
