@@ -186,9 +186,9 @@ public:
     void MenuImportAsset();  // 文件选择器（复制进 Assets/ + 导入）
     void RescanAssets();     // FileWatcher/手动重扫 → DB + GPU 增量导入
     void MenuSweepOrphanMetas(); // Assets 菜单：手动清扫孤儿 .meta（同 Rescan 自动判定）
-    /// 双击 .anim/.override 资产 → 打开 Animation 面板（M6a 批② T3——首个"资产 →
-    /// 专用编辑面板"通道）。T3c 集归并：.anim 若已属某 .override 集 → 开集工作台并
-    /// 选中该段；否则裸 clip 传统模式；.override 直接开集。
+    /// 双击 .clip/.ani 资产 → 打开 Animation 面板（M6a 批② T3——首个"资产 →
+    /// 专用编辑面板"通道）。T3c 集归并：.clip 若已属某 .ani 集 → 开集工作台并
+    /// 选中该段；否则裸 clip 传统模式；.ani 直接开集。
     void OpenAnimationEditor(uint64_t guid);
     /// 文件夹右键「从此文件夹创建动画…」（T3-UX7：唯一创建入口）——开极简
     /// 创建框；保存位置 = AssetBrowser 当前浏览目录（只读展示）

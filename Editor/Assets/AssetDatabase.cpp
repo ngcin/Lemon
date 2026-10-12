@@ -444,6 +444,8 @@ bool AssetDatabase::OpenProject(const std::string& projectRoot, uint32_t spriteI
         }
     }
 
+    MigrateLegacyAnimExtensions(); // 资产族复名（2026-10-13）：旧扩展名保 GUID 迁移后再扫
+
     Rescan();
     manifestCarry_.clear();
     SaveManifest();
@@ -453,6 +455,76 @@ bool AssetDatabase::OpenProject(const std::string& projectRoot, uint32_t spriteI
 }
 
 // ------------------------------------------------------------ 孤儿清扫 ----
+void AssetDatabase::MigrateLegacyAnimExtensions() {
+    // 2026-10-13 资产族复名（ADR-013 D2 修订）：.anim→.clip、.override→.ani。
+    // 扫描口径与 Rescan 同款（项目根 + SkipDir 排除）。保 GUID：文件与 .meta 同行
+    // 改名（.meta 随文件走；"clip"/"animset" type 字符串不变零迁移）——集段引用/
+    // prefab/场景 GUID 引用全不断链（CommitSegRename 同款机制）。manifestCarry_
+    // 按路径记账 → 键随行重映射（spriteId 不漂移）。目标名已存在（新旧混态项目）
+    // = 跳过 + 红字，绝不覆盖。旧扩展名在 TypeOf 已除名——会话中途外部放入的
+    // .anim/.override 按通用档处理，重开项目时经本迁移归位。
+    if (!opened_) return;
+    std::error_code ec;
+    std::vector<std::pair<std::string, std::string>> renames; // {旧 rel, 新 rel}
+    for (auto it = fs::recursive_directory_iterator(
+             root_, fs::directory_options::skip_permission_denied, ec);
+         it != fs::recursive_directory_iterator(); it.increment(ec)) {
+        if (ec) break;
+        const fs::directory_entry& de = *it;
+        if (de.is_directory(ec)) {
+            const std::string name = de.path().filename().string();
+            std::string relDir = fs::relative(de.path(), root_, ec).generic_string();
+            const bool top = !ec && relDir.find('/') == std::string::npos;
+            if (ec || (top ? SkipDirTop(name) : SkipDirAny(name)))
+                it.disable_recursion_pending();
+            continue;
+        }
+        const std::string name = de.path().filename().string();
+        if (name.size() > 5 && name.compare(name.size() - 5, 5, ".meta") == 0) continue;
+        const std::string ext = de.path().extension().string();
+        std::string to;
+        if (ext == ".anim") to = ".clip";
+        else if (ext == ".override") to = ".ani";
+        else continue;
+        const std::string rel = fs::relative(de.path(), root_, ec).generic_string();
+        if (ec || rel.empty()) continue;
+        renames.push_back({rel, rel.substr(0, rel.size() - ext.size()) + to});
+    }
+    uint32_t done = 0;
+    for (const auto& [oldRel, newRel] : renames) {
+        if (fs::exists(root_ + "/" + newRel, ec)) {
+            LEMON_ERROR("资产族迁移跳过（目标已存在，防覆盖——请手动处理）：%s → %s",
+                        oldRel.c_str(), newRel.c_str());
+            continue;
+        }
+        fs::rename(root_ + "/" + oldRel, root_ + "/" + newRel, ec);
+        if (ec) {
+            LEMON_ERROR("资产族迁移改名失败（%s）：%s", ec.message().c_str(), oldRel.c_str());
+            continue;
+        }
+        std::error_code mec;
+        fs::rename(root_ + "/" + oldRel + ".meta", root_ + "/" + newRel + ".meta", mec);
+        if (mec && fs::exists(root_ + "/" + oldRel + ".meta", mec)) {
+            // .meta 在却没跟上（权限/被占用）：文件已走、guid 将重排 = 引用断链，
+            // 必须红字可见（缺席改名失败 = 正常容忍，不发）
+            LEMON_ERROR("资产族迁移 .meta 改名失败（%s → %s）——guid 将重排，"
+                        "引用可能断链，请手动改名 .meta",
+                        (root_ + "/" + oldRel + ".meta").c_str(),
+                        (root_ + "/" + newRel + ".meta").c_str());
+        }
+        if (auto carry = manifestCarry_.find(oldRel);
+            carry != manifestCarry_.end() && manifestCarry_.find(newRel) == manifestCarry_.end()) {
+            manifestCarry_[newRel] = carry->second;
+            manifestCarry_.erase(carry);
+        }
+        hashCache_.erase(oldRel); // 旧路径缓存失效（新路径 miss 即重算，无跨路径误命中）
+        ++done;
+    }
+    if (done > 0)
+        LEMON_LOG("资产族复名迁移（.anim→.clip / .override→.ani，保 GUID）：本批 %u 项",
+                  done);
+}
+
 AssetDatabase::OrphanSweepResult AssetDatabase::SweepOrphanMetas() {
     OrphanSweepResult r = SweepOrphanMetasInternal();
     for (const std::string& p : r.cleaned)
@@ -519,7 +591,7 @@ bool AssetDatabase::GuidReferenced(uint64_t guid) {
         // 内容、消失文件出缓存，只重读变更/新增（此前每次 Rescan 失效全项目全量
         // 重读并拼大串，保存/删除触发的重扫在 UI 线程同步卡顿）；查找逐文件进行，
         // 免整体拼接的瞬态大分配
-        static const char* kRefExt[] = {".scene", ".prefab", ".anim",   ".override",
+        static const char* kRefExt[] = {".scene", ".prefab", ".clip",   ".ani",
                                         ".controller", ".tab", ".rml",  ".rcss",
                                         ".cs",     ".asset"};
         std::error_code ec;
@@ -670,7 +742,7 @@ void AssetDatabase::Rescan() {
             e.sliceBase = prev.sliceBase; // 切片块跨扫描稳定（grid 参数由 meta 每次重读）
             e.sliceCount = prev.sliceCount;
             if (prev.missing) {
-                lastChange_.added.push_back(e.guid); // 墓碑复活
+                lastChange_.added.push_back(e.guid); // 本会话已删条目同名复活（路径命中）
             } else if (prev.hash != e.hash) {
                 lastChange_.modified.push_back(e.guid);
             } else if (e.type == AssetType::Audio &&

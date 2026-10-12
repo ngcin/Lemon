@@ -1,6 +1,6 @@
 // Lemon 引擎 — Play 世界三缓存构建（M7a 批④；M5 批③ / M6a 批② T2·T3c·T3d 随迁）
 // 自 EditorContext::{BuildPlayClipCache,BuildPlayControllerCache,BuildPlayTableCache}
-// 下沉（搬家非复制，日志字符串逐字节保留）：进 Play/运行时启动期把 .anim/.override/
+// 下沉（搬家非复制，日志字符串逐字节保留）：进 Play/运行时启动期把 .clip/.ani/
 // .controller/.tab 资产解析进 World 三通道（Clips/Controllers/Tables），键 = 资产
 // GUID 低 32 位（clipId/prefabId 同款映射约定，03 §69 组件 schema 恒 u32）。
 // 装载时刻快照语义（Play 中改档不生效）；坏档红字跳过不炸 Play。编辑器
@@ -36,7 +36,7 @@ public:
     virtual bool HasClip(uint64_t guid) const = 0;
 };
 
-/// clip 表 + 动画集（.anim → ClipTable 帧映射 + .override 集按名索引）。
+/// clip 表 + 动画集（.clip → ClipTable 帧映射 + .ani 集按名索引）。
 /// EditorContext::BuildPlayClipCache 同源。
 void BuildClipCache(ecs::World& world, const PlayCacheSource& src);
 

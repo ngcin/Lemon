@@ -261,17 +261,17 @@ void TestAssetDatabaseLow32Collision() {
         std::ofstream f(p.string() + ".meta", std::ios::trunc);
         f << "{\"guid\":\"" << guidHex << "\"}";
     };
-    put("Assets/a.anim", "111100000000000a");
-    put("Assets/b.anim", "222200000000000a"); // 与 a 同低 32 位（…0000000a）→ 红字
+    put("Assets/a.clip", "111100000000000a");
+    put("Assets/b.clip", "222200000000000a"); // 与 a 同低 32 位（…0000000a）→ 红字
     put("Prefabs/p.prefab", "333300000000000a"); // 同低 32 位但异域（prefab≠clip）→ 不报
     {
-        std::ofstream f(root / "Assets" / "c.anim", std::ios::binary);
+        std::ofstream f(root / "Assets" / "c.clip", std::ios::binary);
         f << "y";
     } // 无 meta → 新发号
 
     db.Rescan();
     Expect(db.HealthIssues() == 1, "same-type low32 collision flagged exactly once");
-    const AssetEntry* c = db.FindByPath("Assets/c.anim");
+    const AssetEntry* c = db.FindByPath("Assets/c.clip");
     Expect(c && c->guid != 0 && (uint32_t)c->guid != 0x0000000aull,
            "allocated guid avoids taken low32 in domain");
     fs::remove_all(root, ec);
@@ -533,11 +533,11 @@ void TestGridSliceConfig() {
 
     // 非 sprite 拒绝
     {
-        std::ofstream f(root / "Assets" / "x.anim", std::ios::binary);
+        std::ofstream f(root / "Assets" / "x.clip", std::ios::binary);
         f << "{}";
     }
     db.Rescan();
-    if (const AssetEntry* c = db.FindByPath("Assets/x.anim"))
+    if (const AssetEntry* c = db.FindByPath("Assets/x.clip"))
         Expect(!db.SetGridSlice(*db.FindByGuid(c->guid), 1, 1, 1, 1), "non-sprite rejected");
     else
         Expect(false, "clip entry found");
@@ -899,11 +899,11 @@ void TestAssetIndexConsistency() {
              "\"frames\":[2,2]}}";
     }
     {
-        std::ofstream f(root / "Assets" / "walk.anim", std::ios::trunc);
+        std::ofstream f(root / "Assets" / "walk.clip", std::ios::trunc);
         f << "{}";
     }
     {
-        std::ofstream f(root / "Assets" / "walk.anim.meta", std::ios::trunc);
+        std::ofstream f(root / "Assets" / "walk.clip.meta", std::ios::trunc);
         f << "{\"guid\":\"" << lemon::assets::GuidToHex(walkGuid) << "\",\"type\":\"clip\"}";
     }
     {
@@ -932,7 +932,7 @@ void TestAssetIndexConsistency() {
     Expect(db.OpenProject(root.string(), 100), "editor db opens fixture project");
     const lemon::editor::AssetEntry* dbHero = db.FindByPath("Assets/hero.png");
     const lemon::editor::AssetEntry* dbSheet = db.FindByPath("Assets/sheet.png");
-    const lemon::editor::AssetEntry* dbWalk = db.FindByPath("Assets/walk.anim");
+    const lemon::editor::AssetEntry* dbWalk = db.FindByPath("Assets/walk.clip");
     const lemon::editor::AssetEntry* dbMob = db.FindByPath("Prefabs/mob.prefab");
     Expect(dbHero && dbSheet && dbWalk && dbMob, "db indexed all four assets");
     Expect(dbSheet->Sliced() && dbSheet->sliceCount == 4, "db allocated slice block");
@@ -1083,11 +1083,11 @@ void TestAssetIndexPkgManifest() {
              "\"frames\":[2,2]}}";
     }
     {
-        std::ofstream f(root / "Assets" / "walk.anim", std::ios::trunc);
+        std::ofstream f(root / "Assets" / "walk.clip", std::ios::trunc);
         f << "{}";
     }
     {
-        std::ofstream f(root / "Assets" / "walk.anim.meta", std::ios::trunc);
+        std::ofstream f(root / "Assets" / "walk.clip.meta", std::ios::trunc);
         f << "{\"guid\":\"" << lemon::assets::GuidToHex(walkGuid) << "\",\"type\":\"clip\"}";
     }
     {
@@ -1727,11 +1727,11 @@ void TestBakeProjectAtlas() {
         fs::remove_all(empty, ec);
         fs::create_directories(empty / "Assets", ec);
         {
-            std::ofstream f(empty / "Assets" / "walk.anim", std::ios::trunc);
+            std::ofstream f(empty / "Assets" / "walk.clip", std::ios::trunc);
             f << "{}";
         }
         {
-            std::ofstream f(empty / "Assets" / "walk.anim.meta", std::ios::trunc);
+            std::ofstream f(empty / "Assets" / "walk.clip.meta", std::ios::trunc);
             f << "{\"guid\":\"" << GuidToHex(0x5000000000000002ull) << "\",\"type\":\"clip\"}";
         }
         AssetIndex ei;
@@ -1773,6 +1773,73 @@ public:
     bool HasClip(uint64_t) const override { return true; }
 };
 
+
+void TestLegacyAnimExtMigration() {
+    // 2026-10-13 资产族复名（ADR-013 D2 修订）：.anim→.clip / .override→.ani
+    // 开项目保 GUID 迁移——文件+.meta 同行改名、manifestCarry 键随行（spriteId 不漂）。
+    namespace fs = std::filesystem;
+    using lemon::editor::AssetDatabase;
+    using lemon::editor::AssetEntry;
+
+    const fs::path root = fs::temp_directory_path() /
+                          ("lemon-test-legacyext-" + std::to_string(lemon::CurrentProcessId()));
+    std::error_code ec;
+    fs::remove_all(root, ec);
+
+    constexpr uint64_t kWalkGuid = 0xcccc000000000001ull;
+    constexpr uint64_t kSetGuid = 0xcccc000000000002ull;
+    auto put = [&](const std::string& rel, const std::string& body, uint64_t guid,
+                   const char* type) {
+        const fs::path p = root / rel;
+        fs::create_directories(p.parent_path(), ec);
+        { std::ofstream f(p, std::ios::trunc); f << body; }
+        std::ofstream f(p.string() + ".meta", std::ios::trunc);
+        f << "{\"guid\":\"" << lemon::assets::GuidToHex(guid) << "\",\"type\":\"" << type
+          << "\"}";
+    };
+    // 旧扩展名存量直接落盘（迁移前真身）
+    put("Assets/hero/walk.anim",
+        "{\"schemaVersion\":1,\"name\":\"walk\",\"fps\":8,\"loop\":true,\"frames\":[]}",
+        kWalkGuid, "clip");
+    put("Assets/hero/hero.override",
+        "{\"schemaVersion\":1,\"name\":\"hero\",\"segments\":[{\"name\":\"walk\",\"clip\":\"" +
+            lemon::assets::GuidToHex(kWalkGuid) + "\"}]}",
+        kSetGuid, "animset");
+
+    {
+        AssetDatabase db;
+        Expect(db.OpenProject(root.string(), /*spriteIdBase=*/100), "legacy-ext: open migrates");
+        Expect(!fs::exists(root / "Assets/hero/walk.anim", ec) &&
+                   !fs::exists(root / "Assets/hero/hero.override", ec),
+               "legacy-ext: old names gone");
+        const AssetEntry* w = db.FindByPath("Assets/hero/walk.clip");
+        const AssetEntry* s = db.FindByPath("Assets/hero/hero.ani");
+        Expect(w && w->guid == kWalkGuid && w->type == lemon::assets::AssetType::Clip,
+               "legacy-ext: clip guid survives");
+        Expect(s && s->guid == kSetGuid && s->type == lemon::assets::AssetType::AnimSet,
+               "legacy-ext: set guid survives");
+        Expect(fs::exists(root / "Assets/hero/walk.clip.meta", ec) &&
+                   fs::exists(root / "Assets/hero/hero.ani.meta", ec),
+               "legacy-ext: .meta traveled with rename");
+    }
+    { // 二开：guid 跨开稳定（.meta 随行）+ manifest 落盘已用新路径
+        AssetDatabase db;
+        Expect(db.OpenProject(root.string(), /*spriteIdBase=*/100), "legacy-ext: reopen");
+        const AssetEntry* w = db.FindByPath("Assets/hero/walk.clip");
+        const AssetEntry* s = db.FindByPath("Assets/hero/hero.ani");
+        Expect(w && w->guid == kWalkGuid && s && s->guid == kSetGuid,
+               "legacy-ext: guids stable across reopen");
+        std::ifstream mf(root / ".lemon" / "manifest.json", std::ios::binary);
+        std::string manifestText((std::istreambuf_iterator<char>(mf)),
+                                 std::istreambuf_iterator<char>());
+        Expect(manifestText.find("walk.clip") != std::string::npos &&
+                   manifestText.find("hero.ani") != std::string::npos &&
+                   manifestText.find("walk.anim") == std::string::npos,
+               "legacy-ext: manifest rewritten with new paths");
+    }
+    fs::remove_all(root, ec);
+}
+
 void TestClipCacheBadArchive() {
     namespace fs = std::filesystem;
     using lemon::ecs::World;
@@ -1789,32 +1856,32 @@ void TestClipCacheBadArchive() {
         return (root / name).string();
     };
     const std::string good =
-        writeFile("good.anim", "{\"fps\":8,\"loop\":true,\"frames\":[{\"sheet\":\"" + sheet +
+        writeFile("good.clip", "{\"fps\":8,\"loop\":true,\"frames\":[{\"sheet\":\"" + sheet +
                                    "\",\"cell\":0}],\"events\":[{\"frame\":0,\"id\":5}]}");
     const std::string badLoop = writeFile(
-        "bad_loop.anim", "{\"fps\":8,\"loop\":1,\"frames\":[{\"sheet\":\"" + sheet + "\",\"cell\":0}]}");
+        "bad_loop.clip", "{\"fps\":8,\"loop\":1,\"frames\":[{\"sheet\":\"" + sheet + "\",\"cell\":0}]}");
     const std::string badFps = writeFile(
-        "bad_fps.anim", "{\"fps\":\"8\",\"loop\":true,\"frames\":[{\"sheet\":\"" + sheet + "\",\"cell\":0}]}");
+        "bad_fps.clip", "{\"fps\":\"8\",\"loop\":true,\"frames\":[{\"sheet\":\"" + sheet + "\",\"cell\":0}]}");
     const std::string badSheet =
-        writeFile("bad_sheet.anim", "{\"fps\":8,\"frames\":[{\"sheet\":42,\"cell\":0}]}");
+        writeFile("bad_sheet.clip", "{\"fps\":8,\"frames\":[{\"sheet\":42,\"cell\":0}]}");
 
     // b11a review F4：切片面补钉——sliced sheet（2×2 切片 sliceBase=100）cell 2 连号
     // 解析 + 越界 cell 悬空拒 clip 两条分支
     const std::string sheetSliced = "8899aabbccddeeff";
     const std::string goodSliced = writeFile(
-        "good_sliced.anim",
+        "good_sliced.clip",
         "{\"fps\":12,\"frames\":[{\"sheet\":\"" + sheetSliced + "\",\"cell\":2}]}");
     const std::string danglingCell = writeFile(
-        "dangling.anim",
+        "dangling.clip",
         "{\"fps\":12,\"frames\":[{\"sheet\":\"" + sheetSliced + "\",\"cell\":9}]}");
 
     FakeClipSource src;
-    src.clips = {{0xAAAA0001ull, "good.anim", good},
-                 {0xAAAA0002ull, "bad_loop.anim", badLoop},
-                 {0xAAAA0003ull, "bad_fps.anim", badFps},
-                 {0xAAAA0004ull, "bad_sheet.anim", badSheet},
-                 {0xAAAA0005ull, "good_sliced.anim", goodSliced},
-                 {0xAAAA0006ull, "dangling.anim", danglingCell}};
+    src.clips = {{0xAAAA0001ull, "good.clip", good},
+                 {0xAAAA0002ull, "bad_loop.clip", badLoop},
+                 {0xAAAA0003ull, "bad_fps.clip", badFps},
+                 {0xAAAA0004ull, "bad_sheet.clip", badSheet},
+                 {0xAAAA0005ull, "good_sliced.clip", goodSliced},
+                 {0xAAAA0006ull, "dangling.clip", danglingCell}};
     lemon::assets::IndexedEntry whole;
     whole.guid = 0x0011223344556677ull;
     whole.type = lemon::assets::AssetType::Sprite;
@@ -1863,6 +1930,7 @@ void RunAssetsTests() {
 #endif
 #ifdef LEMON_EDITOR_CORE
     TestOrphanMetaSweep();
+    TestLegacyAnimExtMigration(); // 2026-10-13 资产族复名：旧扩展名保 GUID 迁移
 #endif
 #ifdef LEMON_EDITOR_CORE
     TestAssetDatabaseLifecycle();

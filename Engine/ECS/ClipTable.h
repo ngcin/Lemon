@@ -1,6 +1,6 @@
 // Lemon 引擎 — 帧动画 clip 表（M5 批③；03 §5 帧映射 / 06 §2.2 clip2d 数据通道）
 // clipId → {fps, loop, frames[]}：纯 spriteId 数组，零 GPU 依赖——World 持有，
-// 编辑器 EnterPlay 一次性建表（进 Play 时刻资产快照，Play 中改 .anim 不生效），
+// 编辑器 EnterPlay 一次性建表（进 Play 时刻资产快照，Play 中改 .clip 不生效），
 // 引擎测试/玩法层可直接填。帧号 = 纯函数（time*fps 截断），无逐帧累加状态机
 // ——确定性回放不引入次序敏感状态。
 // clipId 语义 = clip 资产 GUID 低 32 位（prefabId 同款映射约定；M7 dense id 表
@@ -15,7 +15,7 @@
 
 namespace lemon::ecs {
 
-/// T3d 批③：帧事件（.anim events[]；id = 作者自定义 16 位标识，C# 侧按 (clipId,id)
+/// T3d 批③：帧事件（.clip events[]；id = 作者自定义 16 位标识，C# 侧按 (clipId,id)
 /// 分发——命名事件列 v1.1）。帧跨越检测在 AnimatorSystem（帧号纯函数 ⇒ 事件序确定）。
 struct ClipEventDef {
     uint16_t frame = 0;
@@ -43,7 +43,7 @@ public:
     void Clear() { clips_.clear(); setsByName_.clear(); setOfSeg_.clear(); }
     uint32_t Count() const { return (uint32_t)clips_.size(); }
 
-    // ---- T3c 动画集按名索引（.override；World 持有非 ECS 零哈希——不入 StateHash，
+    // ---- T3c 动画集按名索引（.ani；World 持有非 ECS 零哈希——不入 StateHash，
     // 基准场不走按名路径 = 金回放逐位不变，09 §6.8 同款口径）----
     /// 登记集（setId = 集资产 GUID 低 32 位；segments = {段名, clipId} 有序对）。
     /// 同集重名先到先得（编辑器按 relPath 序登记并预检告警）；返回实登记数。

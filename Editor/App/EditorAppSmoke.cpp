@@ -67,7 +67,7 @@ void WriteAnimSheetAssets(const std::filesystem::path& assetsDir) {
              "  \"importer\": { \"slice\": \"grid\", \"cell\": [32, 32], \"frames\": [4, 1] },\n"
              "  \"hash\": 0,\n  \"importedAt\": 0\n}\n";
     }
-    std::filesystem::path clip = assetsDir / "anim.anim";
+    std::filesystem::path clip = assetsDir / "anim.clip";
     if (!fs::exists(clip, ec)) {
         std::ofstream f(clip, std::ios::trunc);
         f << "{\n  \"schemaVersion\": 1,\n  \"name\": \"smoke-anim\",\n  \"fps\": 10,\n"
@@ -84,7 +84,7 @@ void WriteAnimSheetAssets(const std::filesystem::path& assetsDir) {
              "  \"importedAt\": 0\n}\n";
     }
     // M6a 批①：受击段（fps12 × 尾两帧 loop=0——Play(hit)+Queue(walk) 切段断言用）
-    std::filesystem::path hitClip = assetsDir / "anim-hit.anim";
+    std::filesystem::path hitClip = assetsDir / "anim-hit.clip";
     if (!fs::exists(hitClip, ec)) {
         std::ofstream f(hitClip, std::ios::trunc);
         f << "{\n  \"schemaVersion\": 1,\n  \"name\": \"smoke-anim-hit\",\n  \"fps\": 12,\n"
@@ -125,7 +125,7 @@ bool SeedBenchSurvivorScene(EditorContext& ctx, uint32_t spriteIdBase) {
     // 查询"真实工作形状进回归口径
     s.Emplace<ecs::Hazard>(mob, ecs::Hazard{.dps = 8.0f, .tickInterval = 0.8f,
                                             .radius = 24.0f});
-    // 动画（M5 批③）：clipId = anim.anim GUID 低 32 位（EnterPlay 建表；fps10×4 帧）
+    // 动画（M5 批③）：clipId = anim.clip GUID 低 32 位（EnterPlay 建表；fps10×4 帧）
     s.Emplace<ecs::Animator2D>(mob).clipId = (uint32_t)kAnimClipGuid;
     ecs::Chase& ch = s.Emplace<ecs::Chase>(mob);
     ch.speed = 70.0f;
@@ -382,7 +382,7 @@ void EditorApp::SeedSmokeScene() {
             ctx_.CreateSpriteEntityFromAsset("FromAsset", kSmokeSpriteGuid, Vec2{420, 200});
         if (!fromAsset.IsNull()) s.Get<Transform2D>(fromAsset).scale = Vec2{0.5f, 0.5f};
     }
-    // M5 批③动画链：程序化 4 帧表 + anim.anim → Animator2D 帧映射断言实体；
+    // M5 批③动画链：程序化 4 帧表 + anim.clip → Animator2D 帧映射断言实体；
     // yami hero-walk（Samples/Assets/yami-dungeon 拷进项目才在场）→ 真素材端到端验
     if (launch_->smokeAnim) {
         if (const AssetEntry* sheet = ctx_.Assets().FindByGuid(kAnimSheetGuid);
@@ -458,7 +458,7 @@ void EditorApp::SeedSmokeProject() {
              "  \"importedAt\": 0\n}\n";
     }
 
-    // M5 批③动画链素材：anim-sheet + grid meta + anim.anim（固定 guid 见 kAnimSheetGuid）
+    // M5 批③动画链素材：anim-sheet + grid meta + anim.clip（固定 guid 见 kAnimSheetGuid）
     if (launch_->smokeAnim) WriteAnimSheetAssets(root / "Assets");
 }
 
@@ -1237,15 +1237,15 @@ bool EditorApp::SmokeUiVerdict() {
 // 前提：Run 进程单次调用 = EditorEntry 唯一入口——全局生命周期与 Run 局部等价）----
 namespace {
 struct AnimSmokeState {
-    // M6a 批② T3：--smoke-anim 扩 clip 编辑链（验收②）。专档 anim-edit.anim
+    // M6a 批② T3：--smoke-anim 扩 clip 编辑链（验收②）。专档 anim-edit.clip
     //（固定 guid，幂等重写基线）走 AnimationPanel 数据面同款链路：落盘 →
     // assets::ParseClipJson → 改 fps/增帧 → assets::ClipToJson → 原子写 → Rescan → 回读 roundtrip。
-    // 不动 anim.anim 种子（既有帧映射/切段断言零改动）。
+    // 不动 anim.clip 种子（既有帧映射/切段断言零改动）。
     bool smokeClipEditOk = false, smokeClipPlayCacheOk = false;
     bool smokeWholeOk = false;
     bool smokeSetEditOk = false, smokeSetPlayCacheOk = false;
     bool smokeGraphEditOk = false, smokeGraphCacheOk = false, smokeGraphSwitchOk = false;
-    bool smokeSetOpenOk = false; // 2026-09-27：.override 直开集修复回归位
+    bool smokeSetOpenOk = false; // 2026-09-27：.ani 直开集修复回归位
     bool smokeSetCreateOk = false; // 2026-09-27 热修②：新建入口清残留编辑态回归位
     bool smokeSetCreateOpenOk = false; // 热修③：模态真实点击创建 → OpenSet 全链
     bool smokeSetCreateFlowDone = false;
@@ -1258,6 +1258,7 @@ struct AnimSmokeState {
     bool smokeAddCountOk = false, smokeAddOrderOk = false, smokeAddFlowDone = false;
     size_t smokeAddBase = 0; // 帧序事故回归：多图追加前编辑态帧数基数
     bool smokeFolderCreateOk = false, smokeDblClipOk = false; // T3-UX7：极简创建/断路
+    bool smokeSegAdoptOk = false; // 2026-10-12 修复回归位：移除出集后同名重建 = 接回既有 .clip
     bool smokeDragItemOk = false; // T3-UX9：帧格交互件回归位（项 ID 非零）
     bool smokeLeftColOk = false, smokeLeftColDone = false; // 三图优化点①：左列段行元信息
     Vec2 smokeCreatePt{-1.0e9f, -1.0e9f};
@@ -1277,9 +1278,9 @@ AnimSmokeState g_animSmoke;
 void EditorApp::SmokeAnimSeed() {
     if (Launch().smokeAnim) {
         const std::filesystem::path clipPath =
-            std::filesystem::path(ctx_.Assets().ProjectRoot()) / "Assets" / "anim-edit.anim";
+            std::filesystem::path(ctx_.Assets().ProjectRoot()) / "Assets" / "anim-edit.clip";
         const std::filesystem::path setPath =
-            std::filesystem::path(ctx_.Assets().ProjectRoot()) / "Assets" / "anim-set.override";
+            std::filesystem::path(ctx_.Assets().ProjectRoot()) / "Assets" / "anim-set.ani";
         {
             std::ofstream f(clipPath, std::ios::trunc);
             f << "{\n  \"schemaVersion\": 1,\n  \"name\": \"smoke-anim-edit\",\n  \"fps\": 10,\n"
@@ -1293,7 +1294,7 @@ void EditorApp::SmokeAnimSeed() {
             // 应解析为本体号（文件夹多单图动画的运行时前提）
             const std::filesystem::path wholePath =
                 std::filesystem::path(ctx_.Assets().ProjectRoot()) / "Assets" /
-                "anim-whole.anim";
+                "anim-whole.clip";
             std::ofstream wf(wholePath, std::ios::trunc);
             wf << "{\n  \"schemaVersion\": 1,\n  \"name\": \"smoke-anim-whole\",\n  \"fps\": 2,\n"
                   "  \"loop\": true,\n  \"frames\": [\n"
@@ -1316,7 +1317,7 @@ void EditorApp::SmokeAnimSeed() {
             sm << "{\n  \"guid\": \"" << AssetDatabase::GuidToHex(kAnimSetGuid) << "\",\n  \"type\": \"animset\",\n  \"hash\": 0,\n"
                   "  \"importedAt\": 0\n}\n";
             // T3d：状态机档——状态名对齐集段名（whole/walk/hit）；whole 稳态绕开
-            // 队列钩子（其按 clipId==anim.anim 认实体，graph 链实体全程不落 walk 稳态）
+            // 队列钩子（其按 clipId==anim.clip 认实体，graph 链实体全程不落 walk 稳态）
             const std::filesystem::path graphPath =
                 std::filesystem::path(ctx_.Assets().ProjectRoot()) / "Assets" /
                 "anim-graph.controller";
@@ -1363,7 +1364,7 @@ void EditorApp::SmokeAnimSeed() {
             }
         }
         if (!g_animSmoke.smokeClipEditOk)
-            LEMON_ERROR("smoke-anim：clip 编辑链失败（anim-edit.anim roundtrip 不符）");
+            LEMON_ERROR("smoke-anim：clip 编辑链失败（anim-edit.clip roundtrip 不符）");
         { // T3c：集档 roundtrip（数据面同款链路）
             std::ifstream vf(setPath, std::ios::binary);
             std::string vtext((std::istreambuf_iterator<char>(vf)),
@@ -1373,7 +1374,7 @@ void EditorApp::SmokeAnimSeed() {
                              v.segments[0].name == "walk" &&
                              v.segments[0].clipGuid == kAnimClipGuid;
             if (!g_animSmoke.smokeSetEditOk)
-                LEMON_ERROR("smoke-anim：动画集解析失败（anim-set.override roundtrip 不符）");
+                LEMON_ERROR("smoke-anim：动画集解析失败（anim-set.ani roundtrip 不符）");
         }
         { // T3d：controller 档 roundtrip（ControllerEdit 数据面同款链路）
             const std::filesystem::path graphPath =
@@ -1389,7 +1390,7 @@ void EditorApp::SmokeAnimSeed() {
             if (!g_animSmoke.smokeGraphEditOk)
                 LEMON_ERROR("smoke-anim：状态机解析失败（anim-graph.controller 不符）");
         }
-        // 2026-09-27 修复回归：双击 .override（AnimSet 直开分支）必须置 setGuid_
+        // 2026-09-27 修复回归：双击 .ani（AnimSet 直开分支）必须置 setGuid_
         //（曾误走 SetTarget 只设 targetGuid_ → 空态/历史集——真人实测报告）。
         // 必须先于下方的 clip 归并调用：归并路径本身会置 setGuid_ 同值，后置
         // 断言会假通过
@@ -1398,21 +1399,21 @@ void EditorApp::SmokeAnimSeed() {
             g_animSmoke.smokeSetOpenOk =
                 static_cast<AnimationPanel*>(en->panel)->SetGuidForTest() == kAnimSetGuid;
         if (!g_animSmoke.smokeSetOpenOk)
-            LEMON_ERROR("smoke-anim：双击 .override 未开集（setGuid_ 未置位）");
+            LEMON_ERROR("smoke-anim：双击 .ani 未开集（setGuid_ 未置位）");
         // 2026-09-27 热修②回归：右键"新建动画集…"必须清残留编辑态（弹窗背后曾
         // 照渲染上一个集——真人实测报告）。须在下方归并重开之前断言：归并路径
         // 会重置 setGuid_，后置断言会假通过（与 open 同理）；归并照旧保住面板
         // 本体 OnGui 覆盖（LoadFrom 重入）。模态不点创建 = 零落盘副作用。
         // 冒烟自清（热修④续）：目标名 player = 冒烟专属产物——工程里已有同名集
         //（用户真人验收建过）会让模态创建撞路拒 → 集不开 → 后续 FilePicker/
-        // 选帧/建 clip 模态链全被卡（2026-09-27 真人报告"player.override 已存在"）
+        // 选帧/建 clip 模态链全被卡（2026-09-27 真人报告"player.ani 已存在"）
         {
             namespace fs = std::filesystem;
             std::error_code ec;
             const fs::path root = fs::path(ctx_.Assets().ProjectRoot());
             const bool removed =
-                fs::remove(root / "Assets/player.override", ec) ||
-                fs::remove(root / "Assets/player.override.meta", ec);
+                fs::remove(root / "Assets/player.ani", ec) ||
+                fs::remove(root / "Assets/player.ani.meta", ec);
             if (removed) RescanAssets(); // DB 不留幻影（墓碑复活留给模态创建路径）
         }
         OpenAnimationCreateSet("");
@@ -1450,11 +1451,11 @@ void EditorApp::SmokeAnimPlaySetup() {
             ctx_.ActiveWorld().Clips().SetOfClip((uint32_t)kAnimWholeClipGuid) ==
                 (uint32_t)kAnimSetGuid;
         if (!g_animSmoke.smokeSetPlayCacheOk)
-            LEMON_ERROR("smoke-anim：动画集未进 Play 快照或按名反查不符（anim-set.override）");
+            LEMON_ERROR("smoke-anim：动画集未进 Play 快照或按名反查不符（anim-set.ani）");
         // T3d：状态机进 Play 快照 + 图驱动三段切换（whole→walk 条件边 → hit
         // trigger 边 → hit→whole exitTime 段末回归）。同步步进 Play 世界（Animator
         // → CSharpBatch → AnimGraph 全链；无脚本世界照常，图评估不依赖脚本）。
-        // 独立实体 + whole 稳态 = 与队列钩子（按 clipId==anim.anim 认实体）零交集。
+        // 独立实体 + whole 稳态 = 与队列钩子（按 clipId==anim.clip 认实体）零交集。
         if (const ecs::ControllerDef* cd =
                 ctx_.ActiveWorld().Controllers().Find((uint32_t)kAnimGraphGuid)) {
             g_animSmoke.smokeGraphCacheOk = cd->states.size() == 3 && cd->transitions.size() == 3;
@@ -1542,7 +1543,7 @@ void EditorApp::SmokeAnimFrame(uint64_t frame) {
             ui_->SetInputOverride(g_animSmoke.smokeCreatePt.x, g_animSmoke.smokeCreatePt.y, 0);
         } else if (frame == 45 && !g_animSmoke.smokeSetCreateFlowDone) {
             g_animSmoke.smokeSetCreateFlowDone = true;
-            const AssetEntry* ne = ctx_.Assets().FindByPath("Assets/player.override");
+            const AssetEntry* ne = ctx_.Assets().FindByPath("Assets/player.ani");
             if (PanelRegistry::Entry* en = panels_.FindEntry("Animation"))
                 g_animSmoke.smokeSetCreateOpenOk =
                     ne && !ne->missing && ne->type == AssetType::AnimSet &&
@@ -1716,7 +1717,7 @@ void EditorApp::SmokeAnimFrame(uint64_t frame) {
         // walksrc/ 三图（文件名序 pick0<1<2——不随项目播种：选择器网格含目录
         // 瓦片会挤占 tile 序，f50 链的 1/8 断言依赖"Assets 无子目录"前提）
         // → f108 语义开框（浏览器在 Assets 根 → 保存位置 = Assets）→
-        // f110/111 真实点「创建」→ f114 断言 Assets/walksrc.anim 落盘 + 面板
+        // f110/111 真实点「创建」→ f114 断言 Assets/walksrc.clip 落盘 + 面板
         // 切到新 clip + 3 帧 = 文件名序（文件夹通道帧序锁）→ f116 先开集
         // （制造旧 bug 的集态残留）→ f117 "双击"新 clip（非任何集成员 = 裸
         // 路径）断言集态清零 + 目标切换（断路回归：旧 bug 下面板继续显示集
@@ -1747,7 +1748,7 @@ void EditorApp::SmokeAnimFrame(uint64_t frame) {
             AnimationPanel* p = nullptr;
             if (PanelRegistry::Entry* en = panels_.FindEntry("Animation"))
                 p = static_cast<AnimationPanel*>(en->panel);
-            const AssetEntry* nc = ctx_.Assets().FindByPath("Assets/walksrc.anim");
+            const AssetEntry* nc = ctx_.Assets().FindByPath("Assets/walksrc.clip");
             const AssetEntry* i0 = ctx_.Assets().FindByPath("Assets/walksrc/pick0.png");
             g_animSmoke.smokeFolderCreateOk = p && nc && i0 && !nc->missing &&
                                   nc->type == AssetType::Clip &&
@@ -1762,7 +1763,7 @@ void EditorApp::SmokeAnimFrame(uint64_t frame) {
             AnimationPanel* p = nullptr;
             if (PanelRegistry::Entry* en = panels_.FindEntry("Animation"))
                 p = static_cast<AnimationPanel*>(en->panel);
-            const AssetEntry* nc = ctx_.Assets().FindByPath("Assets/walksrc.anim");
+            const AssetEntry* nc = ctx_.Assets().FindByPath("Assets/walksrc.clip");
             if (p && nc) OpenAnimationEditor(nc->guid); // 双击裸 clip（同步置态）
             g_animSmoke.smokeDblClipOk = p && nc && p->SetGuidForTest() == 0 &&
                              p->TargetGuidForTest() == nc->guid;
@@ -1785,6 +1786,58 @@ void EditorApp::SmokeAnimFrame(uint64_t frame) {
                 LEMON_ERROR("smoke-anim：帧格非交互件（p=%p frames=%zu id=%u）",
                             (void*)p, p ? p->EditFrameCountForTest() : (size_t)0,
                             p ? p->StripCellItemForTest() : 0u);
+        }
+        // ---- 2026-10-12 用户实测修复回归位：「从集移除」后同名重建。事故：集内
+        // 建 run → 垃圾桶图标移除（设计上保留文件）→ 再建 run 被"已存在：
+        // Assets/…"红字拦死，且长路径在 230px 左列单行渲染被右缘裁掉看不全。
+        // 修 = QuickCreate 撞本集子文件夹遗留活档时接回（不覆盖文件）+ 底部
+        // 状态行折行。链：f119 退 Play（本链前段全程 Play 态，而 QuickCreate 有
+        // D6 沙盒只读守卫——真人操作集也只在非 Play）+ 盘上播种孤儿 run.clip
+        //（拷 anim-edit.clip，不带 .meta = 新 guid，模拟"移除出集后留下的文件"）
+        // → f120 重开播种集 → f121 以"run"走 inline 新建 Enter 语义 → f122 断言
+        // 段入集落盘（.ani 5 段尾段 run 且 guid = 孤儿档）+ 面板选中该段 +
+        // 左列第 5 行元信息已画（旧路径此处 = 红字"已存在"、段不入集、target
+        // 不切）。Play 往返标志（LastExitVerified）在 Stop 调用点置位——关机
+        // 裁决 play-roundtrip 不依赖退出时点。
+        else if (frame == 119) {
+            StopPlay();
+            namespace fs = std::filesystem;
+            std::error_code cec;
+            const fs::path a = fs::path(ctx_.Assets().ProjectRoot()) / "Assets";
+            fs::create_directories(a / "anim-set", cec);
+            fs::copy_file(a / "anim-edit.clip", a / "anim-set" / "run.clip",
+                          fs::copy_options::overwrite_existing, cec);
+            RescanAssets();
+        } else if (frame == 120) {
+            OpenAnimationEditor(kAnimSetGuid);
+        } else if (frame == 121) {
+            if (PanelRegistry::Entry* en = panels_.FindEntry("Animation"))
+                static_cast<AnimationPanel*>(en->panel)->QuickCreateSegmentForTest(*this, "run");
+        } else if (frame == 122) {
+            AnimationPanel* p = nullptr;
+            if (PanelRegistry::Entry* en = panels_.FindEntry("Animation"))
+                p = static_cast<AnimationPanel*>(en->panel);
+            const AssetEntry* run = ctx_.Assets().FindByPath("Assets/anim-set/run.clip");
+            bool setFileOk = false;
+            if (run && !run->missing && run->type == AssetType::Clip) {
+                std::ifstream f(std::filesystem::path(ctx_.Assets().ProjectRoot()) / "Assets" /
+                                "anim-set.ani");
+                std::string text((std::istreambuf_iterator<char>(f)),
+                                 std::istreambuf_iterator<char>());
+                const assets::AnimSetData v = assets::ParseAnimSetJson(text);
+                setFileOk = v.ok && v.segments.size() == 5 && v.segments.back().name == "run" &&
+                            v.segments.back().clipGuid == run->guid;
+            }
+            g_animSmoke.smokeSegAdoptOk = p && run && !run->missing && setFileOk &&
+                                 p->SetGuidForTest() == kAnimSetGuid &&
+                                 p->TargetGuidForTest() == run->guid &&
+                                 p->SegRowFramesForTest(4) >= 1;
+            if (!g_animSmoke.smokeSegAdoptOk)
+                LEMON_ERROR("smoke-anim：移除后同名重建未接回（run=%p segs5=%d "
+                            "targetOk=%d row=%d）",
+                            (void*)run, setFileOk ? 1 : 0,
+                            p && run ? (p->TargetGuidForTest() == run->guid ? 1 : 0) : 0,
+                            p ? p->SegRowFramesForTest(4) : -1);
         }
     }
 }
@@ -1873,6 +1926,7 @@ bool EditorApp::SmokeAnimVerdict() {
              g_animSmoke.smokeSheetRowOk &&
              g_animSmoke.smokeAddCountOk && g_animSmoke.smokeAddOrderOk &&
              g_animSmoke.smokeFolderCreateOk && g_animSmoke.smokeDblClipOk &&
+             g_animSmoke.smokeSegAdoptOk &&
              g_animSmoke.smokeDragItemOk &&
              g_animSmoke.smokeLeftColOk;
     std::printf("[lemon] smoke-anim: prog(maxFrame=%u slice=%s booked=%u)%s "
@@ -1880,7 +1934,7 @@ bool EditorApp::SmokeAnimVerdict() {
                 "edit(rt=%s cache=%s whole=%s) set(rt=%s cache=%s open=%s "
                 "create=%s flow=%s) graph(rt=%s cache=%s switch=%s) "
                 "pick(click=%s shift=%s all=%s sheet(all=%s clear=%s close=%s row=%s)) "
-                "multiadd(count=%s order=%s) create(folder=%s dblclip=%s) "
+                "multiadd(count=%s order=%s) create(folder=%s dblclip=%s adopt=%s) "
                 "drag(item=%s) leftcol(meta=%s) => %s\n",
                 (unsigned)g_animSmoke.smokeAnimMax[0], g_animSmoke.smokeAnimSlice[0] ? "YES" : "NO",
                 sh ? sh->sliceCount : 0, yami, hitBooked ? "booked" : "MISSING",
@@ -1898,6 +1952,7 @@ bool EditorApp::SmokeAnimVerdict() {
                 g_animSmoke.smokeSheetRowOk ? "YES" : "NO",
                 g_animSmoke.smokeAddCountOk ? "YES" : "NO", g_animSmoke.smokeAddOrderOk ? "YES" : "NO",
                 g_animSmoke.smokeFolderCreateOk ? "YES" : "NO", g_animSmoke.smokeDblClipOk ? "YES" : "NO",
+                g_animSmoke.smokeSegAdoptOk ? "YES" : "NO",
                 g_animSmoke.smokeDragItemOk ? "YES" : "NO",
                 g_animSmoke.smokeLeftColOk ? "YES" : "NO",
                 animOk ? "OK" : "FAIL");

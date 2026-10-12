@@ -85,8 +85,8 @@ void WriteHitClips(const std::filesystem::path& assetsDir) {
         int c0, c1;
     };
     const Spec specs[] = {
-        {"hero-hit.anim", kHeroHitClip, "hero-hit", "5bd31a7c10000001", 8, 7},
-        {"monster-hit.anim", kMonsterHitClip, "monster-hit", "5bd31a7c10000003", 7, 6},
+        {"hero-hit.clip", kHeroHitClip, "hero-hit", "5bd31a7c10000001", 8, 7},
+        {"monster-hit.clip", kMonsterHitClip, "monster-hit", "5bd31a7c10000003", 7, 6},
     };
     for (const Spec& sp : specs) {
         {
@@ -1247,7 +1247,7 @@ public sealed class PlayerCombat : LemonBehaviour
     private const string kUpgradesTable = "{GUID:kUpgradesTab}";
     private const string kBalanceTable = "{GUID:kBalanceTab}";
 
-    // 批①受击段 clip（Anim.ClipId = GUID 低 32 位自算；Assets/monster-hit.anim）
+    // 批①受击段 clip（Anim.ClipId = GUID 低 32 位自算；Assets/monster-hit.clip）
     private static readonly uint kMobWalk = Anim.ClipId("{GUID:kMonsterClip}");
     private static readonly uint kMobHit = Anim.ClipId("{GUID:kMonsterHitClip}");
 
@@ -1976,8 +1976,8 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
     for (const char* f : {"dungeon_hero_1.png", "dungeon_hero_1.png.meta",
                           "dungeon_monster_2.png", "dungeon_monster_2.png.meta",
                           "dungeon_boss_1.png", "dungeon_boss_1.png.meta",
-                          "hero-walk.anim", "hero-walk.anim.meta",
-                          "monster-walk.anim", "monster-walk.anim.meta"}) {
+                          "hero-walk.clip", "hero-walk.clip.meta",
+                          "monster-walk.clip", "monster-walk.clip.meta"}) {
         fs::copy(yamiSrc / f, root / "Assets" / f, fs::copy_options::overwrite_existing, ec);
         // #96：与音频拷贝（review #26 修）同款——失败即断，不产出缺素材的"成功"模板
         if (ec) {
@@ -2029,7 +2029,7 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
              "由 `lemon-editor --gen-vs-template <dir>` 生成（改玩法请改 Game/ 下\n"
              "脚本或场景后重新生成，勿手改 .prefab 内 guid）。\n\n"
              "## 素材来源与许可\n\n"
-             "- `dungeon_*` 精灵表与 `*.anim`：yami-rpg-editor（MIT，Copyright (c) 2025\n"
+             "- `dungeon_*` 精灵表与动画剪辑（源 .anim 已更名 .clip）：yami-rpg-editor（MIT，Copyright (c) 2025\n"
              "  Yami & Xuran & Contributors）——随模板再分发需在发布物保留版权声明\n"
              "  （仓库根 THIRD_PARTY.md 已登记）。\n"
              "- `gem/bullet/pierce/blade.png`：程序化生成（无版权负担）。\n"

@@ -94,7 +94,7 @@ struct NativeApiVtable {
     int32_t (*tableCell)(const char* guidHex, int32_t row, int32_t col,
                          char* out, uint32_t cap); // 拷贝数（不含 NUL）；-1 越界/无表；-2 cap 不足
     // ---- M6a 批② T3c（动画集按名解析：Lemon.Anim 字符串重载 → 实体当前段所在
-    // .override 集内查段名；表尾追加同上约定。空宿主/无段/不属集/集内无名 = -1。
+    // .ani 集内查段名；表尾追加同上约定。空宿主/无段/不属集/集内无名 = -1。
     // 按名通道不入 StateHash，基准场零调用 = 零漂移。T3d 批①起作用域优先实体
     // AnimGraph.setGuid 显式绑定，回退 T3c 当前段口径）----
     int64_t (*clipByName)(uint64_t entity, const char* name);        // clipId；-1 = 解析失败

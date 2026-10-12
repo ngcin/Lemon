@@ -13,7 +13,7 @@
 namespace lemon::assets {
 
 // Table = .tab 配置表资产（M6a 批②，ADR-012）
-// AnimSet = .override 动画集容器（M6a 批② T3c：段名 → .anim 引用清单）
+// AnimSet = .ani 动画集容器（M6a 批② T3c：段名 → .clip 引用清单；2026-10-13 复名）
 // Controller = .controller 动画状态机（M6a 批② T3d，ADR-013）
 // Rml/Rcss = 游戏 UI 文档/样式表（M6b 批③b，ADR-014）
 // Audio = 音频源（M6c，ADR-015：.wav/.ogg/.mp3/.flac → 烤制 LBA1）

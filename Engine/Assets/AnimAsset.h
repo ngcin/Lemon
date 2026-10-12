@@ -1,4 +1,4 @@
-// Lemon 引擎 — .anim 帧动画资产解析/序列化（M6a 批② T3 AnimationPanel 的
+// Lemon 引擎 — .clip 帧动画资产解析/序列化（M6a 批② T3 AnimationPanel 的
 // 纯逻辑半；06 §2.2 / M5.md §16.2 D2 schema；M7a 批② 自 Editor/Assets/ClipEdit
 // 下沉引擎——运行时 BuildPlayClipCache 与编辑器面板共用同一宽容度）。
 // 纯文本逻辑，零 ImGui/GPU 依赖（可单测）。
@@ -7,7 +7,7 @@
 //         "frames": [ { "sheet": "<guidHex16>", "cell": 0 }, ... ] }
 //   * 帧引用存 精灵表资产 GUID + 切片序号（行优先），不存 spriteId（manifest
 //     重排不断链）——spriteId 解析归装载期（SpriteRefs 归一），编辑器面只管 guid+cell。
-//   * 序列化手写（非 nlohmann dump）：字段序/缩进与既有 .anim 文件逐字符同型
+//   * 序列化手写（非 nlohmann dump）：字段序/缩进与既有 .clip 文件逐字符同型
 //     ——面板保存后 git diff 只见被改字段（验收② roundtrip 口径）。
 //   * fps 整值输出整数、非整值一位小数（面板 DragInt 恒整；手写档 7.5 兼容）。
 #pragma once
@@ -50,26 +50,26 @@ struct ClipData {
     std::vector<ClipEventEdit> events;
 };
 
-/// .anim JSON 文本 → ClipData。frames[]/fps 必需；loop/name 可缺省；空帧表合法
+/// .clip JSON 文本 → ClipData。frames[]/fps 必需；loop/name 可缺省；空帧表合法
 ///（保存侧校验 ≥1 帧，解析侧不拦——新建空 clip 也要能进编辑态）。sheet 非 16 位
 /// hex / cell 负数 / 类型不对 → ok=false + error（首个错误即返回）。
 ClipData ParseClipJson(std::string_view text);
 
-/// ClipData → .anim JSON 文本（手写定版格式，见文件头）。ok=false 输入 → 空串。
+/// ClipData → .clip JSON 文本（手写定版格式，见文件头）。ok=false 输入 → 空串。
 std::string ClipToJson(const ClipData& c);
 
-// ---- T3c 动画集（.override；Unity AnimatorController 的壳 / Godot SpriteFrames 的
+// ---- T3c 动画集（.ani；Unity AnimatorController 的壳 / Godot SpriteFrames 的
 // 工作台单入口，见 docs/Plans/M6a T3c 决策记录）--------------------
 
 /// 集段引用：name = 段名（集内唯一 = 运行时按名解析键，文件系统同名约束不跨集）；
-/// clip = 段 .anim 资产 GUID（段身份 = 文件 GUID——改名/重建安全，集只存引用）
+/// clip = 段 .clip 资产 GUID（段身份 = 文件 GUID——改名/重建安全，集只存引用）
 struct AnimSetSeg {
     std::string name;
     uint64_t clipGuid = 0;
     friend bool operator==(const AnimSetSeg&, const AnimSetSeg&) = default; // roundtrip 断言
 };
 
-/// .override 解析产物（ClipData 同款 ok/error 约定）
+/// .ani 解析产物（ClipData 同款 ok/error 约定）
 struct AnimSetData {
     bool ok = false;
     std::string error;
@@ -77,11 +77,11 @@ struct AnimSetData {
     std::vector<AnimSetSeg> segments;
 };
 
-/// .override JSON 文本 → AnimSetData。segments[] 必需；name 可缺省；空集合法（新建
+/// .ani JSON 文本 → AnimSetData。segments[] 必需；name 可缺省；空集合法（新建
 /// 空集也要能进工作台）。段缺 name/空 name / clip 非 16 位 hex → ok=false + error。
 AnimSetData ParseAnimSetJson(std::string_view text);
 
-/// AnimSetData → .override JSON 文本（ClipToJson 同款手写定版格式）。ok=false 输入 → 空串。
+/// AnimSetData → .ani JSON 文本（ClipToJson 同款手写定版格式）。ok=false 输入 → 空串。
 std::string AnimSetToJson(const AnimSetData& s);
 
 /// JSON 字符串字面量转义（含首尾引号；nlohmann dump 同款规则，非 ASCII 原样保留）。

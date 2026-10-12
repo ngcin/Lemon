@@ -12,8 +12,8 @@
 //   框选(行优先)/点选(按点击序 = Godot As Selected) + Ctrl+滚轮缩放 + 动态
 //   按钮文案；v2.1（三图优化点③）右栏「选择」区带已选计数——选择操作处
 //   即时反馈；sheet combo 项带缩略图（纯路径列表翻找是旧痛点）。
-// .anim 三条生产通道（T3b：文件夹多单图/网格切片/框选建帧）+ 集容器（T3c：
-// .override = Unity .controller 壳，段身份 = 文件 GUID，集=显式成员关系）数据模型
+// .clip 三条生产通道（T3b：文件夹多单图/网格切片/框选建帧）+ 集容器（T3c：
+// .ani = 动画集容器，段身份 = 文件 GUID，集=显式成员关系）数据模型
 // 不变。LoopMode 三模式（Once/Loop/PingPong）。播放预览 = 编辑器时钟推进（非
 // 确定无妨，不进模拟）；暂停态预览跟随选中帧。EnterPlay 快照语义 = 保存后
 // 下次 Enter Play 生效；Play 中只读（X 关面板同步 PanelRegistry——Window 菜单
@@ -65,9 +65,9 @@ ImU32 WithAlpha(const ImVec4& c, float a) {
 /// 集内动画文件的落位目录（v3.3 设计修复，用户实测驱动）：集所在目录下的
 /// <集文件名去后缀>/ 子文件夹——跨集同名动画（每个角色都有 run/idle 是常态）
 /// 不再共用一个文件。旧设计（裸名落集目录）下两个集的 run 撞同一个
-/// Assets/run.anim：后保存的覆盖先保存的；删除过的还会经墓碑复活把两个集
+/// Assets/run.clip：后保存的覆盖先保存的；删除过的还会经同名复活把两个集
 /// 接到同一 guid——"编辑条目丢失（重扫无效）"悬空的来源。集成员关系语义
-/// 仍 = .override 显式引用（T3c 否决"目录=作用域"的决策不变——文件夹只是存放位）。
+/// 仍 = .ani 显式引用（T3c 否决"目录=作用域"的决策不变——文件夹只是存放位）。
 std::string SetClipDir(const AssetEntry& setEntry) {
     std::string d = setEntry.Dir();
     if (d.empty()) d = "Assets";
@@ -247,10 +247,12 @@ bool AnimationPanel::TryCreateClip(EditorApp& app, const assets::ClipData& c, co
     }
     std::string d = dir.empty() ? "Assets" : dir;
     while (d.size() > 1 && d.back() == '/') d.pop_back();
-    const std::string rel = d == "Assets" ? "Assets/" + c.name + ".anim"
-                                          : d + "/" + c.name + ".anim";
-    // 墓碑（已删除）不挡重建：写文件 + Rescan = 墓碑复活（06 §2 语义——同名
-    // 复活继承旧 guid，旧场景引用随复活重新生效，属预期收益非副作用）
+    const std::string rel = d == "Assets" ? "Assets/" + c.name + ".clip"
+                                          : d + "/" + c.name + ".clip";
+    // 已删同名不挡重建（墓碑 2026-10-01 退役，06 §2.2——"删了就是删了"）：
+    // 写文件 + Rescan = 同名复活——本会话路径命中继承旧 guid；跨会话新号
+    //（编辑器删除连 .meta 一起删；外部删文件留下的被引孤儿 .meta 仍可续号）。
+    // 旧场景引用随复活重新生效，属预期收益非副作用。
     if (const AssetEntry* exist = db.FindByPath(rel); exist && !exist->missing) {
         err = trFmt("anim.err.exists_fmt", {rel});
         return false;
@@ -532,7 +534,7 @@ void AnimationPanel::DrawFilmstrip(EditorApp& app, bool ro, int playFrame) {
             std::memcpy(&d, pay->Data, sizeof(d));
             if (d.kind == 0)
                 InsertFrameAfter((int)edit_.frames.size(), {d.guid, 0}); // 末尾追加
-            else if (d.kind == 4) AppendClipFrames(app, d.guid); // .anim = 复制帧表
+            else if (d.kind == 4) AppendClipFrames(app, d.guid); // .clip = 复制帧表
         }
         ImGui::EndDragDropTarget();
     }
@@ -1016,7 +1018,7 @@ void AnimationPanel::DrawSheetPicker(EditorApp& app) {
 }
 
 void AnimationPanel::AppendClipFrames(EditorApp& app, uint64_t clipGuid) {
-    // 读 clip 资产帧表整段追加（从 .anim 复制 / 拖 .anim 资产两入口共用）
+    // 读 clip 资产帧表整段追加（从 .clip 复制 / 拖 .clip 资产两入口共用）
     using lemon::editor::loc::tr;
     using lemon::editor::loc::trFmt;
     AssetDatabase& db = app.Ctx().Assets();
@@ -1049,7 +1051,7 @@ void AnimationPanel::AppendClipFrames(EditorApp& app, uint64_t clipGuid) {
 }
 
 void AnimationPanel::DrawClipPickModal(EditorApp& app) {
-    // 从 .anim 复制帧（v3.1 加帧通道）：列表弹窗（排除当前编辑目标）。边沿触发。
+    // 从 .clip 复制帧（v3.1 加帧通道）：列表弹窗（排除当前编辑目标）。边沿触发。
     if (!clipPickOpen_) return;
     using lemon::editor::loc::tr;
     const char* pickTitle = tr("anim.copypick.title"); // OpenPopup/BeginPopupModal 同帧同串
@@ -1086,8 +1088,8 @@ void AnimationPanel::DrawClipPickModal(EditorApp& app) {
 }
 
 // ---------------------------------------------------- T3c 动画集工作台 ----
-// 目标 = .override 集容器（Unity AnimatorController 壳 / Godot SpriteFrames 单入口，
-// 决策记录见批文件）：集存段引用（一段一 .anim，段身份 = 文件 GUID），左列段清
+// 目标 = .ani 集容器（Unity AnimatorController 壳 / Godot SpriteFrames 单入口，
+// 决策记录见批文件）：集存段引用（一段一 .clip，段身份 = 文件 GUID），左列段清
 // 单，段编辑复用上方全部 clip 机制（targetGuid_ 指向当前段）。按名播放作用域 =
 // 集成员关系（非目录约定——资源搬家/特殊组织不破语义）。
 
@@ -1101,7 +1103,7 @@ void AnimationPanel::ResetEditingState() {
     targetGuid_ = 0;
     segRowCache_.clear(); // 行元信息随集走——残留只会指向已删/他集的段
     // M7a 批① M23：inline 改名态随集清——此前 segEditIdx_/segEditBuf_/segFilter_
-    // 跨集残留，集 B 的第 N 行命中旧 idx 时预填集 A 的名字，回车即把 B 的 .anim
+    // 跨集残留，集 B 的第 N 行命中旧 idx 时预填集 A 的名字，回车即把 B 的 .clip
     // 改名写盘（用户实测串写路径）。
     segEditIdx_ = -1;
     segEditBuf_.clear();
@@ -1227,7 +1229,7 @@ bool AnimationPanel::TrySaveSet(EditorApp& app, const AssetEntry& setEntry) {
 bool AnimationPanel::TryCreateSet(EditorApp& app, const std::string& dir,
                                   const std::string& name, std::vector<assets::AnimSetSeg> segs,
                                   std::string& err) {
-    // 新建集落盘（TryCreateClip 同款口径）：名字校验 + 撞路拒 + 墓碑复活 + 原子
+    // 新建集落盘（TryCreateClip 同款口径）：名字校验 + 撞路拒 + 已删放行 + 原子
     // 写 + Rescan → OpenSet。
     AssetDatabase& db = app.Ctx().Assets();
     using lemon::editor::loc::trFmt;
@@ -1238,7 +1240,7 @@ bool AnimationPanel::TryCreateSet(EditorApp& app, const std::string& dir,
     }
     std::string d = dir.empty() ? "Assets" : dir;
     while (d.size() > 1 && d.back() == '/') d.pop_back();
-    const std::string rel = d == "Assets" ? "Assets/" + name + ".override" : d + "/" + name + ".override";
+    const std::string rel = d == "Assets" ? "Assets/" + name + ".ani" : d + "/" + name + ".ani";
     if (const AssetEntry* exist = db.FindByPath(rel); exist && !exist->missing) {
         err = trFmt("anim.err.exists_fmt", {rel});
         return false;
@@ -1316,7 +1318,7 @@ void AnimationPanel::DrawSegRowThumb(EditorApp& app, const AssetEntry* sheet, ui
 
 int AnimationPanel::SegRowFramesForTest(size_t idx) const {
     // 缓存由左列绘制侧填充——返回 -1 即"没画过/没解析"，冒烟据此断言左列真的
-    // 走到了行渲染（比探针坐标更贴语义：帧数来自 .anim 解析结果）
+    // 走到了行渲染（比探针坐标更贴语义：帧数来自 .clip 解析结果）
     if (idx >= setEdit_.segments.size()) return -1;
     const auto it = segRowCache_.find(setEdit_.segments[idx].clipGuid);
     if (it == segRowCache_.end() || it->second.hash == 0) return -1;
@@ -1338,7 +1340,7 @@ void AnimationPanel::DrawLeftColumn(EditorApp& app, float width, float height,
     const bool ro = app.Ctx().Playing();
     ImGui::BeginChild("##setlist", ImVec2(width, height), ImGuiChildFlags_Borders);
 
-    // 集名（窄输入；动画 = 一段一 .anim，集存引用）。M7a 批① D6：Play 中只读
+    // 集名（窄输入；动画 = 一段一 .clip，集存引用）。M7a 批① D6：Play 中只读
     //（BeginDisabled 包输入本体）；M25：Enter/失焦且值变 → 立即落盘——集名是
     // 集面唯一"滞留内存"的改动（结构性操作都即时存），即存后无提示丢失窗口
     // 只剩打字中的一瞬（外部重载竞争，登记可接受）。
@@ -1517,18 +1519,22 @@ void AnimationPanel::DrawLeftColumn(EditorApp& app, float width, float height,
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("anim.set.collapse_new"));
     }
+    // 底部状态行按右缘折行（2026-10-12 用户实测：「已存在：Assets/…」在 230px
+    // 左列单行渲染，路径后半被子窗口右缘裁掉看不见）——折行后纵向滚动可及全文。
+    if (!setErr_.empty() || !setMsg_.empty()) ImGui::PushTextWrapPos(0.0f);
     if (!setErr_.empty())
         ImGui::TextColored(theme::kTextError, "%s", setErr_.c_str());
     else if (!setMsg_.empty())
         ImGui::TextColored(setOk_ ? theme::kTextOk : theme::kTextError, "%s", setMsg_.c_str());
     else if (!ro)
         ImGui::TextDisabled("%s", tr("anim.set.footnote"));
+    if (!setErr_.empty() || !setMsg_.empty()) ImGui::PopTextWrapPos();
     ImGui::EndChild();
     if (sameLineAfter) ImGui::SameLine(); // 宽窗并排；窄窗堆叠 = 不回行
 }
 
 void AnimationPanel::QuickCreateSegment(EditorApp& app) {
-    // v3 建段 = 只输入名字：空 .anim 落盘（TryCreateClip 不要求 ≥1 帧——保存侧
+    // v3 建段 = 只输入名字：空 .clip 落盘（TryCreateClip 不要求 ≥1 帧——保存侧
     // 才校验）+ 入集 + 选中；输入保持开、名清空 = 连续建段。fps/循环用默认，
     // 在右区工具条随手改（旧版大表单把参数+选图前置 = 割离操作的主痛点）。
     using lemon::editor::loc::tr;
@@ -1558,6 +1564,45 @@ void AnimationPanel::QuickCreateSegment(EditorApp& app) {
         setErr_ = tr("anim.set.entry_missing");
         return;
     }
+    // 「从集移除」后同名重建（2026-10-12 用户实测：垃圾桶图标移除 run 后重建被
+    // "已存在"红字拦死——移除保文件，重建却撞自己留下的文件）：目标位已有本集
+    // 子文件夹里的合法 .clip 且未被本集引用 → 不新建文件，把既有段重新入集
+    //（不覆盖盘上内容，旧帧随引用回来，绿字告知）。其余撞名
+    //（非 clip 坏档/极端同名异态）仍走 TryCreateClip 红字拒，防静默覆盖。
+    const std::string wantRel = SetClipDir(*se) + "/" + name + ".clip";
+    if (const AssetEntry* leftover = db.FindByPath(wantRel);
+        leftover && !leftover->missing && leftover->type == AssetType::Clip) {
+        bool inSet = false;
+        for (const assets::AnimSetSeg& sg : setEdit_.segments)
+            if (sg.clipGuid == leftover->guid) inSet = true;
+        if (!inSet) {
+            const uint64_t adoptGuid = leftover->guid;
+            setEdit_.segments.push_back({name, adoptGuid});
+            setDirty_ = true;
+            if (AssetEntry* se2 = db.FindByGuid(setGuid_); se2 && TrySaveSet(app, *se2)) {
+                segGuid_ = adoptGuid;
+                SetTarget(adoptGuid);
+                selFrame_ = -1; // 重建段选中态口径与新建路径一致
+                selSet_.clear();
+                selAnchor_ = -1;
+                previewFrame_ = 0;
+                previewing_ = false;
+                segNewName_.clear(); // 输入保持开 = 连续建段（同新建）
+                segNewFocus_ = true;
+                segFilter_.clear();
+                setErr_.clear();
+                setMsg_ = trFmt("anim.set.adopted_fmt", {wantRel});
+                return;
+            }
+            // 集保存失败回滚（新建路径同款口径）：文件未动 = 行可无损撤回
+            setEdit_.segments.pop_back();
+            setErr_ = trFmt("anim.set.err_created_save_fmt",
+                            {setMsg_.size() > 1
+                                 ? setMsg_.substr(setMsg_.find(' ') + 1)
+                                 : std::string(tr("anim.err.write_short"))});
+            return;
+        }
+    }
     assets::ClipData cd;
     cd.ok = true;
     cd.name = name;
@@ -1585,7 +1630,7 @@ void AnimationPanel::QuickCreateSegment(EditorApp& app) {
             segFilter_.clear(); // 新段要立刻可见
             setErr_.clear();
         } else {
-            // M24：集保存失败回滚已 push 的段行（.anim 文件保留——它是合法独立
+            // M24：集保存失败回滚已 push 的段行（.clip 文件保留——它是合法独立
             // 资产，浏览器可删；集档不收 = 下次重载不见，状态一致）
             setEdit_.segments.pop_back();
             setErr_ = trFmt("anim.set.err_created_save_fmt",
@@ -1599,7 +1644,7 @@ void AnimationPanel::QuickCreateSegment(EditorApp& app) {
 }
 
 // ---- M7a 批① M24：集面结构性操作收口------------------------------------------
-// 此前六处 TrySaveSet 返回值被吞：行已抹/文件已删而 .override 落盘失败 = 盘上
+// 此前六处 TrySaveSet 返回值被吞：行已抹/文件已删而 .ani 落盘失败 = 盘上
 // 集与编辑态分叉（报告 M24 的"最重路径"= 先删文件后存集，失败即悬空引用）。
 // 统一语义：内存先改 → TrySaveSet → 失败回滚内存态 + 红字；不可逆步（删文件）
 // 排最后且仅在集保存成功后做。
@@ -1636,7 +1681,7 @@ void AnimationPanel::RemoveSegmentAt(EditorApp& app, size_t i) {
 
 void AnimationPanel::DeleteSegmentFile(EditorApp& app, size_t i) {
     // M24 重排：先从集面移除并存盘（引用面先断），成功后才删文件。旧序 =
-    // db.Remove 先删盘上 .anim → TrySaveSet 失败被吞 → .override 仍列已删 clip
+    // db.Remove 先删盘上 .clip → TrySaveSet 失败被吞 → .ani 仍列已删 clip
     //（下次重载才以"（悬空）"暴露，且无回滚）。
     using lemon::editor::loc::tr;
     using lemon::editor::loc::trFmt;
@@ -1701,10 +1746,10 @@ void AnimationPanel::CommitSegRename(EditorApp& app, int idx) {
         const std::string oldRel = ce->relPath; // Rename 会改条目——先存回滚路径
         std::string newRel;
         if (const AssetEntry* se = db.FindByGuid(setGuid_))
-            newRel = SetClipDir(*se) + "/" + name + ".anim";
+            newRel = SetClipDir(*se) + "/" + name + ".clip";
         else {
             const std::string dir = ce->Dir();
-            newRel = (dir.empty() ? "Assets" : dir) + "/" + name + ".anim";
+            newRel = (dir.empty() ? "Assets" : dir) + "/" + name + ".clip";
         }
         if (AssetEntry* ceMut = db.FindByGuid(clipGuid); db.Rename(*ceMut, newRel)) {
             setDirty_ = true;
@@ -1736,7 +1781,7 @@ void AnimationPanel::CommitSegRename(EditorApp& app, int idx) {
 }
 
 void AnimationPanel::DuplicateSegment(EditorApp& app, size_t idx) {
-    // 复制段：读源 .anim → 撞名后缀 -copy/-2.. 落盘 → 入集 + 选中（相似动作
+    // 复制段：读源 .clip → 撞名后缀 -copy/-2.. 落盘 → 入集 + 选中（相似动作
     // atk/atk2 的量产通道——Godot duplicate 同款）
     using lemon::editor::loc::tr;
     using lemon::editor::loc::trFmt;
@@ -1774,7 +1819,7 @@ void AnimationPanel::DuplicateSegment(EditorApp& app, size_t idx) {
     const auto relOf = [](std::string dir, const std::string& n) {
         if (dir.empty()) dir = "Assets";
         while (dir.size() > 1 && dir.back() == '/') dir.pop_back();
-        return dir == "Assets" ? "Assets/" + n + ".anim" : dir + "/" + n + ".anim";
+        return dir == "Assets" ? "Assets/" + n + ".clip" : dir + "/" + n + ".clip";
     };
     std::string name = src.name + "-copy";
     for (int n = 2; n < 1000; ++n) {
@@ -1850,7 +1895,11 @@ void AnimationPanel::DrawSetModals(EditorApp& app) {
                                           {setCreateSrc_, std::to_string(n)})
                                         .c_str());
             }
-            if (!setErr_.empty()) ImGui::TextColored(theme::kTextError, "%s", setErr_.c_str());
+            if (!setErr_.empty()) { // 长路径折行（写盘失败带绝对路径，480 宽模态也放不下）
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextColored(theme::kTextError, "%s", setErr_.c_str());
+                ImGui::PopTextWrapPos();
+            }
             if (ImGui::Button(tr("anim.create.button"), ImVec2(120, 0))) {
                 std::vector<assets::AnimSetSeg> segs;
                 bool go = true;
@@ -1966,7 +2015,11 @@ void AnimationPanel::DrawFolderCreate(EditorApp& app) {
     ImGui::SetNextItemWidth(110);
     const char* loopNames[] = {tr("anim.loop.once"), tr("anim.loop"), tr("anim.loop.pingpong")};
     ImGui::Combo((std::string(tr("anim.loop")) + "##wiz").c_str(), &wizLoop_, loopNames, 3);
-    if (!wizErr_.empty()) ImGui::TextColored(theme::kTextError, "%s", wizErr_.c_str());
+    if (!wizErr_.empty()) { // 红字折行（AlwaysAutoResize 窗口纵向生长可见全文）
+        ImGui::PushTextWrapPos(0.0f);
+        ImGui::TextColored(theme::kTextError, "%s", wizErr_.c_str());
+        ImGui::PopTextWrapPos();
+    }
 
     if (ImGui::Button(tr("anim.create.button"), ImVec2(140, 0)) ||
         ImGui::IsKeyPressed(ImGuiKey_Enter, false)) {
@@ -2006,7 +2059,7 @@ bool AnimationPanel::SaveAll(EditorApp& app) {
     AssetDatabase& db = app.Ctx().Assets();
     const AssetEntry* t = db.FindByGuid(targetGuid_);
     if (!t || t->missing || t->type != AssetType::Clip) {
-        // 悬空主因：动画文件被删（墓碑——重扫救不回）或被旧版跨集同名覆盖。
+        // 悬空主因：动画文件被删（重扫救不回）或被旧版跨集同名覆盖。
         // 左列该动画标「（悬空）」——右键从集移除后重建（v3.3 起重建落集子文件夹，
         // 不再与别的集撞文件）。
         saveMsg_ = tr("anim.save_all_missing");
@@ -2030,7 +2083,7 @@ bool AnimationPanel::SaveAll(EditorApp& app) {
 // ------------------------------------------------------------ 右区三层 ----
 
 void AnimationPanel::DrawFrameToolbar(EditorApp& app, bool ro) {
-    // v3.1 工具条：加帧四通道下拉（空帧/从精灵表/多图/从 .anim）+ 帧操作 | 播放
+    // v3.1 工具条：加帧四通道下拉（空帧/从精灵表/多图/从 .clip）+ 帧操作 | 播放
     // 传输（Play 态照常可用）| fps/循环/裸 clip 名称 | 保存（集模式 = 段+集连存）
     using lemon::editor::loc::tr;
     if (ro) ImGui::BeginDisabled();
@@ -2103,7 +2156,7 @@ void AnimationPanel::DrawFrameToolbar(EditorApp& app, bool ro) {
 void AnimationPanel::DrawPreview(EditorApp& app, bool ro, int shown) {
     // v3.1 预览条（修"右侧编辑区空白"：预览从大块 child 改为紧凑一行，帧网格
     // 主体化吃剩余空间）：传输图标 + 当前帧图 + 信息两行 + 状态。拖 Assets
-    // 图 = 加帧（sprite）/ 复制帧表（.anim）。
+    // 图 = 加帧（sprite）/ 复制帧表（.clip）。
     using lemon::editor::loc::tr;
     using lemon::editor::loc::trFmt;
     AssetDatabase& db = app.Ctx().Assets();
@@ -2161,7 +2214,7 @@ void AnimationPanel::DrawPreview(EditorApp& app, bool ro, int shown) {
             if (d.kind == 0)
                 InsertFrameAfter((int)edit_.frames.size(), {d.guid, 0}); // sprite = 末尾加帧
             else if (d.kind == 4)
-                AppendClipFrames(app, d.guid); // .anim = 复制帧表
+                AppendClipFrames(app, d.guid); // .clip = 复制帧表
         }
         ImGui::EndDragDropTarget();
     }
@@ -2177,8 +2230,11 @@ void AnimationPanel::DrawPreview(EditorApp& app, bool ro, int shown) {
                               {std::to_string(n ? shown + 1 : 0), std::to_string(n), perFrameS,
                                totalS})
                             .c_str());
-    if (!saveMsg_.empty())
+    if (!saveMsg_.empty()) { // 写盘失败类消息带绝对路径——折行防右缘裁掉
+        ImGui::PushTextWrapPos(0.0f);
         ImGui::TextColored(saveOk_ ? theme::kTextOk : theme::kTextError, "%s", saveMsg_.c_str());
+        ImGui::PopTextWrapPos();
+    }
     else if (dirty_)
         ImGui::TextColored(theme::kTextWarn, "%s", tr("anim.status.unsaved"));
     else
@@ -2241,7 +2297,7 @@ void AnimationPanel::OnGui(EditorApp& app) {
     bool winOpen = true;
     keysFocused_ = false; // 先清（Begin 失败/窗口不绘制时不吃键——防陈旧 true 卡全局）
     // i18n 批3a：标题显示名走 tr；### 后段 = 窗口身份（停靠/ini 持久化不随语言变）
-    const std::string title = std::string(tr("panel.animation")) + "###" + Name();
+    const std::string title = std::string(tr("panel.clipation")) + "###" + Name();
     if (!ImGui::Begin(title.c_str(), &winOpen, ImGuiWindowFlags_NoCollapse)) {
         ImGui::End();
         testhooks::Stash("animpanel.skip", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());

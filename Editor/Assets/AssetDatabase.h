@@ -178,7 +178,8 @@ public:
     /// modified 语义）+ 下次进 Play。false = 非 audio / 写盘失败。
     bool SetAudioImporter(AssetEntry& e, float loopStart, float loopEnd, bool preload,
                           const audio::ClipFx& fx);
-    /// 删除（文件 + .meta；条目转墓碑）。undo 层面由调用方抓场景快照。
+    /// 删除（文件 + .meta；条目同帧隐藏 → 下轮 Rescan 出表——墓碑 2026-10-01
+    /// 退役）。undo 层面由调用方抓场景快照。
     bool Remove(AssetEntry& e);
     /// 导入外部文件（复制进 Assets/ 下 relDest）；返回新条目（失败 nullptr）。
     const AssetEntry* ImportFile(const std::string& absSrc, const std::string& relDest);
@@ -193,12 +194,16 @@ private:
     /// 新发号：全宽全库唯一 + 同类型域内低 32 位唯一（运行时映射约定的安全前提，
     /// 2026-10-01 svr-test Player/Mob 低 32 位碰撞实证后立；Rescan 体检兜手工 .meta）
     uint64_t GenerateUniqueGuid(AssetType type) const;
-    /// 引用面检索：项目数据文本（scene/prefab/anim/override/controller/tab/rml/rcss/
+    /// 引用面检索：项目数据文本（scene/prefab/clip/ani/controller/tab/rml/rcss/
     /// cs/asset，不含 .meta——自引用假阳性）中 guid 的任一形态（hex 小写/大写/十进制）
     /// 命中即真。语料惰性装配，Rescan/OpenProject 起点失效。
     bool GuidReferenced(uint64_t guid);
     /// 清扫本体（自动/手动共用）：遍历源缺失的 .meta，零引用删之、被引用留之。
     OrphanSweepResult SweepOrphanMetasInternal();
+    /// 资产族复名迁移（2026-10-13，ADR-013 D2 修订）：.anim→.clip、.override→.ani。
+    /// OpenProject 专用（manifest 载入后、首次 Rescan 前）：文件 + .meta 同行改名
+    ///（guid/type 零迁移）+ manifestCarry_ 键随行重映射（spriteId 不漂）。
+    void MigrateLegacyAnimExtensions();
     // 引用语料增量缓存（review 2026-10-02 #24）：路径 → {mtime,size,text}，失效后
     // 只重读变更/新增文件、复用未变内容——此前单一大串每次 Rescan 全量重建
     //（保存/删除触发重扫即全项目 IO，大项目同步卡顿 + 瞬态大分配）

@@ -300,7 +300,7 @@ void TestCsvTable() {
 }
 #endif // LEMON_EDITOR_CORE
 
-// ---- M6a 批② T3：.anim 解析/序列化（AnimationPanel 数据面；验收② roundtrip）----
+// ---- M6a 批② T3：.clip 解析/序列化（AnimationPanel 数据面；验收② roundtrip）----
 
 #ifdef LEMON_EDITOR_CORE
 void TestClipEdit() {
@@ -496,7 +496,7 @@ void TestClipEventBounds() {
 }
 #endif // LEMON_EDITOR_CORE
 
-// ---- M6a 批② T3c：.override 动画集解析/序列化 + ClipTable 集按名索引 ----
+// ---- M6a 批② T3c：.ani 动画集解析/序列化 + ClipTable 集按名索引 ----
 
 #ifdef LEMON_EDITOR_CORE
 void TestAnimSetAndClipIndex() {

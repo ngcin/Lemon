@@ -2,7 +2,8 @@
 // 数据源：AssetDatabase（GUID/.meta/manifest）+ AssetGpuCache 缩略图。
 // 交互：目录树 + 缩略图网格；拖拽 sprite 进 SceneView = 建实体、进 Inspector
 // sprite 槽 = 设引用；拖 prefab 进 SceneView/Hierarchy = 实例化；右键导入/
-// 重命名（guid 随 .meta 走 → 引用不断）/删除（墓碑 + 体检红字）；双击 = 建实体。
+// 重命名（guid 随 .meta 走 → 引用不断）/删除（文件+.meta 同删，悬空引用体检
+// 红字——墓碑 2026-10-01 退役）；双击 = 建实体。
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -551,8 +552,8 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
         tableWinGuid_ = e.guid;
     }
 
-    // 双击 .anim/.override = Animation 面板（M6a 批② T3/T3c）——"资产 → 专用编辑面板"
-    // 通道（EditorApp 汇聚：.anim 归属集解析 → 集工作台选中该段；.override 直接开集）
+    // 双击 .clip/.ani = Animation 面板（M6a 批② T3/T3c）——"资产 → 专用编辑面板"
+    // 通道（EditorApp 汇聚：.clip 归属集解析 → 集工作台选中该段；.ani 直接开集）
     if (doubleClicked && e.type == AssetType::Clip) app.OpenAnimationEditor(e.guid);
     if (doubleClicked && e.type == AssetType::AnimSet) app.OpenAnimationEditor(e.guid);
 

@@ -333,7 +333,7 @@ public unsafe struct WaveDirector : IComponent // 1260B
 public unsafe struct AnimGraph : IComponent   // 24B
 {
     public ulong ControllerGuid; // .controller 资产 GUID（0 = 无图，纯集绑定）
-    public ulong SetGuid;        // .override 集资产 GUID（按名解析作用域）
+    public ulong SetGuid;        // .ani 集资产 GUID（按名解析作用域）
     public byte Inited;          // 图初始化边沿（运行时；首 tick 播种参数/进 entry）
     internal fixed byte _pad[7];
 }

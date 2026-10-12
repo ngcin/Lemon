@@ -24,7 +24,7 @@ C# 镜像四处共用一份元数据——新组件对编辑器零代码可见�
 | `Animator2D` | clipId / speed / loop（Once/Loop/PingPong）/ playOnStart | 帧动画播放 |
 | `ParticleEmitterRef` | emitterId / playing | 粒子发射器绑定 |
 | `SortingOverride` | order | 排序微调（层 → orderTier → 批键） |
-| `AnimGraph` | controllerGuid / setGuid | 动画状态机绑定（.controller + .override 资产） |
+| `AnimGraph` | controllerGuid / setGuid | 动画状态机绑定（.controller + .ani 资产） |
 | `AnimParams` | param0–7 | 状态机参数黑板（运行时态，不入档） |
 
 ## 行为/AI（id 9–20）

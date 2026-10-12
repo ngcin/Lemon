@@ -84,7 +84,7 @@ constexpr FieldMeta kAnimator2D[] = {
     // T3d 批③：段末边沿（借原 _pad 位，28B 布局不动；0→1 发 AnimFinished 事件）
     FIELD_RT(Animator2D, ended, UInt8)};
 constexpr FieldEditorMeta kEdAnimator2D[] = {
-    ED_CLIPREF("clip 资产槽（.anim GUID 低 32 位；下拉/拖入。0 = 无 clip，走 M2 纯计时）"),
+    ED_CLIPREF("clip 资产槽（.clip GUID 低 32 位；下拉/拖入。0 = 无 clip，走 M2 纯计时）"),
     ED_RANGE(0.0f, 100.0f), ED_RANGE(0.0f, 100.0f),
     // T3b-2：LoopMode 下拉（0/1/2；旧档 0/1 语义不变，PingPong = 往返纯函数）
     {FieldHint::Enum, 0, 0, kLoopModeNames, 3,
@@ -104,7 +104,7 @@ constexpr FieldMeta kAnimGraph[] = {
     FIELD_RT(AnimGraph, inited, UInt8)};
 constexpr FieldEditorMeta kEdAnimGraph[] = {
     ED_TIP("状态机资产槽（.controller GUID；0 = 无图，仅集绑定用于按名解析）"),
-    ED_TIP("动画集资产槽（.override/.override GUID；按名解析作用域 + 图状态绑定的集）"),
+    ED_TIP("动画集资产槽（.ani 集资产 GUID；按名解析作用域 + 图状态绑定的集）"),
     ED_HIDE};
 // T3d 批②：参数黑板 8 槽（数组无逐槽名，手动行——Projectile.hitMemory 同法；
 // 全 FIELD_RT：入状态哈希不入档，每局由 controller 默认值重播种）

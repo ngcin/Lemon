@@ -5,6 +5,10 @@
     {
       "name": "idle",
       "clip": "0aae7a9071243a7b"
+    },
+    {
+      "name": "run",
+      "clip": "1c1f0d6bb6a5ba57"
     }
   ]
 }

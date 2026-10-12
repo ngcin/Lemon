@@ -28,7 +28,7 @@
 | audio | wav/ogg/mp3/flac | PCM16 预解码，烘焙入 .baked；`.meta` 记循环点 |
 | font | ttf/otf | 位图字体页烘焙（LBF1 .baked；词表/字号/描边可配） |
 | clip2d | json（.clip） | 帧动画（AnimationEditor 产出/编辑） |
-| animset | json（.override） | 动画集：段名 → clip 引用清单 |
+| animset | json（.ani） | 动画集：段名 → clip 引用清单 |
 | controller | json（.controller） | 动画状态机（手写 JSON） |
 | rml/rcss | — | RmlUi 界面文档与样式表（双击装载，rcss 热重载） |
 | particles | json | 粒子发射器预设 |

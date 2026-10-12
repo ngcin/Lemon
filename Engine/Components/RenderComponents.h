@@ -53,7 +53,7 @@ struct Animator2D {
 // 入档入哈希（配置引用面，spriteGuid/prefabId 同款）；0 = 未绑（旁路图/回退隐式集）。
 struct AnimGraph {
     uint64_t controllerGuid = 0; // .controller 资产 GUID（0 = 无图，纯绑定用）
-    uint64_t setGuid = 0;        // .override 集资产 GUID（按名解析作用域）
+    uint64_t setGuid = 0;        // .ani 集资产 GUID（按名解析作用域）
     // T3d 批②：图初始化边沿（FIELD_RT，入哈希不入档）——首 tick 由此触发：
     // AnimParams 槽从 controller 默认值播种 + 当前段不在集内时 Play(entry)。
     uint8_t inited = 0;

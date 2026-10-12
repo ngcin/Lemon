@@ -1,7 +1,7 @@
 // Lemon.SDK — Animator 状态控制（M6a 批①；03 §8.1 换段语义）---------------------
 // uint clipId 重载 = 纯字段读写（Animator2D 镜像经 Native.Read/Write 往返）——
 // 零 C ABI：clipId 本就 = clip 资产 GUID 低 32 位，无需查表通道（与 spriteId 不同）。
-// T3c 起字符串重载 = 按名解析，走唯一低频桥 clipByName：实体当前段所在 .override 动画集
+// T3c 起字符串重载 = 按名解析，走唯一低频桥 clipByName：实体当前段所在 .ani 动画集
 // 内查段名（跨集同名互不干扰）；未命中回退 GUID hex（旧脚本兼容）。
 // 语义（引擎侧 AnimatorSystem 消费，详见 03 §8.1）：
 //   Play      立即切段（time 归零；同段 = 重播；打断在途队列）
@@ -66,7 +66,7 @@ public static class Anim
 
     static readonly HashSet<string> s_missed = new();
 
-    /// <summary>段名/GUID-hex 双解析：先实体当前段所在 .override 动画集内按名（跨集
+    /// <summary>段名/GUID-hex 双解析：先实体当前段所在 .ani 动画集内按名（跨集
     /// 同名互不干扰），未命中回退 GUID hex（旧脚本兼容，合法 hex 恒可达）。都失败
     /// = 红字一次（每实体×名字去重，防逐帧刷屏）→ 返回 0，调用方 no-op——不能拿
     /// 0 写组件（clipId 0 = 挂 Animator 关闭语义）。</summary>

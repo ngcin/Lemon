@@ -242,7 +242,7 @@ clipId = `.clip` 资产 GUID 低 32 位（prefabId 同款映射约定）；编�
 - 无 clip 表 = 队列整体旁路（字段不动不消费）——M2 逐位不变。
 - **T3d 批③**：`ended`（借原 _pad 位，FIELD_RT）= 非 loop 段收尾边沿——钳 total
   时 0→1 发 `AnimFinished` 事件（userArg=clipId），切段归 0；帧跨越发 `AnimFrame`
-  （user=事件 id、userArg=clipId、payload[0]=帧号，`.anim events[]` 打点，帧号纯
+  （user=事件 id、userArg=clipId、payload[0]=帧号，`.clip events[]` 打点，帧号纯
   函数 ⇒ 事件序确定；loop 回绕/pingpong 反放重进该帧重发）。
 
 ### 8.2 动画状态机（T3d；ADR-013 D1 决策层——决策与执行分离）

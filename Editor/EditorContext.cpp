@@ -784,7 +784,7 @@ bool EditorContext::EnterPlay() {
     playWorld_->SetSpawnFn([this](ecs::Scene& s, uint32_t prefabId, Vec2 pos, uint32_t team) {
         return playPrefabs_.Spawn(s, prefabId, pos, team);
     });
-    // M5 批③：clip 表（.anim 资产 → 帧映射；AnimatorSystem #13 消费）
+    // M5 批③：clip 表（.clip 资产 → 帧映射；AnimatorSystem #13 消费）
     BuildPlayClipCache();
     // M6a 批② T3d：状态机表（.controller 资产 → 出边评估；AnimGraphSystem 消费）
     BuildPlayControllerCache();

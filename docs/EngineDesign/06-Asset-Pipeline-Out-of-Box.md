@@ -64,8 +64,8 @@ MyGame/                                   # 用户项目（升级永不触碰）
 | atlas | 目录/手选集 | 图集页 + sprite 重定向表（MaxRects，Prowl2D M0 实现移植思想） | §5 |
 | audio | wav/ogg | PCM16 预解码缓存（`.meta` importer 记循环点/预载；烘焙入 **.baked** 容器 v1，[ADR-015](../ADR/ADR-015-Audio-System-And-Baked-Format.md)；运行时零解码器） | miniaudio（**M6c**，2026-09-30 设计定形；原表 2026-09-24 行改号 M6b 已过时，双行收敛） |
 | font | ttf/otf | 位图字体页(v1)/SDF 图集(v2) | 02 §7。**v1 ✅ M7c 批① 落地（2026-10-07）**：`Assets/FontBake` LBF1 `.baked`（位图页+度量表+paramsHash 增量重烘）；.meta importer 段 `charset/size/outline`（词表配置，热改=Rescan modified 重烘）；编辑器后台烤制（音频 worker 同款）+ packager 包形态现烤；消费 = `BitmapFont` 外部页（Fx 飘字，project.lemon `fxFont` 选定；字形产包 UV 覆盖通道零 sprite 登记） |
-| clip2d | json | 帧动画资产（**.anim**，T3d 批④前 .clip） | AnimationEditor 产出 |
-| animset | json | 动画集/每角色绑定（**.override**，批④前 .ani；段名→clip 引用清单） | AnimationEditor 产出 |
+| clip2d | json | 帧动画资产（**.clip**，2026-10-13 复名，ADR-013 D2 修订） | AnimationEditor 产出 |
+| animset | json | 动画集/每角色绑定（**.ani**，2026-10-13 复名；段名→clip 引用清单） | AnimationEditor 产出 |
 | controller | json | 动画状态机（**.controller**：状态词表/参数/过渡；ADR-013） | 手写 JSON（图编辑器挂起） |
 | rml/rcss | rml/rcss | UI 文档/样式表原档（**.rml**/**.rcss**，ADR-014 一屏一文档） | M6b 批③b（原 M6a）：DB/GUID/.meta/浏览器识别 + 双击装载 + 热重载（rcss = ReloadStyleSheet 保 DOM）；`<img>` 经贴图桥吃项目精灵（`AtlasTexture` 页借用，`rect` 属性切子图） |
 | particles | json | 发射器资产 | ParticleEditor 产出 |

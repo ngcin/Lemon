@@ -28,7 +28,7 @@ public sealed class PlayerBehaviour : LemonBehaviour
     private const string kUpgradesTable = "7e57100000100003";
     private const string kBalanceTable = "7e57100000100004";
 
-    // M7c 批⑪ 动画换装（Assets/Animations/player04.override / fox.override）：
+    // M7c 批⑪ 动画换装（Assets/Animations/player04.ani / fox.ani）：
     // 段名解析走 AnimGraph.setGuid 绑定的集作用域（NativeClipByName），不再硬编
     // 旧 yami clip GUID（5bd31a7c2000000{1,3}/{2,4} 已随换装退役——那批是
     // 16×32 切片素材，与 player04/fox 的整图帧不同源）。玩家 idle↔run 按输入切；

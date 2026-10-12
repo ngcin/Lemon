@@ -143,7 +143,7 @@ std::string ClipToJson(const ClipData& c) {
     return out;
 }
 
-// ---- T3c 动画集（.override）----------------------------------------------------
+// ---- T3c 动画集（.ani）----------------------------------------------------------
 
 namespace {
 AnimSetData FailSet(const char* what, size_t seg) {

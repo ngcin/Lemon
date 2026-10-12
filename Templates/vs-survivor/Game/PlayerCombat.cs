@@ -27,7 +27,7 @@ public sealed class PlayerCombat : LemonBehaviour
     private const string kUpgradesTable = "7e57200000100002";
     private const string kBalanceTable = "7e57200000100003";
 
-    // 批①受击段 clip（Anim.ClipId = GUID 低 32 位自算；Assets/monster-hit.anim）
+    // 批①受击段 clip（Anim.ClipId = GUID 低 32 位自算；Assets/monster-hit.clip）
     private static readonly uint kMobWalk = Anim.ClipId("5bd31a7c20000002");
     private static readonly uint kMobHit = Anim.ClipId("5bd31a7c20000004");
 

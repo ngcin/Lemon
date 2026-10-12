@@ -260,7 +260,7 @@ bool DrawSpriteSlot(EditorApp& app, uint8_t* p, ecs::SpriteRenderer* sr) {
     return false; // 写入已就地完成（combo 尾置 → 属性轨由 Deactivated 捕获）
 }
 
-/// clip 资产槽（FieldHint::ClipRef；M5 批③）。值 = .anim 资产 GUID 低 32 位
+/// clip 资产槽（FieldHint::ClipRef；M5 批③）。值 = .clip 资产 GUID 低 32 位
 /// （Animator2D.clipId；映射约定同 prefabId）。下拉全列 / AssetBrowser 拖入（kind 4）/
 /// 右键清空。写入就地完成（combo 尾置 → 属性轨由 Deactivated 捕获）。
 bool DrawClipSlot(EditorApp& app, uint8_t* p) {
@@ -550,7 +550,7 @@ FieldResult DrawField(EditorApp& app, const ecs::ComponentMeta& meta, ecs::Entit
     } else if (ecs::HasHint(ed.hints, FieldHint::ClipRef) && f.type == FieldType::UInt32) {
         DrawClipSlot(app, p); // M5 批③：Animator2D.clipId（写入就地完成）
     } else if (ecs::HasHint(ed.hints, FieldHint::AnimSetRef) && f.type == FieldType::UInt64) {
-        DrawGuidSlot(app, p, AssetType::AnimSet, 6, tr("insp.animset_none"));
+        DrawGuidSlot(app, p, AssetType::AnimSet, 6, tr("insp.clipset_none"));
     } else if (ecs::HasHint(ed.hints, FieldHint::ControllerRef) && f.type == FieldType::UInt64) {
         DrawGuidSlot(app, p, AssetType::Controller, 7, tr("insp.controller_none"));
     } else if (ecs::HasHint(ed.hints, FieldHint::RmlRef) && f.type == FieldType::UInt64) {

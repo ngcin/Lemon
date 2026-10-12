@@ -208,8 +208,8 @@ void EditorApp::RescanAssets() {
 void EditorApp::OpenAnimationEditor(uint64_t guid) {
     // M6a 批② T3：首个"资产 → 专用编辑面板"通道（05 §5 先例）。按名取注册表
     // 条目（AnimationPanel 是按需窗口：open 置位 + 设目标；装载惰性在面板 OnGui）
-    // T3c 集归并：双击 .anim 时若已属某 .override 集 → 开集工作台并选中该段（工作台
-    // 是统一入口）；.override 直接开集。集数量小 + 双击频度低 → 现场解析可接受。
+    // T3c 集归并：双击 .clip 时若已属某 .ani 集 → 开集工作台并选中该段（工作台
+    // 是统一入口）；.ani 直接开集。集数量小 + 双击频度低 → 现场解析可接受。
     if (PanelRegistry::Entry* en = panels_.FindEntry("Animation")) {
         auto* panel = static_cast<AnimationPanel*>(en->panel);
         en->open = true;
@@ -233,7 +233,7 @@ void EditorApp::OpenAnimationEditor(uint64_t guid) {
                 }
             }
         }
-        // .override 集容器：直接开集（2026-09-27 修复——此前误走 SetTarget 只设
+        // .ani 集容器：直接开集（2026-09-27 修复——此前误走 SetTarget 只设
         // targetGuid_，而面板集模式由 setGuid_ 驱动、剪辑模式要求 target 是 Clip：
         // 指向集资产的 targetGuid_ 两头不满足 → 空态文案；面板保留上次归并装载的
         // 集 = "显示历史内容"。曾在注释里宣称的"面板侧 OpenSet 语义"从未实现）

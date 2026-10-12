@@ -26,7 +26,7 @@ bool ReadFileText(const std::string& absPath, std::string& out) {
 }
 } // namespace
 
-// ---- M5 批③：Play 世界 clip 表（.anim JSON → ClipTable；06 §2.2 / 03 §5）----
+// ---- M5 批③：Play 世界 clip 表（.clip JSON → ClipTable；06 §2.2 / 03 §5）----
 // 格式（M5.md §16.2 D2）：
 //   { "schemaVersion": 1, "fps": 8, "loop": true,
 //     "frames": [ {"sheet": "<guidHex>", "cell": 0}, ... ] }
@@ -99,7 +99,7 @@ void BuildClipCache(ecs::World& world, const PlayCacheSource& src) {
                       clipId, world.Clips().Find(clipId)->frames.size(), fps);
     });
 
-    // ---- T3c 动画集（.override → 集按名索引；EnterPlay 快照同语义，Play 中改不生效）。
+    // ---- T3c 动画集（.ani → 集按名索引；EnterPlay 快照同语义，Play 中改不生效）。
     // Each() = relPath 升序 → 同段入多集/同集重名一律"路径序先到先得"，可复现。
     // 悬空段（clip 缺失/未登记）跳过不炸 Play；空集合法（脚本按名 miss = 报错）。
     src.Each(AssetType::AnimSet, [&](uint64_t guid, const std::string& relPath,

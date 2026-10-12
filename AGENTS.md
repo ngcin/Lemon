@@ -33,7 +33,7 @@ Windows 真机（批⑦ 首编）：`cmake --preset win && cmake --build --prese
 - **新增第三方库**必须登记 `THIRD_PARTY.md` 并在 `docs/EngineDesign/07-Porting-Matrix.md` 加行；禁止 DI 容器。
 - **vendored 第三方大文件禁整读**：`Engine/Audio/thirdparty/`（miniaudio.h ≈4MB、stb_vorbis.c ≈190KB）等巨型单文件**绝不整文件读取**——一轮就烧掉大量 token；需要查符号时先 grep 定位行号再局部读，音频行为看 `MiniAudioImpl.c` 封装层与 [ADR-015](./docs/ADR/ADR-015-Audio-System-And-Baked-Format.md)。`spike/` 内 vendored 大文件（vk_mem_alloc.h、vulkan.h 等）同规。
 - **移植红线**（07 文档 §0）：yami/2DGameEngine 禁拷代码（yami 的 MIT 仅意味着素材与 schema 可用，JS 代码无拷贝价值）；Looper 未核实许可只可对照；Luma/MoteurJV/duality 拷代码须保留版权声明。
-- 命名：C++ `lemon::`、C# `Lemon.*`；扩展名与 Unity 一致——场景 `.scene`、Prefab `.prefab`、数据资产 `.asset`、烘焙 `.baked`（2026-09-19 定名）；项目清单 `project.lemon`（Godot `project.godot` 同款）；项目状态目录 `.lemon/`（生成物 `manifest.json` 落于此）。
+- 命名：C++ `lemon::`、C# `Lemon.*`；扩展名与 Unity 一致——场景 `.scene`、Prefab `.prefab`、数据资产 `.asset`、烘焙 `.baked`（2026-09-19 定名）；动画族破例 = 剪辑 `.clip` / 集 `.ani`（2026-10-13 复名，ADR-013 D2 修订——`.override` 实用反馈差，旧扩展名开项目自动迁移）；项目清单 `project.lemon`（Godot `project.godot` 同款）；项目状态目录 `.lemon/`（生成物 `manifest.json` 落于此）。
 
 ## 本机坑（都踩过，别再踩）
 

@@ -785,7 +785,7 @@ int EditorApp::Run(const EditorLaunch& launch) {
         // 全链复现：播种块 OpenAnimationCreateSet("") 已排好模态（名 player、无
         // 源目录 = 纯空集），此处注入点击"创建"（TestHooks 矩形 + 真实 ImGui
         // 管线，smoke-ui 同款 hold/release 隔帧模式）→ TryCreateSet 落盘
-        // Assets/player.override → Rescan → OpenSet；f45 断言 setGuid_ 已切到
+        // Assets/player.ani → Rescan → OpenSet；f45 断言 setGuid_ 已切到
         // 新集（空集工作台 = 左列可见，"＋ 新建"入口在位）。
         // --smoke-anim 帧链——外迁 EditorAppSmoke.cpp（批③c-3：挂点原位）
         SmokeAnimFrame(frame);
@@ -936,12 +936,15 @@ int EditorApp::Run(const EditorLaunch& launch) {
     uint32_t playAliveAtStop = 0;
     // --bench 停跑证据采集——外迁 EditorAppBench.cpp（批③c-6：挂点原位）
     playAliveAtStop = BenchCaptureStop();
+    // 计时无条件读"最近一次"会话（smoke-anim f119 中途 StopPlay 后此处非 Playing
+    //——旧读法只在 Playing 分支内采样，漏采时 enter/exit 归零，play-roundtrip
+    // 门禁退化为 0<500 恒真；各 --play 路径取值时点不变，逐位同旧值）
+    playEnterMs = ctx_.LastEnterPlayMs();
     if (ctx_.Playing()) { // --play：跑满帧数后 Stop（恢复编辑世界）
         playAliveAtStop = ctx_.ActiveScene().AliveCount();
-        playEnterMs = ctx_.LastEnterPlayMs();
         playVerified = StopPlay();
-        playExitMs = ctx_.LastExitPlayMs();
     }
+    playExitMs = ctx_.LastExitPlayMs();
 
     // ---- 冒烟自检（§6 #13：退出码即判据）----
     int exitCode = 0;

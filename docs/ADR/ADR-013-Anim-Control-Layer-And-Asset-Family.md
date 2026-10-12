@@ -1,9 +1,12 @@
 # ADR-013：动画控制面分层与资产族对齐（.controller / .override / .anim）
 
 - 日期：2026-09-27
-- 状态：**已采纳**（M6a 批② T3d 落地同日定稿——四小批 + ani.scene 双怪对决终验，
+- 状态：**已采纳，D2 于 2026-10-13 修订**（M6a 批② T3d 落地同日定稿——四小批 + ani.scene 双怪对决终验，
   [DevLog](../DevLog/2026-09-27-m6a-b2-t3d-anim-controller.md)；批④迁移注记：历史
-  文档中 `.clip/.ani` 字样按 `.anim/.override` 映射读取，ADR-012 `.table→.tab` 同款）
+  文档中 `.clip/.ani` 字样按 `.anim/.override` 映射读取，ADR-012 `.table→.tab` 同款；
+  **2026-10-13 D2 修订**：实用反馈推翻 Unity 对齐命名，`.anim→.clip`、`.override→.ani`
+  复名 + 开项目保 GUID 自动迁移，[DevLog](../DevLog/2026-10-13-anim-ext-rename-clip-ani.md)——
+  历史文档中 `.anim/.override` 字样按 `.clip/.ani` 映射读取）
 - 影响：`03-ECS-Runtime.md` §8.1（图评估系统/参数组件）、`04-CSharp-Scripting.md`（Lemon.Anim 参数面）、`05-Editor.md` §3/§7（绑定槽/工作台）、`06-Asset-Pipeline-Out-of-Box.md` §2.2（资产族后缀）、`08-Development-Roadmap.md`（M6a T3d）、`Editor/Assets/AssetDatabase.*`（扩展名四行）、`Engine/ECS/ClipTable.*`（按名解析作用域）、新组件 `AnimGraph`/`AnimParams`、新系统 `AnimGraphSystem`
 
 ## 背景
@@ -42,11 +45,20 @@ vs-survivor `PlayerCombat.cs:16-50` 与 demo/svr-test `PlayerBehaviour.cs:108-11
 
 ### D2：资产族后缀对齐 Unity（兑现 2026-09-19"扩展名与 Unity 一致"既定纪律）
 
+> **2026-10-13 修订（用户实用反馈推翻）**：后缀复名 `.anim→.clip`、`.override→.ani`。
+> 推翻动因：`.override` 取自 Unity AnimatorOverrideController（冷门概念，多数 Unity
+> 用户也不认识），实际使用两周反馈"太奇特"——语义指向错位（集不是"覆盖"任何东西）；
+> 原"`.ani` 与 `.anim` 一字母差必混"的反对理由随 `.anim` 退役消失（新对 `.clip/.ani`
+> 视觉区分充分）。Unity 对齐纪律在动画族破例（.clip 亦非 Unity 名），其余资产族不动。
+> 迁移 = 开项目自动改名（文件 + .meta 同行，guid/type 零迁移，manifestCarry 键随行
+> 保 spriteId——`AssetDatabase::MigrateLegacyAnimExtensions`），仓内存量（demo/模板/
+> Samples）已同步改名；`.meta` 的 "clip"/"animset" type 字符串自始未动。
+
 | 资产 | 现名 | 定名 | Unity 对应 |
 |---|---|---|---|
-| 帧动画剪辑 | `.clip` | **`.anim`** | AnimationClip |
-| 动画集（每角色绑定/换皮） | `.ani` | **`.override`** | AnimatorOverrideController（简化后缀） |
-| 共享状态机（新增） | — | **`.controller`** | AnimatorController |
+| 帧动画剪辑 | `.anim` | **`.clip`** | AnimationClip（Unity 用 .anim，本族破例） |
+| 动画集（每角色绑定/换皮） | `.override` | **`.ani`** | AnimatorOverrideController（概念参照，名不复用） |
+| 共享状态机 | `.controller` | **`.controller`**（不变） | AnimatorController |
 
 - 改 `.ani` 的动因：与 `.anim` 仅一字母之差，搜索/文档/肌肉记忆必混；且其角色
   本就随本 ADR 从"controller 壳"移位为"Override 对应物"。

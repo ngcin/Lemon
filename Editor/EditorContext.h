@@ -173,8 +173,8 @@ private:
     /// M6a 批⓪ T2：spriteGuid → spriteId 归一 + 存量回填（装载/恢复/Undo/Prefab 落地）
     SpriteRefStats ResolveSpriteRefs();
     std::string AutosavePathFor(const std::string& sceneStem) const; // .lemon/autosave/<stem>.scene
-    // M5 批③：EnterPlay 建 clip 表（.anim JSON → (sheet guid, cell) 解析为 spriteId
-    // 入 playWorld_->Clips()；进 Play 时刻快照——Play 中改 .anim 不生效）
+    // M5 批③：EnterPlay 建 clip 表（.clip JSON → (sheet guid, cell) 解析为 spriteId
+    // 入 playWorld_->Clips()；进 Play 时刻快照——Play 中改 .clip 不生效）
     void BuildPlayClipCache();
     // M6a 批② T3d：EnterPlay 建状态机表（.controller JSON → 下标形态入
     // playWorld_->Controllers()；进 Play 时刻快照——Play 中改 .controller 不生效；

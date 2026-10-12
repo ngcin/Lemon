@@ -257,7 +257,7 @@ bool CopyTree(const fs::path& src, const fs::path& dst,
     return true;
 }
 
-// ---- guid 形引用悬空扫描（.scene/.prefab/.anim/.override/.controller 对索引）----
+// ---- guid 形引用悬空扫描（.scene/.prefab/.clip/.ani/.controller 对索引）----
 void CheckDanglingRefs(const fs::path& projectRoot, const lemon::assets::AssetIndex& index) {
     std::unordered_set<uint64_t> known;
     for (const lemon::assets::IndexedEntry& e : index.Entries()) known.insert(e.guid);
@@ -266,7 +266,7 @@ void CheckDanglingRefs(const fs::path& projectRoot, const lemon::assets::AssetIn
          it != fs::recursive_directory_iterator(); it.increment(ec)) {
         if (ec || !it->is_regular_file(ec)) continue;
         const std::string ext = it->path().extension().string();
-        if (ext != ".scene" && ext != ".prefab" && ext != ".anim" && ext != ".override" &&
+        if (ext != ".scene" && ext != ".prefab" && ext != ".clip" && ext != ".ani" &&
             ext != ".controller")
             continue;
         std::ifstream f(it->path(), std::ios::binary);
