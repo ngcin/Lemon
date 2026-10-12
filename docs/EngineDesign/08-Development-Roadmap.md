@@ -178,9 +178,9 @@ Tilemap 数据 + chunk 烘焙渲染 → 碰撞层 → 自动瓦片 + TilePalette
 > 修复进度跟踪在 [M7c 批⑪](../Plans/M7c/2026-10-09-b11-engine-review-fixes.md)；三条债不随批⑪ 修码。
 >
 > **2026-10-10 扩充（b11d 收口，[DevLog](../DevLog/2026-10-10-m7c-b11d-lowfixes-and-reg.md)）**——评审 L 类评估后不修码的 10 项 + 1 验证项，各附触发条件（小修面已在 b11a–d 清完，以下为有余量再动项）：
-> - **#M4 批量纹理上传 Windows 验证**：UploadTextures API 已落地，mac/MoltenVK 实测负收益（单一大提交的编码器切换开销 > waitIdle 节省；dev 装载 111 张三态对比见 b11c DevLog）调用方保持单张。**触发 = M8 压测 A 前的 Windows 真机一轮** → 正收益则 TextureStore/AtlasStore 切批量。
+> - **#M4 批量纹理上传 Windows 验证**：UploadTextures API 已落地，mac/MoltenVK 实测负收益（单一大提交的编码器切换开销 > waitIdle 节省；dev 装载 111 张三态对比见 b11c DevLog）调用方保持单张。**触发 = M8 压测 A 前的 Windows 真机一轮** → 正收益则 TextureStore/AtlasStore 切批量。**（2026-10-12 批⑥ 注记：mac 侧数字与该决策解耦——切换只影响 Windows 运行路径；压测 A mac 三跑已过（fps=91/90/91），Windows 轮 = 批⑥ D 组独立三态对比，不阻塞 mac 侧收口。）**
 > - **#L3 DrawTextEx/TextWidthEx 每调用堆分配**：cps vector → 线程局部 scratch 复用。**触发 = M8 后处理批触碰 BitmapFont 或飘字压测显分配热点**。
-> - **#L5 ComputeStateHash 字段名重复哈希**：组件级预哈希（注意哈希流布局变更 = 既有回放文件不兼容，内部格式变更需迁移判据）。**触发 = M8 soak 前回放录制耗时成瓶颈**。
+> - **#L5 ComputeStateHash 字段名重复哈希**：组件级预哈希（注意哈希流布局变更 = 既有回放文件不兼容，内部格式变更需迁移判据）。**触发 = M8 soak 前回放录制耗时成瓶颈**。**（2026-10-12 批⑥ 探针关账 ✅：`TestLightStateHashCostProbe` 实测——真实规模 10 灯逐帧双字段写 1.6µs/帧（增量 1.1µs ≈ 500µs 阈值的 0.2%）、10000 灯 1119µs/帧纯线性（≈0.11µs/灯；压测 A 真实上限 64 灯 ≈7µs）——四数量级余量，组件级预哈希不立项；[DevLog](../DevLog/2026-10-12-m8-b6-stress-a-and-soak.md) §2。）**
 > - **#L8 DDOL 幸存判定逐实体上行祖先链**：DDOL 根 DFS 标记幸存集合替代上行链（CollectTree 原语已有）。**触发 = 换场尖峰压测显示清场段占比可测**。
 > - **#L10 场景档案只增不减**：sceneRecords_ 句柄→下标哈希索引（复用句柄方案触碰回放发号语义，先只做索引）。**触发 = soak 2h 换场千次级场景的 FindSceneRecord 线性扫成点**。
 > - **#L16 飘字数字格式化分配**：真零分配需 native 表加 char*/float 直写变体（SDK string marshal 链改造）。**触发 = M8 GC 压测显示战斗飘字 Gen0 分配占比**。

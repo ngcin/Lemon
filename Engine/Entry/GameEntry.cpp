@@ -22,7 +22,8 @@
 // 直画 swapchain，spike-04 先例）→ present。
 //
 // CLI：lemon-game [--project <dir>] [--scene <rel>] [--frames N] [--smoke]
-//                 [--smoke-scene] [--smoke-light] [--smoke-fx] [--validate]
+//                 [--smoke-scene] [--smoke-light] [--smoke-fx] [--vsync]
+//                 [--validate]
 //   --project     项目根（含 project.lemon）；缺省 = exe 旁 data/（包形态零参启动）
 //   --scene       相对路径覆盖入口场景（缺省 = entryScene → 回退链）
 //   --frames      跑 N 帧退出（自动化；smoke 族要求 N≥240——帧机在 f200 后收尾）
@@ -30,6 +31,10 @@
 //   --smoke-scene 换场编排冒烟（M7c 批⑥b）；--smoke-light 光贴图冒烟（M8 批③）；
 //   --smoke-fx 后处理链冒烟（M8 批④：bloom/色调/冲击波 + 关链逐位同）
 //                 ——三 smoke 旗标互斥使用（组合态未定义，装载期 WARN）
+//   --vsync       自动化模式强制 FIFO 呈现（M8 批⑥ soak 实证 2026-10-12：
+//                 IMMEDIATE 不限速灌帧在 macOS 触发合成器 drawable 节流 →
+//                 nextDrawable 长阻塞，画面冻结且事件停轮询——四轮 sample 同栈；
+//                 bench 默认 IMMEDIATE 不受影响）
 //   --validate    Vulkan 验证层（开发自测）
 #include <SDL3/SDL.h>
 
@@ -448,14 +453,14 @@ int main(int argc, char** argv) {
     std::string projectArg, sceneArg, screenshotArg;
     long frames = 0;
     bool smoke = false, smokeScene = false, smokeLight = false, smokeFx = false,
-         validate = false;
+         validate = false, vsync = false;
     // L31（review 2026-10-09）：未知/残缺参数原静默落空——`--frames abc` 经 atoi→0
     // 使 paced 反转为 true，自动化调用变交互模式无限挂住。未知/非数字 = 响亮退出。
     const auto usage = [] {
         std::fprintf(stderr,
                      "用法：lemon-game [--project <dir>] [--scene <name>] [--frames N] "
                      "[--smoke] [--smoke-scene] [--smoke-light] [--smoke-fx] "
-                     "[--validate]\n");
+                     "[--vsync] [--validate]\n");
     };
     for (int i = 1; i < argc; ++i) {
         if (!std::strcmp(argv[i], "--project") && i + 1 < argc) projectArg = argv[++i];
@@ -472,6 +477,7 @@ int main(int argc, char** argv) {
         else if (!std::strcmp(argv[i], "--smoke-scene")) smokeScene = true;
         else if (!std::strcmp(argv[i], "--smoke-light")) smokeLight = true;
         else if (!std::strcmp(argv[i], "--smoke-fx")) smokeFx = true;
+        else if (!std::strcmp(argv[i], "--vsync")) vsync = true;
         else if (!std::strcmp(argv[i], "--validate")) validate = true;
         else if (!std::strcmp(argv[i], "--screenshot") && i + 1 < argc)
             screenshotArg = argv[++i]; // 末帧交换链 PNG（调试判据；须配 --frames N）
@@ -543,7 +549,11 @@ int main(int argc, char** argv) {
     if (!device) return 1;
     rhi::SwapchainDesc sd;
     sd.nativeWindow = window->NativeHandle();
-    sd.present = paced ? rhi::PresentModePref::Fifo : rhi::PresentModePref::Immediate;
+    // soak 姿势 = 自动化步进 + FIFO 呈现（--vsync）：每帧一步走 60Hz 真实节奏
+    // （D2 判据 432k 帧 = 2h@60Hz 同口径）；自动化默认 IMMEDIATE 系 bench 口径，
+    // 长跑灌帧会被 macOS 合成器节流至 drawable 池枯竭（2026-10-12 四轮 soak
+    // sample 同栈实证：主线程阻塞于 nextDrawable，画面冻结 + 事件停轮询）。
+    sd.present = (paced || vsync) ? rhi::PresentModePref::Fifo : rhi::PresentModePref::Immediate;
     if (!device->CreateSwapchain(sd)) return 1;
 
     // ---- C# 宿主（窗口/设备之后、World 装配之前：脚本即游戏，装配失败响亮退出；
@@ -1578,7 +1588,8 @@ int main(int argc, char** argv) {
         // PRESENT_SRC 布局借道拷出；f61/f101/f107/f221 + 波窗口帧取回）
         if (smokeFx && fxCapReq != 0 && frame == fxCapFrame) cl.DebugRecordCapture();
         // --screenshot：末帧捕获（同款借道；帧尾循环外取回落盘）
-        if (!screenshotArg.empty() && frame + 1 == frames) cl.DebugRecordCapture();
+        if (!screenshotArg.empty() && frame + 1 == static_cast<uint64_t>(frames))
+            cl.DebugRecordCapture();
 
         bool needRe = false, lost = false;
         device->EndFrameAndPresent(needRe, lost);

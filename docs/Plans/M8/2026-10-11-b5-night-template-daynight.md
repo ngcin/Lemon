@@ -1,6 +1,6 @@
 # M8 批⑤ —— 模板夜战场 + svr-test 昼夜循环 + 真人走查
 
-Status: 机器面 ✅ 2026-10-11 当日（单测 34,919/script-tests 1,911 持平/ctest 4/4/回归 25 绿 + bench-survivor 软门禁热态波动（单独复跑 80/80 PASS，判机器噪声）/金回放三档零重录 mismatches=0/无头 svr.daynight=2 + Night 15/15 零崩，[DevLog](../../DevLog/2026-10-11-m8-b5-night-template-daynight.md)）；真人走查待用户（§D）
+Status: done（**机器面 ✅ 2026-10-11 当日**（单测 34,919/script-tests 1,911 持平/ctest 4/4/回归 25 绿 + bench-survivor 软门禁热态波动（单独复跑 80/80 PASS，判机器噪声）/金回放三档零重录 mismatches=0/无头 svr.daynight=2 + Night 15/15 零崩，[DevLog](../../DevLog/2026-10-11-m8-b5-night-template-daynight.md)）；**真人走查 ✅ 2026-10-12 零缺陷终态**（§D 四项全过、FX 零调参反馈；过程期实报五项已随支持期修复 3a57452 收敛复验，[验收记录](../../DevLog/2026-10-12-acceptance-m8-b5-walkthrough.md)））
 
 - 总览行：[M8.md](./M8.md) §2 ⑤行；出口判据 = 模板光照场景进 Play 全流程零 C++ / 昼夜循环 C# 样例 / 真人走查过（灯池观感/昼夜过渡/blob 阴影/蒙版聚光灯 + 光+FX 合成观感——批④ 真人观感归本批组合走查）
 - 前置：批① 组件（id 32/33）✅ / 批② 编辑器光贴图 ✅ / 批③ lemon-game 装配 + `Lemon.Lighting` 门面 ✅ / 批④ FX 两壳 ✅
@@ -54,7 +54,7 @@ Status: 机器面 ✅ 2026-10-11 当日（单测 34,919/script-tests 1,911 持�
 - [x] **C4** 无头断言手跑记 DevLog：Grass 直开 `--smoke --play --frames 1600`（≈26s 游戏时 = 两段过渡）读 `svr.daynight`≥2；Night 直开 `--frames 600` 零崩零警告刷屏；模板临时产物 dotnet build + template-chain 已覆盖（C2）。
 - [x] **C5** bench 门禁随回归（bench-survivor ≥76.5）；ci-daily bench-lights ≥55 软门禁（FX 在场数字重锚归批⑥）。
 
-### D 真人走查（待用户，出口判据）
+### D 真人走查（✅ 2026-10-12 通过，出口判据）
 
 清单落批 DevLog（m7c-b9 先例格式）：
 
@@ -62,6 +62,8 @@ Status: 机器面 ✅ 2026-10-11 当日（单测 34,919/script-tests 1,911 持�
 2. **svr-test Grass 昼夜**：进战斗观察 ≥1 轮（晨→昼→暮→夜过渡连续、夜段 ambient 压暗后 HUD/飘字可读）；
 3. **蒙版聚光灯**：编辑器开 light.scene → Add Component Light2D → SpriteMask 型选 mask sprite → 观感（顺带验证 Inspector 光照工作流）；
 4. **FX 观感反馈**：bloom 阈值/强度、色调对比/暖偏不对味现场反馈（PostFxParams 四参数 C++ 侧批内调）。
+
+**结果（2026-10-12）**：四项全过，FX 零调参反馈，终态零缺陷——[验收记录](../../DevLog/2026-10-12-acceptance-m8-b5-walkthrough.md)。过程期实报（blob 贴脚/地图层/orderTier/TargetBoard 过滤）已随支持期修复 3a57452 收敛并随本走查复验。
 
 通过后另立 acceptance DevLog（仿 2026-10-10-acceptance-m7c-b9-b10.md）+ AGENTS.md 行动项同步。
 

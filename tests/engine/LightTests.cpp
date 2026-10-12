@@ -19,8 +19,11 @@
 #include "Renderer/SceneExtractor.h"
 #include "Serialization/SceneArchive.h"
 
+#include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <string>
+#include <vector>
 
 using namespace lemon::ecs;
 using lemon::Vec2;
@@ -155,6 +158,52 @@ void TestLightStateHashStream() {
     world.Step(1.0f / 60.0f); // 两阶段销毁提交（Essential）
     world.Step(1.0f / 60.0f);
     Expect(ComputeStateHash(s) == h0, "scene back to empty baseline after destroy");
+}
+
+// #L5 探针（M8 批⑥，08 债表）：昼夜脚本逐帧写灯字段（intensity/color =
+// DayNightCycle 补间同款双字段路径）下 ComputeStateHash 每帧成本——只打印
+// 不断言（CI 计时不设门，手跑记数判定"回放录制耗时是否成点"，批⑥ 批文件
+// C1/C2：增量 <500µs/帧 = 不成点关账，超阈值 = 组件级预哈希立项）。
+void TestLightStateHashCostProbe() {
+    RegisterAllComponents();
+    struct Sample {
+        const char* tag;
+        size_t lights;
+    };
+    const Sample samples[] = {{"ctl-0", 0}, {"real-10", 10}, {"stress-10000", 10000}};
+    for (const Sample& smp : samples) {
+        World world;
+        Scene& s = world.CreateScene("light-hash-cost");
+        std::vector<Entity> es;
+        es.reserve(smp.lights);
+        for (size_t i = 0; i < smp.lights; ++i) {
+            Entity e = s.Create();
+            Light2D& l = s.Emplace<Light2D>(e);
+            l.type = kLightTypePoint;
+            l.intensity = 1.0f;
+            es.push_back(e);
+        }
+        const int kFrames = 240;
+        uint64_t sink = 0; // 逐帧异或累积，防编译器把哈希调用优化掉
+        const auto t0 = std::chrono::steady_clock::now();
+        for (int f = 0; f < kFrames; ++f) {
+            const float k = static_cast<float>(f) / static_cast<float>(kFrames);
+            for (Entity e : es) {
+                Light2D& l = s.Get<Light2D>(e);
+                l.intensity = 1.0f + k; // 昼夜补间同款：每帧双字段写
+                l.color = 0xFF000000u | static_cast<uint32_t>(64.0f + 191.0f * k);
+            }
+            sink ^= ComputeStateHash(s);
+        }
+        const auto t1 = std::chrono::steady_clock::now();
+        const double usPerFrame =
+            std::chrono::duration<double, std::micro>(t1 - t0).count() / kFrames;
+        std::printf("[m8-b6-L5] state-hash cost: lights=%zu frames=%d "
+                    "us/frame=%.1f sink=%llu\n",
+                    smp.lights, kFrames, usPerFrame,
+                    static_cast<unsigned long long>(sink));
+        Expect(usPerFrame >= 0.0, "probe ran (print-only, no timing gate)");
+    }
 }
 
 // ---- M8 批②：渲染域 ----
@@ -377,6 +426,7 @@ void RunLightTests() {
     TestLightDefaultsAndLifecycle();
     TestLightSceneRoundtrip();
     TestLightStateHashStream();
+    TestLightStateHashCostProbe();
     TestLightAttenuationCurves();
     TestLightSpotAngular();
     TestLightExtractionChannel();
