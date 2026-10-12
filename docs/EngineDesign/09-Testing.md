@@ -152,6 +152,17 @@ RESULT `quality=Low`。
 判读：fps 维持 60、recreates=0、skipped=0、quality=High 无抖动。
 **结果（2026-09-18）**：7200 帧 60.2fps，全指标无退化。
 
+**M8 批⑥ soak 2h（2026-10-12，lemon-game 全链首跑）**：对象 = svr-test Grass 直开
+（昼夜动画灯 + 灯池 + blob + 导演刷怪 + FX 全链在场，08 M8 出口判据 mac 侧口径）。
+姿势七轮教训后定型：`--vsync`（60Hz 真实节奏——`--frames N` 自动化默认 Immediate
+不限速灌帧，实测 422fps，四轮栈采样同族 = macOS 合成器 drawable 节流 →
+`nextDrawable` 长阻塞冻结）+ god-HP 项目副本（防玩家死亡结算暂停）+ `caffeinate -is`
+（压显示器睡眠）+ 窗口保持至少部分可见；判据 = **墙钟 ≥7200s + RSS 稳态段无单调上涨
+（首 30min 装载/池预热爬坡剔除）+ 零崩溃转储 + 干净 exit 0**；帧数当量下限 432k
+（2h@60Hz）。内存曲线靠外部 `ps -o rss=` 60s 采样（soak 是一次性验收，进程内不设
+驻留采样口）。**结果**：v5 轮 17:04 挂机（600k 帧 ≈2.7h），收表后落 DevLog
+`2026-10-12-m8-b6-stress-a-and-soak.md`。
+
 ### 6.5 管线缓存命中
 
 方法：同一程序连跑两次，第二次启动日志应出现 `pipeline cache loaded`（首次为落盘 saved）。
@@ -388,6 +399,51 @@ Hierarchy 面板）。回归口径 = 本命令三跑稳定。
    `ImGuiListClipper` 只画可见行（DrawNode 拆行体 DrawNodeRow + 子遍历；带父子
    结构或过滤态仍走原递归——混合结构万级平铺的通用扁平化留 M5 观察）。
    uidraw 随之 0.13→0.03ms（顶点量骤减）。
+
+**压测 A（--bench-survivor-lit，M8 批⑥ 终测 2026-10-12）**：bench-survivor 同构 +
+**光照/FX 默认在场**的终验口径（门禁 = alive≥10000 + lights≥64 + fxPass==5 +
+fps≥60，帧守卫 ≥600；工具 = 批④ D2）。三跑（frames=900，对齐回归口径；
+LEMON_NO_ACTIVATE=1）：
+
+| 跑 | fps | alive | lights | fxPass | frameAvg | frameMax |
+|---|---|---|---|---|---|---|
+| ① 冷机 | 91 | 10507 | 64 | 5/5 | ≈11.0ms | ≈19ms |
+| ② 热机 | 90 | 10507 | 64 | 5/5 | ≈11.0ms | ≈19ms |
+| ③ 复跑 | 91 | 10507 | 64 | 5/5 | ≈11.0ms | ≈19ms |
+
+**同日 bench 三口径重锚（A2 结论 = 门禁全维持）**：bench-survivor **fps=92**
+（门禁 76.5，余量 +21%）、bench-lights **881**（软门禁 55）、bench-survivor-lit
+**90–91**（门禁 60）——批⑤ 尾态 74/76 判热态环境噪声成立（当日冷热三态一致 90+）；
+上调门禁反而放大热态 flake 面，76.5/55/60 原值维持即"基线回归 <10%"口径自洽，
+`tools/editor-regression.sh` 与 `tools/ci-daily.sh` 零改动。mac 侧数字与 #M4
+（批量上传）解耦——切换只影响 Windows 运行路径，Windows 三态对比归 D 组。
+
+### 6.11 光照与后处理专项（M8 批②–④ 建场，2026-10-12 落账；批⑦ C1）
+
+光贴图三段式（sceneRT × lightRT 乘法合成，[02 §8](./02-Rendering-Vulkan.md)）
++ 蒙版光/blob 暗斑 + PostFx 链的机器证口径。**关灯/关链零成本**（08 §0 M8 行
+出口判据）由两壳"逐位同"断言机器证，不依赖目测。
+
+**回归四步**（full 26 步内，`tools/editor-regression.sh`）：
+
+| 步 | 壳 | 断言面 |
+|---|---|---|
+| `smoke-light`（`lemon-editor --smoke-light --frames 240 --validate --no-reopen`） | 编辑器 GameView | **九断言全 1 才 PASS**（verdict 行 = `EditorAppSmokeLight.cpp:306`）：`base` 无灯基线帧就绪 / `onVsBase` 开灯帧与基线有差 / `onDiff` lightRT 灯心 vs 远角 Δ>30（理论 ≈166：r = clamp(0.35+2.0·att)≈1.0 vs ambient 0.35，推导见源码注释）/ `mask` 蒙版光斑 g 通道 Δ>30（实测 166–170）/ `blob` 暗斑 Δ>30（实测 ≈85：Subtract 白×0.5 清 0）/ `plan` 提取计划含灯与 blob / `tier` 三档 lightRT 327×184→654×368→1308×736 / `gizmo` SceneView 圈/楔形像素 >0 / `offIdentical` **关灯帧与基线逐位同（光照默认关闭零成本的机器证）** |
+| `light-smoke`（`lemon-game --smoke-light --frames 240`） | lemon-game | 游戏壳三段式：蒙版光斑/暗斑 Δ 同口径（阈值 >30）+ 三档 lightRT 320×180→640×360→1280×720 + **fps≥60** |
+| `smoke-fx`（编辑器，--validate 短段） | 编辑器 gameRT | bloom/色调曲线/冲击波各差分（SetParams 0 对照帧）+ **关链帧逐位同** + 质量档位切换 |
+| `fx-smoke`（`lemon-game --smoke-fx --frames 240`） | lemon-game | 同款游戏壳（历史读数 fps≈392–474，只判 OK 不设门禁） |
+
+**bench 口径**：`bench-lights`（编辑态 64 灯 + FX 在场，`ci-daily.sh` 软门禁
+55）——批② 515 → 批③ blob 渲染生效 919（冷机态）→ 批⑥ 重锚读数 881；
+`bench-survivor-lit` 压测 A 终验场数字 = §6.10 尾表。质量档语义：
+Low 关 FX 链（`QualityParams.fxChain` Med+ 位，关链帧逐位同两壳各证）+
+lightRT 低分辨率档。
+
+**与 §6.8 金回放的关系**：光照纯表现不入金档——基准场零 Light2D 实例
+（M8 批① 加组件字段零重录先例），昼夜动画灯（脚本逐帧写组件字段）只存在于
+消费场景不进基准场；哈希流成本探针 `TestLightStateHashCostProbe` 实测
+10 灯逐帧双字段写 1.6µs/帧（10000 灯 1119µs 纯线性）——#L5 四数量级余量
+关账（[08 债表](./08-Development-Roadmap.md) M8 段）。
 
 ## 7. M2 验收结果汇总（2026-09-19，本机 6C）
 
