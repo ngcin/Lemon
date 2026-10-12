@@ -204,6 +204,8 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
     {
         const std::string prefix = currentDir_.empty() ? "Assets/" : currentDir_ + "/";
         for (const std::string& d : db.Directories()) {
+            if (d.empty()) continue; // 哨兵根条目（Directories() 以 "" 打头）；漏滤
+                                     // 会画出无名文件夹且点击无导航（用户实报）
             bool direct =
                 d.size() > prefix.size() && d.compare(0, prefix.size(), prefix) == 0 &&
                 d.find('/', prefix.size()) == std::string::npos; // 当前目录直下子目录
