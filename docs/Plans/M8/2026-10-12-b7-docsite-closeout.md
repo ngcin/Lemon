@@ -1,6 +1,6 @@
 # M8 批⑦ —— 文档站 v1 + 09 §6.11 光照/FX 专项 + 段收官
 
-Status: in-progress（2026-10-12 开工落账 + **同日日1 完成**：A1–A4 基座全过（2 页生成/负面测试原始 HTML 与死链各验 exit 1/嵌套列表结构核对）+ C1 §6.11 落账 + B1 intro + B8 lighting（API 逐名核对 Lighting.cs）；[DevLog](../../DevLog/2026-10-12-m8-b7-docsite-start.md)；**余 = B2–B7/B9–B13 十一页内容；段收官 D 组 gate = 批⑥ mac 侧收口**（soak B2 红旗判读落账），见 §3 D4）
+Status: in-progress（2026-10-12 开工落账 + **同日日1 完成**：A1–A4 基座全过（2 页生成/负面测试原始 HTML 与死链各验 exit 1/嵌套列表结构核对）+ C1 §6.11 落账 + B1 intro + B8 lighting（API 逐名核对 Lighting.cs）；[DevLog](../../DevLog/2026-10-12-m8-b7-docsite-start.md)；**同日日2 完成：B2–B7/B9–B13 十一页全数落齐——十三页站生成 13 页零错误（零死链/零越子集语法），intro 全页导航链通**；[DevLog](../../DevLog/2026-10-12-m8-b7-manual-pages.md)；**A/B/C 三组全部收口；余 = 段收官 D 组 gate = 批⑥ mac 侧收口**（soak B2 红旗判读落账），见 §3 D4）
 
 ## 1. 输入条件（2026-10-12 探测核证）
 
@@ -24,18 +24,18 @@ Status: in-progress（2026-10-12 开工落账 + **同日日1 完成**：A1–A4 
 ### B 使用手册内容（v1 十三页，zh-CN）
 
 - [x] **B1** `01-intro.md`：引擎定位与边界（纯 2D/品类/不做 3D 不做重物理）+ 五分钟跑起来（mac/win preset、lemon-editor 首开）。素材：00 总纲、AGENTS 构建段、Windows-Build-Guide。—— **✅ 2026-10-12**（含能力面一览/平台表/lemon-game 直开/「如何读本手册」分层导读——手册不复载数字的 D6 纪律成文）。
-- [ ] **B2** `02-getting-started.md`：新建项目（project.lemon / .lemon/ 目录）+ vs-survivor 模板生成器 + lemon-game 运行 + 出包初览。素材：06 资产分册、Templates/。
-- [ ] **B3** `03-editor.md`：布局/SceneView/Hierarchy/Inspector/Assets 四面板 + gizmo + Play 模式 + i18n 切换。素材：05 编辑器分册。
-- [ ] **B4** `04-components.md`：组件目录全表（id/字段/用途，ComponentCatalog 单一来源）+ Add Component 工作流 + 运行时语义。素材：03 ECS 分册。
-- [ ] **B5** `05-scripting.md`：C# 脚本模型（生命周期/批量 API + 事件队列两通道）+ Lemon.SDK 门面总览（22 文件分域表）+ 第一个脚本 walkthrough。素材：04 C# 分册、Lemon.SDK。
-- [ ] **B6** `06-scenes.md`：场景/.scene 格式 + SceneManager 多场景 + LoadSceneAsync + DDOL + 加载屏模式。素材：M7c 批⑦⑧⑨、SceneManager.cs。
-- [ ] **B7** `07-assets.md`：资产管线（sprite/图集/prefab/.asset/GUID/.baked）+ 引用与重定向。素材：06 分册。
+- [x] **B2** `02-getting-started.md`：新建项目（project.lemon / .lemon/ 目录）+ vs-survivor 模板生成器 + lemon-game 运行 + 出包初览。素材：06 资产分册、Templates/。—— **✅ 2026-10-12**（项目布局树 + project.lemon 实例（逐字段对模板实物）+ 向导模板表 + `--gen-vs-template` + 运行三形态 + 热重载口径）。
+- [x] **B3** `03-editor.md`：布局/SceneView/Hierarchy/Inspector/Assets 四面板 + gizmo + Play 模式 + i18n 切换。素材：05 编辑器分册。—— **✅ 2026-10-12**（核心七面板职责表 + Play/Stop 快照沙盒语义（Play 中改动只落 Play World、Stop 即丢；Undo 禁用）+ 保存/自动备份 + 日常操作节）。
+- [x] **B4** `04-components.md`：组件目录全表（id/字段/用途，ComponentCatalog 单一来源）+ Add Component 工作流 + 运行时语义。素材：03 ECS 分册。—— **✅ 2026-10-12**（34 组件按域五表，字段名逐个对 `ComponentCatalog.cpp`；FIELD_RT 运行时态不入档语义 + team 2 惯例成文）。
+- [x] **B5** `05-scripting.md`：C# 脚本模型（生命周期/批量 API + 事件队列两通道）+ Lemon.SDK 门面总览（22 文件分域表）+ 第一个脚本 walkthrough。素材：04 C# 分册、Lemon.SDK。—— **✅ 2026-10-12**（生命周期七回调表对 `GameObject.cs`；IForEachSystem 示例对 `Scripting.cs` 签名（`ref readonly Chunk`，`Time.DeltaTime` 源码核对）；**结构命令两拍**语义成文；SDK 十域总览表）。
+- [x] **B6** `06-scenes.md`：场景/.scene 格式 + SceneManager 多场景 + LoadSceneAsync + DDOL + 加载屏模式。素材：M7c 批⑦⑧⑨、SceneManager.cs。—— **✅ 2026-10-12**（API 表 + 换场帧协议⑤时序 + AsyncSceneLoad 成员表（**progress 纯呈现量禁挂玩法分支** + allowSceneActivation 门）+ 跨场壳模式（GameFlow 种子/加载屏）+ v1 边界（Single 唯一/Additive 红字）；ADR-017 实链）。
+- [x] **B7** `07-assets.md`：资产管线（sprite/图集/prefab/.asset/GUID/.baked）+ 引用与重定向。素材：06 分册。—— **✅ 2026-10-12**（.meta 实例 + manifest 体检 + 十类资产表 + 孤儿清扫口径 + 编辑器态/发布态图集两态 + GUID 十六进制串脚本引用口径）。
 - [x] **B8** `08-lighting.md`：Light2D（四类型/三混合）+ BlobShadow2D + 蒙版光语义（rgb×a 无衰减）+ ambient 使用注意（加亮类场景 ambient 须留暗）+ 质量三档 + DayNight 循环。素材：ADR-019、02 §8、批③④⑤ DevLog。—— **✅ 2026-10-12**（字段表/API 表逐名核对 `Lighting.cs`；**两拍时序与补间在途禁写同字段两条坑显式成文**；DayNightCycle 缩减样例取自 svr-test 真实消费者；设计依据三链尾）。
-- [ ] **B9** `09-fx.md`：PostFx 链（bloom 双滤波三级/色调曲线/冲击波 UV 扰动）+ QualityParams.fxChain 档位语义 + 关链零成本口径。素材：02 §4、批④。
-- [ ] **B10** `10-ui.md`：RmlUi（.rml/.rcss、UIDocument 声明式装载、C# Ui/GameUI 门面）。素材：ADR-014、M6b 各批。
-- [ ] **B11** `11-audio.md`：AudioSource + .baked 烘焙格式 + 覆写规则。素材：ADR-015、M6c。
-- [ ] **B12** `12-packaging.md`：lemon-packager 出包 + Windows 真机清单 + 独立运行时。素材：M7a b7、Windows-Build-Guide。
-- [ ] **B13** `13-debug.md`：调试旗标面（--validate/--frames/--vsync/--screenshot/无头 svr.* 系列）+ 金回放口径（用户视角）+ 常见坑（验证层 dyld 绕行）。素材：09、AGENTS 本机坑。
+- [x] **B9** `09-fx.md`：PostFx 链（bloom 双滤波三级/色调曲线/冲击波 UV 扰动）+ QualityParams.fxChain 档位语义 + 关链零成本口径。素材：02 §4、批④。—— **✅ 2026-10-12**（**世界空间 Fx（飘字/血条）与全屏 FX 链分开成两节防混淆**；Fx API 表逐名核对 `Fx.cs`；质量三档全景表对 `Quality.h`（Low 20k 粒子/32 灯/关链）；v1 无脚本面 FX 参数位如实登记）。
+- [x] **B10** `10-ui.md`：RmlUi（.rml/.rcss、UIDocument 声明式装载、C# Ui/GameUI 门面）。素材：ADR-014、M6b 各批。—— **✅ 2026-10-12**（**三层分工**开篇（世界空间 HUD/RtUi 快速 HUD/RmlUi 完整界面）；`Ui.cs`（ShowCards/CardPick/ShowDialog）与 `GameUI.cs`（UI.Apply 提交制 + UI.Events 反向）两门面分工成文；「忘了 Apply = 屏上不动」坑登记）。
+- [x] **B11** `11-audio.md`：AudioSource + .baked 烘焙格式 + 覆写规则。素材：ADR-015、M6c。—— **✅ 2026-10-12**（组件字段表 + Audio 门面九 API 逐名核对 `Audio.cs`；**TimeScale 不自动映射暂停**的流程冻结防线 + 循环点烘焙期口径成文）。
+- [x] **B12** `12-packaging.md`：lemon-packager 出包 + Windows 真机清单 + 独立运行时。素材：M7a b7、Windows-Build-Guide。—— **✅ 2026-10-12**（两步出包命令 + 参数表 + **自检行四 Miss/extra 全 0 判据** + HintPath 重锚注意 + lavapipe 提示；命令形态对 Windows-Build-Guide §6）。
+- [x] **B13** `13-debug.md`：调试旗标面（--validate/--frames/--vsync/--screenshot/无头 svr.* 系列）+ 金回放口径（用户视角）+ 常见坑（验证层 dyld 绕行）。素材：09、AGENTS 本机坑。—— **✅ 2026-10-12**（两壳旗标表对 `EditorEntry.cpp` usage 与 GameEntry CLI 注释；DYLD 绕行/不限速挂机冻结/结构命令两拍/补间禁写/无头站桩死亡五坑清单 + 确定性回放用户视角（Scripting.Rng 纪律））。
 - 内容纪律：手册页只写**用户视角的用法与语义**；设计依据/实测数字链回 EngineDesign 与 DevLog（手册不复载数字，防两处漂移）；API 名以 Lemon.SDK 源码为准逐名核对。
 
 ### C 09 §6.11 光照/FX 专项落账

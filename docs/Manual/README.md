@@ -21,20 +21,20 @@ open build/manual/index.html     # 浏览器 file:// 直开
 
 站内死链 / 图片缺失 / 越子集语法 = 构建失败（exit 1）。
 
-## 页清单（v1 十三页，M8 批⑦ B 组）
+## 页清单（v1 十三页，M8 批⑦ B 组；2026-10-12 全数落齐）
 
 | 页 | 主题 | 状态 |
 |---|---|---|
-| 01-intro | 定位与快速跑起来 | 编写中 |
-| 02-getting-started | 新建项目/模板/运行/出包 | 待写 |
-| 03-editor | 编辑器布局与工作流 | 待写 |
-| 04-components | 组件目录全表 | 待写 |
-| 05-scripting | C# 脚本模型与 SDK 总览 | 待写 |
-| 06-scenes | 场景与多场景 | 待写 |
-| 07-assets | 资产管线 | 待写 |
-| 08-lighting | 2D 光照 | 编写中 |
-| 09-fx | 后处理链 | 待写 |
-| 10-ui | RmlUi 界面 | 待写 |
-| 11-audio | 音频 | 待写 |
-| 12-packaging | 出包与独立运行时 | 待写 |
-| 13-debug | 调试旗标与常见坑 | 待写 |
+| 01-intro | 定位与快速跑起来 | ✅ |
+| 02-getting-started | 新建项目/模板/运行/出包 | ✅ |
+| 03-editor | 编辑器布局与工作流 | ✅ |
+| 04-components | 组件目录全表（id 0–33） | ✅ |
+| 05-scripting | C# 脚本模型与 SDK 总览 | ✅ |
+| 06-scenes | 场景与多场景 | ✅ |
+| 07-assets | 资产管线 | ✅ |
+| 08-lighting | 2D 光照 | ✅ |
+| 09-fx | 后处理与战斗表现 | ✅ |
+| 10-ui | 界面（RtUi/RmlUi 三层分工） | ✅ |
+| 11-audio | 音频 | ✅ |
+| 12-packaging | 出包与独立运行时 | ✅ |
+| 13-debug | 调试旗标与常见坑 | ✅ |

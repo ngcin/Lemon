@@ -52,4 +52,8 @@ cmake --preset mac && cmake --build --preset mac
 - 推翻既定设计的决策记录 → `../ADR/`
 - 实测数字、事故复盘、验收记录 → `../DevLog/`
 
-> v1 手册（M8 批⑦）持续编写中——侧栏即进度表；先从 [2D 光照](08-lighting.md)读起也可。
+> 更深的分册导航：入门链（[新建项目](02-getting-started.md) → [编辑器](03-editor.md) →
+> [组件](04-components.md) → [脚本](05-scripting.md)）→ 工作流（[场景](06-scenes.md) →
+> [资产](07-assets.md)）→ 表现（[2D 光照](08-lighting.md) → [FX](09-fx.md)）→
+> 系统与发布（[界面](10-ui.md) → [音频](11-audio.md) → [出包](12-packaging.md) →
+> [调试](13-debug.md)）。
