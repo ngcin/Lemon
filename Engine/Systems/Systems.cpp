@@ -58,14 +58,20 @@ void TargetBoard::DeclareTeams(const std::vector<uint32_t>& teamIds) {
 void TargetBoard::Rebuild(Scene& scene, bool collectAll, JobSystem* jobs) {
     for (auto& t : teams_) t.list.clear();
     all_.clear();
-    auto view = scene.View<Meta, Transform2D>();
+    // 战斗资格过滤（M8 批⑤ 走查实报）：可追击目标 = 有 Health 的实体——弹幕
+    // （Meta 继承射手 team）/环绕刃/静态装饰等非战斗实体不入板，Chase/Shooter
+    // 不再在玩家与逼近的子弹间翻转目标（"进一下退一下"鬼畜折返的根因）
+    auto view = scene.View<Meta, Transform2D, Health>();
     entt::registry& reg = scene.Registry();
 
     // 串行路径（存量/单线程档/小场）：view 迭代序收集 + 就地建桶
-    const size_t est = std::min(scene.Pool<Meta>().size(),
-                                scene.Pool<Transform2D>().size());
+    const size_t est = std::min({scene.Pool<Meta>().size(),
+                                 scene.Pool<Transform2D>().size(),
+                                 scene.Pool<Health>().size()});
     if (!jobs || jobs->ThreadCount() <= 1 || est < kParallelMin) {
-        for (auto [ent, meta, tf] : view.each()) {
+        for (auto [ent, meta, tf, health] : view.each()) {
+            (void)meta;
+            (void)health;
             TargetEntry entry{Scene::FromEntt(ent), tf.pos};
             if (collectAll) all_.push_back(entry);
             for (auto& t : teams_)
@@ -83,8 +89,8 @@ void TargetBoard::Rebuild(Scene& scene, bool collectAll, JobSystem* jobs) {
     // → 每队 Build 结果唯一确定；各队独立，逐队入队并行（任务内不嵌套，纪律见
     // JobSystem.h 文头），最后一队留给主线程参与执行。
     collectEnts_.clear();
-    for (auto [ent, meta, tf] : view.each()) {
-        (void)meta; (void)tf;
+    for (auto [ent, meta, tf, health] : view.each()) {
+        (void)meta; (void)tf; (void)health;
         collectEnts_.push_back(Scene::FromEntt(ent));
     }
     const uint32_t n = (uint32_t)collectEnts_.size();

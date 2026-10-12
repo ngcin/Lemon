@@ -89,3 +89,7 @@ Status: 机器面 ✅ 2026-10-11 当日（单测 34,919/script-tests 1,911 持�
 - bench-survivor 套件尾态 74/76 两轮 < 76.5 软线、单独复跑 80/80 PASS——本批引擎零改动且 bench 自播种不消费模板，判热态噪声；重锚归批⑥（与 bench-lights FX 在场同口径）。
 - 六项裁决全兑现（§3）；回归零新步零断言漂移。
 - 移交：真人走查（§D 四项清单）；批⑥ = 压测 A 终测 + soak + #M4 Windows 真机轮 + bench 数字重锚。
+- 走查支持期修复（10-12，详 DevLog 追记）：blob 贴脚 / mapbg 地面消费 / 排序
+  orderTier（层→tier→批键）/ 非战斗实体 team 2 / **TargetBoard 战斗资格过滤
+  （入板 = 有 Health——怪追弹幕鬼畜折返根因，金回放重录 m8b5：sim 两档新录
+  自洽 + 终态定向对账，script 档续用）/ lemon-game `--screenshot` 调试口。

@@ -831,6 +831,7 @@ void TestVerifyAISystemChase() {
     s.Emplace<Transform2D>(p, Transform2D{{100, 0}});
     s.Emplace<Meta>(p).team = 0;
     s.Emplace<Velocity>(p);
+    s.Emplace<Health>(p); // M8 批⑤：入板资格 = 有 Health（追击目标须战斗实体）
 
     w.Step(1.0f / 60.0f);
     Vec2 v = s.Get<Velocity>(m).v;
@@ -864,6 +865,7 @@ void TestVerifyFleeAndPatrol() {
         Entity threat = s.Create();
         s.Emplace<Transform2D>(threat, Transform2D{{50, 0}});
         s.Emplace<Meta>(threat).team = 0;
+        s.Emplace<Health>(threat); // M8 批⑤：入板资格 = 有 Health（威胁须战斗实体）
 
         // [ISSUE-5 已修复] NearestAny 排除自身：威胁在 +50 → 逃向 -x
         w.Step(1.0f / 60.0f);

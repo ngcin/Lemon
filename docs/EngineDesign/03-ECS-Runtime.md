@@ -100,7 +100,7 @@ struct IncrementalState { double rate, multiplier; double cached; };     // 增�
 | 1 | InputSnapshot | 输入队列 | — | — | 主线程采样→模拟线程消费 |
 | 2 | DirectorSystem | WaveDirector 波次表 | WaveStart/Spawn 事件 + 出生（经 SpawnFn） | — | 波次调度（§8；M5 批②落地：直接出生通道，非 Spawner 配额） |
 | 3 | SpawnSystem | 销毁队列/池 | Transform2D 等 | — | 池取用 + 事件入队 onSpawn |
-| 4 | AISystem(Behavior) | Chase/Patrol/Flee/Shooter | Velocity | ✅ grain 256 | 纯函数逐实体。目标板 Nearest = 网格桶（cell 32px CSR + 占位位图）环搜（2026-09-25：many-vs-many 线性全扫在红蓝对抗场实测 25.4ms/帧 → 1.7ms，15×；列表 <64 走线性快径 = 存量场景逐位不变，金回放零重录实证；等距平局语义 = 环扫序先见者，见 Systems.h 注释）。Rebuild 并行化（2026-09-26：view 序 chunk 切分归并 + 逐队建桶，串行 2.51→1.69ms @五万场；同构单测钉板，见 DevLog 当日条） |
+| 4 | AISystem(Behavior) | Chase/Patrol/Flee/Shooter | Velocity | ✅ grain 256 | 纯函数逐实体。目标板 Nearest = 网格桶（cell 32px CSR + 占位位图）环搜（2026-09-25：many-vs-many 线性全扫在红蓝对抗场实测 25.4ms/帧 → 1.7ms，15×；列表 <64 走线性快径 = 存量场景逐位不变，金回放零重录实证；等距平局语义 = 环扫序先见者，见 Systems.h 注释）。Rebuild 并行化（2026-09-26：view 序 chunk 切分归并 + 逐队建桶，串行 2.51→1.69ms @五万场；同构单测钉板，见 DevLog 当日条）。**入板资格 = Meta+Transform+Health**（M8 批⑤ 2026-10-12 走查实报修订：弹幕/环绕刃/静态装饰带 Meta+team 而无 Health，此前 Chase 每 tick 在玩家与逼近子弹间翻转目标 = 鬼畜折返；非战斗实体一律不入可追击表，金回放重录 m8b1→m8b5 口径） |
 | 5 | NavigationSystem | Chase | Velocity | — | 采样 FlowField/避障（§7） |
 | 6 | SeparationSystem | Transform2D/Meta.team | Velocity | ✅ | 同队分离力（软碰撞，割草不堆叠的关键）。参数场景侧可调（2026-09-26：`Lemon.Physics.Separation` → World::Separation()，引擎默认不动 = 基准场零漂移；高密场收紧 maxNeighbors 近乎线性省时，Battle 场 10→6 实测 5.5→4.4ms） |
 | 7 | MovementSystem | Velocity/Mover/Knockback | Transform2D | ✅ | 积分 + 地形碰撞钳制（查询层） |

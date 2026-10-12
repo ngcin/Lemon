@@ -2162,7 +2162,10 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
                                         .interval = 1.0f, .range = 80.0f};
     };
     if (!exportPrefab("Player", 0, kHeroSheet, buildPlayer)) return false;
-    if (!exportPrefab("Director", 0, 0, buildDirector)) return false;
+    // Director = 系统实体非战斗目标：team 2（中立队——M8 批⑤ 走查实报：team 0
+    // 静态原点实体进 TargetBoard 队列表，玩家走远后怪追击最近 team-0 = 原点
+    // 而非玩家，堆叠不追；Ground/灯等非战斗实体同理，均不得占 team 0）
+    if (!exportPrefab("Director", 2, 0, buildDirector)) return false;
     if (!exportPrefab("Mob", 1, kMonsterSheet, [&](ecs::Entity e) {
             s.Emplace<ecs::Health>(e, ecs::Health{.max = 20.0f, .cur = 20.0f});
             s.Emplace<ecs::Knockback>(e);
@@ -2248,7 +2251,9 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
         ecs::Scene& gs = ctx.EditScene();
         gs.SetName("Grass"); // 同上：C# scene.name 匹配面
         buildPlayer(ctx.CreateSpriteEntityByGuid("Player", kHeroSheet));
-        buildDirector(ctx.CreateEntity("Director"));
+        ecs::Entity director = ctx.CreateEntity("Director");
+        buildDirector(director);
+        gs.Get<ecs::Meta>(director).team = 2; // 非战斗实体不占 team 0（TargetBoard 可追击表，M8 批⑤）
         std::ofstream f(root / "Scenes" / "Grass.scene", std::ios::trunc);
         f << ecs::SceneArchive::Save(gs);
     }
@@ -2262,7 +2267,9 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
         ecs::Scene& ns = ctx.EditScene();
         ns.SetName("Night"); // 同上：C# scene.name 匹配面（GameFlow 夜战路由）
         buildPlayer(ctx.CreateSpriteEntityByGuid("Player", kHeroSheet));
-        buildDirector(ctx.CreateEntity("Director"));
+        ecs::Entity nightDirector = ctx.CreateEntity("Director");
+        buildDirector(nightDirector);
+        ns.Get<ecs::Meta>(nightDirector).team = 2; // 同 Grass（M8 批⑤）
         auto addLight = [&](const char* tag, float x, float y, float rotDeg,
                             const ecs::Light2D& lt) {
             ecs::Entity e = ctx.CreateEntity(tag);

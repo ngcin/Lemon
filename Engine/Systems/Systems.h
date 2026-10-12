@@ -34,7 +34,10 @@ public:
     /// 返回，TeamList 对象（含 Grid 五组 vector 容量）跨帧保活复用，内容清空
     /// 由紧随的 Rebuild 负责；声明变化才增删槽（仍被声明的槽 move 保容量）。
     void DeclareTeams(const std::vector<uint32_t>& teamIds);
-    /// 收集各声明队 + （可选）全部实体的位置（Meta+Transform 池一遍）。
+    /// 收集各声明队 + （可选）全部实体的位置（Meta+Transform+Health 池一遍——
+    /// **战斗资格 = 有 Health**（M8 批⑤ 走查实报：弹幕/环绕刃/静态装饰均带
+    /// Meta+team，无过滤时 Chase 每 tick 在玩家与逼近的子弹间翻转目标 = 鬼畜
+    /// 折返；非战斗实体一律不入可追击表）。
     /// jobs 非空且实体量 ≥ kParallelMin 时并行收集/建桶（2026-09-26 五万场批）：
     /// list 序 = view 迭代序逐位不变（chunk 按 view 序切分、按序归并）；
     /// 桶内池序 = 排序键 (cellKey, 池索引) 唯一 → 并行建桶结果与串行逐位同构。

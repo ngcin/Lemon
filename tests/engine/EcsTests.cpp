@@ -509,6 +509,7 @@ void TestSimulationEndToEnd() {
     Entity player = s.Create();
     s.Emplace<Transform2D>(player, Transform2D{{0, 0}});
     s.Emplace<Meta>(player).team = 0;
+    s.Emplace<Health>(player); // M8 批⑤：入板资格 = 有 Health（玩家是战斗实体）
 
     Entity monster = TestSpawnFactory(s, 1, {100, 0}, 1);
     Chase& chase = s.Get<Chase>(monster);
@@ -928,6 +929,7 @@ void TestTargetBoardGridEquivalence() {
 
     // 布置：team1 ×200（≥ kMinList=64 → 网格路径）/ team3 ×150 / team0 ×30（未
     // 声明队）/ 无 Meta ×20（不进板）。创建序 = Rebuild 收集序（新场景无销毁）。
+    // M8 批⑤：入板资格 = Meta+Transform+Health（战斗实体）——spawn 均补 Health。
     struct Ref {
         Entity e;
         Vec2 pos;
@@ -939,6 +941,7 @@ void TestTargetBoardGridEquivalence() {
             Vec2 p = randPos();
             s.Emplace<Transform2D>(e, Transform2D{p});
             s.Emplace<Meta>(e).team = team;
+            s.Emplace<Health>(e);
             into.push_back({e, p});
         }
     };
@@ -948,6 +951,7 @@ void TestTargetBoardGridEquivalence() {
         Entity e = s.Create();
         s.Emplace<Transform2D>(e, Transform2D{randPos()});
         s.Emplace<Meta>(e).team = 0;
+        s.Emplace<Health>(e); // 未声明队仍收集（M8 批⑤ 资格口径同款）
     }
     for (int i = 0; i < 20; ++i) {
         Entity e = s.Create();
@@ -1031,6 +1035,7 @@ void TestTargetBoardBadCoordDefense() {
         Entity e = s.Create();
         s.Emplace<Transform2D>(e, Transform2D{pos});
         s.Emplace<Meta>(e).team = team;
+        s.Emplace<Health>(e); // M8 批⑤：入板资格 = 有 Health
         return e;
     };
     // 100 正常点（≥ kMinList=64 触发网格路径）+ NaN / ±Inf / 1e9 三簇毒点
@@ -1065,6 +1070,7 @@ void TestTargetBoardParallelRebuildIsomorphic() {
         Entity e = s.Create();
         s.Emplace<Transform2D>(e, Transform2D{pos});
         s.Emplace<Meta>(e).team = team;
+        s.Emplace<Health>(e); // M8 批⑤：入板资格 = 有 Health
         return e;
     };
 

@@ -112,5 +112,33 @@ Play 全流程零 C++ / 昼夜循环 C# 样例"机器面已证；真人走查为
 - **lemon-game 新增 `--screenshot <path>`**（末帧交换链 PNG，配 `--frames N`；
   stbi_write_png 前向声明借 StbImage.cpp 实现 TU 符号，不外扩头包含域）——
   走查调试判据设施，后续观感问题可无头复现。
+- **怪不追玩家/原点堆叠（走查实报 → 根因 → 修复）**：TargetBoard 注册面 =
+  全部 `Meta+Transform2D` 实体（无战斗资格过滤），Ground/DayNight/Director
+  三个 team 0 静态原点实体全在可追击表内——Chase 每 tick 重查最近邻，玩家
+  一走远怪即转向原点堆叠（Director 系 M7c 起潜伏，mapbg 让玩家走远后显形）。
+  修复 = 非战斗实体全部移出可追击队（team 2 = 冲刺残影/宝石中立队先例，
+  怪不追不伤）：svr-test 四场景（Ground/Director/DayNight/Flow）+ Director
+  prefab + 模板生成器（exportPrefab("Director",2) + Grass/Night 内联 team 2）
+  再生成入库。复验：lemon-game Grass 900 帧无头截图 = 怪四面合围玩家（对比
+  修复前"散点+原点堆叠"），弹道/暴击/击杀正常。
+- **AI 鬼畜折返根因修复（走查实报"偶尔前进一步又退回去"→ TargetBoard 战斗
+  资格过滤）**：弹幕/环绕刃（Meta 继承射手 team、无 Health）全在可追击表内，
+  Chase 每 tick 重查最近邻 → 怪的目标在玩家与逼近的子弹间高频翻转（子弹
+  0.1s 内飞过/命中即消失）= 折返鬼畜；飞剑×19 + 弹幕密集后翻转频率大增显形。
+  修复 = `TargetBoard::Rebuild` 入板资格改 `Meta+Transform2D+Health`（战斗
+  实体限定；Systems.h 契约注释 + 03 §AI 行同步）；三个钉行为的单测补 Health
+  （板资格口径，检查数 34,919 持平）。分离力排除嫌疑（vel += 叠加式标准
+  flocking，非主因）。
+- **金回放重录 m8b1 → m8b5**（行为有意变更口径，09 §6.8 重录先例族）：sim-st
+  / sim-mt 新录 + replay 自洽 `mismatches=0`；终态对账 = alive 8249→8099
+  （−150）/ destroyed 7754→7904（+150）/ created 16003 不变——恰为"怪不再追
+  子弹、直接接战玩家、18k 帧内多消灭 150 只"的定向变化，零不可解释漂移；
+  script 档原样 replay **PASS**（场景无 Chase/Shooter，过滤无涉，m8b1 续用）。
+- 复验：lemon-game Grass 900 帧无头截图 = 怪群成列合围玩家、接战点收敛于
+  弹幕交界（对比修复前全向折返）。
+- **回归收口（10-12）**：orderTier 修复后 full 重跑 **26/26 全绿** fps=79；AI
+  资格过滤后 full 重跑 25 绿 + bench-survivor 环境尖刺（present 段 947ms 卡顿
+  打崩均值——sim 尖刺均值反由 41–49ms 降至 17.4ms = AI 修复后模拟更便宜），
+  单独复跑 fps=77 PASS；bench 数字重锚仍归批⑥。
 
 
