@@ -421,27 +421,22 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
 
     ImGui::PushID((int)e.guid);
     ImGui::BeginGroup();
-    const float cellX = ImGui::GetCursorPosX(); // 单元格左缘：等比缩略水平居中基准
-    const float cellY = ImGui::GetCursorPosY(); // 单元格顶缘：竖向居中基准（用户
-    // 实测条图"只占顶部一点"——v1 顶对齐 + 底部垫高；选择器瓦片是图区双向居中
     // 缩略图 / 类型图标：sprite = 纹理页缩略；其余 = 形状页类型图标（M4.7b，
     // 替代旧调色板色块——prefab 蓝调 / script 墨绿 / generic 次级灰，ImageButton tint 染色）。
-    // sprite 等比缩略（用户实测：序列帧长条图被拉成正方形 → 顶对齐"只占顶部
-    // 一点"）：按导入页宽高比 fit 进 kThumb 见方区，按钮在方格内**双向居中**
-    //（选择器瓦片同语言），标签钉固定单元格相对 Y → 行高恒等于方格单元格；
-    // 类型图标无宽高比问题，保持满格方图。
-    float imgW = kThumb, imgH = kThumb;
+    // sprite 缩略（用户实测四轮口径"占满格子"，与选择器瓦片同构）：格子恒
+    // kThumb 见方（固定卡片尺寸——网格整齐、选中框统一），图**整幅拉伸铺满**；
+    // 网格切片 sprite（序列帧图）取**第一帧**子矩形（UV (0,0)-(cw,ch)）——整页
+    // 拉伸会把 8 帧压扁成糊（最初"拉升"报障根结），帧级铺满轻度变形但内容完整
+    // 可辨（缩略图的职责）。类型图标无宽高比问题，满格方图。
+    ImVec2 uv0(0, 0), uv1(1, 1);
     void* tex = isSprite ? app.AssetGpu().Thumbnail(e.guid) : app.Viewport().IconTex();
     if (isSprite && tex) {
         uint32_t pw = 0, ph = 0;
-        if (app.AssetGpu().PageInfo(e.guid, pw, ph) && pw > 0 && ph > 0) {
-            const float s = std::min(kThumb / (float)pw, kThumb / (float)ph);
-            imgW = std::max(1.0f, (float)pw * s);
-            imgH = std::max(1.0f, (float)ph * s);
-        }
+        if (app.AssetGpu().PageInfo(e.guid, pw, ph) && pw > 0 && ph > 0 &&
+            e.cellW > 0 && e.cellH > 0 && e.cellW <= pw && e.cellH <= ph)
+            uv1 = ImVec2((float)e.cellW / (float)pw, (float)e.cellH / (float)ph);
     }
-    const ImVec2 size(imgW, imgH);
-    ImVec2 uv0(0, 0), uv1(1, 1);
+    const ImVec2 size(kThumb, kThumb);
     ImVec4 tint(1, 1, 1, 1);
     if (!isSprite && tex) {
         float u0, v0, u1, v1;
@@ -468,14 +463,10 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
                                             : theme::kTextDim;
     }
     const bool selected = e.guid == selectedGuid_; // 单击选中（M6a 批②：表格区锚点）
-    if (tex) {
-        // 等比缩窄/矮 → 按钮帧（图 + 2×FramePadding）在方格内双向居中（选择器
-        // 瓦片同语言）；帧 padding 双向对称抵消，偏移 = (kThumb - img)/2 精确
-        if (imgW < kThumb) ImGui::SetCursorPosX(cellX + (kThumb - imgW) * 0.5f);
-        if (imgH < kThumb) ImGui::SetCursorPosY(cellY + (kThumb - imgH) * 0.5f);
+    if (tex)
         ImGui::ImageButton("##thumb", tex, size, uv0, uv1,
                            selected ? theme::kAccentDim : theme::kBgMid, tint);
-    } else ImGui::Button("?", size);
+    else ImGui::Button("?", size);
     const bool hovered = ImGui::IsItemHovered();
     const bool doubleClicked = hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
     if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) selectedGuid_ = e.guid;
@@ -599,15 +590,7 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
     if (doubleClicked && e.type == AssetType::Audio) app.TogglePreviewAudio(e.guid);
 
     // 文件名（居中省略号单行；单元格宽 = kThumb+2×FramePadding，列距公式前提；
-    // 右键菜单已上移绑缩略图）。标签 Y 钉到与满格方图完全相同的单元格相对位
-    //（方图帧底 + 一行距）——替代 Dummy 垫高（Dummy 会多出一个行距，混合行
-    // 行高漂移）；行高逐位 == 方格单元格，网格恒齐
-    if (imgH < kThumb) {
-        const float labelY = cellY + kThumb +
-                             ImGui::GetStyle().FramePadding.x * 2.0f + // 帧高 = 图 + 双侧 pad
-                             ImGui::GetStyle().ItemSpacing.y;
-        ImGui::SetCursorPosY(std::max(ImGui::GetCursorPosY(), labelY));
-    }
+    // 右键菜单已上移绑缩略图）。格子恒满格方图 → 组高天然恒定，无需垫高/钉 Y
     DrawCenteredLabel(e.FileName().c_str(),
                       kThumb + ImGui::GetStyle().FramePadding.x * 2.0f);
     ImGui::EndGroup();
