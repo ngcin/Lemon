@@ -30,10 +30,19 @@ std::unique_ptr<Window> Window::Create(const WindowDesc& desc) {
     // 合成事件注入，不依赖窗口激活；手动使用不设此变量 = 默认行为不变
     if (std::getenv("LEMON_NO_ACTIVATE"))
         SDL_SetHint(SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN, "0");
+    // HiDPI（M8 批⑧ 2026-10-14）：高像素密度窗口——Retina/4K@2x 上交换链取设备
+    // 分辨率（RHI 本就按 SDL_GetWindowSizeInPixels 取尺寸；配套前提 = 编辑器按
+    // SDL_GetWindowPixelDensity 记账视口 RT 密度、UI 库核心按 DisplayFramebufferScale
+    // 自动点对点栅格化字体）。缺此标志 = 1× 帧缓冲被 OS 拉伸，编辑器全 UI 发糊
+    //（4K 实报）。LEMON_NO_HIGHDPI=1 旁路（NO_ACTIVATE 同款约定）：回归口径钉 1×
+    //——编辑器 smoke 族固定 px 断言与历史截图判据逐位稳定；脚本统一 export，
+    // 手动不设 = 默认清晰
+    const bool hidpi = std::getenv("LEMON_NO_HIGHDPI") == nullptr;
     auto w = std::unique_ptr<Window>(new Window());
     w->m = std::make_unique<Impl>();
     w->m->window = SDL_CreateWindow(desc.title, desc.width, desc.height,
                                     SDL_WINDOW_VULKAN |
+                                        (hidpi ? SDL_WINDOW_HIGH_PIXEL_DENSITY : 0) |
                                         (desc.resizable ? SDL_WINDOW_RESIZABLE : 0));
     if (!w->m->window) {
         LEMON_ERROR("SDL_CreateWindow failed: %s", SDL_GetError());

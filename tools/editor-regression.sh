@@ -7,6 +7,11 @@
 # 后台跑：编辑器窗口不抢前台焦点（smoke 输入为合成事件注入，不依赖激活；
 # 2026-09-24 用户反馈回归运行打断前台工作而加，机制见 Window.cpp LEMON_NO_ACTIVATE）
 export LEMON_NO_ACTIVATE=1
+# M8 批⑧（2026-10-14）：HiDPI 钉 1×——交互模式默认开 HIGH_PIXEL_DENSITY（4K/Retina
+# 交换链取设备分辨率，编辑器字体按密度栅格化）；回归口径必须逐位稳定 = 全步旁路
+#（编辑器 smoke 族固定 px 断言/截图判据/金回放读数均在 1× 锚定，机制见 Window.cpp
+# LEMON_NO_HIGHDPI 注）
+export LEMON_NO_HIGHDPI=1
 
 # 残留实例前置守卫（2026-09-30 批③c-5 事故复盘：前夜泄漏的 headless 实例与
 # 回归链争 GPU/窗口资源，帧锚定注入链间歇失败、三轮排障才现形）。分类处置：

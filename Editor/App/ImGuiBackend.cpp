@@ -145,8 +145,9 @@ struct ImGuiBackend::Impl {
             ImFontConfig cfg;
             cfg.FontDataOwnedByAtlas = false; // 字节由本 Impl 持有，防双释放
             cfg.FontNo = 0;                   // TTC 首字体
-            // 像素密度缩放下按 pointSize*density 栅格化（配合 DisplayFramebufferScale
-            // 逐像素对齐，非整倍拉伸）；含 ASCII + 2500 常用简体（05 §10）
+            // 字号恒为设计值 16pt——显示密度由 1.92 核心自动栅格（NewFrame 按
+            // FramebufferScale 置 FontRasterizerDensity，见 ApplyScale 批⑧ 注）；
+            // 含 ASCII + 2500 常用简体（05 §10）
             io.Fonts->AddFontFromMemoryTTF(fontData.data(), (int)fontData.size(),
                                            16.0f * scale, &cfg,
                                            io.Fonts->GetGlyphRangesChineseSimplifiedCommon());
@@ -160,12 +161,16 @@ struct ImGuiBackend::Impl {
 
     void ApplyScale(float newScale) {
         scale = newScale;
-        // #25：主题铺设计值（k=1），DPI 缩放只走 ScaleAllSizes 一道——原 ApplyTheme(k)
-        // 已把全部尺寸乘 k 再 ScaleAllSizes(k) 追乘 = 密度 2.0（Retina）时间距/圆角
-        // = 设计值 ×4 的双重缩放
+        // 批⑧ 追修（2026-10-14 用户实报：界面整体放大操作空间减半）：1.92 自动
+        // 密度接管——核心按 viewport FramebufferScale（= io.DisplayFramebufferScale，
+        // SDL3 后端每帧喂 = SDL_GetWindowDisplayScale）自动置 FontRasterizerDensity
+        //（NewFrame 的 RendererHasTextures 路径，Vulkan 后端在列）：16pt 物理大小
+        // 不变、按密度点对点栅格化。#25 的 ScaleAllSizes + pointSize×density 是
+        // 1.91 时代手工方案，1.92 下与自动机制叠加 = 界面双重放大。本函数只保留
+        // scale 记账（DisplayScale() 消费方 = 视口 RT 尺寸 ×dpi 等），style/字体
+        // 一律铺设计值；顺带消解密度 2→1 时 ScaleAllSizes 不回缩的既有 quirk。
         SetupStyle(1.0f);
-        ImGui::GetStyle().ScaleAllSizes(scale); // 1.92：尺寸缩放（字体另行重栅格化）
-        RebuildFonts(scale);
+        RebuildFonts(1.0f);
     }
 
     static void EventThunk(const void* sdlEvent, void* userData) {
