@@ -199,6 +199,7 @@ struct ParticleGPUData {                   // GPU 平行数组 = 4×vec4，上�
 - **ambient/昼夜**：Global 灯（至多一个生效）颜色×强度 = lightRT 底色；昼夜循环 = 脚本补间该组件字段（可入回放）。**使用注意（批② 真人观感期实证）**：无 Global 灯 = ambient 白，LDR 光贴图钳 1.0 下 Additive/Screen 对满值只加不亮（数学空操作）、唯 Subtract 显形——摆加亮类灯的场景 ambient 须留暗（<1）；ambient=白是「全亮无影」语义而非中性底。
 - **质量分级**：lightRT 分辨率 Low=1/4 / Med=1/2 / High=全分辨率；光源数上限 64/帧（Low 32，超出截断 + 一次性 WARN）——QualityManager 接入编辑器（批②）/lemon-game（批③，渲染帧钟 EMA 同款）两壳。
 - **RT 格式与色彩空间（2026-10-11 评审拍板，批② 开工核证项）**：v1 = LDR（sceneRT/lightRT 均 RGBA8Unorm）+ **gamma 空间乘法合成**——像素风惯例（yami 同款），有意决策防后人当 bug 修；代价 = lightRT 叠加在 1.0 截断、bloom 只能做 LDR 阈值（近白像素）。**HDR bloom（16F RT）列 v1.1 触发项**——若翻案将牵动 lemon-game 双格式管线与批② 开灯帧断言基线，故格式批② 定死、批④ bloom 按本口径实现。
+  **交换链 UNORM 落账（2026-10-14 修复，[DevLog](../DevLog/2026-10-14-swapchain-unorm-gamma-passthrough-fix.md)）**：本拍板的必然推论 = 交换链必须取 surface 的 **UNORM 变体**（M1 起 RHI 误优选 `_SRGB`，出口硬件多编码一次 linear→sRGB ⇒ 全画面灰白——贴图 UNORM 直通 + 编码无配对解码）。`Format::BGRA8Unorm` 自此入枚举；仅 `_SRGB` 可用的 surface 走兜底（保运行、观感降级）。回归锚 = fx-smoke gamma 直通（授权色出口逐通道 ±4，负向 0/25 实证）。**编辑器壳交换链像素断言仍是盲区**（编辑器 smoke 族断言域在 RT——低频候选池登记，非债）。
 - **关灯零成本**：场景零 Light2D 且零 BlobShadow2D ⇒ 三段链整体跳过，两壳路径与无光照版逐字节相同（默认管线 = 无光照直出，符合像素风默认审美；smoke-light 像素断言机器证）。
 - **逐对象采样**：v1 全局模式（全屏乘法覆盖层 0..250）；**anchor 锚点采样**（移动实体按锚点采样光值整体受光，CPU 染色 colorBits 零 shader 改动）列 v1.1 触发式（消费者出现即做）。
 - **不做**：法线贴图任何形式（二阶段触发）、SDF 几何硬阴影（砍单序列第 2 条维持）、Max 混合、逐精灵光照材质、阴影投射体、光照贴图烘焙（Non-goals 全表见 ADR-019）。

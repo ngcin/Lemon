@@ -58,6 +58,7 @@ static bool ReadFileBytes(const char* path, std::vector<char>& out) {
 static VkFormat ToVkFormat(rhi::Format f) { // 引擎侧 ToVk 在 RHI.cpp 内部，此处复制最小映射
     switch (f) {
         case rhi::Format::RGBA8Unorm: return VK_FORMAT_R8G8B8A8_UNORM;
+        case rhi::Format::BGRA8Unorm: return VK_FORMAT_B8G8R8A8_UNORM;
         case rhi::Format::BGRA8UnormSrgb: return VK_FORMAT_B8G8R8A8_SRGB;
         case rhi::Format::RGBA8UnormSrgb: return VK_FORMAT_R8G8B8A8_SRGB;
         case rhi::Format::RGBA16Float: return VK_FORMAT_R16G16B16A16_SFLOAT;

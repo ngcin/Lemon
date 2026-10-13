@@ -33,7 +33,14 @@ struct Shader   { uint32_t id = kInvalid; bool IsValid() const { return id != kI
 struct Pipeline { uint32_t id = kInvalid; bool IsValid() const { return id != kInvalid; } };
 
 // ---------------------------------------------------------------- 枚举 ----
-enum class Format : uint8_t { Undefined, RGBA8Unorm, BGRA8UnormSrgb, RGBA8UnormSrgb, RGBA16Float };
+enum class Format : uint8_t {
+    Undefined,
+    RGBA8Unorm,
+    BGRA8Unorm,     // 交换链 gamma 直通工作流（02 §8）：_SRGB 附件 = 出口多一次编码
+    BGRA8UnormSrgb,
+    RGBA8UnormSrgb,
+    RGBA16Float
+};
 enum class BlendMode : uint8_t {
     Opaque,
     Alpha,
@@ -93,7 +100,7 @@ struct SamplerDesc {
 struct PipelineDesc {
     Shader vs, fs;
     BlendMode blend = BlendMode::Alpha;
-    Format colorFormat = Format::BGRA8UnormSrgb; // 交换链格式（动态渲染下管线唯一格式依赖）
+    Format colorFormat = Format::BGRA8Unorm; // 交换链格式（动态渲染下管线唯一格式依赖）
 };
 
 struct AcquireResult {

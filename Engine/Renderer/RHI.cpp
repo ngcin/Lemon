@@ -70,6 +70,7 @@ static uint64_t HashWords(const uint32_t* w, size_t n) {
 static VkFormat ToVk(Format f) {
     switch (f) {
         case Format::RGBA8Unorm: return VK_FORMAT_R8G8B8A8_UNORM;
+        case Format::BGRA8Unorm: return VK_FORMAT_B8G8R8A8_UNORM;
         case Format::BGRA8UnormSrgb: return VK_FORMAT_B8G8R8A8_SRGB;
         case Format::RGBA8UnormSrgb: return VK_FORMAT_R8G8B8A8_SRGB;
         case Format::RGBA16Float: return VK_FORMAT_R16G16B16A16_SFLOAT;
@@ -622,9 +623,18 @@ struct Device::Impl {
             std::vector<VkSurfaceFormatKHR> fmts(n);
             VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(physical, surface, &n, fmts.data()));
             format = fmts[0];
+            // Gamma 直通工作流（02 §8）：交换链必须选 UNORM 变体。引擎贴图全链是
+            // sRGB 字节直通（TextureDesc 默认 UNORM + composite gamma 空间直乘），
+            // _SRGB 附件会让硬件对每次写入附加 linear→sRGB 编码 → 双重 gamma，
+            // 全画面灰白失原色（2026-10-14 用户实报，像素级归因 v^(1/2.2) 吻合）
             for (auto& f : fmts)
-                if ((f.format == VK_FORMAT_B8G8R8A8_SRGB || f.format == VK_FORMAT_R8G8B8A8_SRGB) &&
+                if ((f.format == VK_FORMAT_B8G8R8A8_UNORM || f.format == VK_FORMAT_R8G8B8A8_UNORM) &&
                     f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) { format = f; break; }
+            if (format.format != VK_FORMAT_B8G8R8A8_UNORM &&
+                format.format != VK_FORMAT_R8G8B8A8_UNORM) // 极端 surface 兜底：仅 _SRGB 可用时保运行
+                for (auto& f : fmts)
+                    if ((f.format == VK_FORMAT_B8G8R8A8_SRGB || f.format == VK_FORMAT_R8G8B8A8_SRGB) &&
+                        f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) { format = f; break; }
         }
         {
             uint32_t n = 0;
@@ -949,6 +959,7 @@ bool Device::RecreateSwapchain() {
 
 Format Device::SwapchainFormat() const {
     switch (m->swapFormat) {
+        case VK_FORMAT_B8G8R8A8_UNORM: return Format::BGRA8Unorm;
         case VK_FORMAT_B8G8R8A8_SRGB: return Format::BGRA8UnormSrgb;
         case VK_FORMAT_R8G8B8A8_SRGB: return Format::RGBA8UnormSrgb;
         case VK_FORMAT_R8G8B8A8_UNORM: return Format::RGBA8Unorm;

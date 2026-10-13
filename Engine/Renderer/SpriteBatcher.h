@@ -25,7 +25,7 @@ public:
     /// 动态渲染下管线唯一格式依赖，格式不符 = 验证层 VUID 拦截）。
     /// ringSlot = 实例环 SSBO 数组槽（多视口合批器各占一槽，帧内不改写；M4.7-P0）
     void Init(rhi::Device& device, uint32_t samplerLinearSlot, uint32_t samplerPointSlot,
-              rhi::Format colorFormat = rhi::Format::BGRA8UnormSrgb,
+              rhi::Format colorFormat = rhi::Format::BGRA8Unorm,
               uint32_t ringSlot = 0);
 
     /// Bake：有序包段（精灵 / 粒子 / 文本，各段内有序、段间层序递增）→ 实例 + 批表。
@@ -82,7 +82,7 @@ private:
 
     rhi::Device* device_ = nullptr;
     rhi::Device::RecreateCallbackId recreateCbId_ = 0; // Init 登记（M9 反注册用）
-    rhi::Format colorFormat_ = rhi::Format::BGRA8UnormSrgb;
+    rhi::Format colorFormat_ = rhi::Format::BGRA8Unorm;
     uint32_t samplerSlots_[2] = {0, 1}; // Linear/Point → bindless 采样器槽
     uint32_t ringSlot_ = 0;             // 实例环 SSBO 数组槽（binding 2 下标）
     rhi::Buffer cornerVB_, indexIB_;

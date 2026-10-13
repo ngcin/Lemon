@@ -849,6 +849,7 @@ int main(int argc, char** argv) {
     //（smoke-light 同款教训——菜单态相机随挂靠点漂移）----
     ecs::Entity fxSmBright = ecs::Entity::Null(), fxSmDark = ecs::Entity::Null();
     ecs::Entity fxSmStripe[6] = {};
+    ecs::Entity fxSmGamma = ecs::Entity::Null();
     if (smokeFx) {
         auto seedQuad = [&](const char* tag, uint64_t guid, uint32_t rgba) {
             ecs::Entity e = scene.Create();
@@ -866,8 +867,11 @@ int main(int argc, char** argv) {
         for (int i = 0; i < 6; ++i)
             fxSmStripe[i] = seedQuad("SmFxStripe", 4740000000000000010ull + (uint64_t)i,
                                      (i & 1) ? 0x46403C3Cu : 0xFFFFFFFFu);
+        // gamma 直通锚（2026-10-14 交换链 UNORM 修复）：不透明授权色 (60,76,92)——
+        // 双重编码出口会抬到 ~(133,146,158)，f60 基线捕获断言其逐通道直通
+        fxSmGamma = seedQuad("SmFxGamma", 4740000000000000003ull, 0xFF5C4C3Cu);
         ecs::StampSceneMembership(scene, world.ActiveSceneHandle()); // 组合 smoke 态防孤儿
-        LEMON_LOG("lemon-game smoke-fx: 播种 8 实体（白亮块/暗对照/棋盘×6）");
+        LEMON_LOG("lemon-game smoke-fx: 播种 9 实体（白亮块/暗对照/棋盘×6/gamma 锚）");
     }
     if (smokeFx && (smoke || smokeScene || smokeLight))
         LEMON_WARN("lemon-game：--smoke-fx 与其他 smoke 族组合态未定义"
@@ -1196,10 +1200,10 @@ int main(int argc, char** argv) {
     int fxStage = 0;  // 捕获所属阶段：1 基线 / 2 链开 / 3 无 bloom / 4 波 / 5 关链
     bool fxBaseOk = false, fxChainOnOk = false, fxBloomOk = false, fxWaveOk = false,
          fxWaveGoneOk = false, fxChainPassOk = false, fxOffIdenticalOk = false,
-         fxSawWave = false, fxWaveProbed = false;
+         fxGammaOk = false, fxSawWave = false, fxWaveProbed = false;
     std::vector<uint8_t> fxBaseline, fxChained;
     uint32_t fxBaseW = 0, fxBaseH = 0;
-    Vec2 fxBrightPos{}, fxWaveWorld{}; // f30 布位后锚（相机漂移免疫的断言采样点）
+    Vec2 fxBrightPos{}, fxWaveWorld{}, fxGammaPos{}; // f30 布位后锚（相机漂移免疫的断言采样点）
     auto fxSmokeFrame = [&](uint64_t f) {
         auto worldToPx = [&](Vec2 world, uint32_t w, uint32_t h) {
             const float asp =
@@ -1221,6 +1225,25 @@ int main(int argc, char** argv) {
                     fxBaseW = w;
                     fxBaseH = h;
                     fxBaseOk = !fxBaseline.empty();
+                    // gamma 直通锚：授权色 (60,76,92) 经 sprite→交换链全程直通；
+                    // 出口若多一次 linear→sRGB 编码会抬到 ~(133,146,158)——冒烟即红
+                    const auto [gx, gy] = worldToPx(fxGammaPos, w, h);
+                    int hits = 0;
+                    for (int dy = -2; dy <= 2; ++dy)
+                        for (int dx = -2; dx <= 2; ++dx) {
+                            const int64_t x = (int64_t)gx + dx, y = (int64_t)gy + dy;
+                            if (x < 0 || y < 0 || x >= (int64_t)w || y >= (int64_t)h)
+                                continue;
+                            const uint8_t* p =
+                                &fxBaseline[((uint64_t)y * w + (uint64_t)x) * 4];
+                            if (std::abs((int)p[0] - 60) <= 4 &&
+                                std::abs((int)p[1] - 76) <= 4 &&
+                                std::abs((int)p[2] - 92) <= 4)
+                                ++hits;
+                        }
+                    fxGammaOk = hits >= 20; // 25 取 20：采样窗边缘容错
+                    LEMON_LOG("smoke-fx: gamma 直通锚命中 %d/25 → %s", hits,
+                              fxGammaOk ? "OK" : "FAIL");
                 } else if (fxStage == 2 && px.size() == fxBaseline.size()) {
                     size_t diff = 0;
                     for (size_t i = 0; i < px.size(); ++i)
@@ -1287,6 +1310,8 @@ int main(int argc, char** argv) {
             for (int i = 0; i < 6; ++i) // 棋盘带：1280×32 横条 ×6（波位移对照）
                 place(fxSmStripe[i], c + Vec2{0.0f, 60.0f + (float)i * 32.0f},
                       {20.0f, 0.5f});
+            fxGammaPos = c + Vec2{-520.0f, 300.0f}; // 棋盘带下方左下角（64×64）
+            place(fxSmGamma, fxGammaPos, {1.0f, 1.0f});
             fxWaveWorld = c + Vec2{0.0f, 140.0f}; // 棋盘带中心（波锚）
             LEMON_LOG("smoke-fx: f30 布位锚 %.0f,%.0f（Low 档基线态）", c.x, c.y);
         } else if (f == 59) {
@@ -1857,16 +1882,17 @@ int main(int argc, char** argv) {
     if (smokeFx) {
         // RESULT 行（回归口径，M8 批④ 出口判据）：三效果断言（bloom 分离差分/
         // tone 全帧差/冲击波位移 + 寿终）+ chainPasses 全链在场 + **关链帧与基线
-        // 逐位同**（FX 关零成本——编辑器 --smoke-fx 同款口径）+ fps≥60 门禁
+        // 逐位同**（FX 关零成本——编辑器 --smoke-fx 同款口径）+ gamma 直通锚
+        // （2026-10-14：交换链出口无二次编码）+ fps≥60 门禁
         const double fps = frameSec > 0 ? (double)statFrames / frameSec : 0.0;
         const bool ok = fxBaseOk && fxChainOnOk && fxBloomOk && fxChainPassOk && fxWaveOk &&
-                        fxWaveGoneOk && fxOffIdenticalOk && fps >= 60.0;
+                        fxWaveGoneOk && fxOffIdenticalOk && fxGammaOk && fps >= 60.0;
         std::printf(
             "[lemon-game] RESULT fx-smoke: frames=%llu fps=%.1f chainOn=%d bloom=%d "
-            "chainPass=%d wave=%d waveGone=%d offIdentical=%d => %s\n",
+            "chainPass=%d wave=%d waveGone=%d offIdentical=%d gamma=%d => %s\n",
             (unsigned long long)frame, fps, fxChainOnOk ? 1 : 0, fxBloomOk ? 1 : 0,
             fxChainPassOk ? 1 : 0, fxWaveOk ? 1 : 0, fxWaveGoneOk ? 1 : 0,
-            fxOffIdenticalOk ? 1 : 0, ok ? "OK" : "FAIL");
+            fxOffIdenticalOk ? 1 : 0, fxGammaOk ? 1 : 0, ok ? "OK" : "FAIL");
         std::fflush(stdout);
         g_host = nullptr;
         ui.Shutdown();
