@@ -49,6 +49,40 @@ inline uint32_t AxisColor(bool xAxis, bool hovered) {
 
 float SnapTo(float v, float step) { return std::round(v / step) * step; }
 
+// ---- 缩放档位表（2026-10-14 A+B 改造：输入归一 + Godot 式档位）----
+// 滚轮一格 = 移一档；密度 1× 附近 ~9-17%/档（渐进精调主工作区），两端加粗到
+// ~20-25%。端点 0.25/16（二轮手试：0.05/64 全量程 1280× 仍不跟手，收窄到 64×
+// ——原 58 档裁两端）。0.5/1/2/4/8… 像素完美倍率为表内精确值。全表 35 档。
+constexpr float kZoomLadder[] = {
+    0.25f, 0.30f, 0.35f, 0.40f, 0.45f, 0.50f, 0.60f, 0.70f, 0.80f,
+    0.90f, 1.00f, 1.10f, 1.20f, 1.40f, 1.60f, 1.80f, 2.00f, 2.20f, 2.50f,
+    2.80f, 3.20f, 3.60f, 4.00f, 4.50f, 5.00f, 5.60f, 6.30f, 7.1f, 8.00f,
+    9.00f, 10.0f, 11.0f, 12.5f, 14.0f, 16.0f,
+};
+constexpr int kZoomLadderCount = (int)(sizeof(kZoomLadder) / sizeof(kZoomLadder[0]));
+// 每帧滚轮消费上限（格）：连续设备洪峰（触控板/妙控鼠标单帧多格）截断——单帧
+// 最多 ±2 档（≈×1.35），惯性延续也只以此速率推进，杜绝一帧打到量程端点
+constexpr int kZoomTicksPerFrame = 2;
+
+/// 对数空间最近档下标（0.25/0.30 分界取几何中点 √(ab)，非算术中点）
+int NearestZoomIndex(float z) {
+    const float lz = std::log(std::max(z, 1e-6f));
+    int best = 0;
+    float bestD = 1e30f;
+    for (int i = 0; i < kZoomLadderCount; ++i) {
+        const float d = std::fabs(lz - std::log(kZoomLadder[i]));
+        if (d < bestD) {
+            bestD = d;
+            best = i;
+        }
+    }
+    return best;
+}
+/// 从 z 的最近档起移 steps 档（越界钳端点；steps=0 = 吸附到最近档）
+float ZoomLadderStep(float z, int steps) {
+    return kZoomLadder[std::clamp(NearestZoomIndex(z) + steps, 0, kZoomLadderCount - 1)];
+}
+
 // ---- Gizmo 世界↔本地换算（父子实体；2026-09-25 P3 批）----
 // Transform2D 存本地值，Gizmo 拖拽算的是世界增量/目标——原 Move/Rotate/Scale 直接
 // 把世界量写进本地字段（Rotate/Scale 还拿本地 pos 与世界 pivot_ 混算），父链带
@@ -142,12 +176,14 @@ void SceneViewPanel::OnGui(EditorApp& app) {
     vpX_ = imagePos.x; vpY_ = imagePos.y; vpW_ = avail.x; vpH_ = avail.y;
     rtW_ = rtW; rtH_ = rtH;
 
-    // ---- 相机：滚轮缩放（前推 = 放大）----
+    // ---- 相机：滚轮缩放（前推 = 放大；A+B：整格输入 + 档位移步）----
     // （WantCaptureKeyboard 不可作门：ImGui 1.92 语义 = 有窗口持有焦点即真，编辑器内
     // 恒真——曾经因此滚轮缩放/点击拾取全灭，M4.7 手测抓到；输入态由 WantTextInput 表达）
-    // 锚点：有主选中 = 对象中心（缩放前后屏幕位置不动，Godot/Unity 手感）；
-    // 无选中 = 鼠标点。ImGui MouseWheel 正值 = 前推。
-    if (hovered && io.MouseWheel != 0.0f && !io.WantTextInput) {
+    // 输入 = 后端 WheelTicks（SDL integer_y 量化——连续设备振幅解耦）再每帧钳制；
+    // 倍率 = 档位表移步（一格一档）。锚点：有主选中 = 对象中心（缩放前后屏幕位置
+    // 不动，Godot/Unity 手感）；无选中 = 鼠标点。正值 = 前推。
+    const int zoomTicks = app.Ui().WheelTicks();
+    if (hovered && zoomTicks != 0 && !io.WantTextInput) {
         Vec2 anchorPt{mousePx.x, mousePx.y}; // 屏幕锚点（RT px），默认 = 鼠标
         if (!ctx.Primary().IsNull()) {
             Vec2 c, s;
@@ -164,7 +200,8 @@ void SceneViewPanel::OnGui(EditorApp& app) {
             }
         }
         const Vec2 before = vr.ScreenToWorld(cam, anchorPt, rtW, rtH);
-        cam.zoom = math::Clamp(cam.zoom * std::exp(io.MouseWheel * 0.12f), 0.05f, 64.0f);
+        const int steps = std::clamp(zoomTicks, -kZoomTicksPerFrame, kZoomTicksPerFrame);
+        cam.zoom = ZoomLadderStep(cam.zoom, steps);
         cam.halfHeight = kRefHalfHeight / cam.zoom;
         const Vec2 after = vr.ScreenToWorld(cam, anchorPt, rtW, rtH);
         cam.center += before - after; // 锚点下世界点不动
@@ -623,7 +660,7 @@ void SceneViewPanel::FocusSelection(EditorApp& app, uint32_t rtW, uint32_t rtH) 
     const float aspect = (float)rtW / (float)std::max(1u, rtH);
     float zoom = 0.6f * std::min(2.0f * kRefHalfHeight / h,
                                  2.0f * kRefHalfHeight * aspect / w);
-    cam.zoom = math::Clamp(zoom, 0.05f, 64.0f);
+    cam.zoom = ZoomLadderStep(zoom, 0); // A+B：吸附最近档（表端点即量程界，越界归界）
     cam.halfHeight = kRefHalfHeight / cam.zoom;
 }
 

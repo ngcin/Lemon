@@ -70,6 +70,10 @@ static VkFormat ToVkFormat(rhi::Format f) { // 引擎侧 ToVk 在 RHI.cpp 内部
 static std::function<void(const void*)> s_eventTap;
 void ImGuiBackend::SetSdlEventTap(std::function<void(const void*)> tap) { s_eventTap = std::move(tap); }
 
+// 滚轮整格累积（2026-10-14 A+B 缩放改造）：EventThunk 收 SDL wheel.integer_y
+// （SDL 3.2.12+ 侧残差量化，逐事件 0/±1/±2 格），BeginFrame 发布后清零
+static int s_wheelTicks = 0;
+
 struct ImGuiBackend::Impl {
     Window* window = nullptr;
     rhi::Device* device = nullptr;
@@ -84,6 +88,7 @@ struct ImGuiBackend::Impl {
     rhi::Device::RecreateCallbackId preDestroyCb = 0;
     rhi::Device::RecreateCallbackId recreateCb = 0;
     bool vulkanInited = false;
+    int frameWheelTicks_ = 0; // 本帧滚轮整格数（发布点 = BeginFrame，见 s_wheelTicks 注）
     // 经 RegisterViewportTexture 发出的描述符集记账：1.92.9b 的 AddTexture/RemoveTexture
     // 是无注册表的旧式 API——RemoveTexture 盲目 vkFreeDescriptorSets(当前池)。设备
     // 重建后旧调用方手里的旧代集若直接释放 = 外来集 UB，须跳过（集已随旧池销毁）
@@ -175,7 +180,9 @@ struct ImGuiBackend::Impl {
 
     static void EventThunk(const void* sdlEvent, void* userData) {
         (void)userData;
-        ImGui_ImplSDL3_ProcessEvent((const SDL_Event*)sdlEvent);
+        const SDL_Event* ev = (const SDL_Event*)sdlEvent;
+        if (ev->type == SDL_EVENT_MOUSE_WHEEL) s_wheelTicks += ev->wheel.integer_y;
+        ImGui_ImplSDL3_ProcessEvent(ev);
         // 批③c（M7）：旁听 tap（后喂——ImGui 先吃；TEXT_INPUT/TEXT_EDITING → 游戏 UI）
         if (s_eventTap) s_eventTap(sdlEvent);
     }
@@ -261,6 +268,10 @@ void ImGuiBackend::BeginFrame(Window& window) {
     if (density != m->scale) m->ApplyScale(density);
 
     ImGui_ImplSDL3_NewFrame();
+    // 滚轮整格发布：事件泵在 NewFrame 排水侧已完成本帧累积（EventThunk），此处定格；
+    // 冒烟注入在其后同路叠加（与 io.MouseWheel 注入同时序）
+    m->frameWheelTicks_ = s_wheelTicks;
+    s_wheelTicks = 0;
     if (mouseOverrideSet_) { // 冒烟扫掠：轮询后、排水前注入（顺序靠后生效）
         mouseOverrideSet_ = false;
         ImGuiIO& io = ImGui::GetIO();
@@ -272,6 +283,7 @@ void ImGuiBackend::BeginFrame(Window& window) {
         if (wheelSet_) { // --smoke-drag：滚轮格数注入
             wheelSet_ = false;
             io.AddMouseWheelEvent(0.0f, mouseWheel_);
+            m->frameWheelTicks_ += (int)mouseWheel_;
         }
     }
     if (chordSet_) { // --smoke-drag/ui：本帧 (mods+)key down，下一帧 key(+mods) up
@@ -323,6 +335,7 @@ void ImGuiBackend::SkipFrame() { ImGui::EndFrame(); }
 
 float ImGuiBackend::DisplayScale() const { return m->scale; }
 bool ImGuiBackend::CjkFontLoaded() const { return m->cjkLoaded; }
+int ImGuiBackend::WheelTicks() const { return m->frameWheelTicks_; }
 
 void* ImGuiBackend::RegisterViewportTexture(uint32_t rhiTextureId) {
     void* view = m->device->GetVulkanTextureViewInterop(rhi::Texture{rhiTextureId});

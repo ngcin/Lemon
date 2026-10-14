@@ -53,6 +53,13 @@ public:
     /// CJK 字体是否加载成功（冒烟断言项：失败 = 回退 ProggyClean，中文显示为问号）
     bool CjkFontLoaded() const;
 
+    /// 本帧滚轮"整格"数（2026-10-14 A+B 缩放改造）：SDL 3.2.12+ wheel.integer_y
+    /// 自带残差累积，连续设备（触控板/妙控鼠标/自由滚轮）的分数增量在 SDL 侧即
+    /// 量化成格——事件振幅与缩放幅度解耦（此前 SceneView 直接 exp(io.MouseWheel)，
+    /// 连续设备单帧 ±30 单位 = "稍微一滚就打到 64/0.05" 的根因）。发布点 =
+    /// BeginFrame；冒烟注入（SetInputOverride wheel=±N）同路叠加。
+    int WheelTicks() const;
+
     /// 视口纹理注册（M4.2）：引擎纹理 → ImTextureID（ImGui Image 显示）。
     /// 纹理重建（resize）时 Unregister 旧的再注册新的。返回 nullptr = 失败。
     void* RegisterViewportTexture(uint32_t rhiTextureId);
