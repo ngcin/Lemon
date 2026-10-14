@@ -1,6 +1,6 @@
 # M8 批⑥ —— 压测 A 终测 + soak 2h + 架构债 #M4/#L5 对表
 
-Status: in-progress（2026-10-12 开工落账；**A/C 全收口，soak v5 已收表**——硬判据全过（rc=0/600k 帧/60.4fps/墙钟 10022s/零崩溃转储）但 **B2 RSS 红旗：稳态段完美线性 +44.5MB/h（R²=1.0000）→ 对照跑 A 已备好、择时重跑**（用户腾机 21:58 中止首跑 @12min：副本 svr-ctl/runner 就绪，重跑 = 一条命令；12min 部分数据 `rss-ctl-partial-12min.csv` 留档——171.8→176.0MB 增速趋缓，预热收敛迹象但未到判别窗不作判读依据）；⚠️ 机器 ~21:00 重启清空 /tmp（v5 原始 CSV 丢失，数字已转存 DevLog §4）；B2 判读 + E 残项待对照跑完；#M4 Windows 真机轮待用户窗口，可与批⑤ 真人走查合并排期（M8.md §3 排程注记））
+Status: in-progress（2026-10-12 开工；**A/B/C/E 全收口,#R1 环境豁免结案 2026-10-14（用户拍板）**——压测 A 三跑 91/90/91 + bench 三门禁维持 + #L5 探针关账 + soak v5 硬判据全过（rc=0/600k 帧/60.4fps/墙钟 10022s/零崩溃转储）+ B2 RSS 红旗归因收口：mac +44.5MB/h = macOS SkyLight 系统行为（引擎自有内存零增长实证 + Windows 同构 61min 零斜率反证,mac 特有性坐实——[定位报告](../../DevLog/2026-10-13-r1-soak-leak-diagnosis.md)、[Windows 反证](../../DevLog/2026-10-14-r1-windows-counterproof.md)）,M8 出口判据"soak 内存曲线平"按引擎侧口径勾销；08 债表 #R1 已勾销;**仅剩敞口 = D 组 #M4 Windows 真机轮（三态对比）,待用户窗口可与批⑤ 走查/W5 合并排期**）
 
 ## 1. 输入条件（2026-10-12 探测核证）
 
@@ -26,9 +26,9 @@ Status: in-progress（2026-10-12 开工落账；**A/C 全收口，soak v5 已收
 ### B soak 2h（mac 侧，挂机后台）
 
 - [x] **B1** 口径定形 + fps 探测：`lemon-game --project <soak副本> --scene Scenes/Grass.scene --frames N`；先 3,000 帧探测起始 fps。`--validate` 不全程开（D4）。—— **✅ 2026-10-12 三轮定型**：探测 237fps 起始 → **N=3,000,000**（实测 387fps 稳态，预期墙钟 2.5h+）。**挂机姿势两轮教训后定型**：① 第 2 轮 present 路径卡死（`sample` 取证：主线程全堵 `CAMetalLayer nextDrawable` 信号量等待——显示器睡眠/窗口全遮挡 → WindowServer 停止合成 → drawable 不返还 → present 无限等，主线程卡死连事件轮询都停 = 用户实报"画面冻结 ESC/R 无反应"；环境性伪影非引擎缺陷，取证存 `/tmp/m8-b6-soak/sample-run2-freeze.txt`）→ 第 3 轮起 **`caffeinate -is` 压住显示器睡眠**；② 无头局玩家站桩终会被围殴至死亡结算（世界暂停 = soak 退化为空转）→ **项目副本抬玩家 HP 至 1e9**（`/tmp/m8-b6-soak/svr-soak`，`cp -R demo/svr-test` 后仅改 Player.prefab Health cur/max——工作项目零触碰；合围稳态保持：弹幕杀怪 gems 落点在 pickupRadius 96 外 → 无升级弹窗打断）；第 1 轮 12 分钟（窗口被手动关闭前）数据留档 `rss-run1.csv`。soak 第 3 轮已启动（LEMON_NO_ACTIVATE=1 + RSS 每 60s → `rss.csv`，**须保持窗口至少部分可见**——全遮挡同款合成停摆风险）。**第 4–6 轮追加定性（2026-10-12 午后）**：第 4/5 轮（副本 god-HP）经栈采样证实**世界健康步进**（World::Step/Batch 主导、Gem/Mob 持续生成 = 战斗在打），但"合围稳态"画面肉眼近似静止 + 玩家被 blob 叠乘黑团遮住，两次被当作卡死手动关窗（automation 干净退出实证：`exit: frames=117742`）；用户黄调截图实为昼夜黄昏相位 = 世界活着的反证。**看门狗 v3 定型（第 6 轮起）**：`/tmp/m8-b6-soak/soak-runner.sh`——① 副本 project.lemon name 改「M8-soak挂机压测·勿关」（窗口标题可识别，title = pf.name，GameEntry.cpp:532）；② 分段自动续跑（窗口误关 rc=0 / 卡死段 >900s 击杀 rc=137 均自动重启记账，总窗 2.5h；**非零退出 = 真崩溃立即停表**）；③ 活性判定改用日志生成计数器（Prefab 实例化行增长），不依赖肉眼；RSS 曲线含分段边界标记，跨段连续。**第 7 轮 v4 失败归因 + v5 定型（2026-10-12 16:37 起跑、16:47 中断 250k 帧，无退出记录）**：① runner 随工具会话进程组被收（macOS 无 setsid → nohup 双层 + zsh `&!` disown，脚本/游戏双脱离）；② **真根因 = `--vsync` 缺失**：`paced = frames==0`（GameEntry.cpp:492）→ `--frames N` 自动化走 **Immediate 不限速**（实测 422fps），四轮栈采样同族 = macOS 合成器对 IMMEDIATE 不限速灌帧节流 → `nextDrawable` 长阻塞、画面冻结且事件停轮询；`--vsync` 旗标落地（`(paced || vsync) ? Fifo : Immediate`，61.4fps 实测 = 60Hz 真实节奏 = D2 判据 432k 帧 @60Hz 同口径）——本变更随 C1 探针同批提交（GameEntry.cpp）。**v5 runner 定型**：`soak-runner-v5.sh` = nohup 脱离会话 + `--vsync --frames 600000`（600k/61.4fps ≈ 2.7h 墙钟，双判据 ≥7200s 且 ≥432k 帧）+ god-HP 副本 + `caffeinate -is` + LEMON_NO_ACTIVATE=1 + RSS 60s 采样 + 自然退出记 rc（无自动重启/无卡死击杀——soak 要干净 exit 0）；窗口须保持至少部分可见（第 2 轮全遮挡教训）。**2026-10-12 17:04 v5 已挂机启动**（ETA ≈19:45）。
-- [ ] **B2** 内存曲线采样：外部 shell 每 60s `ps -o rss=` 采样 + 墙钟时间戳落 CSV（`/tmp/m8-b6-soak/`）；判据 = 稳态后无单调上涨趋势（首 30min 爬坡属装载/池预热正常态）+ 墙钟 ≥7200s + 干净退出码 0。—— **🔄 进行中**：v5 轮 17:04 起采样（rss.csv 每 60s 一点）；收表后线性回归判读（前 30min 预热段剔除）。
+- [x] **B2** 内存曲线采样：外部 shell 每 60s `ps -o rss=` 采样 + 墙钟时间戳落 CSV（`/tmp/m8-b6-soak/`）；判据 = 稳态后无单调上涨趋势（首 30min 爬坡属装载/池预热正常态）+ 墙钟 ≥7200s + 干净退出码 0。—— **✅ 2026-10-13 判读收口：不平 = 真泄漏（缺陷单 08 债表 #R1）**。v5 稳态段（剔前 30min 预热）181→282MB **+44.5MB/h 完美线性 R²=1.0000**；归因对照跑 A（二进制钉 7453595 同源重编 + 摘 Director 零刷怪，60min/216k 帧/60.4fps/rc=0）判别窗 t∈[20,60]min 斜率 **0.742MB/min（44.49MB/h）R²=1.0000，与 v5 比值 1.00** ⇒ ~215B/帧确定性泄漏在引擎/C# 每帧固定路径，B2 场景豁免不成立。曲线与回归参数落 DevLog §4/§5。
 - [x] **B3** 崩溃转储检查：soak 收尾查 `~/Library/Logs/DiagnosticReports/` 零新增 lemon-game 报告（08 出口判据"崩溃转储登记"mac 侧口径；Windows 侧归 D 组）。—— **✅ 2026-10-12 v5 收表核查**：最新 lemon 条目停在 10-11（lemon-editor/tests），当日零新增。
-- [ ] **B4** soak 结论落 DevLog（曲线图/采样表 + 判读）。
+- [x] **B4** soak 结论落 DevLog（曲线图/采样表 + 判读）。—— **✅ 2026-10-13**：v5 结果表 + 对照跑归因判读 + 回归参数全落 [DevLog](../../DevLog/2026-10-12-m8-b6-stress-a-and-soak.md) §4/§5；09 §6.4 soak 小节结果同步。
 
 ### C #L5 检查（soak 前收口）
 
@@ -43,9 +43,9 @@ Status: in-progress（2026-10-12 开工落账；**A/C 全收口，soak v5 已收
 
 ### E 文档落账
 
-- [ ] **E1** `docs/EngineDesign/09-Testing.md`：压测 A 终测数字（§7 bench 表）+ soak 口径与结果（§6.8 后新小节或 §7）+ #L5/#M4 结论。
-- [ ] **E2** `AGENTS.md` 回归基线段重锚 + 本页 ⑥ 行勾销 + DevLog 条目（`2026-10-12-m8-b6-stress-a-and-soak.md`）。
-- [ ] **E3** `docs/EngineDesign/08-Development-Roadmap.md`：M8 行出口判据对表（压测 A 全绿/soak 平/零崩溃）+ M8 段债表 #M4/#L5 行勾销。
+- [x] **E1** `docs/EngineDesign/09-Testing.md`：压测 A 终测数字（§7 bench 表）+ soak 口径与结果（§6.8 后新小节或 §7）+ #L5/#M4 结论。—— **✅ 2026-10-13**：压测 A 表由批⑦ 落账（68606d3）；soak 口径 + v5/对照判读结果落 §6.4（含 #R1 缺陷指针）；#L5 关账/#M4 解耦注记在 08 债表。
+- [x] **E2** `AGENTS.md` 回归基线段重锚 + 本页 ⑥ 行勾销 + DevLog 条目（`2026-10-12-m8-b6-stress-a-and-soak.md`）。—— **✅ 2026-10-13**：基线段 fps 门禁数字维持（A2 三门禁不动的结论随 68606d3 重锚落）；本页 ⑥ 行与 AGENTS 状态段随判读收口更新；DevLog §5 结果补齐（含二进制钉源补记）。
+- [x] **E3** `docs/EngineDesign/08-Development-Roadmap.md`：M8 行出口判据对表（压测 A 全绿/soak 平/零崩溃）+ M8 段债表 #M4/#L5 行勾销。—— **✅ 终表 2026-10-14**：压测 A 全绿 ✅ / 零崩溃（转储登记）✅ / **soak 平 ✅ 按引擎侧口径（#R1 环境豁免结案：引擎自有内存零增长实证 + Windows 同构 61min 零斜率反证，mac 侧涨幅 = macOS SkyLight 系统行为；08 债表 #R1 已勾销）**；#L5 关账 ✅、#M4 留 D 组 Windows 轮。
 
 ## 3. 设计裁决（默认执行，用户可否决）
 
@@ -63,4 +63,4 @@ Status: in-progress（2026-10-12 开工落账；**A/C 全收口，soak v5 已收
 
 ## 5. 完工记录
 
-（开工时空；机器面数字与判读落 DevLog `2026-10-12-m8-b6-stress-a-and-soak.md`）
+（A 压测三跑 PASS + 门禁维持 / C #L5 探针关账 / B soak v5 硬判据全过——数字落 DevLog `2026-10-12-m8-b6-stress-a-and-soak.md` §1–§5。B2 RSS 红旗全案：10-13 定位（引擎内存面全干净,增长 = macOS SkyLight 64KB VM 块,场景级二分矩阵）→ 10-14 Windows 同构反证（61min 零斜率）→ **#R1 环境豁免结案（用户拍板 2026-10-14）**,M8 出口判据按引擎侧口径勾销。敞口：D 组 #M4 Windows 真机轮待用户窗口。）
