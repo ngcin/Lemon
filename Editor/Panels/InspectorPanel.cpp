@@ -2,9 +2,12 @@
 // 反射驱动：ComponentRegistry 字段表 + FieldEditorMeta 特性 → 控件；新增登记组件
 // 零编辑器代码出现在此（验收点）。编辑直写组件 + ctx.dirty；
 // Undo 属性轨 M4.2 接入（IsItemActivated/Deactivated 拖拽合并）。
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <limits>
 #include <type_traits>
 
@@ -42,6 +45,37 @@ const ecs::FieldEditorMeta& EdOf(const ComponentMeta& meta, uint16_t i) {
 bool ProtectedComponent(const char* name) {
     return std::strcmp(name, "Transform2D") == 0 || std::strcmp(name, "Meta") == 0 ||
            std::strcmp(name, "DestroyQueueTag") == 0;
+}
+
+// ---- 新建脚本（A 件二轮）路径辅助 ----
+/// child 是否位于 parent 内（词法归一后逐组件比较；均须绝对路径）
+bool PathWithin(std::filesystem::path child, std::filesystem::path parent) {
+    child = child.lexically_normal();
+    parent = parent.lexically_normal();
+    auto c = child.begin();
+    for (auto p = parent.begin(); p != parent.end(); ++c, ++p)
+        if (c == child.end() || *c != *p) return false;
+    return true;
+}
+
+/// 脚本目录 → C# 命名空间（相对 Game 根；段名净化——非法标识符段跳过，根 = 空
+/// 即全局命名空间，与既有 GameMain/模板脚本约定一致）
+std::string FolderNamespaceOf(const std::filesystem::path& dir,
+                              const std::filesystem::path& gameDir) {
+    std::error_code ec;
+    const std::filesystem::path rel = std::filesystem::relative(dir, gameDir, ec);
+    std::string ns;
+    if (ec) return ns;
+    for (const auto& seg : rel) {
+        const std::string s = seg.generic_string();
+        if (s == "." || s == "..") continue;
+        std::string clean;
+        for (char ch : s)
+            if (std::isalnum((unsigned char)ch) || ch == '_') clean += ch;
+        if (clean.empty() || std::isdigit((unsigned char)clean[0])) continue;
+        ns += ns.empty() ? clean : "." + clean;
+    }
+    return ns;
 }
 
 /// 反射显示名映射（i18n 批4 §B）：组件/字段名来自 ComponentRegistry（英文注册名
@@ -759,6 +793,49 @@ void InspectorPanel::OnGui(EditorApp& app) {
         ImGui::Separator();
     }
     ctx.PruneSelection();
+    // ---- 新建脚本自动挂载（A 件三补）：创建成功 → pending 记实体+类名；热重载
+    // 换域出新类型即挂（挂载目标 = 存储句柄，不依赖当前选中；15s 超时兜编译失败，
+    // 实体销毁静默放弃）----
+    if (!pendingAttachClass_.empty()) {
+        ecs::Scene& s = ctx.ActiveScene();
+        if (!s.Alive(pendingAttachEntity_) ||
+            ImGui::GetTime() > pendingAttachDeadline_) {
+            if (s.Alive(pendingAttachEntity_))
+                LEMON_WARN("自动挂载 %s 超时（编译失败？）——修复后请从「添加脚本」"
+                           "手动挂载",
+                           pendingAttachClass_.c_str());
+            pendingAttachClass_.clear();
+        } else {
+            bool found = false;
+            for (const std::string& n : ctx.ScriptTypeNames())
+                if (n == pendingAttachClass_) {
+                    found = true;
+                    break;
+                }
+            if (found) {
+                // 同菜单口径：找同名 .cs 资产关联 guid（布局归一后 .cs 进资产库有
+                // guid；旧布局 Game/ 兜底时无 = 0，仅类名装配）
+                uint64_t guid = 0;
+                for (const auto& a : ctx.Assets().Entries()) {
+                    if (a.type != AssetType::Script || a.missing) continue;
+                    std::string stem = a.FileName();
+                    if (size_t dot = stem.find_last_of('.'); dot != std::string::npos)
+                        stem.resize(dot);
+                    if (stem == pendingAttachClass_) {
+                        guid = a.guid;
+                        break;
+                    }
+                }
+                const std::string before = ctx.SnapshotSceneJson();
+                ctx.AttachScript(pendingAttachEntity_, guid,
+                                 pendingAttachClass_.c_str());
+                autoExpandScript_ = true; // 挂完展开脚本段
+                if (!ctx.Playing()) ctx.PushStructuralUndo("挂脚本", before);
+                LEMON_LOG("已自动挂载脚本 %s（热重载后）", pendingAttachClass_.c_str());
+                pendingAttachClass_.clear();
+            }
+        }
+    }
     ecs::Entity e = ctx.Primary();
     if (e.IsNull()) {
         ImGui::TextDisabled("%s", tr("insp.no_selection"));
@@ -828,9 +905,16 @@ void InspectorPanel::OnGui(EditorApp& app) {
     // 每槽一 combo + 移除；同类型唯一——已挂类型菜单置灰）----
     scripting::ScriptBox* sb = ctx.ActiveScene().TryGet<scripting::ScriptBox>(e);
     if (sb) {
-        // 标题本地化 + ### 后缀保 header ID 不随语言变（展开态不丢）
+        // 标题本地化 + ### 后缀保 header ID 不随语言变（展开态不丢）。
+        // 默认折叠（2026-10-14 三件套）；全折展请求/挂脚本后自动展开走存储直写
         const std::string scriptHeader = std::string(tr("insp.script")) + "###Script";
-        if (ImGui::CollapsingHeader(scriptHeader.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (setAllOpen_ >= 0)
+            ImGui::GetStateStorage()->SetInt(ImGui::GetID(scriptHeader.c_str()), setAllOpen_);
+        else if (autoExpandScript_) {
+            ImGui::GetStateStorage()->SetInt(ImGui::GetID(scriptHeader.c_str()), 1);
+            autoExpandScript_ = false; // 一次性
+        }
+        if (ImGui::CollapsingHeader(scriptHeader.c_str())) {
             const auto& names = ctx.ScriptTypeNames();
             for (uint32_t i = 0; i < sb->count; ++i) {
                 scripting::ScriptSlot& s = sb->slots[i];
@@ -893,6 +977,7 @@ void InspectorPanel::OnGui(EditorApp& app) {
             }
         }
     }
+    setAllOpen_ = -1; // 全折展请求已遍历所有头（组件 + 脚本段），本遍历消费
 
     ImGui::Spacing();
     const bool canAdd = !ctx.ActiveScene().Has<scripting::ScriptBox>(e) ||
@@ -907,6 +992,17 @@ void InspectorPanel::OnGui(EditorApp& app) {
                                 {std::to_string(scripting::kMaxScriptsPerEntity)})
                               .c_str());
     if (ImGui::BeginPopup("add_script")) {
+        // ---- 新建脚本（2026-10-14 A 件）：模板 .cs 落盘 → watcher 热重载自动编译
+        // 换域 → 数秒后类型出现在本菜单。无脚本工程 = 置灰（tooltip 复用宿主缺失）----
+        std::string csproj, dll;
+        const bool hostReady = app.FindGameProject(csproj, dll);
+        if (ImGui::MenuItem(tr("insp.new_script"), nullptr, false, hostReady)) {
+            newScriptOpen_ = true;
+            newScriptFocus_ = true;
+        }
+        if (!hostReady && ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s", tr("insp.no_script_host"));
+        ImGui::Separator();
         const auto& names = ctx.ScriptTypeNames();
         if (names.empty()) ImGui::TextDisabled("%s", tr("insp.no_script_host"));
         for (const std::string& n : names) {
@@ -932,7 +1028,150 @@ void InspectorPanel::OnGui(EditorApp& app) {
             }
             const std::string before = ctx.SnapshotSceneJson();
             ctx.AttachScript(e, guid, n.c_str());
+            autoExpandScript_ = true; // 挂完即可配参数（脚本段可能刚建/在折叠态）
             if (!ctx.Playing()) ctx.PushStructuralUndo("挂脚本", before);
+        }
+        ImGui::EndPopup();
+    }
+    // ---- 新建脚本对话框（A 件二轮重设计：类名 + 存储路径 + 预览 + 浏览钮）----
+    // 目录浏览走面板私有 scriptPicker_（模态不叠加：开 picker 前先关本框，选定/
+    // 取消回填后 newScriptReopen_ 重开——向导 WizardDir 同款回路）
+    if (PickerResult r = scriptPicker_.Draw(); r.action != PickerAction::None) {
+        if (r.action == PickerAction::Open && !r.path.empty()) {
+            namespace fs = std::filesystem;
+            std::error_code ec;
+            const fs::path root(ctx.Assets().ProjectRoot());
+            const fs::path rel = fs::relative(fs::path(r.path), root, ec);
+            newScriptLoc_ = ec ? r.path : rel.generic_string(); // 项目外原样存，校验拦
+        }
+        newScriptReopen_ = true;
+    }
+    if (newScriptOpen_) {
+        newScriptOpen_ = false;
+        newScriptName_.clear();
+        if (newScriptLoc_.empty()) newScriptLoc_ = "Assets/Scripts";
+        ImGui::OpenPopup("###new_script");
+    }
+    if (newScriptReopen_) {
+        newScriptReopen_ = false;
+        ImGui::OpenPopup("###new_script");
+    }
+    if (ImGui::BeginPopupModal((std::string(tr("insp.new_script")) + "###new_script").c_str(),
+                               nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        namespace fs = std::filesystem;
+        std::string csproj, dll;
+        const bool hostReady = app.FindGameProject(csproj, dll);
+        const fs::path gameDir = fs::path(csproj).parent_path();
+        const fs::path absLoc = fs::path(ctx.Assets().ProjectRoot()) / newScriptLoc_;
+        // 校验链：宿主 → 类名（C# 标识符，重名类会炸编译）→ 路径域（脚本工程内，
+        // 外侧 .cs 不进 csproj glob 也无 watcher）→ 目标文件重名
+        const std::string& name = newScriptName_;
+        bool ok = hostReady;
+        const char* why = tr("insp.no_script_host");
+        if (ok && (name.empty() || name.size() > 48)) {
+            ok = false;
+            why = tr("insp.new_script_bad_name");
+        }
+        if (ok) {
+            for (size_t i = 0; i < name.size(); ++i) {
+                const char c = name[i];
+                const bool good = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                                  c == '_' || (i > 0 && c >= '0' && c <= '9');
+                if (!good) {
+                    ok = false;
+                    why = tr("insp.new_script_bad_name");
+                    break;
+                }
+            }
+        }
+        if (ok && !PathWithin(absLoc, gameDir)) {
+            ok = false;
+            why = tr("insp.new_script_bad_path");
+        }
+        if (ok) {
+            // 注册表身份 = 类型短名（Behaviours.Register 存 t.Name，菜单/场景
+            // className 同键）——同名即撞车（不同命名空间同名短名同样歧义）
+            for (const std::string& n : ctx.ScriptTypeNames())
+                if (n == name) {
+                    ok = false;
+                    why = tr("insp.new_script_exists");
+                    break;
+                }
+        }
+        std::error_code fileEc;
+        if (ok && fs::exists(absLoc / (name + ".cs"), fileEc)) {
+            ok = false;
+            why = tr("insp.new_script_exists");
+        }
+        // 预览串：项目根相对的最终落盘路径
+        char preview[320];
+        std::snprintf(preview, sizeof(preview), "%s%s%s.cs",
+                      newScriptLoc_.c_str(),
+                      (!newScriptLoc_.empty() && newScriptLoc_.back() == '/') ? "" : "/",
+                      name.empty() ? "…" : name.c_str());
+        ImGui::TextUnformatted(tr("insp.new_script_prompt"));
+        ImGui::Spacing();
+        // 三行左标签对齐（标签列取最长 + 间距；值列固定宽——AlwaysAutoResize 下
+        // 负宽会与内容宽互推）
+        float labelW = ImGui::CalcTextSize(tr("insp.new_script_preview_label")).x;
+        labelW = ImGui::CalcTextSize(tr("insp.new_script_loc_label")).x > labelW
+                     ? ImGui::CalcTextSize(tr("insp.new_script_loc_label")).x
+                     : labelW;
+        labelW = ImGui::CalcTextSize(tr("insp.new_script_name_label")).x > labelW
+                     ? ImGui::CalcTextSize(tr("insp.new_script_name_label")).x
+                     : labelW;
+        labelW += 12.0f;
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(tr("insp.new_script_name_label"));
+        ImGui::SameLine(labelW);
+        ImGui::SetNextItemWidth(340.0f);
+        if (newScriptFocus_) ImGui::SetKeyboardFocusHere(0);
+        const bool entered = ImGui::InputText(
+            "##new_script_name", &newScriptName_,
+            ImGuiInputTextFlags_EnterReturnsTrue |
+                (newScriptFocus_ ? ImGuiInputTextFlags_AutoSelectAll : 0));
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(tr("insp.new_script_loc_label"));
+        ImGui::SameLine(labelW);
+        ImGui::SetNextItemWidth(304.0f);
+        ImGui::InputText("##new_script_loc", &newScriptLoc_);
+        ImGui::SameLine();
+        if (ImGui::Button("...", ImVec2(32, 0)) && hostReady) {
+            std::error_code dirEc;
+            const fs::path start = fs::is_directory(absLoc, dirEc) ? absLoc : gameDir;
+            scriptPicker_.SetQuickDirs({{"Scripts", gameDir.string()}});
+            scriptPicker_.OpenDir(tr("insp.new_script_pick_dir"), start.string());
+            ImGui::CloseCurrentPopup(); // 模态不叠加：本框先收，picker 定后重开
+        }
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(tr("insp.new_script_preview_label"));
+        ImGui::SameLine(labelW);
+        ImGui::SetNextItemWidth(340.0f);
+        ImGui::InputText("##new_script_preview", preview, sizeof(preview),
+                         ImGuiInputTextFlags_ReadOnly);
+        newScriptFocus_ = false;
+        if (!ok && (!name.empty() || newScriptLoc_ != "Assets/Scripts")) {
+            ImGui::PushStyleColor(ImGuiCol_Text, theme::kTextWarn);
+            ImGui::TextUnformatted(why);
+            ImGui::PopStyleColor();
+        }
+        // 右下按钮对：取消 | 创建
+        const float bwCancel = ImGui::CalcTextSize(tr("insp.new_script_cancel")).x + 24.0f;
+        const float bwCreate = ImGui::CalcTextSize(tr("insp.new_script_create")).x + 24.0f;
+        const float rightX = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x -
+                             bwCancel - bwCreate - 8.0f;
+        if (rightX > ImGui::GetCursorPosX()) ImGui::SetCursorPosX(rightX);
+        if (ImGui::Button(tr("insp.new_script_cancel"))) ImGui::CloseCurrentPopup();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!ok);
+        const bool create = ImGui::Button(tr("insp.new_script_create")) || (entered && ok);
+        ImGui::EndDisabled();
+        if (create && ok && CreateNewScript(app, name, newScriptLoc_)) {
+            // 热重载完成后自动挂载到当前实体（Unity「New Script」同款闭环）
+            pendingAttachEntity_ = e;
+            pendingAttachClass_ = name;
+            pendingAttachDeadline_ = ImGui::GetTime() + 15.0;
+            ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
     }
@@ -948,6 +1187,7 @@ void InspectorPanel::OnGui(EditorApp& app) {
             if (ImGui::MenuItem(DisplayName(meta.name))) {
                 const std::string before = ctx.SnapshotSceneJson();
                 meta.emplaceFn(ctx.ActiveScene(), e);
+                autoExpandCompId_ = (int)meta.id; // 新增自动展开：挂完直接配（Unity 同款）
                 ctx.dirty = true; // 新登记组件零编辑器代码即出现在此（验收点）
                 if (!ctx.Playing())
                     ctx.PushStructuralUndo("添加组件", before);
@@ -956,6 +1196,87 @@ void InspectorPanel::OnGui(EditorApp& app) {
         ImGui::EndPopup();
     }
     ImGui::End();
+}
+
+// 新建脚本落盘（2026-10-14 A 件二轮）：模板 .cs 写入 locRel（项目根相对；脚本
+// 工程内子目录按需创建，SDK 风格 csproj 递归 glob 免改工程）+ 命名空间随目录推导
+//（根 = 全局，与既有 GameMain 约定一致）+ GameMain.Configure 追加 Register 行
+//（全限定类型名）。追加点 = 最后一个 Behaviours.Register< 之后——typeId = 注册序
+//（跨帧稳定契约），中插会平移既有 typeId。落盘后 scriptWatcher_ 热重载链自动
+// 编译换域（约 2s），类型随后出现在「添加脚本」菜单。
+bool InspectorPanel::CreateNewScript(EditorApp& app, const std::string& name,
+                                     const std::string& locRel) {
+    namespace fs = std::filesystem;
+    std::string csproj, dll;
+    if (!app.FindGameProject(csproj, dll)) {
+        LEMON_WARN("新建脚本失败：项目无脚本工程（脚本宿主未装配）");
+        return false;
+    }
+    const fs::path gameDir = fs::path(csproj).parent_path();
+    const fs::path dir = fs::path(app.Ctx().Assets().ProjectRoot()) / locRel;
+    if (!PathWithin(dir, gameDir)) { // 对话框已拦；此处纵深防御（含手输外逸）
+        LEMON_WARN("新建脚本失败：存储位置 %s 不在脚本工程内", locRel.c_str());
+        return false;
+    }
+    std::error_code ec;
+    fs::create_directories(dir, ec); // 子目录按需建（UI/Role 等组织形式）
+    if (ec) {
+        LEMON_WARN("新建脚本失败：无法创建目录 %s（%s）", dir.string().c_str(),
+                   ec.message().c_str());
+        return false;
+    }
+    const std::string ns = FolderNamespaceOf(dir, gameDir);
+    {
+        std::ofstream f(dir / (name + ".cs"), std::ios::trunc);
+        if (!f) {
+            LEMON_WARN("新建脚本失败：无法写入 %s",
+                       (dir / (name + ".cs")).string().c_str());
+            return false;
+        }
+        const char* ind = ns.empty() ? "" : "    ";
+        f << "// " << name << " — 编辑器「新建脚本」生成\n"
+          << "using Lemon;\n";
+        if (!ns.empty()) f << "\nnamespace " << ns << "\n{\n";
+        f << ind << "public sealed class " << name << " : LemonBehaviour\n"
+          << ind << "{\n"
+          << ind << "    protected override void Update()\n"
+          << ind << "    {\n"
+          << ind << "    }\n"
+          << ind << "}\n";
+        if (!ns.empty()) f << "}\n";
+    }
+    // GameMain.cs 末尾追加注册（全限定名与向导生成一致，不假设 using）；找不到
+    // Register 行 = 手写工程，提示手动注册（脚本文件已建不回滚）
+    const fs::path gameMain = gameDir / "GameMain.cs";
+    if (std::ifstream in(gameMain); in) {
+        std::string src((std::istreambuf_iterator<char>(in)),
+                        std::istreambuf_iterator<char>());
+        const size_t last = src.rfind("Behaviours.Register<");
+        if (last != std::string::npos) {
+            const size_t lineStart = src.rfind('\n', last) + 1;
+            const size_t lineEnd = src.find('\n', last);
+            const size_t nb = src.find_first_not_of(" \t", lineStart);
+            const std::string indent =
+                nb == std::string::npos ? std::string(8, ' ')
+                                        : src.substr(lineStart, nb - lineStart);
+            const std::string full = ns.empty() ? name : ns + "." + name;
+            const std::string line =
+                indent + "Lemon.Behaviours.Register<" + full + ">();\n";
+            if (lineEnd == std::string::npos) src += "\n" + line;
+            else src.insert(lineEnd + 1, line);
+            std::ofstream out(gameMain, std::ios::trunc);
+            out << src;
+        } else {
+            LEMON_WARN("GameMain.cs 无 Behaviours.Register 行——请在 Configure 内"
+                       "手动注册 %s",
+                       name.c_str());
+        }
+    } else {
+        LEMON_WARN("GameMain.cs 不存在——请创建并在 Configure 内注册 %s", name.c_str());
+    }
+    LEMON_LOG("新建脚本 %s → %s/%s.cs（热重载编译后可在「添加脚本」挂载）",
+              name.c_str(), locRel.c_str(), name.c_str());
+    return true;
 }
 
 void InspectorPanel::DrawComponent(EditorApp& app, const ComponentMeta& meta, ecs::Entity e) {
@@ -982,31 +1303,49 @@ void InspectorPanel::DrawComponent(EditorApp& app, const ComponentMeta& meta, ec
     // 组件头显示名本地化；### 后段（=注册名）保 header ID 不随语言变（展开态
     // 与 PushID 作用域均按原名 hash，行为与旧版逐位一致）
     const std::string header = std::string(DisplayName(meta.name)) + "###" + meta.name;
-    if (ImGui::CollapsingHeader(header.c_str(), &open, ImGuiTreeNodeFlags_DefaultOpen)) {
-        // M4.8-a 组件级重置：右键组件头 → removeFn+emplaceFn 恢复默认值（Unity
-        // Reset Component 同语义）。Meta 除外（guid = 身份，重置会断场景引用）；
-        // Transform2D 可重置 = 归零（Unity 同）。弹窗 ID 在 PushID(meta.name)
-        // 作用域内 = 每组件唯一（node_ctx 共享 ID 教训）
-        if (ImGui::BeginPopupContextItem("comp_reset_ctx")) {
-            const bool canReset = std::strcmp(meta.name, "Meta") != 0 &&
-                                  meta.removeFn && meta.emplaceFn && !ctx.Playing();
-            if (ImGui::MenuItem(tr("insp.reset_component"), nullptr, false, canReset)) {
-                const std::vector<uint8_t> before = ctx.SnapshotComponent(e, meta.id);
-                meta.removeFn(ctx.ActiveScene(), e);
-                meta.emplaceFn(ctx.ActiveScene(), e);
-                ctx.dirty = true;
-                if (guid && meta.sizeOf > 0)
-                    ctx.PushPropertyUndo("重置组件", guid, meta.id, before,
-                                         ctx.SnapshotComponent(e, meta.id));
-                idleSnaps_.erase(guid ^ ((uint64_t)meta.id << 48)); // 空闲快照失效
-                LEMON_LOG("重置组件 %s（实体 %llu）", meta.name,
-                          (unsigned long long)e.id);
-            }
-            ImGui::EndPopup();
-            ImGui::PopStyleVar();
-            ImGui::PopID();
-            return; // 池可能重排：comp 指针已失效，本帧不画字段表（下帧重取）
+    // 默认折叠（2026-10-14 三件套）：仅 Transform2D 默认展开（高频首行），其余
+    // 默认折叠省纵向空间；折叠态按组件类型由 ImGui storage 粘滞（DefaultOpen 仅
+    // 在无存储态时生效——本会话内手动折/展过的类型跨实体选择保持）
+    const ImGuiTreeNodeFlags headerFlags =
+        std::strcmp(meta.name, "Transform2D") == 0 ? ImGuiTreeNodeFlags_DefaultOpen : 0;
+    // 全折展请求 / 新增组件自动展开：直写 header 存储（压过既有折叠记忆）
+    if (setAllOpen_ >= 0)
+        ImGui::GetStateStorage()->SetInt(ImGui::GetID(header.c_str()), setAllOpen_);
+    if ((int)meta.id == autoExpandCompId_) {
+        ImGui::GetStateStorage()->SetInt(ImGui::GetID(header.c_str()), 1);
+        autoExpandCompId_ = -1; // 一次性
+    }
+    const bool expanded = ImGui::CollapsingHeader(header.c_str(), &open, headerFlags);
+    // M4.8-a 组件级重置：右键组件头 → removeFn+emplaceFn 恢复默认值（Unity
+    // Reset Component 同语义）。Meta 除外（guid = 身份，重置会断场景引用）；
+    // Transform2D 可重置 = 归零（Unity 同）。弹窗 ID 在 PushID(meta.name)
+    // 作用域内 = 每组件唯一（node_ctx 共享 ID 教训）。
+    // 2026-10-14：菜单改绑在 if(expanded) 之外——折叠态头也需要重置/全折展入口
+    // （原实现菜单在展开体内 = 折叠头右键无菜单的潜伏不可达，默认折叠后成主路径）
+    if (ImGui::BeginPopupContextItem("comp_reset_ctx")) {
+        const bool canReset = std::strcmp(meta.name, "Meta") != 0 &&
+                              meta.removeFn && meta.emplaceFn && !ctx.Playing();
+        if (ImGui::MenuItem(tr("insp.reset_component"), nullptr, false, canReset)) {
+            const std::vector<uint8_t> before = ctx.SnapshotComponent(e, meta.id);
+            meta.removeFn(ctx.ActiveScene(), e);
+            meta.emplaceFn(ctx.ActiveScene(), e);
+            ctx.dirty = true;
+            if (guid && meta.sizeOf > 0)
+                ctx.PushPropertyUndo("重置组件", guid, meta.id, before,
+                                     ctx.SnapshotComponent(e, meta.id));
+            idleSnaps_.erase(guid ^ ((uint64_t)meta.id << 48)); // 空闲快照失效
+            LEMON_LOG("重置组件 %s（实体 %llu）", meta.name,
+                      (unsigned long long)e.id);
         }
+        ImGui::Separator();
+        if (ImGui::MenuItem(tr("insp.collapse_all"))) setAllOpen_ = 0;
+        if (ImGui::MenuItem(tr("insp.expand_all"))) setAllOpen_ = 1;
+        ImGui::EndPopup();
+        ImGui::PopStyleVar();
+        ImGui::PopID();
+        return; // 池可能重排：comp 指针已失效，本帧不画字段表（下帧重取）
+    }
+    if (expanded) {
         if (meta.fieldCount > 0 && ImGui::BeginTable("fields", 2, ImGuiTableFlags_SizingStretchProp)) {
             ImGui::TableSetupColumn("name", ImGuiTableColumnFlags_WidthFixed,
                                     ImGui::CalcTextSize("sortingLayer").x + 20);

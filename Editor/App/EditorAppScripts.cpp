@@ -175,7 +175,10 @@ bool EditorApp::OpenProjectPipeline(const std::string& projectRoot) {
         });
     }
     watcher_.Start(ctx_.Assets().AssetsRoot());
-    scriptWatcher_.Start(ctx_.Assets().ProjectRoot() + "/Game"); // 热重载触发源（§3.7）
+    // 旧布局迁移（2026-10-14 布局归一）：顶层 Game/ 脚本工程 → Assets/Scripts/
+    //（必须在 watcher/宿主装配前——随后两行都以新路径为前提）
+    ProjectWizard::MigrateLegacyGameDir(projectRoot);
+    scriptWatcher_.Start(ScriptProjectDir()); // 热重载触发源（§3.7）
     // 源码基线化（M4.6）：开项目时已存在的 .cs 不算"变更"——否则 lastHandledCsWrite_
     // 从 0 起步，首次 watcher 事件（dotnet build 写 obj 触发）必引发一次无谓换装
     // （每次泄漏一个旧域；用户实测闪退链的第一环就是它）
@@ -190,9 +193,9 @@ bool EditorApp::OpenProjectPipeline(const std::string& projectRoot) {
         if (ProjectWizard::BuildGameProject(csproj, ctx_.Assets().ProjectRoot() + "/.lemon/bin",
                                             &buildMs, &buildOut) == 0) {
             InitScriptHostFrom(dll);
-            LEMON_LOG("Game/ 编译 %.0fms → %s", buildMs, dll.c_str());
+            LEMON_LOG("脚本工程编译 %.0fms → %s", buildMs, dll.c_str());
         } else {
-            LEMON_ERROR("Game/ 编译失败（项目仍可编辑，无脚本）：dotnet build %s", csproj.c_str());
+            LEMON_ERROR("脚本工程编译失败（项目仍可编辑，无脚本）：dotnet build %s", csproj.c_str());
             LogCompileErrors(buildOut); // M4.6 §5-6：启动期编译错误同样红字可读
         }
     } else if (launch_->script.empty()) {

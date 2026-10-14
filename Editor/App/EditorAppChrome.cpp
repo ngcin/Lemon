@@ -995,15 +995,15 @@ void EditorApp::BuildPickersAndModals() {
         ImGui::InputText(tr("modal.class_name_label"), newScriptName_, sizeof(newScriptName_));
         ImGui::BeginDisabled(!newScriptName_[0]);
         if (ImGui::Button(tr("modal.create_and_compile"), ImVec2(160, 0))) {
-            const std::string gameDir = ctx_.Assets().ProjectRoot() + "/Game";
+            const std::string gameDir = ScriptProjectDir();
             if (ProjectWizard::AddBehaviourScript(gameDir, newScriptName_)) {
-                LEMON_LOG("新脚本已建：Game/%s.cs（注册行已插，热重载排队）", newScriptName_);
+                LEMON_LOG("新脚本已建：Assets/Scripts/%s.cs（注册行已插，热重载排队）", newScriptName_);
                 ScriptSourceChanged(); // 吸收基线（编译走队列；watcher 不再二次重编）
                 QueueScriptRebuild("新建脚本");
                 newScriptOpen_ = false;
                 ImGui::CloseCurrentPopup();
             } else {
-                LEMON_WARN("新建脚本失败：类名非法或 Game/%s.cs 已存在", newScriptName_);
+                LEMON_WARN("新建脚本失败：类名非法或 Assets/Scripts/%s.cs 已存在", newScriptName_);
             }
         }
         ImGui::EndDisabled();

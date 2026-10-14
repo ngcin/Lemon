@@ -3,7 +3,6 @@
   "assets.search_hint": "搜索资产…",
   "assets.rescan": "重扫",
   "assets.stat_fmt": "{0} 资产 / 体检红字 {1}",
-
   "assets.filter.all": "全部",
   "assets.filter.sprite": "精灵",
   "assets.filter.clip": "动画",
@@ -15,16 +14,13 @@
   "assets.filter.rml": "UI 文档",
   "assets.filter.rcss": "UI 样式",
   "assets.filter.audio": "音频",
-
   "assets.folder_tip_fmt": "文件夹（单击进入）\n{0}",
   "assets.ctx.create_anim_from_folder": "从此文件夹创建动画…",
   "assets.ctx.new_anim_set": "新建动画集…",
   "assets.ctx.copy_guid": "复制 GUID",
   "assets.ctx.audio_params": "音频参数…",
-
   "assets.rename.title": "重命名资产",
   "assets.rename.hint": "新路径（相对 Assets/；.meta 随行 → 场景引用不断）",
-
   "assets.tip.imported_fmt": "已导入 {0}x{1}",
   "assets.tip.not_imported": "未导入",
   "assets.tip.dbl_table": "\n双击：放大编辑",
@@ -32,7 +28,6 @@
   "assets.tip.dbl_set": "\n双击：动画工作台",
   "assets.tip.dbl_rml": "\n双击：装载到游戏 UI（Play 中显示）",
   "assets.tip.rcss": "\n经文档 <link> 引用；改动热重载生效",
-
   "assets.table.view_header": "表格视图",
   "assets.table.enlarge": "放大编辑",
   "assets.table.editor_title_fmt": "{0} — 表格编辑器",
@@ -41,7 +36,6 @@
   "assets.table.playing_hint": "Play 进行中：当前局的表快照不变，改动下一局生效",
   "assets.table.rejected_fmt": "提交被拒：{0}",
   "assets.table.write_fail_fmt": "写盘失败（磁盘满/权限？）：{0}",
-
   "assets.audio.title": "音频参数",
   "assets.audio.loop_hint": "循环起止都填 0 = 整曲循环；改动重新进入 Play 后生效",
   "assets.audio.loop_start": "循环起点(秒)",

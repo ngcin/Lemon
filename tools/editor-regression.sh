@@ -157,7 +157,7 @@ if [ "${MODE}" = "full" ]; then
     GAME="${BUILD}/Engine/Entry/lemon-game"
     if [ -x "${GAME}" ]; then
         cp -R Templates/vs-survivor "${TMP}/game"
-        if dotnet build "${TMP}/game/Game/Game.csproj" -c Release \
+        if dotnet build "${TMP}/game/Assets/Scripts/Game.csproj" -c Release \
                 -o "${TMP}/game/.lemon/bin" >/dev/null 2>&1; then
             grep_step "game-smoke (lemon-game standalone runtime: four caches + ui-click-to-run + prefab spawn + direct render + saves; M7a-b4)" \
                 "game-smoke: .* => OK" \
@@ -180,7 +180,7 @@ if [ "${MODE}" = "full" ]; then
                 "fx-smoke: .* => OK" \
                 "${GAME}" --project "${TMP}/game" --frames 240 --smoke-fx
         else
-            echo "  FAIL game-smoke (夹具 Game/ 编译失败：dotnet build ${TMP}/game)"
+            echo "  FAIL game-smoke (夹具 Assets/Scripts 编译失败：dotnet build ${TMP}/game)"
             fail=$((fail+1))
         fi
     else

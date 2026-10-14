@@ -18,15 +18,22 @@ Lemon/                                  # 引擎安装目录（升级只动这�
 MyGame/                                   # 用户项目（升级永不触碰）
 ├── project.lemon                         # 项目清单：引擎版本锚点、场景列表、配置
 ├── Assets/                               # 资产（源文件 + .meta，06 §2）
+│   └── Scripts/                          # C# 脚本工程（标准 csproj；2026-10-14 布局归一）
 ├── Scenes/                               # 场景文件（.scene）
 ├── Prefabs/                              # Prefab 资产（.prefab）
-├── Game/                                 # C# 脚本工程（标准 csproj）
 ├── Data/                                 # Team 表/导演波次/本地化/曲线等数据资产（.asset）
 ├── .lemon/                             # 编辑器状态（布局/缓存/缩略图，gitignore）
 └── Builds/                               # 打包输出（gitignore）
 ```
 
 - `project.lemon` 记录 `engineVersion`（语义化 + 最低兼容），编辑器启动校验并提示升级/迁移。
+- **2026-10-14 布局归一（用户拍板，Unity 式）**：脚本工程从顶层 `Game/` 并入
+  `Assets/Scripts/`（csproj 随迁，SDK 递归 glob 不变）。`.cs` 进资产树 = 浏览器
+  一等条目（新建/重命名/删除/移动/类型过滤）；`.csproj` 不入库不给 guid。挂载
+  身份仍按类名（场景引用零迁移）；guid 化与拖拽挂载随 M8.5 ③。旧项目开项目时
+  `MigrateLegacyGameDir` 自动迁移（清 obj/bin 后整树 rename；`Game/` 无 csproj 或
+  `Assets/Scripts/` 已存在 = 告警交人），`ScriptProjectDir()` 新布局优先、顶层
+  `Game/` 兜底。
 - **新建项目向导**（yami 流程照抄）：选模板 → 选路径 → 复制模板 → 生成项目 GUID（存档隔离键）→ 直接打开编辑器并进入 Play —— 全程零配置。
 - 引擎升级 = 替换安装目录；项目数据格式带 `schemaVersion`，自动迁移链升级（03 §13）。
 

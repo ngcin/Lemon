@@ -148,6 +148,11 @@ public:
     ViewportRenderer& Viewport() { return *viewport_; }
     AssetGpuCache& AssetGpu() { return gpuAssets_; }
     bool Playing() const { return playing_; } // Play 沙盒 M4.3 接入
+    /// Game/ 工程查询：csproj 路径 + 输出 dll（项目根/.lemon/bin/<名>.dll）。
+    /// 原 private（换装判定辅助）；2026-10-14 A 件新建脚本路径消费，提公共
+    bool FindGameProject(std::string& csproj, std::string& dll);
+    /// 脚本工程目录（2026-10-14 布局归一）：Assets/Scripts 优先，顶层 Game/ 兜底
+    std::string ScriptProjectDir();
     // project.lemon 入口场景声明（M7a 批⓪，ADR-016 M8/D6）：空 = 未声明（消费方走
     // 唯一 .scene 回退链）。编辑器侧只解析回显；正式消费 = 批② ProjectFile / 批④
     // lemon-game / 批⑤ packager。
@@ -379,8 +384,6 @@ private:
     void FinalSample(uint64_t frame);
     bool FinalVerdict(uint32_t playAliveAtStop, double playEnterMs, double playExitMs,
                       bool playVerified, double firstFrameMs);
-    /// 换装判定辅助：Game/*.csproj 路径 + 输出 dll（项目根/.lemon/bin/<名>.dll）
-    bool FindGameProject(std::string& csproj, std::string& dll);
     /// Game/ 源码变更检测（FileWatcher 置脏后过滤 .cs，排除 obj/bin）
     bool ScriptSourceChanged();
     /// 崩溃恢复提示模态（启动检测 autosave 新于盘档 → 恢复/忽略）

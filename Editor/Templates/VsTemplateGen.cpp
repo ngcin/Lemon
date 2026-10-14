@@ -1953,17 +1953,18 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
     // （Templates/vs-survivor 入库目录满足标记）不受影响。
     if (fs::exists(root, ec)) {
         const bool lemonProject = fs::is_regular_file(root / "project.lemon", ec) &&
-                                  fs::is_directory(root / "Game", ec);
+                                  (fs::is_directory(root / "Assets" / "Scripts", ec) ||
+                                   fs::is_directory(root / "Game", ec)); // 后者 = 旧布局产物
         if (!lemonProject) {
             LEMON_ERROR("gen-vs-template：目标已存在且不是 lemon 工程（缺 project.lemon/"
-                        "Game/ 标记），拒绝删除：%s",
+                        "Assets/Scripts 标记），拒绝删除：%s",
                         root.string().c_str());
             return false;
         }
         fs::remove_all(root, ec);
     }
-    for (const char* dir : {"Assets", "Assets/tables", "Assets/Audio", "Prefabs",
-                            "Scenes", "Game", "Data", ".lemon/editor"})
+    for (const char* dir : {"Assets", "Assets/tables", "Assets/Audio", "Assets/Scripts",
+                            "Prefabs", "Scenes", "Data", ".lemon/editor"})
         fs::create_directories(root / dir, ec);
 
     // 1) yami 素材拷贝（批③入库包 → 模板自带；.meta 随行 = guid/切片稳定）
@@ -1997,7 +1998,7 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
     //    OpenProject 扫描按 meta 记账，之后覆写 .prefab 内容 guid 不动）
     WriteProceduralAssets(root / "Assets");
 #ifdef LEMON_SCRIPT_DIR
-    WriteGameSources(root / "Game", LEMON_SCRIPT_DIR);
+    WriteGameSources(root / "Assets" / "Scripts", LEMON_SCRIPT_DIR);
 #endif
     struct Pf { const char* file; uint64_t guid; };
     for (const Pf& pf : {Pf{"Mob.prefab", kMobPf}, Pf{"BossMob.prefab", kBossPf},

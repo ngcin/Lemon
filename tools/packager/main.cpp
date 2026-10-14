@@ -12,7 +12,8 @@
 //                          （AssetIndex 导出，运行时快路径首查）+ Fonts/（Noto 随包）
 //
 // CLI：lemon-packager --project <dir> --runtime <engine-build-dir> --out <pkg> [--force]
-//   --project  游戏项目根（含 project.lemon 与 Game/Game.csproj）
+//   --project  游戏项目根（含 project.lemon 与 Assets/Scripts/Game.csproj；顶层
+//              Game/Game.csproj 旧布局兜底，2026-10-14 布局归一）
 //   --runtime  引擎构建目录（build/mac——取 Engine/Entry/lemon-game 与 Scripting 托管件）
 //   --out      出包根（须不存在或空；--force = 先清）
 //   --force    出包根在场时整删重建
@@ -410,8 +411,13 @@ int main(int argc, char** argv) {
         Err("入口场景不可用（entryScene 未声明/不唯一/文件缺失）：" + project.string());
         return 1;
     }
-    if (!fs::is_regular_file(project / "Game" / "Game.csproj", ec)) {
-        Err("项目缺 Game/Game.csproj（packager 经此工程 dotnet publish）：" + project.string());
+    // 脚本工程双布局（2026-10-14 布局归一）：Assets/Scripts 优先，顶层 Game/ 兜底
+    //（迁移器 MigrateLegacyGameDir 失败/未开过的旧项目仍可出包）
+    const fs::path gameCsproj = fs::is_regular_file(project / "Assets" / "Scripts" / "Game.csproj", ec)
+                                    ? project / "Assets" / "Scripts" / "Game.csproj"
+                                    : project / "Game" / "Game.csproj";
+    if (!fs::is_regular_file(gameCsproj, ec)) {
+        Err("项目缺 Assets/Scripts/Game.csproj（packager 经此工程 dotnet publish）：" + project.string());
         return 1;
     }
     if (!fs::is_regular_file(gameExe, ec)) {
@@ -630,7 +636,7 @@ int main(int argc, char** argv) {
            << "    <Nullable>disable</Nullable>\n"
            << "  </PropertyGroup>\n"
            << "  <ItemGroup>\n"
-           << "    <ProjectReference Include=\"" << (project / "Game" / "Game.csproj").string()
+           << "    <ProjectReference Include=\"" << gameCsproj.string()
            << "\" />\n"
            << "    <Reference Include=\"Lemon.Entry\">\n"
            << "      <HintPath>" << (buildScriptDir / "Lemon.Entry.dll").string()

@@ -327,6 +327,9 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
         }
         ImGui::EndDragDropTarget();
     }
+    // Game 脚本只读区已退役（2026-10-14 布局归一）：脚本工程并入 Assets/Scripts/
+    //（ProjectWizard::MigrateLegacyGameDir 开项目自动迁移），.cs 走资产树原生
+    // 网格/过滤/重命名/删除——不再需要根级平铺补可见性
     ImGui::EndChild();
 
     // 内嵌表格区（选中 .tab 时；写在 EndChild 之后 = 面板底部独立滚动区）

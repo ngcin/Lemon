@@ -832,8 +832,33 @@ ScriptHost::HotReloadInfo ScriptHost::HotReloadAssembly(const char* path) {
     // 未捕获 → coreclr abort。InitScriptHostFrom 侧早有同款，M4.6 实测闪退后补齐此口）
     std::error_code eca;
     const std::string abs = std::filesystem::absolute(path, eca).generic_string();
+    // 同路径镜像缓存坑（2026-10-14 独立探针 + 活体双复现）：本 runtime 旧 ALC 泄漏
+    // 钉住 CoreCLR 的路径级装配镜像缓存——文件已换新，同路径 LoadFromAssemblyPath
+    // 仍返回旧镜像（换装假成功，类型表冻结在首载，新注册脚本永不出现 = 自动挂载
+    // 超时的根因）。修法：每次换装复制到唯一路径再装载（探针同款验证：唯一路径/
+    // 内存流均可取到新镜像）。副本随泄漏旧 ALC 存续无法当场删，跨会话清理见
+    // InitScriptHostFrom。复制失败（只读目录等）= 回退原路径，行为不劣于修复前
+    static uint32_t s_stageSeq = 0;
+    std::string loadPath = abs;
+    {
+        namespace fs2 = std::filesystem;
+        const fs2::path src(abs);
+        const fs2::path dst = src.parent_path() /
+                              (src.stem().string() + ".hr" +
+                               std::to_string(++s_stageSeq) + src.extension().string());
+        std::error_code ecc;
+        fs2::copy_file(src, dst, fs2::copy_options::overwrite_existing, ecc);
+        if (!ecc) {
+            loadPath = dst.generic_string();
+            fs2::path pdbSrc = src, pdbDst = dst; // pdb 同名随行（异常栈行号）；缺失不阻断
+            pdbSrc.replace_extension(".pdb");
+            pdbDst.replace_extension(".pdb");
+            if (fs2::exists(pdbSrc, ecc))
+                fs2::copy_file(pdbSrc, pdbDst, fs2::copy_options::overwrite_existing, ecc);
+        }
+    }
     int leaks = 0, collected = 0;
-    info.ok = dmReload_(AcpToUtf8(abs).c_str(), &leaks, &collected) == 1; // 同 LoadUserAssembly：边界前归一 UTF-8
+    info.ok = dmReload_(AcpToUtf8(loadPath).c_str(), &leaks, &collected) == 1; // 同 LoadUserAssembly：边界前归一 UTF-8
     info.leakCount = leaks;
     info.lastCollected = collected != 0;
     if (hrReloadsFn_) hrCount_ = hrReloadsFn_();

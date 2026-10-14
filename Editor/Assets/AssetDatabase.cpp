@@ -326,8 +326,10 @@ void AssetDatabase::SyncMeta(AssetEntry& e) const {
 
 // ------------------------------------------------------------ Open/Scan ----
 namespace {
-// 扫描排除（06 §1 布局）：点开头（.lemon/.git 等）与 obj/bin 任何层级；顶层
-// Game/Scenes/Data/Builds 整树排除（脚本工程/场景/数据/出包目录不是资产源）。
+// 扫描排除：点开头（.lemon/.git 等）与 obj/bin 任何层级（2026-10-14 布局归一后
+// obj/bin 深藏 Assets/Scripts/ 下，任意层排除仍是主防线）；顶层 Scenes/Data/Builds
+// 整树排除（场景/数据/出包目录不是资产源）。Game/ 保留为旧布局兜底排除
+//（MigrateLegacyGameDir 迁移失败/未开过的极旧项目）
 bool SkipDirAny(const std::string& name) {
     return name.empty() || name[0] == '.' || name == "obj" || name == "bin";
 }
@@ -705,6 +707,12 @@ void AssetDatabase::Rescan() {
         const std::string name = file.filename().string();
         if (name.empty() || name[0] == '.') continue;
         if (name.size() > 5 && name.compare(name.size() - 5, 5, ".meta") == 0) continue;
+        // 脚本工程构建系统文件（Assets/Scripts/*.csproj，2026-10-14 布局归一后入
+        // 资产树范围）：非内容资产，不进库不给 guid（Unity 的 csproj 也不在 Assets）
+        {
+            const std::string e = file.extension().string();
+            if (e == ".csproj" || e == ".sln") continue;
+        }
         if (!fs::is_regular_file(file, ec)) continue;
 
         std::string rel = fs::relative(file, root_, ec).generic_string();

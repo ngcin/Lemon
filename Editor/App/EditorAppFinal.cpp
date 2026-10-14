@@ -60,7 +60,7 @@ bool EditorApp::FinalSeedScene() {
 void EditorApp::FinalFrame(uint64_t frame) {
     if (Launch().finalTest && frame == 20) {
         namespace fs = std::filesystem;
-        const fs::path sp = fs::path(launch_->projectDir) / "Game" / "SpawnerBehaviour.cs";
+        const fs::path sp = fs::path(launch_->projectDir) / "Assets" / "Scripts" / "SpawnerBehaviour.cs";
         std::ifstream in(sp, std::ios::binary);
         std::string src((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         const size_t at = src.find("_tick > 40");
@@ -103,7 +103,7 @@ bool EditorApp::FinalVerdict(uint32_t playAliveAtStop, double playEnterMs,
         // Edit 态热重载一例（§6 #2 双态各一）：加 EditProbeBehaviour → 注册表可见
         {
             namespace fs = std::filesystem;
-            const fs::path gp = fs::path(launch_->projectDir) / "Game";
+            const fs::path gp = fs::path(launch_->projectDir) / "Assets" / "Scripts";
             std::ofstream probe(gp / "EditProbeBehaviour.cs", std::ios::trunc);
             probe << "public sealed class EditProbeBehaviour : Lemon.LemonBehaviour { }\n";
             std::ifstream in(gp / "GameMain.cs", std::ios::binary);
@@ -142,7 +142,7 @@ bool EditorApp::FinalVerdict(uint32_t playAliveAtStop, double playEnterMs,
         const bool fpsOk = finalPlayMinFps_ >= 45.0;
         const bool coldOk = firstFrameMs < 2000.0;
         finalOk = bagOk && hrOk && fpsOk && coldOk && autosaveOk && playVerified;
-        std::printf("[lemon] final-wizard: dirs/project.lemon/Game/spawn.png => %s\n", "OK");
+        std::printf("[lemon] final-wizard: dirs/project.lemon/Assets-Scripts/spawn.png => %s\n", "OK");
         std::printf("[lemon] final-judgement: zero-code scene entities=%u visible=%u\n",
                     smokeSeeded_, viewport_->LastSceneVisible());
         std::printf("[lemon] final-hotreload: play=%.0fms edit=%.0fms(≤2000) "

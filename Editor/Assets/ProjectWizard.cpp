@@ -142,7 +142,7 @@ std::string ProjectWizard::Create(const ProjectDesc& d, uint64_t* outSpawnGuid) 
             f << "\n}\n";
         }
         // Game/*.csproj HintPath 重锚（找到 Reference Include="Lemon.SDK" 段替换）
-        if (!d.sdkDir.empty()) ReanchorSdkHintPath(root / "Game", d.sdkDir);
+        if (!d.sdkDir.empty()) ReanchorSdkHintPath(root / "Assets" / "Scripts", d.sdkDir);
         LEMON_LOG("项目已创建（%s 模板）：%s（project guid %016llx）",
                   d.templateName.c_str(), root.string().c_str(),
                   (unsigned long long)projectGuid);
@@ -151,8 +151,8 @@ std::string ProjectWizard::Create(const ProjectDesc& d, uint64_t* outSpawnGuid) 
 
     // 目录骨架（06 §1）。T3b-9：Assets/anims、Assets/sprites = 推荐分类落点
     //（约定不强制——用户可自由重组/删除；guid 随 .meta 走，引用不受目录影响）
-    for (const char* dir : {"Assets", "Assets/anims", "Assets/sprites", "Scenes", "Prefabs",
-                            "Game", "Data", ".lemon/editor", "Builds"})
+    for (const char* dir : {"Assets", "Assets/anims", "Assets/sprites", "Assets/Scripts",
+                            "Scenes", "Prefabs", "Data", ".lemon/editor", "Builds"})
         fs::create_directories(root / dir, ec);
 
     // project.lemon：引擎版本锚点（06 §1：启动校验/迁移提示的依据）。
@@ -212,7 +212,7 @@ std::string ProjectWizard::Create(const ProjectDesc& d, uint64_t* outSpawnGuid) 
 
 bool ProjectWizard::WriteGameProject(const ProjectDesc& d, uint64_t spawnGuid) {
     if (d.sdkDir.empty()) return false;
-    fs::path game = fs::path(d.parentDir) / d.name / "Game";
+    fs::path game = fs::path(d.parentDir) / d.name / "Assets" / "Scripts";
     // HintPath 绝对锚定（创建期固化；06 §1 安装模型 M5 随安装器迁相对锚）
     fs::path sdk(d.sdkDir);
     {
@@ -409,6 +409,49 @@ bool ProjectWizard::AddBehaviourScript(const std::string& gameDirAbs,
         LEMON_WARN("脚本已建但未能自动注册（GameMain.cs 无注册锚点，请手加 %s）",
                    regLine.c_str());
     }
+    return true;
+}
+
+bool ProjectWizard::MigrateLegacyGameDir(const std::string& projectRoot) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path legacy = fs::path(projectRoot) / "Game";
+    if (!fs::is_directory(legacy, ec)) return false;
+    // 有 .csproj 才认脚本工程；散目录（用户手建同名文件夹）不动，交人裁决
+    bool hasCsproj = false;
+    for (auto it = fs::directory_iterator(legacy, ec); it != fs::directory_iterator();
+         it.increment(ec)) {
+        if (ec) break;
+        if (it->is_regular_file(ec) && it->path().extension() == ".csproj") {
+            hasCsproj = true;
+            break;
+        }
+    }
+    if (!hasCsproj) {
+        LEMON_WARN("发现顶层 Game/ 但无 .csproj（非脚本工程），不自动迁移：%s",
+                   legacy.string().c_str());
+        return false;
+    }
+    const fs::path dst = fs::path(projectRoot) / "Assets" / "Scripts";
+    if (fs::exists(dst, ec)) {
+        LEMON_WARN("迁移跳过：Assets/Scripts 已存在（与顶层 Game/ 并存，请手动合并）：%s",
+                   dst.string().c_str());
+        return false;
+    }
+    // obj/bin 是 restore 产物，内含旧绝对路径——迁移后必失配 → 先清（build 重生成）
+    for (const char* d : {"obj", "bin"}) {
+        std::error_code ecr;
+        fs::remove_all(legacy / d, ecr);
+    }
+    fs::create_directories(dst.parent_path(), ec);
+    fs::rename(legacy, dst, ec);
+    if (ec) {
+        LEMON_WARN("Game/ → Assets/Scripts 迁移失败（%s）——脚本工程保持原位",
+                   ec.message().c_str());
+        return false;
+    }
+    LEMON_LOG("旧布局已迁移：Game/ → Assets/Scripts/（脚本并入资产树；挂载身份按类名"
+              "不受影响，.cs 首扫将获 guid/.meta）");
     return true;
 }
 

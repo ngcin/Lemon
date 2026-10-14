@@ -3,7 +3,6 @@
   "assets.search_hint": "Search assets...",
   "assets.rescan": "Rescan",
   "assets.stat_fmt": "{0} assets | health issues {1}",
-
   "assets.filter.all": "All",
   "assets.filter.sprite": "Sprite",
   "assets.filter.clip": "Clip",
@@ -15,16 +14,13 @@
   "assets.filter.rml": "UI Doc",
   "assets.filter.rcss": "UI Style",
   "assets.filter.audio": "Audio",
-
   "assets.folder_tip_fmt": "Folder (click to enter)\n{0}",
   "assets.ctx.create_anim_from_folder": "Create Animation from This Folder...",
   "assets.ctx.new_anim_set": "New Animation Set...",
   "assets.ctx.copy_guid": "Copy GUID",
   "assets.ctx.audio_params": "Audio Settings...",
-
   "assets.rename.title": "Rename Asset",
   "assets.rename.hint": "New path (relative to Assets/; the .meta travels with it → scene references stay intact)",
-
   "assets.tip.imported_fmt": "Imported {0}x{1}",
   "assets.tip.not_imported": "Not imported",
   "assets.tip.dbl_table": "\nDouble-click: enlarged editor",
@@ -32,7 +28,6 @@
   "assets.tip.dbl_set": "\nDouble-click: animation workbench",
   "assets.tip.dbl_rml": "\nDouble-click: load into the game UI (shown during Play)",
   "assets.tip.rcss": "\nReferenced by documents via <link>; edits hot-reload",
-
   "assets.table.view_header": "Table View",
   "assets.table.enlarge": "Enlarge",
   "assets.table.editor_title_fmt": "{0} — Table Editor",
@@ -41,7 +36,6 @@
   "assets.table.playing_hint": "Play in progress: this run keeps its table snapshot; changes apply next run",
   "assets.table.rejected_fmt": "Commit rejected: {0}",
   "assets.table.write_fail_fmt": "Write failed (disk full / permissions?): {0}",
-
   "assets.audio.title": "Audio Settings",
   "assets.audio.loop_hint": "Loop start and end both 0 = loop the whole clip; changes take effect on next Play",
   "assets.audio.loop_start": "Loop start (s)",

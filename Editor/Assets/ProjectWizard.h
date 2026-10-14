@@ -46,6 +46,11 @@ public:
     /// 新建行为脚本（M4.6 §5-4）：模板 .cs 落 gameDir/<类名>.cs（已存在 = false），
     /// 并在 GameMain.cs 注册锚点前插 Register 行（锚点缺失 = 告警手注册，文件仍建）。
     static bool AddBehaviourScript(const std::string& gameDirAbs, const std::string& className);
+
+    /// 旧布局迁移（2026-10-14 布局归一）：顶层 Game/ 脚本工程 → Assets/Scripts/。
+    /// 前提 = Game/ 内有 .csproj 且 Assets/Scripts 不存在（并存 = 告警交手动合并）；
+    /// 迁移前清 obj/bin（restore 产物含旧绝对路径，迁后必失配）。返回 true = 已迁移。
+    static bool MigrateLegacyGameDir(const std::string& projectRoot);
 };
 
 } // namespace lemon::editor

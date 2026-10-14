@@ -74,8 +74,30 @@ private:
     void DrawFields(EditorApp& app, const ecs::ComponentMeta& meta, void* comp, ecs::Entity e);
     void DrawArraySeg(EditorApp& app, const ecs::ComponentMeta& meta, void* comp,
                       bool& anyActive, bool& anyDeactivated);
+    /// 新建脚本（2026-10-14 A 件二轮）：模板 .cs 落盘 locRel（项目根相对，脚本工程
+    /// （Assets/Scripts，旧布局 Game/ 兜底）内子目录按需创建，命名空间随目录推导）
+    /// + GameMain.Configure 追加 Register 行；watcher 热重载链自动编译换域。
+    /// 返回 false = 落盘/无工程/越界失败
+    bool CreateNewScript(EditorApp& app, const std::string& name, const std::string& locRel);
 
     std::unordered_set<uint64_t> openedHeaders_;
+    // ---- 组件默认折叠三件套（2026-10-14）----
+    int setAllOpen_ = -1;         // 右键"全部折叠/全部展开"请求：-1 无 / 0 折 / 1 展；
+                                  // 组件遍历（含脚本段）逐头直写存储后消费
+    int autoExpandCompId_ = -1;   // 新增组件 id：首帧强制展开（一次性；压过折叠记忆）
+    bool autoExpandScript_ = false; // 挂脚本后脚本段强制展开（一次性）
+    // ---- 新建脚本（2026-10-14 A 件；同日二轮重设计：类名 + 存储路径 + 预览）----
+    FilePicker scriptPicker_;      // 存储目录浏览（脚本工程根内；模态不叠加，向导同款回路）
+    std::string newScriptName_;    // 类名（std::string 直绑 InputText）
+    std::string newScriptLoc_;     // 存储目录（项目根相对，默认 Assets/Scripts；会话内记忆上次）
+    bool newScriptOpen_ = false;   // 延迟开模态（菜单项帧置位，add_script 弹窗收栈后消费）
+    bool newScriptFocus_ = false;  // 模态首帧聚焦类名输入
+    bool newScriptReopen_ = false; // 目录选择器关闭后重开对话框
+    // 自动挂载（A 件三补）：创建成功 → 记实体+类名；热重载换域出新类型即挂
+    //（轮询不挂钩子——换域时序在 EditorApp 侧；15s 超时兜编译失败）
+    ecs::Entity pendingAttachEntity_ = ecs::Entity::Null();
+    std::string pendingAttachClass_;
+    double pendingAttachDeadline_ = 0.0; // ImGui::GetTime() 秒
     // 属性轨空闲缓存（M4.7d 修：按 组件键→快照 多槽——原单槽被"排最后的组件"
     // 的空闲刷新覆盖，编辑首个组件时 key 永不匹配 → 控件编辑不进 Undo）
     std::unordered_map<uint64_t, std::vector<uint8_t>> idleSnaps_;
@@ -190,7 +212,6 @@ private:
     int typeFilter_ = 0;          // 类型过滤（T3b-9）：0 全部/1 图/2 动画/3 Prefab/4 表/5 脚本
     uint64_t renamingGuid_ = 0;   // 0 = 无重命名进行中
     std::string renameBuf_;
-
     // ---- 音频参数模态（M7c 批②：loop/preload + 听感覆写三件 → SetAudioImporter）----
     uint64_t audioFxGuid_ = 0;   // 0 = 无编辑进行中
     float afxLoopStart_ = 0.0f, afxLoopEnd_ = 0.0f;

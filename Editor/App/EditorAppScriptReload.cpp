@@ -41,12 +41,23 @@ void EditorApp::LogCompileErrors(const std::string& dotnetOutput) {
     if (errs.size() >= 50) LEMON_WARN("编译错误超 50 条，仅列前 50");
 }
 
+// 脚本工程目录（2026-10-14 布局归一：Game/ → Assets/Scripts/，随资产树 Unity 式
+// 管理）：新布局优先；顶层 Game/ 兜底（MigrateLegacyGameDir 失败/极旧项目未开过）
+std::string EditorApp::ScriptProjectDir() {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const std::string& root = ctx_.Assets().ProjectRoot();
+    const fs::path modern = fs::path(root) / "Assets" / "Scripts";
+    if (fs::is_directory(modern, ec)) return modern.generic_string();
+    return root + "/Game";
+}
+
 bool EditorApp::FindGameProject(std::string& csproj, std::string& dll) {
     namespace fs = std::filesystem;
     const std::string& root = ctx_.Assets().ProjectRoot();
     if (root.empty()) return false;
     std::error_code ec;
-    for (auto it = fs::directory_iterator(root + "/Game", ec);
+    for (auto it = fs::directory_iterator(ScriptProjectDir(), ec);
          it != fs::directory_iterator(); it.increment(ec)) {
         if (ec || !it->is_regular_file(ec)) continue;
         if (it->path().extension() != ".csproj") continue;
@@ -61,6 +72,24 @@ bool EditorApp::FindGameProject(std::string& csproj, std::string& dll) {
 bool EditorApp::InitScriptHostFrom(const std::string& dllAbs) {
 #ifdef LEMON_SCRIPT_DIR
     namespace fs = std::filesystem;
+    // 换装唯一路径副本（Game.hr<N>.dll）的跨会话清理：本会话尚未装载任何副本，
+    // 目录里的遗留全是往期会话产物，可安全删。删除失败（Windows 侧被映射等）静默
+    // 跳过——下次启动再清，不阻断装配
+    {
+        std::error_code ecg;
+        const fs::path dir = fs::path(dllAbs).parent_path();
+        const std::string stem = fs::path(dllAbs).stem().string();
+        for (auto it = fs::directory_iterator(dir, ecg); it != fs::directory_iterator();
+             it.increment(ecg)) {
+            if (ecg) break;
+            const std::string n = it->path().filename().string();
+            if (n.rfind(stem + ".hr", 0) != 0 ||
+                n.size() < 4 || n.compare(n.size() - 4, 4, ".dll") != 0)
+                continue;
+            std::error_code ecr;
+            fs::remove(it->path(), ecr);
+        }
+    }
     if (!fs::exists(dllAbs)) {
         LEMON_WARN("脚本装配失败：程序集不存在 %s", dllAbs.c_str());
         return false;
@@ -103,7 +132,7 @@ bool EditorApp::ScriptSourceChanged() {
     // FileWatcher 只报"有变化"；这里过滤出真正需要重编译的源写（.cs/.csproj，
     // 排除 obj/bin 生成物——dotnet build 会改写它们，否则自我触发死循环）
     namespace fs = std::filesystem;
-    const std::string gameDir = ctx_.Assets().ProjectRoot() + "/Game";
+    const std::string gameDir = ScriptProjectDir();
     std::error_code ec;
     int64_t newest = 0;
     for (auto it = fs::recursive_directory_iterator(gameDir,
