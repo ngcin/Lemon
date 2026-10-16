@@ -698,6 +698,63 @@ void TestControllerAndGraph() {
     const std::vector<std::string> w2 = assets::ControllerStructuralWarnings(l);
     Expect(w2.size() == 1 && w2[0].find("A") != std::string::npos, "换 entry 后旧入口不可达");
     Expect(assets::ControllerStructuralWarnings(bad).empty(), "坏档 lint 不炸（空返）");
+
+    // -- M8 批⑩a：画布布局（editor.nodes 解析归一/容错/自动布局/量化/可达性位图）--
+    // 带 editor 块：手写键序倒置 = 解析按 states 序归一（序列化同序 → roundtrip）
+    const char* goldenEd =
+        "{\n  \"schemaVersion\": 1,\n  \"name\": \"Basic\",\n  \"params\": [\n"
+        "    { \"name\": \"speed\", \"kind\": \"float\" }\n  ],\n"
+        "  \"entry\": \"Idle\",\n  \"states\": [\"Idle\", \"Walk\", \"Attack\"],\n"
+        "  \"transitions\": [\n"
+        "    { \"from\": \"Idle\", \"to\": \"Walk\", \"when\": [{ \"param\": \"speed\", \">\": 0.1 "
+        "}] },\n"
+        "    { \"from\": \"Attack\", \"to\": \"Idle\", \"on\": \"exitTime\" }\n  ],\n"
+        "  \"editor\": {\n    \"nodes\": {\n      \"Attack\": [384, 96],\n"
+        "      \"Idle\": [0, 0],\n      \"Walk\": [192, 0]\n    }\n  }\n}";
+    const assets::ControllerData ce = assets::ParseControllerJson(goldenEd);
+    Expect(ce.ok, "editor 块解析");
+    Expect(ce.layout.size() == 3 && ce.layout[0].state == "Idle" && ce.layout[0].x == 0 &&
+               ce.layout[0].y == 0 && ce.layout[1].state == "Walk" && ce.layout[1].x == 192 &&
+               ce.layout[2].state == "Attack" && ce.layout[2].y == 96,
+           "editor 键序归一（states 序）+ 坐标");
+    { // roundtrip 逐字节（规范序）——序列化产物流回解析=布局等值
+        const assets::ControllerData ce2 =
+            assets::ParseControllerJson(assets::ControllerToJson(ce));
+        Expect(ce2.ok && ce2.layout == ce.layout, "editor 块 roundtrip 等值");
+    }
+    // 容错：未列状态键/坏坐标（字符串/短数组）忽略单项，不拦解析
+    const assets::ControllerData ctl = assets::ParseControllerJson(
+        R"({ "states": ["A","B"], "entry": "A", "transitions": [{"from":"A","to":"B","on":"exitTime"}],
+             "editor": { "nodes": { "Ghost": [8, 8], "A": [8, 16], "B": "bad", "C": [1] } } })");
+    Expect(ctl.ok && ctl.layout.size() == 1 && ctl.layout[0].state == "A" &&
+               ctl.layout[0].x == 8 && ctl.layout[0].y == 16,
+           "editor 容错：坏项忽略单项");
+    Expect(assets::ControllerToJson(ctl).find("Ghost") == std::string::npos,
+           "editor 悬空键不序列化（保存即清洗）");
+    // 自动布局：确定性 + BFS 分层坐标 + 不可达尾列 + 8px 网格对齐
+    assets::ControllerData al;
+    al.ok = true;
+    al.states = {"A", "B", "C", "D", "E"};
+    al.entry = "A";
+    al.transitions = {{"A", "B", true, {}}, {"A", "C", true, {}}, {"C", "D", true, {}}};
+    const std::vector<assets::ControllerNodePos> al1 = assets::ControllerAutoLayoutNodes(al);
+    const std::vector<assets::ControllerNodePos> al2 = assets::ControllerAutoLayoutNodes(al);
+    Expect(al1 == al2 && al1.size() == 5, "自动布局确定性");
+    Expect(al1[0].x == 0 && al1[0].y == 0 && al1[1].x == 192 && al1[1].y == 0 &&
+               al1[2].x == 192 && al1[2].y == 96 && al1[3].x == 384 && al1[3].y == 0 &&
+               al1[4].x == 576 && al1[4].y == 0,
+           "自动布局分层坐标/不可达尾列");
+    bool onGrid = true;
+    for (const assets::ControllerNodePos& np : al1)
+        onGrid &= (np.x % 8 == 0) && (np.y % 8 == 0);
+    Expect(onGrid, "自动布局 8px 网格对齐");
+    const std::vector<uint8_t> rch = assets::ControllerReachability(al);
+    Expect(rch.size() == 5 && rch[0] && rch[1] && rch[2] && rch[3] && !rch[4],
+           "可达性位图（E 不可达；与 lint 同源）");
+    Expect(assets::ControllerReachability(bad).empty(), "坏档可达性全 0 不炸");
+    Expect(assets::ControllerSnapGrid(7) == 8 && assets::ControllerSnapGrid(-5) == -8 &&
+               assets::ControllerSnapGrid(8) == 8 && assets::ControllerSnapGrid(3) == 0,
+           "画布网格量化（8px 最近格）");
 }
 #endif // LEMON_EDITOR_CORE
 

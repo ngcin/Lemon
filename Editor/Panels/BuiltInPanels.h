@@ -481,20 +481,20 @@ private:
     std::string setErr_;
 };
 
-/// AnimController（M8 批⑨）：.controller 状态机工作台——ADR-013 登记的 v1 形态
-/// （"JSON 手写 + Inspector 编辑"）编辑面补全。**不做可视化图**（"游戏阻塞
-/// 触发"挂起项不动，ADR-013 D4 极简词面：无 blend tree/layers/sub-FSM）。
-/// 布局 = 三张表：左列参数表（name/kind/def，≤8 拦——AnimParams 黑板上限）+
-/// 状态词表（选中/inline 改名/增删，entry 徽标）；右区选中状态出边表
-/// （to 下拉 + exitTime 勾选 + 条件行 param/op/value；trigger 参数固定 op）+
-/// 入边只读行。灵魂 = 编辑期校验：结构 lint（不可达状态，引擎
-/// ControllerStructuralWarnings 同源）+ 跨资产黄字（exitTime 出边状态在项目
-/// .ani 集中绑定的 clip 为 Loop 模式 → 段末边沿永不触发——Systems exitTime
-/// 只认非 loop 收尾的登记边角，编辑面堵而非改运行时求值）；保存门禁拦
-/// 悬空引用/空条件/超 8 参数（ParseControllerJson 同一判据）。保存走 Animation
-/// 面板三关范式（校验 → 序列化 → roundtrip 预验 → 原子写 → Rescan）。Play 态
-/// 只读（快照语义横幅）。新建 = 空态 inline（落 Assets/Controllers/，ADR-013
-/// D3）。双击 AssetBrowser 的 .controller 进入。
+/// AnimController（M8 批⑨ 三表工作台 / 批⑩a 画布化）：.controller 状态机工作台
+/// ——ADR-013 D6 定形"图管结构 + 检查器管细节"。**精简可视化图**（批⑩：节点=
+/// 状态/边=transition 画布 + 布局随档持久化；不做 any-state/blend/layers/sub-FSM，
+/// D4 红线）。布局 = 左画布（自绘 ImDrawList：节点拖动/平移/缩放/适配；边=贝塞尔
+/// +箭头）+ 右检查器列（参数表 + 状态词表 + 选中状态出边表——b9 三表保留）。
+/// 布局数据随 .controller 顶层可选 editor.nodes（旧档缺省 = 确定性自动布局，
+/// 运行时/旧档零感知）。灵魂 = 编辑期校验：结构 lint（不可达状态，引擎
+/// ControllerStructuralWarnings/ControllerReachability 同源——画布灰化同数据）
+/// + 跨资产黄字（exitTime 出边状态在项目 .ani 集中绑定的 clip 为 Loop 模式 →
+/// 段末边沿永不触发——Systems exitTime 只认非 loop 收尾的登记边角，编辑面堵而非
+/// 改运行时求值）；保存门禁拦悬空引用/空条件/超 8 参数（ParseControllerJson
+/// 同一判据）。保存走 Animation 面板三关范式（校验 → 序列化 → roundtrip 预验 →
+/// 原子写 → Rescan）。Play 态只读（快照语义横幅）。新建 = 空态 inline（落
+/// Assets/Controllers/，ADR-013 D3）。双击 AssetBrowser 的 .controller 进入。
 class AnimControllerPanel final : public IEditorPanel {
 public:
     const char* Name() const override { return "AnimController"; }
@@ -533,6 +533,13 @@ public:
     void SelectStateForTest(int idx) { selState_ = idx; }
     /// 语义直调：保存（与「保存」按钮同入口——门禁/roundtrip/落盘全链）
     bool SaveForTest(EditorApp& app);
+    // ---- 批⑩a：画布布局（冒烟：拖拽同通道移动 + 盘上 editor 块 roundtrip）----
+    /// 状态布局坐标查询（缺 = false；EnsureLayout 后恒有——自动布局已生成）
+    bool NodePosForTest(const std::string& state, int& x, int& y) const;
+    /// 语义直调：落位（与画布拖动同一通道 SetNodePosition——网格量化/归一同款）
+    void MoveNodeForTest(const std::string& state, int x, int y) {
+        SetNodePosition(state, x, y);
+    }
 
 private:
     void LoadFrom(const AssetDatabase& db, const AssetEntry& e); // 缓存键失效 → 重读
@@ -545,12 +552,22 @@ private:
         lintDirty_ = true; // 结构变更 → 跨资产 lint 重算（结构 lint 每帧 O(N+M) 直算）
     }
     void DrawCreateForm(EditorApp& app, bool ro);  // 空态新建表单（边沿开）
-    void DrawParamsTable(EditorApp& app);          // 左列上：参数（≤8 拦）
-    void DrawStatesList(EditorApp& app);           // 左列下：状态词表 + inline 改名
-    void DrawTransitions(EditorApp& app);          // 右区：出边表 + 入边只读行
+    void DrawCanvas(EditorApp& app, bool ro);      // 左画布（批⑩a：节点/边/拖动/相机）
+    void DrawParamsTable(EditorApp& app);          // 检查器：参数（≤8 拦）
+    void DrawStatesList(EditorApp& app);           // 检查器：状态词表 + inline 改名
+    void DrawTransitions(EditorApp& app);          // 检查器：出边表 + 入边只读行
     void RecomputeLint(EditorApp& app); // 跨资产 lint（exitTime×Loop 扫集，缓存剪枝）
     /// 状态名 → 下标（-1 = 未列；combo/入边归一单源）
     int StateIndex(const std::string& name) const;
+    // ---- 批⑩a：布局（editor.nodes）----
+    int LayoutIndexOf(const std::string& state) const; // -1 = 无布局项
+    /// 缺失状态补自动布局（不改 dirty——打开旧档不显"未保存"）；幂等
+    void EnsureLayout();
+    /// 归一 states 序 + 丢弃悬空键（序列化/roundtrip 等值前提；TrySave 前必调）
+    void NormalizeLayout();
+    /// 落位单一入口（画布拖动与 ForTest 同通道）：网格量化 + dirty
+    void SetNodePosition(const std::string& state, int x, int y);
+    void FitCanvas(float availW, float availH); // F/首次打开：全节点适配视图
 
     uint64_t targetGuid_ = 0;
     uint64_t loadedGuid_ = 0, loadedHash_ = 0; // 缓存键（外部改动/保存回读 = 重读）
@@ -572,6 +589,14 @@ private:
     std::string createDir_; // 落点目录（相对项目根；空 = Assets/Controllers）
     std::string createName_ = "new-controller";
     std::string createErr_;
+    // 画布相机/拖动（批⑩a；布局数据住 edit_.layout——随档。坐标用裸 float 对，
+    // 本头文件不引 imgui.h——ImVec2 只在 .cpp 内用）
+    float canvasZoom_ = 1.0f;
+    float canvasPanX_ = 0.0f, canvasPanY_ = 0.0f;
+    bool canvasFitPending_ = true; // 装载/自动布局后首帧适配视图（F 键同口径）
+    int dragNode_ = -1;            // 拖动中的状态下标（-1 = 无）
+    float dragStartGX_ = 0.0f, dragStartGY_ = 0.0f;
+    int dragOrigX_ = 0, dragOrigY_ = 0;
 };
 
 } // namespace lemon::editor

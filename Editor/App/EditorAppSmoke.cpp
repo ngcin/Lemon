@@ -1272,6 +1272,9 @@ struct AnimSmokeState {
     // 语义直调编辑→保存→盘上 roundtrip / 悬空引用被保存门禁拒（档不被写坏）
     bool smokeCtrlOpenOk = false, smokeCtrlLoadOk = false, smokeCtrlSaveOk = false,
          smokeCtrlGateOk = false;
+    // M8 批⑩a：画布布局链——自动布局（旧档缺 editor 块）+ 拖拽同通道移动 + 保存
+    // → 盘上 editor 块 roundtrip（API 级：窗口不开——b9 标签组通道冲突教训）
+    bool smokeCtrlCanvasOk = false, smokeCtrlCanvasDone = false;
     Vec2 smokeCreatePt{-1.0e9f, -1.0e9f};
     Vec2 smokePickPt{-1.0e9f, -1.0e9f};
     Vec2 smokeSheetPt{-1.0e9f, -1.0e9f};
@@ -1617,6 +1620,40 @@ void EditorApp::SmokeAnimFrame(uint64_t frame) {
                 }
                 if (!g_animSmoke.smokeCtrlGateOk)
                     LEMON_ERROR("smoke-anim：状态机保存门禁未拒悬空引用/跨资产黄字缺席");
+            } else if (frame == 36 && !g_animSmoke.smokeCtrlCanvasDone) {
+                // M8 批⑩a：画布布局链（API 级——不在开窗注入链上抢标签组）：
+                // 装载即自动布局（旧档无 editor 块）→ 拖拽同通道移动 → 保存 → 盘上
+                // editor 块 roundtrip（states 全量 + 目标坐标 + 解析回读等值）
+                g_animSmoke.smokeCtrlCanvasDone = true;
+                if (PanelRegistry::Entry* en = panels_.FindEntry("AnimController")) {
+                    AnimControllerPanel* cp = static_cast<AnimControllerPanel*>(en->panel);
+                    cp->EnsureLoaded(*this); // f35 保存后 hash 变 → 重读（布局随盘）
+                    int ax = -1, ay = -1;
+                    const bool autoLayout = cp->NodePosForTest("walk", ax, ay);
+                    cp->MoveNodeForTest("whole", 320, 64); // 拖动同通道（量化同款）
+                    const bool saved = cp->SaveForTest(*this);
+                    bool diskOk = false;
+                    if (saved) {
+                        const std::filesystem::path gp =
+                            std::filesystem::path(ctx_.Assets().ProjectRoot()) / "Assets" /
+                            "anim-graph.controller";
+                        std::ifstream vf(gp, std::ios::binary);
+                        std::string vtext((std::istreambuf_iterator<char>(vf)),
+                                          std::istreambuf_iterator<char>());
+                        const assets::ControllerData v = assets::ParseControllerJson(vtext);
+                        int wx = -1, wy = -1;
+                        for (const assets::ControllerNodePos& np : v.layout)
+                            if (np.state == "whole") {
+                                wx = np.x;
+                                wy = np.y;
+                            }
+                        diskOk = v.ok && v.layout.size() == v.states.size() && wx == 320 &&
+                                 wy == 64;
+                    }
+                    g_animSmoke.smokeCtrlCanvasOk = autoLayout && saved && diskOk;
+                }
+                if (!g_animSmoke.smokeCtrlCanvasOk)
+                    LEMON_ERROR("smoke-anim：画布布局链不符（自动布局/移动落盘/editor 块）");
             }
         } else if (frame == 40) {
             ImVec2 mn, mx;
@@ -2044,14 +2081,16 @@ bool EditorApp::SmokeAnimVerdict() {
              g_animSmoke.smokeDragItemOk &&
              g_animSmoke.smokeLeftColOk &&
              g_animSmoke.smokeCtrlOpenOk && g_animSmoke.smokeCtrlLoadOk &&
-             g_animSmoke.smokeCtrlSaveOk && g_animSmoke.smokeCtrlGateOk;
+             g_animSmoke.smokeCtrlSaveOk && g_animSmoke.smokeCtrlGateOk &&
+             g_animSmoke.smokeCtrlCanvasOk;
     std::printf("[lemon] smoke-anim: prog(maxFrame=%u slice=%s booked=%u)%s "
                 "queue(hitClip=%s hit=%s back=%s) fx(text/bar=%s) "
                 "edit(rt=%s cache=%s whole=%s) set(rt=%s cache=%s open=%s "
                 "create=%s flow=%s) graph(rt=%s cache=%s switch=%s) "
                 "pick(click=%s shift=%s all=%s sheet(all=%s clear=%s close=%s row=%s)) "
                 "multiadd(count=%s order=%s) create(folder=%s dblclip=%s adopt=%s) "
-                "drag(item=%s) leftcol(meta=%s) ctrl(open=%s load=%s save=%s gate=%s) "
+                "drag(item=%s) leftcol(meta=%s) ctrl(open=%s load=%s save=%s gate=%s "
+                "layout=%s) "
                 "=> %s\n",
                 (unsigned)g_animSmoke.smokeAnimMax[0], g_animSmoke.smokeAnimSlice[0] ? "YES" : "NO",
                 sh ? sh->sliceCount : 0, yami, hitBooked ? "booked" : "MISSING",
@@ -2074,6 +2113,7 @@ bool EditorApp::SmokeAnimVerdict() {
                 g_animSmoke.smokeLeftColOk ? "YES" : "NO",
                 g_animSmoke.smokeCtrlOpenOk ? "YES" : "NO", g_animSmoke.smokeCtrlLoadOk ? "YES" : "NO",
                 g_animSmoke.smokeCtrlSaveOk ? "YES" : "NO", g_animSmoke.smokeCtrlGateOk ? "YES" : "NO",
+                g_animSmoke.smokeCtrlCanvasOk ? "YES" : "NO",
                 animOk ? "OK" : "FAIL");
     return animOk;
 }

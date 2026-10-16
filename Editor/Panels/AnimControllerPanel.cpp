@@ -1,9 +1,11 @@
-// Lemon 编辑器 — AnimController 面板（M8 批⑨：.controller 状态机工作台）
-// ADR-013 登记的 v1 编辑面补全——"JSON 手写 + Inspector 编辑"的后者从未建过，
-// 本批补齐；可视化图（节点/连线）维持"游戏阻塞触发"挂起不动。
-// 布局 = 三张表：左列（参数黑板 ≤8 + 状态词表）+ 右区（选中状态出边表 +
-// 入边只读行）。编辑期校验是本批的灵魂：
+// Lemon 编辑器 — AnimController 面板（M8 批⑨ 三表工作台 / 批⑩a 画布化）
+// ADR-013 D6 定形"图管结构 + 检查器管细节"：左画布（节点=状态/边=transition，
+// 自绘 ImDrawList，拖动/平移/缩放/适配）+ 右检查器列（b9 三表保留：参数/
+// 状态词表/选中出边）。布局随 .controller 顶层可选 editor.nodes 持久化
+// （旧档缺省 = 确定性自动布局，运行时/旧档零感知；批⑩b 接连线/检查器细节/
+// 撤销重做，本批不动）。编辑期校验是本批灵魂：
 //   * 结构 lint（不可达状态）——引擎 ControllerStructuralWarnings 同源，每帧直算；
+//     画布灰化用 ControllerReachability（同一 BFS，杜绝两套）。
 //   * 跨资产黄字（exitTime×Loop 脚枪）——exitTime 出边状态在项目 .ani 集中绑定
 //     的 clip 若非 Once 模式，段末边沿永不触发（Systems.cpp exitTime 只认非 loop
 //     收尾边沿的登记边角）。运行时语义不动，编辑面把作者错误拦在写盘前；
@@ -12,6 +14,7 @@
 // 快照语义：Play 态只读横幅；保存后下次 Enter Play 生效。
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -30,7 +33,9 @@
 
 namespace lemon::editor {
 namespace {
-constexpr float kLeftWidth = 250.0f; // 左列宽（参数 + 状态词表）
+constexpr float kNodeW = 160.0f;  // 节点矩形（图空间）
+constexpr float kNodeH = 56.0f;
+constexpr float kNodeRad = 6.0f;  // 圆角（图空间）
 
 const char* KindLabel(int kind) {
     return kind == 1 ? "bool" : kind == 2 ? "trigger" : "float";
@@ -67,6 +72,8 @@ void AnimControllerPanel::LoadFrom(const AssetDatabase& db, const AssetEntry& e)
     }
     if (edit_.ok && edit_.name.empty())
         edit_.name = std::filesystem::path(e.relPath).stem().string();
+    EnsureLayout(); // 旧档无 editor 块 = 内存自动布局（不改 dirty；保存时随档写出）
+    canvasFitPending_ = true;
     warnings_.clear();
     lintDirty_ = true;
 }
@@ -75,6 +82,61 @@ int AnimControllerPanel::StateIndex(const std::string& name) const {
     for (size_t i = 0; i < edit_.states.size(); ++i)
         if (edit_.states[i] == name) return (int)i;
     return -1;
+}
+
+// ---------------------------------------------------- 布局（editor.nodes）----
+
+int AnimControllerPanel::LayoutIndexOf(const std::string& state) const {
+    for (size_t i = 0; i < edit_.layout.size(); ++i)
+        if (edit_.layout[i].state == state) return (int)i;
+    return -1;
+}
+
+void AnimControllerPanel::EnsureLayout() {
+    if (!edit_.ok || edit_.states.empty()) return;
+    bool missing = false;
+    for (const std::string& s : edit_.states)
+        if (LayoutIndexOf(s) < 0) {
+            missing = true;
+            break;
+        }
+    if (missing) {
+        const std::vector<assets::ControllerNodePos> autoPos =
+            assets::ControllerAutoLayoutNodes(edit_);
+        for (const assets::ControllerNodePos& np : autoPos)
+            if (LayoutIndexOf(np.state) < 0) edit_.layout.push_back(np);
+    }
+    NormalizeLayout();
+}
+
+void AnimControllerPanel::NormalizeLayout() {
+    if (edit_.layout.empty()) return;
+    std::vector<assets::ControllerNodePos> out;
+    out.reserve(edit_.states.size());
+    for (const std::string& s : edit_.states)
+        if (const int li = LayoutIndexOf(s); li >= 0)
+            out.push_back(edit_.layout[(size_t)li]);
+    edit_.layout = std::move(out);
+}
+
+void AnimControllerPanel::SetNodePosition(const std::string& state, int x, int y) {
+    if (!edit_.ok) return;
+    EnsureLayout();
+    const int li = LayoutIndexOf(state);
+    if (li < 0) return;
+    const int nx = assets::ControllerSnapGrid(x), ny = assets::ControllerSnapGrid(y);
+    if (edit_.layout[(size_t)li].x == nx && edit_.layout[(size_t)li].y == ny) return;
+    edit_.layout[(size_t)li].x = nx;
+    edit_.layout[(size_t)li].y = ny;
+    dirty_ = true; // 布局不碰结构——不动 lintDirty_（跨资产扫描免重算）
+}
+
+bool AnimControllerPanel::NodePosForTest(const std::string& state, int& x, int& y) const {
+    const int li = LayoutIndexOf(state);
+    if (li < 0) return false;
+    x = edit_.layout[(size_t)li].x;
+    y = edit_.layout[(size_t)li].y;
+    return true;
 }
 
 void AnimControllerPanel::EnsureLoaded(EditorApp& app) {
@@ -159,6 +221,7 @@ bool AnimControllerPanel::TrySave(EditorApp& app, const AssetEntry& e) {
     }
     // entry 显式化（缺省语义 = states[0]，落盘前钉死——roundtrip 等值的前提）
     if (edit_.entry.empty() && !edit_.states.empty()) edit_.entry = edit_.states[0];
+    NormalizeLayout(); // 悬空布局键清洗 + states 序（roundtrip 等值前提）
     const std::string abs = app.Ctx().Assets().AbsolutePath(e);
     // 门禁 = 序列化 → ParseControllerJson（与运行时 BuildPlayControllerCache 同一
     // 判据：悬空引用/空条件/超 8 参数/重名）→ roundtrip 等值（序列化器缺陷不
@@ -176,7 +239,8 @@ bool AnimControllerPanel::TrySave(EditorApp& app, const AssetEntry& e) {
         return false;
     }
     if (back.name != edit_.name || back.entry != edit_.entry || back.states != edit_.states ||
-        back.params != edit_.params || back.transitions != edit_.transitions) {
+        back.params != edit_.params || back.transitions != edit_.transitions ||
+        back.layout != edit_.layout) {
         saveMsg_ = tr("animctrl.err.roundtrip");
         saveOk_ = false;
         return false;
@@ -251,6 +315,7 @@ void AnimControllerPanel::AddState(const std::string& name) {
     if (!edit_.ok || name.empty() || StateIndex(name) >= 0) return;
     edit_.states.push_back(name);
     selState_ = (int)edit_.states.size() - 1;
+    EnsureLayout(); // 新状态补自动布局位（画布立即可见）
     MarkDirty();
 }
 
@@ -385,6 +450,8 @@ void AnimControllerPanel::DrawStatesList(EditorApp& app) {
                     const std::string old = edit_.states[i];
                     edit_.states[i] = renameBuf_;
                     if (edit_.entry == old) edit_.entry = renameBuf_;
+                    if (const int li = LayoutIndexOf(old); li >= 0)
+                        edit_.layout[(size_t)li].state = renameBuf_; // 布局键随迁
                     for (auto& t : edit_.transitions) { // 引用传播（from/to）
                         if (t.from == old) t.from = renameBuf_;
                         if (t.to == old) t.to = renameBuf_;
@@ -437,6 +504,176 @@ void AnimControllerPanel::DrawStatesList(EditorApp& app) {
         AddState(stNewName_);
         stNewName_.clear();
     }
+}
+
+// ---------------------------------------------------------------- 画布 ----
+
+void AnimControllerPanel::FitCanvas(float availW, float availH) {
+    if (edit_.layout.empty()) {
+        canvasZoom_ = 1.0f;
+        canvasPanX_ = canvasPanY_ = 0.0f;
+        return;
+    }
+    float minX = 1.0e9f, minY = 1.0e9f, maxX = -1.0e9f, maxY = -1.0e9f;
+    for (const assets::ControllerNodePos& np : edit_.layout) {
+        minX = std::min(minX, (float)np.x);
+        minY = std::min(minY, (float)np.y);
+        maxX = std::max(maxX, (float)np.x + kNodeW);
+        maxY = std::max(maxY, (float)np.y + kNodeH);
+    }
+    const float pad = 40.0f;
+    const float w = std::max(maxX - minX + pad * 2.0f, 1.0f);
+    const float h = std::max(maxY - minY + pad * 2.0f, 1.0f);
+    canvasZoom_ = std::clamp(std::min(availW / w, availH / h), 0.25f, 2.0f);
+    canvasPanX_ = (availW - (minX + maxX) * canvasZoom_) * 0.5f;
+    canvasPanY_ = (availH - (minY + maxY) * canvasZoom_) * 0.5f;
+}
+
+void AnimControllerPanel::DrawCanvas(EditorApp& app, bool ro) {
+    using lemon::editor::loc::tr;
+    (void)app;
+    EnsureLayout();
+    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    ImVec2 avail = ImGui::GetContentRegionAvail();
+    if (avail.x < 64.0f) avail.x = 64.0f;
+    if (avail.y < 64.0f) avail.y = 64.0f;
+    ImGui::InvisibleButton("##ctrlcanvas", avail,
+                           ImGuiButtonFlags_MouseButtonLeft |
+                               ImGuiButtonFlags_MouseButtonMiddle);
+    const bool hovered = ImGui::IsItemHovered();
+    testhooks::Stash("animctrl.canvas", p0, ImVec2(p0.x + avail.x, p0.y + avail.y));
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->PushClipRect(p0, ImVec2(p0.x + avail.x, p0.y + avail.y), true);
+
+    const ImGuiIO& io = ImGui::GetIO();
+    if (canvasFitPending_) {
+        FitCanvas(avail.x, avail.y);
+        canvasFitPending_ = false;
+    }
+    // 相机：screen = p0 + graph * zoom + pan
+    auto toScreen = [&](float gx, float gy) {
+        return ImVec2(p0.x + gx * canvasZoom_ + canvasPanX_,
+                      p0.y + gy * canvasZoom_ + canvasPanY_);
+    };
+    auto toGraph = [&](const ImVec2& sp) {
+        return ImVec2((sp.x - p0.x - canvasPanX_) / canvasZoom_,
+                      (sp.y - p0.y - canvasPanY_) / canvasZoom_);
+    };
+    auto nodeRectGraph = [&](int li) {
+        const assets::ControllerNodePos& np = edit_.layout[(size_t)li];
+        return ImVec4{(float)np.x, (float)np.y, (float)np.x + kNodeW, (float)np.y + kNodeH};
+    };
+    const ImVec2 gm = toGraph(io.MousePos);
+
+    // ---- 相机操作：滚轮缩放（锚定光标）/ F 适配 / 中键或 空格+左键 平移 ----
+    if (hovered && io.MouseWheel != 0.0f) {
+        const ImVec2 anchor = toGraph(io.MousePos);
+        canvasZoom_ =
+            std::clamp(canvasZoom_ * std::pow(1.15f, io.MouseWheel), 0.25f, 2.0f);
+        canvasPanX_ = io.MousePos.x - p0.x - anchor.x * canvasZoom_;
+        canvasPanY_ = io.MousePos.y - p0.y - anchor.y * canvasZoom_;
+    }
+    if (hovered && ImGui::IsKeyPressed(ImGuiKey_F)) FitCanvas(avail.x, avail.y);
+    const bool spaceDown = ImGui::IsKeyDown(ImGuiKey_Space);
+    if (dragNode_ < 0 && ImGui::IsItemActive() &&
+        (ImGui::IsMouseDragging(ImGuiMouseButton_Middle) ||
+         (spaceDown && ImGui::IsMouseDragging(ImGuiMouseButton_Left)))) {
+        canvasPanX_ += io.MouseDelta.x;
+        canvasPanY_ += io.MouseDelta.y;
+    }
+
+    // ---- 节点命中/拖动（左键按下命中=选中+拖动；空格按住不选）----
+    if (!ro && dragNode_ < 0 && hovered && !spaceDown &&
+        ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        for (size_t li = 0; li < edit_.layout.size(); ++li) {
+            const ImVec4 r = nodeRectGraph((int)li);
+            if (gm.x >= r.x && gm.x <= r.z && gm.y >= r.y && gm.y <= r.w) {
+                dragNode_ = StateIndex(edit_.layout[li].state);
+                if (dragNode_ >= 0) {
+                    selState_ = dragNode_;
+                    dragStartGX_ = gm.x;
+                    dragStartGY_ = gm.y;
+                    dragOrigX_ = edit_.layout[li].x;
+                    dragOrigY_ = edit_.layout[li].y;
+                }
+                break;
+            }
+        }
+    }
+    if (dragNode_ >= 0 && dragNode_ < (int)edit_.states.size() &&
+        ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        SetNodePosition(edit_.states[(size_t)dragNode_],
+                        dragOrigX_ + (int)std::lround(gm.x - dragStartGX_),
+                        dragOrigY_ + (int)std::lround(gm.y - dragStartGY_));
+    }
+    if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) dragNode_ = -1;
+
+    // ---- 绘制：先边后节点（节点盖住线心）；不可达灰化 = 引擎可达性同源 ----
+    const std::vector<uint8_t> reach = assets::ControllerReachability(edit_);
+    const ImU32 edgeCol = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    for (const assets::ControllerTransitionEdit& t : edit_.transitions) {
+        const int fi = LayoutIndexOf(t.from), ti = LayoutIndexOf(t.to);
+        if (fi < 0 || ti < 0) continue;
+        const ImVec4 fr = nodeRectGraph(fi), trr = nodeRectGraph(ti);
+        if (fi == ti) { // 自环（trigger 重启等合法形态）：右侧环线
+            const ImVec2 c = toScreen(fr.z, (fr.y + fr.w) * 0.5f);
+            dl->AddCircle(c, 24.0f * canvasZoom_, edgeCol, 0, 1.5f * canvasZoom_);
+            continue;
+        }
+        const ImVec2 a = toScreen((fr.x + fr.z) * 0.5f, (fr.y + fr.w) * 0.5f);
+        const ImVec2 b = toScreen((trr.x + trr.z) * 0.5f, (trr.y + trr.w) * 0.5f);
+        const float off = 24.0f * canvasZoom_;
+        const ImVec2 c1{a.x + (b.x >= a.x ? off : -off), a.y};
+        const ImVec2 c2{b.x - (b.x >= a.x ? off : -off), b.y};
+        dl->AddBezierCubic(a, c1, c2, b, edgeCol, 1.5f * canvasZoom_);
+        // 箭头：线从目标节点边框穿出处
+        const float dx = b.x - a.x, dy = b.y - a.y;
+        const float len = std::sqrt(dx * dx + dy * dy);
+        if (len < 1.0e-3f) continue;
+        const float hw = (trr.z - trr.x) * 0.5f * canvasZoom_;
+        const float hh = (trr.w - trr.y) * 0.5f * canvasZoom_;
+        const float s = std::min(hw / std::max(std::abs(dx), 1.0e-4f),
+                                 hh / std::max(std::abs(dy), 1.0e-4f));
+        const ImVec2 tip{b.x - dx * s, b.y - dy * s};
+        const ImVec2 u{dx / len, dy / len};
+        const ImVec2 n{-u.y, u.x};
+        const float as = 9.0f * canvasZoom_;
+        dl->AddTriangleFilled(
+            tip, ImVec2(tip.x - u.x * as + n.x * as * 0.5f, tip.y - u.y * as + n.y * as * 0.5f),
+            ImVec2(tip.x - u.x * as - n.x * as * 0.5f, tip.y - u.y * as - n.y * as * 0.5f),
+            edgeCol);
+    }
+    const std::string entryName =
+        edit_.entry.empty() ? (edit_.states.empty() ? std::string() : edit_.states[0])
+                            : edit_.entry;
+    for (size_t li = 0; li < edit_.layout.size(); ++li) {
+        const int si = StateIndex(edit_.layout[li].state);
+        if (si < 0) continue;
+        const ImVec4 r = nodeRectGraph((int)li);
+        const ImVec2 a = toScreen(r.x, r.y), b = toScreen(r.z, r.w);
+        const bool sel = si == selState_;
+        const bool reachable = (size_t)si < reach.size() && reach[(size_t)si];
+        dl->AddRectFilled(a, b, ImGui::GetColorU32(ImGuiCol_FrameBg, sel ? 1.0f : 0.7f),
+                          kNodeRad * canvasZoom_);
+        dl->AddRect(a, b,
+                    sel ? ImGui::GetColorU32(ImGuiCol_ButtonActive)
+                        : ImGui::GetColorU32(ImGuiCol_Border),
+                    kNodeRad * canvasZoom_, 0, (sel ? 2.0f : 1.0f) * canvasZoom_);
+        const float fs = std::max(13.0f * canvasZoom_, 8.0f);
+        dl->AddText(ImGui::GetFont(), fs,
+                    ImVec2(a.x + 10.0f * canvasZoom_, (a.y + b.y) * 0.5f - fs * 0.5f),
+                    reachable ? ImGui::GetColorU32(ImGuiCol_Text)
+                              : ImGui::GetColorU32(ImGuiCol_TextDisabled),
+                    edit_.layout[li].state.c_str());
+        if (edit_.layout[li].state == entryName)
+            dl->AddText(ImGui::GetFont(), fs * 0.8f,
+                        ImVec2(b.x - 40.0f * canvasZoom_, a.y + 5.0f * canvasZoom_),
+                        ImGui::GetColorU32(ImGuiCol_TextDisabled),
+                        tr("animctrl.states.entry"));
+    }
+    dl->AddText(ImVec2(p0.x + 8.0f, p0.y + avail.y - 20.0f),
+                ImGui::GetColorU32(ImGuiCol_TextDisabled), tr("animctrl.canvas.hint"));
+    dl->PopClipRect();
 }
 
 void AnimControllerPanel::DrawTransitions(EditorApp& app) {
@@ -712,25 +949,31 @@ void AnimControllerPanel::OnGui(EditorApp& app) {
         ImGui::PopStyleColor();
     }
 
-    // ---- 双列：左（参数 + 状态）| 右（出边）——窄窗上下堆叠 ----
+    // ---- 画布（左）+ 检查器（右）——窄窗上下堆叠（⑩a：b9 三表整体搬右列）----
     const float availW = ImGui::GetContentRegionAvail().x;
-    if (availW >= 520.0f) {
-        ImGui::BeginChild("##left", ImVec2(std::min(kLeftWidth, availW * 0.34f), 0),
-                          ImGuiChildFlags_None);
+    const float availH = ImGui::GetContentRegionAvail().y;
+    auto drawInspector = [&]() {
         DrawParamsTable(app);
         DrawStatesList(app);
+        ImGui::Separator();
+        DrawTransitions(app);
+    };
+    if (availW >= 640.0f) {
+        ImGui::BeginChild("##ctrlcanvas_col", ImVec2(availW * 0.58f, 0), ImGuiChildFlags_None,
+                          ImGuiWindowFlags_NoScrollbar);
+        DrawCanvas(app, ro);
         ImGui::EndChild();
         ImGui::SameLine();
-        ImGui::BeginChild("##right", ImVec2(0, 0));
-        DrawTransitions(app);
+        ImGui::BeginChild("##ctrlinspector");
+        drawInspector();
         ImGui::EndChild();
     } else {
-        ImGui::BeginChild("##left", ImVec2(0, ImGui::GetContentRegionAvail().y * 0.42f));
-        DrawParamsTable(app);
-        DrawStatesList(app);
+        ImGui::BeginChild("##ctrlcanvas_col", ImVec2(0, availH * 0.55f), ImGuiChildFlags_None,
+                          ImGuiWindowFlags_NoScrollbar);
+        DrawCanvas(app, ro);
         ImGui::EndChild();
-        ImGui::BeginChild("##right", ImVec2(0, 0));
-        DrawTransitions(app);
+        ImGui::BeginChild("##ctrlinspector");
+        drawInspector();
         ImGui::EndChild();
     }
 

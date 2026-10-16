@@ -1,7 +1,11 @@
 // Lemon 引擎 — ControllerAsset 实现（M6a 批② T3d / M7a 批② 下沉；见 ControllerAsset.h 契约注记）
 #include "Assets/ControllerAsset.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
+#include <numeric>
+#include <unordered_map>
 
 #include "Assets/AnimAsset.h" // JsonEscape（名字字段转义单源，review 2026-10-02 #5）
 #include "nlohmann/json.hpp"
@@ -16,6 +20,12 @@ ControllerData Fail(const char* what, size_t idx) {
     std::snprintf(buf, sizeof(buf), "%s（条目 %zu）", what, idx);
     out.error = buf;
     return out;
+}
+
+int StateIdx(const ControllerData& c, const std::string& s) {
+    for (size_t i = 0; i < c.states.size(); ++i)
+        if (c.states[i] == s) return (int)i;
+    return -1;
 }
 
 int KindOf(const std::string& s) {
@@ -162,6 +172,24 @@ ControllerData ParseControllerJson(std::string_view text) {
             out.transitions.push_back(t);
         }
     }
+    // editor.nodes（M8 批⑩a）：容错读取——未列状态键/坏坐标（非 2 元数值数组）
+    // 忽略单项不拦解析；按 states 序归一（手写键序任意，序列化同序）。
+    if (doc.contains("editor")) {
+        const nlohmann::json& ed = doc.at("editor");
+        if (ed.is_object()) {
+            const auto ni = ed.find("nodes");
+            if (ni != ed.end() && ni->is_object()) {
+                for (const std::string& s : out.states) {
+                    const auto it = ni->find(s);
+                    if (it == ni->end() || !it->is_array() || it->size() != 2) continue;
+                    if (!(*it)[0].is_number() || !(*it)[1].is_number()) continue;
+                    out.layout.push_back(
+                        {s, (int)std::lround((*it)[0].get<double>()),
+                         (int)std::lround((*it)[1].get<double>())});
+                }
+            }
+        }
+    }
     out.ok = true;
     return out;
 }
@@ -228,38 +256,111 @@ std::string ControllerToJson(const ControllerData& c) {
         }
         out += " }";
     }
-    out += c.transitions.empty() ? "]\n}" : "\n  ]\n}";
+    out += c.transitions.empty() ? "]" : "\n  ]";
+    // editor 块（仅当有仍列于 states 的布局项时写出；悬空键丢弃 = 保存即清洗；
+    // states 序——与解析归一序同构，roundtrip 等值的前提）
+    std::string edNodes;
+    for (const ControllerNodePos& np : c.layout) {
+        if (StateIdx(c, np.state) < 0) continue;
+        edNodes += edNodes.empty() ? "\n      " : ",\n      ";
+        edNodes += JsonEscape(np.state);
+        edNodes += ": [";
+        edNodes += std::to_string(np.x);
+        edNodes += ", ";
+        edNodes += std::to_string(np.y);
+        edNodes += "]";
+    }
+    if (!edNodes.empty()) {
+        out += ",\n  \"editor\": {\n    \"nodes\": {";
+        out += edNodes;
+        out += "\n    }\n  }";
+    }
+    out += "\n}";
     return out;
+}
+
+std::vector<uint8_t> ControllerReachability(const ControllerData& c) {
+    std::vector<uint8_t> reach(c.states.size(), 0);
+    if (!c.ok || c.states.empty()) return reach;
+    const int entry = StateIdx(c, c.entry.empty() ? c.states.front() : c.entry);
+    if (entry < 0) return reach; // 悬空 entry 归解析器管（不可达词面不重复报）
+    reach[(size_t)entry] = 1;
+    std::vector<int> queue{entry};
+    for (size_t qi = 0; qi < queue.size(); ++qi) {
+        for (const ControllerTransitionEdit& t : c.transitions) {
+            if (t.from != c.states[(size_t)queue[qi]]) continue;
+            const int to = StateIdx(c, t.to);
+            if (to >= 0 && !reach[(size_t)to]) {
+                reach[(size_t)to] = 1;
+                queue.push_back(to);
+            }
+        }
+    }
+    return reach;
 }
 
 std::vector<std::string> ControllerStructuralWarnings(const ControllerData& c) {
     std::vector<std::string> out;
     if (!c.ok || c.states.empty()) return out;
-    auto indexOf = [&](const std::string& name) {
-        for (size_t i = 0; i < c.states.size(); ++i)
-            if (c.states[i] == name) return (int)i;
-        return -1;
-    };
-    const int entry = indexOf(c.entry.empty() ? c.states.front() : c.entry);
-    if (entry < 0) return out; // 悬空 entry 归解析器管（不可达词面不重复报）
-    std::vector<char> reach(c.states.size(), 0);
-    reach[entry] = 1;
-    std::vector<int> queue{entry};
-    for (size_t qi = 0; qi < queue.size(); ++qi) {
-        for (const ControllerTransitionEdit& t : c.transitions) {
-            if (t.from != c.states[queue[qi]]) continue;
-            const int to = indexOf(t.to);
-            if (to >= 0 && !reach[to]) {
-                reach[to] = 1;
-                queue.push_back(to);
-            }
-        }
-    }
+    if (StateIdx(c, c.entry.empty() ? c.states.front() : c.entry) < 0) return out;
+    const std::vector<uint8_t> reach = ControllerReachability(c);
     for (size_t i = 0; i < c.states.size(); ++i) {
         if (!reach[i])
             out.push_back(c.states[i] + "：从 entry 不可达（无入边可达——死状态）");
     }
     return out;
+}
+
+std::vector<ControllerNodePos> ControllerAutoLayoutNodes(const ControllerData& c) {
+    std::vector<ControllerNodePos> out;
+    const int n = (int)c.states.size();
+    if (n <= 0) return out;
+    std::vector<int> layer((size_t)n, -1), order((size_t)n, 0);
+    int visit = 0, maxLayer = 0;
+    std::vector<int> queue;
+    // BFS 分层：入队/访问序 = transitions 文件序（确定性——无随机、无哈希序）
+    auto bfsFrom = [&](int root, int baseLayer) {
+        if (root < 0 || layer[(size_t)root] >= 0) return;
+        layer[(size_t)root] = baseLayer;
+        order[(size_t)root] = visit++;
+        queue.push_back(root);
+        for (size_t qi = 0; qi < queue.size(); ++qi) {
+            const int cur = queue[qi];
+            for (const ControllerTransitionEdit& t : c.transitions) {
+                if (t.from != c.states[(size_t)cur]) continue;
+                const int to = StateIdx(c, t.to);
+                if (to >= 0 && layer[(size_t)to] < 0) {
+                    layer[(size_t)to] = layer[(size_t)cur] + 1;
+                    order[(size_t)to] = visit++;
+                    queue.push_back(to);
+                }
+            }
+        }
+        for (const int i : queue) maxLayer = std::max(maxLayer, layer[(size_t)i]);
+        queue.clear();
+    };
+    const int entry = StateIdx(c, c.entry.empty() ? c.states.front() : c.entry);
+    bfsFrom(entry >= 0 ? entry : 0, 0);
+    // 不可达状态归尾列（各起新列 BFS，states 序——与 lint 灰化同一集合）
+    for (int i = 0; i < n; ++i)
+        if (layer[(size_t)i] < 0) bfsFrom(i, maxLayer + 1);
+    // 同列行号（BFS 访问序）
+    std::vector<int> byOrder((size_t)n), row((size_t)n, 0);
+    std::iota(byOrder.begin(), byOrder.end(), 0);
+    std::sort(byOrder.begin(), byOrder.end(), [&](int a, int b) {
+        if (layer[(size_t)a] != layer[(size_t)b]) return layer[(size_t)a] < layer[(size_t)b];
+        return order[(size_t)a] < order[(size_t)b];
+    });
+    std::unordered_map<int, int> rowsInLayer;
+    for (const int i : byOrder) row[(size_t)i] = rowsInLayer[layer[(size_t)i]]++;
+    out.reserve((size_t)n);
+    for (int i = 0; i < n; ++i)
+        out.push_back({c.states[(size_t)i], layer[(size_t)i] * 192, row[(size_t)i] * 96});
+    return out;
+}
+
+int ControllerSnapGrid(int v) {
+    return (int)std::lround((double)v / 8.0) * 8;
 }
 
 } // namespace lemon::assets

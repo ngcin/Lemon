@@ -47,6 +47,15 @@ struct ControllerTransitionEdit {
                            const ControllerTransitionEdit&) = default;
 };
 
+/// 画布节点坐标（.controller 顶层可选 editor.nodes："状态名": [x, y]）。整数，
+/// 8px 网格由编辑器拖动侧量化（schema 不强制对齐——旧档手写非网格值照常读）。
+/// M8 批⑩a：布局随档持久化（ADR-013 D6；旧档缺省 = 确定性自动布局）。
+struct ControllerNodePos {
+    std::string state;
+    int x = 0, y = 0;
+    friend bool operator==(const ControllerNodePos&, const ControllerNodePos&) = default;
+};
+
 /// .controller 解析产物（ClipData 同款 ok/error 约定；坏档 ok=false 不炸调用方）
 struct ControllerData {
     bool ok = false;
@@ -56,11 +65,14 @@ struct ControllerData {
     std::vector<std::string> states;
     std::string entry; // 缺省 ""（= states[0]）
     std::vector<ControllerTransitionEdit> transitions;
+    std::vector<ControllerNodePos> layout; // 画布布局（可选块；恒按 states 序归一）
 };
 
 /// .controller JSON 文本 → ControllerData。states[] 必需非空；params/entry/
-/// transitions 可缺省。状态重名/参数 >8 或重名/from-to- entry 引用未列状态/
+/// transitions/editor 可缺省。状态重名/参数 >8 或重名/from-to- entry 引用未列状态/
 /// op-on-kind 字符串未识别/空 conds 非 exitTime → ok=false + error（首错即返）。
+/// editor.nodes 为编辑面附加块：容错读取（未列状态键/坏坐标 = 忽略单项，不拦
+/// 解析），读取按 states 序归一（序列化同序——roundtrip 等值的前提）。
 ControllerData ParseControllerJson(std::string_view text);
 
 /// ControllerData → .controller JSON 文本（手写定版格式，见文件头）。ok=false → 空串。
@@ -71,5 +83,17 @@ std::string ControllerToJson(const ControllerData& c);
 /// 与解析错误不同，告警不拦解析（ok=true 的档也可能有死状态——作者面提示）。
 /// 编辑器工作台每帧展示、EditorTests 单测同源。
 std::vector<std::string> ControllerStructuralWarnings(const ControllerData& c);
+
+/// 可达性位图（states 序；1 = 从 entry（缺省 states[0]）沿 transitions 可达）。
+/// 坏档/entry 悬空 = 全 0。结构 lint 与画布灰化同源（M8 批⑩a——杜绝两套 BFS）。
+std::vector<uint8_t> ControllerReachability(const ControllerData& c);
+
+/// 确定性自动布局（M8 批⑩a；entry BFS 分层，列距 192 / 行距 96——均 8px 网格
+/// 对齐）。无布局档/新增状态/首次打开用；同输入同输出（无随机，测试依赖）。
+/// 不可达状态归尾列（BFS 展开，states 序起根）。返回恒按 states 序。
+std::vector<ControllerNodePos> ControllerAutoLayoutNodes(const ControllerData& c);
+
+/// 画布坐标网格量化（8px 最近格；编辑器拖动/落位用——schema 不强制，编辑器保证）
+int ControllerSnapGrid(int v);
 
 } // namespace lemon::assets
