@@ -1,12 +1,15 @@
 # ADR-013：动画控制面分层与资产族对齐（.controller / .override / .anim）
 
 - 日期：2026-09-27
-- 状态：**已采纳，D2 于 2026-10-13 修订**（M6a 批② T3d 落地同日定稿——四小批 + ani.scene 双怪对决终验，
+- 状态：**已采纳，D2 于 2026-10-13 修订，D6 于 2026-10-16 增补**（M6a 批② T3d 落地同日定稿——四小批 + ani.scene 双怪对决终验，
   [DevLog](../DevLog/2026-09-27-m6a-b2-t3d-anim-controller.md)；批④迁移注记：历史
   文档中 `.clip/.ani` 字样按 `.anim/.override` 映射读取，ADR-012 `.table→.tab` 同款；
   **2026-10-13 D2 修订**：实用反馈推翻 Unity 对齐命名，`.anim→.clip`、`.override→.ani`
   复名 + 开项目保 GUID 自动迁移，[DevLog](../DevLog/2026-10-13-anim-ext-rename-clip-ani.md)——
-  历史文档中 `.anim/.override` 字样按 `.clip/.ani` 映射读取）
+  历史文档中 `.anim/.override` 字样按 `.clip/.ani` 映射读取；
+  **2026-10-16 D6 增补**：精简可视化图编辑纳入 v1——b9 三表工作台实测"表单形态不可用"
+  改道，图管结构 + 检查器管细节；布局随 `.controller` 顶层 `editor` 字段持久化
+  （运行时零感知），[批文件](../Plans/M8/2026-10-16-b10-anim-graph-editor.md)）
 - 影响：`03-ECS-Runtime.md` §8.1（图评估系统/参数组件）、`04-CSharp-Scripting.md`（Lemon.Anim 参数面）、`05-Editor.md` §3/§7（绑定槽/工作台）、`06-Asset-Pipeline-Out-of-Box.md` §2.2（资产族后缀）、`08-Development-Roadmap.md`（M6a T3d）、`Editor/Assets/AssetDatabase.*`（扩展名四行）、`Engine/ECS/ClipTable.*`（按名解析作用域）、新组件 `AnimGraph`/`AnimParams`、新系统 `AnimGraphSystem`
 
 ## 背景
@@ -85,6 +88,26 @@ vs-survivor `PlayerCombat.cs:16-50` 与 demo/svr-test `PlayerBehaviour.cs:108-11
   （exitTime，= Queue 的图化形态，**吸收 T3c 遗留的"段末自动过渡表"**）。
 - **不抄 mecanim 全量**：无 blend tree / layers / sub-state machine / any-state /
   姿态混合（CrossFade = 延迟切换的 M6a 批①定案不变；帧动画无姿态可混）。
+- **D4 红线复杂度注记（2026-10-16 批⑩ 立项时结算）**——四项均为批级**全栈**工作
+  （运行时 + schema + 编辑器 + 校验 + 金回放重录），且互相耦合（单做一项易产出
+  与后续打架的临时语义，mecanim 是耦合系统，不做半套）：
+  - **any-state**（从任意状态出发的过渡）：运行时加第二遍全局边扫描 + 与常规边
+    的优先级规定；难点在语义非代码——自环防重（to==当前态时 bool 会每帧重切）、
+    trigger 消费归属、与 exitTime 互斥。**~1–1.5 批**。复活触发 = 作者反馈
+    "每个状态手抄受击边"成高频痛点（当前替代 = 脚本 Play 强切，D1 已定职责 +
+    Hurt 段正常出边完成回位）。
+  - **sub-FSM**（子状态机）：状态标识从名字变路径（状态名即集绑定键、全局唯一，
+    嵌套必撞名）、评估递归化、当前状态反推变"叶子→路径映射"、编辑器加钻取
+    导航。**~2–3 批**。复活触发 = 真实项目单控制器 >15–20 态（目标品类
+    典型 3–8 态）。
+  - **layers**（并行层 + 权重 + 遮罩）：每实体多状态机并行 + 输出合成策略；
+    单 sprite 输出下语义 ≈ 已有 CrossFade 队列，遮罩依赖骨骼/多渲染器（不存在）。
+    **~3–4 批**。复活触发 = 骨骼路径（D5）落地时一并评估。
+  - **blend tree**（参数轴加权混合）：采样层需多 clip 合成器、输出层需多 sprite
+    带权渲染；帧动画无姿态代数——加权叠加 = 重影，真混合属骨骼路径（D5）。
+    **~3–4 批**。复活触发 = 骨骼路径（D5）落地时一并评估。
+  - 共同耦合（为什么不能"顺手加"）：当前状态靠播中 clipId 反推（单一值前提）；
+    每 tick 至多一条切换、无级联（确定性口径）；采样 = 单 clip 纯函数。
 
 ### D5：骨骼扩展边界（预留，不实现——本 ADR 起为验收红线）
 
@@ -99,12 +122,24 @@ vs-survivor `PlayerCombat.cs:16-50` 与 demo/svr-test `PlayerBehaviour.cs:108-11
 杂兵帧动画、主角/Boss 骨骼。Spine 许可证（编辑器席位 + runtime 商业条款）是选型
 前置风险：采样后端接口不得绑定特定厂商类型，开源替代留退路。
 
+### D6：精简可视化图编辑纳入 v1（2026-10-16 增补）
+
+原负面项"v1 无可视化图编辑（`.controller` JSON 手写 + Inspector 编辑）"由 b9
+三表工作台实测推翻：表单形态"完全不会用"，可视化图是结构导航的正确载体。
+定形 = **图管结构 + 检查器管细节**——节点=状态、边=transition 的画布编辑
+（拖动/连线/选中/删除），条件与字段细节恒在选中检查器（复用 b9 控件）；布局随
+`.controller` 顶层可选 `editor` 字段持久化（旧档缺省 = 确定性自动布局；解析器
+白名单读取，未知字段天然忽略 → 运行时/旧档零感知）。**D4 红线不变**：无
+any-state / blend tree / layers / sub-FSM；运行时求值语义零改动。交互清单与
+验收判据见 [批文件](../Plans/M8/2026-10-16-b10-anim-graph-editor.md)。
+
 ## 后果
 
 - 正面：N 角色一份状态机逻辑（OnHit 复制粘贴止于现状两处）；消灭 GUID 魔法常量与
   隐式集作用域；资产族/目录与 Unity 肌肉记忆一致；骨骼接入时控制面零改动。
-- 负面/边界：v1 无可视化图编辑（`.controller` JSON 手写 + Inspector 编辑；图编辑器
-  仍挂"游戏阻塞触发"）；EnterPlay 快照语义不变（Play 中改 .controller 当局不生效）；
+- 负面/边界：v1 含**精简**可视化图编辑（2026-10-16 D6 增补；原"JSON 手写 + Inspector"
+  形态由 b9 实测推翻）；mecanim 全量（blend tree / layers / any-state / sub-FSM）仍为
+  红线；EnterPlay 快照语义不变（Play 中改 .controller 当局不生效）；
   后缀迁移触碰存量模板/demo/smoke 种子（保 GUID 迁移，独立小批走，见批次文件）。
 - 关联：T3c §6"下批（T3d 候选）"由本 ADR 升格定形；批次分解与验收见
   [Plans/M6a/2026-09-27-b2-t3d-anim-controller.md](../Plans/M6a/2026-09-27-b2-t3d-anim-controller.md)。

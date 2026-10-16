@@ -1,5 +1,5 @@
 # WIP（冷启动文件——永远只记当前态）
 
-- **停在哪**：M8 批⑥ 收口（2026-10-14 #R1 soak 环境豁免结案，用户拍板）；moreal 回退、**Lemon 恢复唯一主线**（2026-10-16，回退报告 = moreal `docs/Reports/M0-GoNoGo.md`）；流程纪律平移已落 AGENTS.md（提交纪律 / 轻量双流 / WIP / 模块契约 / 事故结案铁律）。
-- **下一步第一个动作**：待用户定向——按 08 路线图执行序（M7c → M8 → M9 → M7b），候选 = ①M8 剩余 D 组 #M4 Windows 真机轮（可与 W5 真机 GPU 合并窗口）②直接开 M9。另：平移 B 档基建（分级门禁脚本 L0/L1 + bisect×金回放包装 + 红线 grep 门）待排期，L0 预算需实测 cmake+ccache 增量耗时。
+- **停在哪**：动画创作面打磨系列——批⑨ 已提交（`8ff48d1`）；批⑩ 精简可视化图规划**已确认入库**（In/Out 终稿 + ADR-013 D6/D4 复杂度注记 + 批文件 + 编号顺延，docs commit）；⑩a 开工中（画布 + `editor` 布局字段 + 拖节点 + 自动布局）；moreal 回退、**Lemon 唯一主线**（回退报告 = moreal `docs/Reports/M0-GoNoGo.md`）。
+- **下一步第一个动作**：⑩a 实施——先 schema（`editor.nodes` 解析/序列化/roundtrip/自动布局纯函数 + 单测）→ 面板两栏重构（画布 + 检查器）→ smoke 探针；出口见批文件 §4。次选：D 组 #M4 Windows 真机轮 / M9；B 档基建（分级门禁 L0/L1 + bisect 包装）待排期。
 - **踩到一半的坑**：无。
