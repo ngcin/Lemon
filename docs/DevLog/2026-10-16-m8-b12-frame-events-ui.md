@@ -66,4 +66,5 @@ Attack.clip 两个手写 events 资产。用户拍板 UI 形态（三选一）= 
 - 命名事件/payload 维持 v1.1 登记；per-frame 帧时长维持 v1.1。
 - AnimationPanel 本地撤销栈（帧 + 事件操作统一）归批⑩"面板本地撤销与场景结构
   轨 Undo 互通"既有登记，不本批。
-- 样本 + 手册端到端 + vs-survivor 去 GUID 化 + 真人组合验收 → 批⑬。
+- 样本 + 手册端到端 + vs-survivor 去 GUID 化 + 真人组合验收 → 批⑭
+  （2026-10-17 批⑬ 帧事件注册表插队顺延，[b13 批文件](../Plans/M8/2026-10-17-b13-anim-event-registry.md)）。

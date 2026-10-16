@@ -197,7 +197,9 @@ struct Chase { LEMON_FIELD(speed, Range{0,500}); LEMON_FIELD(aggroRange); LEMON_
 > **RemapClipEvents**（引擎纯函数，`SanitizeClipEvents` 同居）：事件随帧序——
 > 插帧后移/删帧随删前缩/换位互换/拖拽段旋转/复制不带事件/整表替换保守清越界
 > （此前五路径全不动 events = 语义漂移缺陷随批修）+ TrySave roundtrip 预验补
-> events 等值。命名事件/payload 维持 v1.1；无本地撤销（归批⑩ 登记）。
+> events 等值。命名事件/payload → **批⑬ 立项**（2026-10-17，原 v1.1 登记提前
+> ——注册表 + 下拉 + 启动期校验，[批文件](../Plans/M8/2026-10-17-b13-anim-event-registry.md)）；
+> 无本地撤销（归批⑩ 登记）。
 >
 > **M8 批⑨ 落地口径（2026-10-16，AnimController 工作台）**：`.controller`
 > 三表工作台（参数 ≤8 + 状态词表 + 选中状态出边表，`ControllerAsset` 数据面
