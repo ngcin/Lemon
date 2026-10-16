@@ -21,7 +21,7 @@ open build/manual/index.html     # 浏览器 file:// 直开
 
 站内死链 / 图片缺失 / 越子集语法 = 构建失败（exit 1）。
 
-## 页清单（v1 十三页，M8 批⑦ B 组；2026-10-12 全数落齐）
+## 页清单（v1 十四页；批⑦ 十三页 + 2026-10-16 批⑪ 后补动画页）
 
 | 页 | 主题 | 状态 |
 |---|---|---|
@@ -38,3 +38,4 @@ open build/manual/index.html     # 浏览器 file:// 直开
 | 11-audio | 音频 | ✅ |
 | 12-packaging | 出包与独立运行时 | ✅ |
 | 13-debug | 调试旗标与常见坑 | ✅ |
+| 14-animation | 动画状态机操作指南（clip/ani/controller 三件套 + 画布 + Any 节点 + 脚本驱动；批⑪ 后补） | ✅ |

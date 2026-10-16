@@ -29,7 +29,7 @@
 | font | ttf/otf | 位图字体页烘焙（LBF1 .baked；词表/字号/描边可配） |
 | clip2d | json（.clip） | 帧动画（AnimationEditor 产出/编辑） |
 | animset | json（.ani） | 动画集：段名 → clip 引用清单 |
-| controller | json（.controller） | 动画状态机（双击进 AnimController 工作台编辑；`Assets/Controllers/` 为共享库约定落点） |
+| controller | json（.controller） | 动画状态机（双击进 AnimController 工作台编辑；`Assets/Controllers/` 为共享库约定落点；操作指南见 [14-animation.md](14-animation.md)） |
 | rml/rcss | — | RmlUi 界面文档与样式表（双击装载，rcss 热重载） |
 | particles | json | 粒子发射器预设 |
 | data/curve | json（.asset） | Team 表/波次表/曲线等数据资产 |
