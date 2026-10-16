@@ -6,6 +6,7 @@
 #include "Assets/PlayCaches.h"
 
 #include <fstream>
+#include <iterator> // make_move_iterator（批⑪ any 边前置编译）
 #include <unordered_set>
 #include <vector>
 
@@ -168,16 +169,26 @@ void BuildControllerCache(ecs::World& world, const PlayCacheSource& src) {
         if (def.entry < 0) def.entry = 0; // 解析已拦，防御手改档
         for (const ControllerParamEdit& p : c.params)
             def.params.push_back({p.name, (ecs::AnimParamKind)p.kind, p.def});
+        // 批⑪ 求值序 = any 边（from="*"）先于状态边、组内保持文件序——编译期稳定
+        // 前置（两遍收集）；无 any 边的档序与文件序逐位一致，AnimGraphSystem 单遍
+        // 扫描即得"any 先评、首条命中即切"（ADR-013 D4 修订口径）
+        std::vector<ecs::AnimTransitionDef> stateEdges;
         for (const ControllerTransitionEdit& t : c.transitions) {
             ecs::AnimTransitionDef td;
-            td.from = (uint16_t)def.StateIndex(t.from);
+            td.from = t.from == kControllerAnyFrom
+                          ? ecs::kAnimAnyFrom
+                          : (uint16_t)def.StateIndex(t.from);
             td.to = (uint16_t)def.StateIndex(t.to);
             td.exitTime = t.exitTime;
             for (const ControllerCondEdit& cd : t.conds)
                 td.conds.push_back({(uint16_t)def.ParamIndex(cd.param),
                                     (ecs::AnimCondOp)cd.op, cd.value});
-            def.transitions.push_back(std::move(td));
+            (t.from == kControllerAnyFrom ? def.transitions : stateEdges)
+                .push_back(std::move(td));
         }
+        def.transitions.insert(def.transitions.end(),
+                               std::make_move_iterator(stateEdges.begin()),
+                               std::make_move_iterator(stateEdges.end()));
         const uint32_t controllerId = (uint32_t)guid; // 低 32 位（同款映射约定）
         if (!seenControllerIds.insert(controllerId).second)
             LEMON_WARN("Play 状态机表低 32 位碰撞：%s（guid %016llx）与先登记 controller "

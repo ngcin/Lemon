@@ -1,9 +1,11 @@
-// Lemon 编辑器 — AnimController 面板（M8 批⑨ 三表工作台 / 批⑩a 画布化）
+// Lemon 编辑器 — AnimController 面板（M8 批⑨ 三表工作台 / 批⑩a 画布化 / 批⑪ any-state）
 // ADR-013 D6 定形"图管结构 + 检查器管细节"：左画布（节点=状态/边=transition，
 // 自绘 ImDrawList，拖动/平移/缩放/适配）+ 右检查器列（b9 三表保留：参数/
 // 状态词表/选中出边）。布局随 .controller 顶层可选 editor.nodes 持久化
-// （旧档缺省 = 确定性自动布局，运行时/旧档零感知；批⑩b 接连线/检查器细节/
-// 撤销重做，本批不动）。编辑期校验是本批灵魂：
+// （旧档缺省 = 确定性自动布局，运行时/旧档零感知）。批⑪：Any 节点（图空间可拖，
+// editor.nodes 保留键 "*" 持久化；from="*" 全局中断边——受击/死亡扇入治理，求值
+// any 先评）+ B16 自环三入口禁 + B17-1 边锚点改节点边界交点 + 直线边定形。
+// 编辑期校验是本批灵魂：
 //   * 结构 lint（不可达状态）——引擎 ControllerStructuralWarnings 同源，每帧直算；
 //     画布灰化用 ControllerReachability（同一 BFS，杜绝两套）。
 //   * 跨资产黄字（exitTime×Loop 脚枪）——exitTime 出边状态在项目 .ani 集中绑定
@@ -39,6 +41,10 @@ namespace {
 constexpr float kNodeW = 160.0f;  // 节点矩形（图空间）
 constexpr float kNodeH = 56.0f;
 constexpr float kNodeRad = 6.0f;  // 圆角（图空间）
+constexpr float kAnyNodeW = 120.0f; // Any 节点（图空间，随相机缩放——五轮起与状态节点同口径）
+constexpr float kAnyNodeH = 40.0f;
+constexpr int kEdgeDragAny = -2;  // edgeDragFrom_ 的 any 源哨兵（批⑪；-1 = 无手势）
+constexpr int kAnyDragNode = -2;  // dragNode_ 的 Any 体哨兵（批⑪ 五轮；-1 = 无拖动）
 
 const char* KindLabel(int kind) {
     return kind == 1 ? "bool" : kind == 2 ? "trigger" : "float";
@@ -119,11 +125,43 @@ void AnimControllerPanel::EnsureLayout() {
 void AnimControllerPanel::NormalizeLayout() {
     if (edit_.layout.empty()) return;
     std::vector<assets::ControllerNodePos> out;
-    out.reserve(edit_.states.size());
+    out.reserve(edit_.states.size() + 1);
     for (const std::string& s : edit_.states)
         if (const int li = LayoutIndexOf(s); li >= 0)
             out.push_back(edit_.layout[(size_t)li]);
+    // Any 保留键 "*" 恒居尾（批⑪ 五轮：与解析/序列化规范序同构，roundtrip 前提）
+    if (const int ai = LayoutIndexOf(assets::kControllerAnyFrom); ai >= 0)
+        out.push_back(edit_.layout[(size_t)ai]);
     edit_.layout = std::move(out);
+}
+
+// Any 节点图空间矩形（批⑪ 五轮：可拖/随档持久化——editor.nodes 保留键 "*"；
+// 无档位 = 布局包围盒左外侧缺省（自动布局 x≥0，恒不与状态节点重叠））
+void AnimControllerPanel::AnyRectGraph(float& x, float& y, float& z, float& w) const {
+    if (const int ai = LayoutIndexOf(assets::kControllerAnyFrom); ai >= 0) {
+        const assets::ControllerNodePos& np = edit_.layout[(size_t)ai];
+        x = (float)np.x;
+        y = (float)np.y;
+        z = (float)np.x + kAnyNodeW;
+        w = (float)np.y + kAnyNodeH;
+        return;
+    }
+    if (edit_.layout.empty()) {
+        x = 16.0f;
+        y = 52.0f;
+        z = 16.0f + kAnyNodeW;
+        w = 52.0f + kAnyNodeH;
+        return;
+    }
+    float minX = 1.0e9f, minY = 1.0e9f;
+    for (const assets::ControllerNodePos& np : edit_.layout) {
+        minX = std::min(minX, (float)np.x);
+        minY = std::min(minY, (float)np.y);
+    }
+    x = minX - kAnyNodeW - 48.0f;
+    y = minY;
+    z = minX - 48.0f;
+    w = minY + kAnyNodeH;
 }
 
 bool AnimControllerPanel::SetNodePosition(const std::string& state, int x, int y) {
@@ -185,7 +223,7 @@ void AnimControllerPanel::RecomputeLint(EditorApp& app) {
     if (!edit_.ok) return;
     std::vector<std::string> exitStates;
     for (const assets::ControllerTransitionEdit& t : edit_.transitions)
-        if (t.exitTime &&
+        if (t.exitTime && t.from != assets::kControllerAnyFrom && // any 源无法按名对集段（批⑪ 注记）
             std::find(exitStates.begin(), exitStates.end(), t.from) == exitStates.end())
             exitStates.push_back(t.from);
     if (exitStates.empty()) return;
@@ -404,9 +442,23 @@ int AnimControllerPanel::AddTransitionByIndex(int fromIdx, int toIdx) {
     if (!edit_.ok || fromIdx < 0 || fromIdx >= (int)edit_.states.size() || toIdx < 0 ||
         toIdx >= (int)edit_.states.size())
         return -1;
+    if (fromIdx == toIdx)
+        return -1; // B16：自环拒——图切换无重启语义（同段 no-op 只吃 trigger 遮出边）
+    SelectState(fromIdx); // 节点选保留（源方位感）——先于 SelectEdge（其不清节点选）
+    return AddTransitionInternal(edit_.states[(size_t)fromIdx], toIdx);
+}
+
+int AnimControllerPanel::AddAnyTransitionByIndex(int toIdx) {
+    if (!edit_.ok || edit_.states.empty()) return -1;
+    SelectState(-1); // any 边无源状态——清节点选，检查器纯边详情
+    return AddTransitionInternal(assets::kControllerAnyFrom, toIdx);
+}
+
+int AnimControllerPanel::AddTransitionInternal(const std::string& from, int toIdx) {
+    if (!edit_.ok || toIdx < 0 || toIdx >= (int)edit_.states.size()) return -1;
     PushUndo();
     assets::ControllerTransitionEdit t;
-    t.from = edit_.states[(size_t)fromIdx];
+    t.from = from;
     t.to = edit_.states[(size_t)toIdx];
     // 起步即合法（b9 规则）：有参数 → 默认一条首参条件；无参数 → exitTime
     if (!edit_.params.empty()) {
@@ -416,7 +468,6 @@ int AnimControllerPanel::AddTransitionByIndex(int fromIdx, int toIdx) {
         t.exitTime = true;
     }
     edit_.transitions.push_back(std::move(t));
-    SelectState(fromIdx);
     SelectEdge((int)edit_.transitions.size() - 1); // 新边即选 → 检查器转边详情
     MarkDirty();
     return (int)edit_.transitions.size() - 1;
@@ -490,7 +541,7 @@ std::string AnimControllerPanel::EdgeSummary(const assets::ControllerTransitionE
 void AnimControllerPanel::HandleKeys(bool ro) {
     if (ro || !keysFocused_) return;
     if (ImGui::GetIO().WantTextInput) return;
-    if (dragNode_ >= 0 || edgeDragFrom_ >= 0) return; // 手势会话中不吃功能键
+    if (dragNode_ >= 0 || edgeDragFrom_ != -1) return; // 手势会话中不吃功能键（含 any 源 -2）
     if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Z)) {
         if (ImGui::GetIO().KeyShift)
             RedoLocal();
@@ -690,9 +741,11 @@ void AnimControllerPanel::DrawEdgeInspector(EditorApp& app) {
     using lemon::editor::loc::trFmt;
     (void)app;
     assets::ControllerTransitionEdit& t = edit_.transitions[(size_t)selEdge_];
-    ImGui::Text("%s → %s", t.from.c_str(), t.to.c_str());
+    ImGui::Text("%s → %s",
+                t.from == assets::kControllerAnyFrom ? tr("animctrl.any.label") : t.from.c_str(),
+                t.to.c_str());
     testhooks::Stash("animctrl.insp.edge", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
-    int order = 0, total = 0; // 同 from 文件序 = 运行时评估序（首条命中即切）
+    int order = 0, total = 0; // 同 from 文件序 = 运行时评估序（any 边组内同理，批⑪）
     for (size_t i = 0; i < edit_.transitions.size(); ++i)
         if (edit_.transitions[i].from == t.from) {
             ++total;
@@ -702,13 +755,15 @@ void AnimControllerPanel::DrawEdgeInspector(EditorApp& app) {
         "%s", trFmt("animctrl.edge.order_fmt", {std::to_string(order), std::to_string(total)}).c_str());
     ImGui::SetNextItemWidth(160);
     if (ImGui::BeginCombo(tr("animctrl.edge.to"), t.to.c_str())) {
-        for (size_t j = 0; j < edit_.states.size(); ++j)
+        for (size_t j = 0; j < edit_.states.size(); ++j) {
+            if (edit_.states[j] == t.from) continue; // B16：to 下拉过滤自身（any 源恒不撞）
             if (ImGui::Selectable(edit_.states[j].c_str(), edit_.states[j] == t.to) &&
                 edit_.states[j] != t.to) {
                 PushUndo();
                 t.to = edit_.states[j];
                 MarkDirty();
             }
+        }
         ImGui::EndCombo();
     }
     ImGui::SameLine();
@@ -826,10 +881,19 @@ void AnimControllerPanel::FitCanvas(float availW, float availH) {
     }
     float minX = 1.0e9f, minY = 1.0e9f, maxX = -1.0e9f, maxY = -1.0e9f;
     for (const assets::ControllerNodePos& np : edit_.layout) {
+        if (np.state == assets::kControllerAnyFrom) continue; // Any 尺寸不同，下方专用块入界
         minX = std::min(minX, (float)np.x);
         minY = std::min(minY, (float)np.y);
         maxX = std::max(maxX, (float)np.x + kNodeW);
         maxY = std::max(maxY, (float)np.y + kNodeH);
+    }
+    { // Any 节点入界（批⑪ 五轮：缺省位在包围盒左外侧，不入界 F 适配会裁掉）
+        float ax, ay, az, aw;
+        AnyRectGraph(ax, ay, az, aw);
+        minX = std::min(minX, ax);
+        minY = std::min(minY, ay);
+        maxX = std::max(maxX, az);
+        maxY = std::max(maxY, aw);
     }
     const float pad = 40.0f;
     const float w = std::max(maxX - minX + pad * 2.0f, 1.0f);
@@ -841,6 +905,7 @@ void AnimControllerPanel::FitCanvas(float availW, float availH) {
 
 void AnimControllerPanel::DrawCanvas(EditorApp& app, bool ro) {
     using lemon::editor::loc::tr;
+    using lemon::editor::loc::trFmt;
     EnsureLayout();
     const ImVec2 p0 = ImGui::GetCursorScreenPos();
     lastCanvasP0X_ = p0.x;
@@ -874,6 +939,19 @@ void AnimControllerPanel::DrawCanvas(EditorApp& app, bool ro) {
         const assets::ControllerNodePos& np = edit_.layout[(size_t)li];
         return ImVec4{(float)np.x, (float)np.y, (float)np.x + kNodeW, (float)np.y + kNodeH};
     };
+    // Any 节点（批⑪ 五轮）：图空间 + 随档持久化（editor.nodes 保留键 "*"，缺省 =
+    // AnyRectGraph 包围盒左外侧）；不可删体/改名/设入口，四向把手 = any 边出口，
+    // 体可拖（kAnyDragNode）——右键「删除」= 清空全局边（节点恒在 = 建边入口）
+    auto anyRect = [&]() {
+        float gx, gy, gz, gw;
+        AnyRectGraph(gx, gy, gz, gw);
+        const ImVec2 a = toScreen(gx, gy), b = toScreen(gz, gw);
+        return ImVec4{a.x, a.y, b.x, b.y};
+    };
+    auto hitAny = [&](const ImVec2& sp) {
+        const ImVec4 r = anyRect();
+        return sp.x >= r.x && sp.x <= r.z && sp.y >= r.y && sp.y <= r.w;
+    };
     const ImVec2 gm = toGraph(io.MousePos);
     const float fs = std::max(13.0f * canvasZoom_, 8.0f);
     const std::string entryName =
@@ -881,86 +959,130 @@ void AnimControllerPanel::DrawCanvas(EditorApp& app, bool ro) {
                             : edit_.entry;
 
     // ---- 命中工具（绘制与命中同源）----
+    // 状态节点专用——Any 保留键 "*" 不在此列（其命中走 hitAny；若混入会以
+    // StateIndex("*")=-1 假命中吞掉点击/右键/拖动——五轮实测回归位）
     auto hitNodeLi = [&](const ImVec2& p) -> int {
         for (size_t li = 0; li < edit_.layout.size(); ++li) {
+            if (edit_.layout[li].state == assets::kControllerAnyFrom) continue;
             const ImVec4 r = nodeRectGraph((int)li);
             if (p.x >= r.x && p.x <= r.z && p.y >= r.y && p.y <= r.w) return (int)li;
         }
         return -1;
     };
-    auto handlePos = [&](int li) {
-        const ImVec4 r = nodeRectGraph(li);
-        return toScreen(r.z, (r.y + r.w) * 0.5f); // 节点右侧中点把手
+    auto nodeRectScreen = [&](int li) {
+        const ImVec4 g = nodeRectGraph(li);
+        const ImVec2 a = toScreen(g.x, g.y), b = toScreen(g.z, g.w);
+        return ImVec4{a.x, a.y, b.x, b.y};
+    };
+    // 四向把手（用户实测三轮）：每边中点一个拖线起点（常见编辑器形态）；落点端
+    // 渲染仍按连线方向自动求边界交点——端口不进 schema，零数据面改动
+    auto sideHandlePos = [](const ImVec4& r, int side) {
+        switch (side) {
+        case 1: return ImVec2(r.x, (r.y + r.w) * 0.5f);  // 左
+        case 2: return ImVec2((r.x + r.z) * 0.5f, r.y);  // 上
+        case 3: return ImVec2((r.x + r.z) * 0.5f, r.w);  // 下
+        default: return ImVec2(r.z, (r.y + r.w) * 0.5f); // 右
+        }
     };
     struct EdgePath {
-        bool ok = false, loop = false;
-        ImVec2 a, b, c1, c2, mid, loopC;
-        float loopR = 0.0f;
+        bool ok = false;
+        ImVec2 a, b, mid, midDir; // 直线端点 + 中点/方向（箭头位，用户实测四轮）
+    };
+    // B17-1：边端点 = 节点边界交点（沿连线方向投影）——线不穿节点体。
+    // 四轮定形：**直线边**（贝塞尔拱弧实测不友好）——双向对 = 各平移一侧的
+    // 平行双线；同向叠边逐条外错；箭头恒在直线中点沿方向（同轴天然成立）
+    auto borderOffset = [](float hw, float hh, float dx, float dy) {
+        return std::min(hw / std::max(std::abs(dx), 1.0e-4f),
+                        hh / std::max(std::abs(dy), 1.0e-4f));
     };
     auto edgePath = [&](size_t ti) {
         EdgePath ep;
         const assets::ControllerTransitionEdit& t = edit_.transitions[ti];
-        const int fi = LayoutIndexOf(t.from), tj = LayoutIndexOf(t.to);
-        if (fi < 0 || tj < 0) return ep;
-        const ImVec4 fr = nodeRectGraph(fi), trr = nodeRectGraph(tj);
-        int dup = 0; // 同 from/to 多条边垂直偏移（绘制/命中同源）
-        for (size_t j = 0; j < ti; ++j)
-            if (edit_.transitions[j].from == t.from && edit_.transitions[j].to == t.to) ++dup;
-        if (fi == tj) { // 自环（trigger 重启等合法形态）：右侧环线
-            ep.ok = true;
-            ep.loop = true;
-            ep.loopC = toScreen(fr.z, (fr.y + fr.w) * 0.5f);
-            ep.loopR = (24.0f + (float)dup * 16.0f) * canvasZoom_;
-            ep.mid = ImVec2(ep.loopC.x + ep.loopR, ep.loopC.y);
-            return ep;
+        const bool anyEdge = t.from == assets::kControllerAnyFrom; // 批⑪：源 = Any 节点
+        const int fi = anyEdge ? -1 : LayoutIndexOf(t.from), tj = LayoutIndexOf(t.to);
+        if ((!anyEdge && fi < 0) || tj < 0) return ep;
+        int dup = 0;      // 同 from/to 叠边（本边之前的——逐条外错）
+        bool opposite = false; // 双向对（to→from 亦存在——两拱各偏一侧）
+        for (size_t j = 0; j < edit_.transitions.size(); ++j) {
+            if (j == ti) continue;
+            const assets::ControllerTransitionEdit& o = edit_.transitions[j];
+            if (j < ti && o.from == t.from && o.to == t.to) ++dup;
+            if (o.from == t.to && o.to == t.from) opposite = true;
         }
         ep.ok = true;
-        ep.a = toScreen((fr.x + fr.z) * 0.5f, (fr.y + fr.w) * 0.5f);
-        ep.b = toScreen((trr.x + trr.z) * 0.5f, (trr.y + trr.w) * 0.5f);
-        const float off = 24.0f * canvasZoom_;
-        const float offY = (float)dup * 16.0f * canvasZoom_;
-        ep.c1 = ImVec2(ep.a.x + (ep.b.x >= ep.a.x ? off : -off), ep.a.y + offY);
-        ep.c2 = ImVec2(ep.b.x - (ep.b.x >= ep.a.x ? off : -off), ep.b.y + offY);
-        ep.mid = ImVec2((ep.a.x + 3.0f * ep.c1.x + 3.0f * ep.c2.x + ep.b.x) * 0.125f,
-                        (ep.a.y + 3.0f * ep.c1.y + 3.0f * ep.c2.y + ep.b.y) * 0.125f);
+        const ImVec4 trr = nodeRectGraph(tj);
+        const ImVec2 cB = toScreen((trr.x + trr.z) * 0.5f, (trr.y + trr.w) * 0.5f);
+        ImVec2 cA;
+        float hwA, hhA;
+        if (anyEdge) {
+            const ImVec4 ar = anyRect();
+            cA = ImVec2((ar.x + ar.z) * 0.5f, (ar.y + ar.w) * 0.5f);
+            hwA = (ar.z - ar.x) * 0.5f;
+            hhA = (ar.w - ar.y) * 0.5f;
+        } else {
+            const ImVec4 fr = nodeRectGraph(fi);
+            cA = toScreen((fr.x + fr.z) * 0.5f, (fr.y + fr.w) * 0.5f);
+            hwA = kNodeW * 0.5f * canvasZoom_;
+            hhA = kNodeH * 0.5f * canvasZoom_;
+        }
+        const float dx = cB.x - cA.x, dy = cB.y - cA.y;
+        const float chordLen = std::sqrt(dx * dx + dy * dy);
+        ImVec2 aS, bS;
+        if (chordLen > 1.0e-3f) {
+            const float sA = borderOffset(hwA, hhA, dx, dy);
+            const float sB =
+                borderOffset(kNodeW * 0.5f * canvasZoom_, kNodeH * 0.5f * canvasZoom_, dx, dy);
+            aS = ImVec2(cA.x + dx * sA, cA.y + dy * sA);
+            bS = ImVec2(cB.x - dx * sB, cB.y - dy * sB);
+        } else { // 节点完全重叠兜底：中心对中心（退化可视）
+            aS = cA;
+            bS = cB;
+        }
+        // 侧向平移（直线边）：同向叠边沿弦垂直向逐条外错（8px/条）；双向对
+        //（A→B 与 B→A）按状态名字符串序各平移一侧（10px）→ 平行双线——箭头/
+        // 标签/点选互不踩，且无弧线（确定性，与相机无关）。any 边无双向对
+        //（to 不接受 "*"）
+        ImVec2 latVec{0.0f, 0.0f};
+        if (chordLen > 1.0e-3f) {
+            const float stackPx = (float)dup * 8.0f * canvasZoom_;
+            latVec = ImVec2(-dy / chordLen * stackPx, dx / chordLen * stackPx);
+        }
+        if (opposite) {
+            const bool fromLo = t.from < t.to; // 规范向：字符串小 → 大
+            const ImVec2 cLo = fromLo ? cA : cB, cHi = fromLo ? cB : cA;
+            const float pdx = cHi.x - cLo.x, pdy = cHi.y - cLo.y;
+            const float plen = std::sqrt(pdx * pdx + pdy * pdy);
+            if (plen > 1.0e-3f) {
+                const float s = (fromLo ? 1.0f : -1.0f) * 10.0f * canvasZoom_ / plen;
+                latVec.x += -pdy * s;
+                latVec.y += pdx * s;
+            }
+        }
+        ep.a = ImVec2(aS.x + latVec.x, aS.y + latVec.y);
+        ep.b = ImVec2(bS.x + latVec.x, bS.y + latVec.y);
+        const float ldx = ep.b.x - ep.a.x, ldy = ep.b.y - ep.a.y;
+        const float llen = std::sqrt(ldx * ldx + ldy * ldy);
+        ep.mid = ImVec2((ep.a.x + ep.b.x) * 0.5f, (ep.a.y + ep.b.y) * 0.5f);
+        ep.midDir = llen > 1.0e-3f ? ImVec2(ldx / llen, ldy / llen) : ImVec2(0.0f, 0.0f);
         return ep;
     };
     auto hitEdge = [&](const ImVec2& mouse) -> int {
+        // 直线边命中 = 点到线段距离（四轮：曲线采样退役）
         int best = -1;
         float bestD = 6.0f; // 屏幕像素阈值
         for (size_t ti = 0; ti < edit_.transitions.size(); ++ti) {
             const EdgePath ep = edgePath(ti);
             if (!ep.ok) continue;
-            if (ep.loop) {
-                const float d = std::abs(
-                    std::hypot(mouse.x - ep.loopC.x, mouse.y - ep.loopC.y) - ep.loopR);
-                if (d < bestD) {
-                    bestD = d;
-                    best = (int)ti;
-                }
-                continue;
-            }
-            for (int k = 0; k < 24; ++k) { // 曲线采样命中（24 段折线）
-                auto bez = [&](float tt) {
-                    const float u = 1.0f - tt;
-                    return ImVec2(
-                        u * u * u * ep.a.x + 3 * u * u * tt * ep.c1.x +
-                            3 * u * tt * tt * ep.c2.x + tt * tt * tt * ep.b.x,
-                        u * u * u * ep.a.y + 3 * u * u * tt * ep.c1.y +
-                            3 * u * tt * tt * ep.c2.y + tt * tt * tt * ep.b.y);
-                };
-                const ImVec2 q0 = bez((float)k / 24.0f), q1 = bez((float)(k + 1) / 24.0f);
-                const float vx = q1.x - q0.x, vy = q1.y - q0.y;
-                const float wx = mouse.x - q0.x, wy = mouse.y - q0.y;
-                const float len2 = vx * vx + vy * vy;
-                const float tt =
-                    len2 > 1.0e-6f ? std::clamp((wx * vx + wy * vy) / len2, 0.0f, 1.0f) : 0.0f;
-                const float dx = wx - vx * tt, dy = wy - vy * tt;
-                const float d = std::sqrt(dx * dx + dy * dy);
-                if (d < bestD) {
-                    bestD = d;
-                    best = (int)ti;
-                }
+            const float vx = ep.b.x - ep.a.x, vy = ep.b.y - ep.a.y;
+            const float wx = mouse.x - ep.a.x, wy = mouse.y - ep.a.y;
+            const float len2 = vx * vx + vy * vy;
+            const float tt =
+                len2 > 1.0e-6f ? std::clamp((wx * vx + wy * vy) / len2, 0.0f, 1.0f) : 0.0f;
+            const float dx = wx - vx * tt, dy = wy - vy * tt;
+            const float d = std::sqrt(dx * dx + dy * dy);
+            if (d < bestD) {
+                bestD = d;
+                best = (int)ti;
             }
         }
         return best;
@@ -987,26 +1109,47 @@ void AnimControllerPanel::DrawCanvas(EditorApp& app, bool ro) {
 
     // ---- 交互（编辑态；Play = 只读 + 当前状态高亮）----
     const int hoveredLi = hovered ? hitNodeLi(gm) : -1;
-    if (!ro && edgeDragFrom_ < 0 && hovered && !spaceDown &&
+    if (!ro && edgeDragFrom_ == -1 && hovered && !spaceDown &&
         ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-        // 拖线建边：节点右侧把手按下即起（优先于节点拖动）
-        for (size_t li = 0; li < edit_.layout.size(); ++li) {
-            const ImVec2 h = handlePos((int)li);
-            const float dx = io.MousePos.x - h.x, dy = io.MousePos.y - h.y;
-            if (dx * dx + dy * dy <= 64.0f) { // 8px 半径
-                const int si = StateIndex(edit_.layout[li].state);
-                if (si >= 0) {
-                    edgeDragFrom_ = si;
+        // 拖线建边：四向把手（Any 优先 → 各节点；优先于节点拖动）——用户实测三轮
+        bool started = false;
+        if (!edit_.states.empty()) {
+            for (int side = 0; side < 4 && !started; ++side) {
+                const ImVec2 h = sideHandlePos(anyRect(), side);
+                const float adx = io.MousePos.x - h.x, ady = io.MousePos.y - h.y;
+                if (adx * adx + ady * ady <= 64.0f) { // 8px 半径
+                    edgeDragFrom_ = kEdgeDragAny;
+                    edgeDragSide_ = side;
                     edgeDragHeld_ = true;
-                    edgeDragStartX_ = io.MousePos.x; // review B1：松开阈值判"拖 vs 点"
+                    edgeDragStartX_ = io.MousePos.x;
                     edgeDragStartY_ = io.MousePos.y;
-                    SelectState(si);
+                    SelectState(-1);
+                    started = true;
                 }
-                break;
+            }
+        }
+        for (size_t li = 0; !started && li < edit_.layout.size(); ++li) {
+            if (edit_.layout[li].state == assets::kControllerAnyFrom) continue; // Any 把手已前置扫描
+            const ImVec4 r = nodeRectScreen((int)li);
+            for (int side = 0; side < 4 && !started; ++side) {
+                const ImVec2 h = sideHandlePos(r, side);
+                const float dx = io.MousePos.x - h.x, dy = io.MousePos.y - h.y;
+                if (dx * dx + dy * dy <= 64.0f) { // 8px 半径
+                    const int si = StateIndex(edit_.layout[li].state);
+                    if (si >= 0) {
+                        edgeDragFrom_ = si;
+                        edgeDragSide_ = side;
+                        edgeDragHeld_ = true;
+                        edgeDragStartX_ = io.MousePos.x; // review B1：松开阈值判"拖 vs 点"
+                        edgeDragStartY_ = io.MousePos.y;
+                        SelectState(si);
+                    }
+                    started = true;
+                }
             }
         }
     }
-    if (!ro && dragNode_ < 0 && edgeDragFrom_ < 0 && hovered && !spaceDown &&
+    if (!ro && dragNode_ < 0 && edgeDragFrom_ == -1 && hovered && !spaceDown &&
         ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         if (hoveredLi >= 0) {
             const int si = StateIndex(edit_.layout[(size_t)hoveredLi].state);
@@ -1020,21 +1163,49 @@ void AnimControllerPanel::DrawCanvas(EditorApp& app, bool ro) {
                 preDrag_ = edit_; // 拖动撤销"松手拍一次"会话起拍
                 dragMutated_ = false;
             }
+        } else if (hitAny(io.MousePos)) {
+            SelectState(-1); // 体不可选细节（把手/右键才是工作位）；批⑪ 五轮：体可拖
+            dragNode_ = kAnyDragNode;
+            dragStartGX_ = gm.x;
+            dragStartGY_ = gm.y;
+            float agx, agy, agz, agw;
+            AnyRectGraph(agx, agy, agz, agw);
+            dragOrigX_ = (int)std::lround(agx);
+            dragOrigY_ = (int)std::lround(agy);
+            preDrag_ = edit_; // 拖动撤销"松手拍一次"会话起拍（状态节点同款）
+            dragMutated_ = false;
         } else if (const int ei = hitEdge(io.MousePos); ei >= 0) {
-            SelectEdge(ei); // 边点选（曲线采样命中 + 中点小圆点辅助）
+            SelectEdge(ei); // 边点选（点到线段距离命中，四轮口径）
         } else {
             SelectState(-1); // 空点 = 全清（检查器回参数表）
         }
     }
-    if (dragNode_ >= 0 && dragNode_ < (int)edit_.states.size() &&
-        ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-        if (SetNodePosition(edit_.states[(size_t)dragNode_],
-                            dragOrigX_ + (int)std::lround(gm.x - dragStartGX_),
-                            dragOrigY_ + (int)std::lround(gm.y - dragStartGY_)))
-            dragMutated_ = true;
+    if (dragNode_ != -1 && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        if (dragNode_ == kAnyDragNode) {
+            const int nx = dragOrigX_ + (int)std::lround(gm.x - dragStartGX_);
+            const int ny = dragOrigY_ + (int)std::lround(gm.y - dragStartGY_);
+            const int sx = assets::ControllerSnapGrid(nx), sy = assets::ControllerSnapGrid(ny);
+            if (LayoutIndexOf(assets::kControllerAnyFrom) < 0) {
+                // 惰性落位：首次实际位移才建 "*" 档键（未拖过的控制器不写该键）
+                if (sx != dragOrigX_ || sy != dragOrigY_) {
+                    edit_.layout.push_back(
+                        {assets::kControllerAnyFrom, sx, sy});
+                    NormalizeLayout(); // 归一到规范序（any 恒居尾）
+                    dirty_ = true;    // 布局不碰结构——不动 lintDirty_（SetNodePosition 同款）
+                    dragMutated_ = true;
+                }
+            } else if (SetNodePosition(assets::kControllerAnyFrom, nx, ny)) {
+                dragMutated_ = true;
+            }
+        } else if (dragNode_ < (int)edit_.states.size()) {
+            if (SetNodePosition(edit_.states[(size_t)dragNode_],
+                                dragOrigX_ + (int)std::lround(gm.x - dragStartGX_),
+                                dragOrigY_ + (int)std::lround(gm.y - dragStartGY_)))
+                dragMutated_ = true;
+        }
     }
     if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
-        if (dragNode_ >= 0 && dragMutated_) undoStack_.Push(preDrag_); // 拖动 = 一步撤销
+        if (dragNode_ != -1 && dragMutated_) undoStack_.Push(preDrag_); // 拖动 = 一步撤销
         dragNode_ = -1;
         dragMutated_ = false;
     }
@@ -1046,6 +1217,11 @@ void AnimControllerPanel::DrawCanvas(EditorApp& app, bool ro) {
                 SelectState(si);
                 ImGui::OpenPopup("ctrlctx_node");
             }
+        } else if (hitAny(io.MousePos)) {
+            SelectState(-1);
+            // Any 节点：体可拖（五轮）、只出边（无入口/改名）；「删除」= 清空全局边
+            // （节点本体 = 建边入口恒在，Unity Any State 同款不可移除）
+            ImGui::OpenPopup("ctrlctx_any");
         } else {
             SelectState(-1);
             ImGui::OpenPopup("ctrlctx_canvas");
@@ -1072,10 +1248,34 @@ void AnimControllerPanel::DrawCanvas(EditorApp& app, bool ro) {
             if (ImGui::MenuItem(tr("animctrl.ctx.new_edge"), nullptr, false,
                                 edit_.states.size() >= 2)) {
                 edgeDragFrom_ = selState_;
+                edgeDragSide_ = 0; // 右侧起步（待点模式无抓取侧）
                 edgeDragHeld_ = false; // 待点模式：下一左键落目标节点（空处取消）
             }
             ImGui::Separator();
             if (ImGui::MenuItem(tr("animctrl.ctx.delete_state"))) DeleteState(selState_);
+        }
+        ImGui::EndPopup();
+    }
+    if (!ro && ImGui::BeginPopup("ctrlctx_any")) {
+        if (ImGui::MenuItem(tr("animctrl.ctx.new_edge"), nullptr, false,
+                            edit_.states.size() >= 1)) {
+            edgeDragFrom_ = kEdgeDragAny;
+            edgeDragSide_ = 0; // 右侧起步（待点模式无抓取侧）
+            edgeDragHeld_ = false; // 待点模式：下一左键落目标节点（空处取消）
+        }
+        size_t anyEdgeCount = 0; // 「删除」语义 = 清空全局边（本体 = 建边入口保留）
+        for (const assets::ControllerTransitionEdit& t : edit_.transitions)
+            if (t.from == assets::kControllerAnyFrom) ++anyEdgeCount;
+        if (ImGui::MenuItem(
+                trFmt("animctrl.ctx.delete_any_fmt", {std::to_string(anyEdgeCount)})
+                    .c_str(),
+                nullptr, false, anyEdgeCount > 0)) {
+            PushUndo();
+            std::erase_if(edit_.transitions, [](const assets::ControllerTransitionEdit& t) {
+                return t.from == assets::kControllerAnyFrom;
+            });
+            SelectState(-1); // any 边全清后选择归零（检查器回参数表）
+            MarkDirty();
         }
         ImGui::EndPopup();
     }
@@ -1107,35 +1307,45 @@ void AnimControllerPanel::DrawCanvas(EditorApp& app, bool ro) {
         }
         ImGui::EndPopup();
     }
-    // 拖线建边推进/收尾（按住拖 = 松开落点；待点模式 = 下一左键落点）
-    if (edgeDragFrom_ >= 0) {
-        const int hli = edgeDragFrom_ < (int)edit_.states.size()
-                            ? LayoutIndexOf(edit_.states[(size_t)edgeDragFrom_])
-                            : -1;
-        if (hli < 0) {
+    // 拖线建边推进/收尾（按住拖 = 松开落点；待点模式 = 下一左键落点）。
+    // 源 = 状态（下标）或 Any（kEdgeDragAny，from="*"，批⑪）
+    if (edgeDragFrom_ != -1) {
+        const bool anyDrag = edgeDragFrom_ == kEdgeDragAny;
+        const int hli = anyDrag
+                            ? -1
+                            : (edgeDragFrom_ < (int)edit_.states.size()
+                                   ? LayoutIndexOf(edit_.states[(size_t)edgeDragFrom_])
+                                   : -1);
+        if (!anyDrag && hli < 0) {
             edgeDragFrom_ = -1;
             edgeDragHeld_ = false;
         } else {
-            const ImVec2 h = handlePos(hli);
+            const ImVec2 h = anyDrag ? sideHandlePos(anyRect(), edgeDragSide_)
+                                     : sideHandlePos(nodeRectScreen(hli), edgeDragSide_);
             const int tgtLi = hovered ? hitNodeLi(gm) : -1;
             const int tgtSi = tgtLi >= 0 ? StateIndex(edit_.layout[(size_t)tgtLi].state) : -1;
+            // B16：状态拖线落回源自身 = 取消（图无自环）；any 源无此约束（非状态）
+            const bool tgtOk = tgtSi >= 0 && (anyDrag || tgtSi != edgeDragFrom_);
+            const std::string fromName =
+                anyDrag ? std::string(assets::kControllerAnyFrom)
+                        : edit_.states[(size_t)edgeDragFrom_];
             dl->AddLine(h, io.MousePos, ImGui::GetColorU32(ImGuiCol_ButtonActive), 2.0f);
             dl->AddCircleFilled(io.MousePos, 4.0f, ImGui::GetColorU32(ImGuiCol_ButtonActive));
             if (edgeDragHeld_) {
                 if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
                     // review B1：单击未拖动（<6px 阈值，SceneView 拖拽同款）= 误触
-                    // 右缘把手——取消会话不落边（未动时 tgt = 源节点自身 → 自环）
+                    // 把手——取消会话不落边
                     const float mdx = io.MousePos.x - edgeDragStartX_;
                     const float mdy = io.MousePos.y - edgeDragStartY_;
-                    if (mdx * mdx + mdy * mdy >= 36.0f && tgtSi >= 0)
-                        AddTransitionByIndex(edgeDragFrom_, tgtSi);
+                    if (mdx * mdx + mdy * mdy >= 36.0f && tgtOk)
+                        AddTransitionInternal(fromName, tgtSi);
                     edgeDragFrom_ = -1;
                     edgeDragHeld_ = false;
                 }
             } else if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
                 edgeDragFrom_ = -1;
             } else if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-                if (tgtSi >= 0) AddTransitionByIndex(edgeDragFrom_, tgtSi);
+                if (tgtOk) AddTransitionInternal(fromName, tgtSi);
                 edgeDragFrom_ = -1;
             }
         }
@@ -1152,35 +1362,21 @@ void AnimControllerPanel::DrawCanvas(EditorApp& app, bool ro) {
         const ImU32 col = selE ? edgeSelCol : edgeCol;
         const float w = (selE ? 2.5f : 1.5f) * canvasZoom_;
         const std::string summary = EdgeSummary(edit_.transitions[ti]);
-        if (ep.loop) {
-            dl->AddCircle(ep.loopC, ep.loopR, col, 0, w);
-            dl->AddCircleFilled(ep.mid, selE ? 4.0f : 3.0f, col);
-            dl->AddText(ImGui::GetFont(), fs,
-                        ImVec2(ep.loopC.x + ep.loopR + 6.0f, ep.loopC.y - fs * 0.5f), col,
-                        summary.c_str());
-            continue;
-        }
-        dl->AddBezierCubic(ep.a, ep.c1, ep.c2, ep.b, col, w);
-        // 箭头：线从目标节点边框穿出处
-        const float dx = ep.b.x - ep.a.x, dy = ep.b.y - ep.a.y;
-        const float len = std::sqrt(dx * dx + dy * dy);
-        if (len > 1.0e-3f) {
-            const ImVec4 trr = nodeRectGraph(LayoutIndexOf(edit_.transitions[ti].to));
-            const float hw = (trr.z - trr.x) * 0.5f * canvasZoom_;
-            const float hh = (trr.w - trr.y) * 0.5f * canvasZoom_;
-            const float s = std::min(hw / std::max(std::abs(dx), 1.0e-4f),
-                                     hh / std::max(std::abs(dy), 1.0e-4f));
-            const ImVec2 tip{ep.b.x - dx * s, ep.b.y - dy * s};
-            const ImVec2 u{dx / len, dy / len};
+        dl->AddLine(ep.a, ep.b, col, w); // 直线边（四轮：贝塞尔拱弧退役）
+        // 箭头在直线中点、沿方向（同轴天然成立——二轮定形保留）；点选参照即箭头
+        if (ep.midDir.x != 0.0f || ep.midDir.y != 0.0f) {
+            const ImVec2 u = ep.midDir;
             const ImVec2 nrm{-u.y, u.x};
-            const float as = 9.0f * canvasZoom_;
+            const float as = (selE ? 11.0f : 9.0f) * canvasZoom_;
+            const ImVec2 tip{ep.mid.x + u.x * as * 0.5f, ep.mid.y + u.y * as * 0.5f};
             dl->AddTriangleFilled(
                 tip,
-                ImVec2(tip.x - u.x * as + nrm.x * as * 0.5f, tip.y - u.y * as + nrm.y * as * 0.5f),
-                ImVec2(tip.x - u.x * as - nrm.x * as * 0.5f, tip.y - u.y * as - nrm.y * as * 0.5f),
+                ImVec2(ep.mid.x - u.x * as * 0.5f + nrm.x * as * 0.45f,
+                       ep.mid.y - u.y * as * 0.5f + nrm.y * as * 0.45f),
+                ImVec2(ep.mid.x - u.x * as * 0.5f - nrm.x * as * 0.45f,
+                       ep.mid.y - u.y * as * 0.5f - nrm.y * as * 0.45f),
                 col);
         }
-        dl->AddCircleFilled(ep.mid, selE ? 4.0f : 3.0f, col); // 中点小圆点（点选辅助）
         dl->AddText(ImGui::GetFont(), fs, ImVec2(ep.mid.x + 6.0f, ep.mid.y - fs - 2.0f), col,
                     summary.c_str());
     }
@@ -1223,10 +1419,29 @@ void AnimControllerPanel::DrawCanvas(EditorApp& app, bool ro) {
             dl->AddRect(ImVec2(a.x - 2.0f, a.y - 2.0f), ImVec2(b.x + 2.0f, b.y + 2.0f),
                         ImGui::GetColorU32(theme::kTextWarn), kNodeRad * canvasZoom_ + 2.0f, 0,
                         3.0f * canvasZoom_);
-        if (!ro && (int)li == hoveredLi) // 拖线把手（hover 显现）
-            dl->AddCircleFilled(handlePos((int)li), 5.0f, edgeSelCol);
+        if (!ro && (int)li == hoveredLi) { // 四向拖线把手（hover 显现）
+            const ImVec4 r = nodeRectScreen((int)li);
+            for (int side = 0; side < 4; ++side)
+                dl->AddCircleFilled(sideHandlePos(r, side), 5.0f, edgeSelCol);
+        }
     }
-    if (edgeDragFrom_ >= 0) // 建边会话提示（按住拖 = 松开落点；待点 = 点目标/空处取消）
+    // Any 节点（批⑪ 五轮）：图空间可拖 + editor.nodes 保留键 "*" 持久化，最后画
+    // （盖边）；ro 态照画（观察面），把手/tooltip 仅编辑态
+    {
+        const ImVec4 ar = anyRect();
+        const ImVec2 a{ar.x, ar.y}, b{ar.z, ar.w};
+        dl->AddRectFilled(a, b, ImGui::GetColorU32(ImGuiCol_FrameBg, 0.9f), kNodeRad);
+        dl->AddRect(a, b, ImGui::GetColorU32(ImGuiCol_Border), kNodeRad, 0, 1.0f);
+        dl->AddText(ImGui::GetFont(), 13.0f,
+                    ImVec2(a.x + 10.0f, (a.y + b.y) * 0.5f - 6.5f),
+                    ImGui::GetColorU32(ImGuiCol_Text), tr("animctrl.any.label"));
+        if (!ro && hovered && hitAny(io.MousePos)) {
+            for (int side = 0; side < 4; ++side)
+                dl->AddCircleFilled(sideHandlePos(anyRect(), side), 5.0f, edgeSelCol);
+            ImGui::SetTooltip("%s", tr("animctrl.any.hint"));
+        }
+    }
+    if (edgeDragFrom_ != -1) // 建边会话提示（按住拖 = 松开落点；待点 = 点目标/空处取消）
         dl->AddText(ImVec2(p0.x + 8.0f, p0.y + 26.0f), ImGui::GetColorU32(ImGuiCol_Text),
                     tr("animctrl.canvas.edge_drag_hint"));
     dl->AddText(ImVec2(p0.x + 8.0f, p0.y + avail.y - 20.0f),

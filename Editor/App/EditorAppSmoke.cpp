@@ -1278,6 +1278,9 @@ struct AnimSmokeState {
     // M8 批⑩b：连线链——建边（AddTransitionByIndex 同入口）→ 撤销 → 重做 → 删边
     //（面板本地快照栈；计数往返断言）
     bool smokeCtrlEdgeOk = false, smokeCtrlEdgeDone = false;
+    // M8 批⑪：any-state 链——建 any 边（from="*"）+ 撤销往返 + B16 自环拒 +
+    // 保存后盘上 "from": "*" roundtrip（f38）
+    bool smokeCtrlAnyOk = false, smokeCtrlAnyDone = false;
     // review 修复回归（2026-10-16）：B2 Play 只读态画布滚轮缩放 + B1 把手单击
     // 不落自环边（f125 再进 Play → f128 滚轮注入 → f129/f130 单击注入）
     bool smokeCtrlRoPlayOk = false, smokeCtrlZoomOk = false, smokeCtrlClickOk = false;
@@ -1696,6 +1699,49 @@ void EditorApp::SmokeAnimFrame(uint64_t frame) {
                 }
                 if (!g_animSmoke.smokeCtrlEdgeOk)
                     LEMON_ERROR("smoke-anim：连线链不符（建边/撤销/重做/删边计数往返）");
+            } else if (frame == 38 && !g_animSmoke.smokeCtrlAnyDone) {
+                // M8 批⑪：any-state 链（API 级同入口——Any 节点把手/右键均走
+                // AddAnyTransitionByIndex）：建 any 边（*→Dead）→ 撤销往返 →
+                // B16 自环拒（AddTransitionForTest(i,i) = -1）→ 保存 → 盘上
+                // "from": "*" 字面 + 解析回读等值（roundtrip 门禁对 any 边生效）
+                g_animSmoke.smokeCtrlAnyDone = true;
+                if (PanelRegistry::Entry* en = panels_.FindEntry("AnimController")) {
+                    AnimControllerPanel* cp = static_cast<AnimControllerPanel*>(en->panel);
+                    cp->EnsureLoaded(*this); // f36 保存后 f37 仅内存操作——hash 未变
+                    const size_t t0 = cp->TransitionCountForTest();
+                    const int ni = cp->AddAnyTransitionForTest(3); // *→Dead（全局中断）
+                    const size_t t1 = cp->TransitionCountForTest();
+                    const bool undoOk = cp->UndoForTest();
+                    const size_t t2 = cp->TransitionCountForTest();
+                    const bool redoOk = cp->RedoForTest();
+                    const size_t t3 = cp->TransitionCountForTest();
+                    const bool selfRejected =
+                        cp->AddTransitionForTest(0, 0) == -1; // B16：whole→whole 拒
+                    const size_t t4 = cp->TransitionCountForTest();
+                    bool diskAny = false;
+                    const bool saved = cp->SaveForTest(*this);
+                    if (saved) {
+                        const std::filesystem::path gp =
+                            std::filesystem::path(ctx_.Assets().ProjectRoot()) / "Assets" /
+                            "anim-graph.controller";
+                        std::ifstream vf(gp, std::ios::binary);
+                        std::string vtext((std::istreambuf_iterator<char>(vf)),
+                                          std::istreambuf_iterator<char>());
+                        diskAny = vtext.find("\"from\": \"*\"") != std::string::npos;
+                        if (const assets::ControllerData v = assets::ParseControllerJson(vtext);
+                            v.ok && v.transitions.size() == t3) {
+                            for (const assets::ControllerTransitionEdit& t : v.transitions)
+                                if (t.from == "*" && t.to == "Dead") diskAny = true;
+                        } else {
+                            diskAny = false;
+                        }
+                    }
+                    g_animSmoke.smokeCtrlAnyOk =
+                        t0 == 4 && ni == (int)t0 && t1 == t0 + 1 && undoOk && t2 == t0 &&
+                        redoOk && t3 == t0 + 1 && selfRejected && t4 == t3 && saved && diskAny;
+                }
+                if (!g_animSmoke.smokeCtrlAnyOk)
+                    LEMON_ERROR("smoke-anim：any-state 链不符（建 any 边/撤销/B16 自环拒/盘上 roundtrip）");
             }
         } else if (frame == 40) {
             ImVec2 mn, mx;
@@ -2198,6 +2244,7 @@ bool EditorApp::SmokeAnimVerdict() {
              g_animSmoke.smokeCtrlOpenOk && g_animSmoke.smokeCtrlLoadOk &&
              g_animSmoke.smokeCtrlSaveOk && g_animSmoke.smokeCtrlGateOk &&
              g_animSmoke.smokeCtrlCanvasOk && g_animSmoke.smokeCtrlEdgeOk &&
+             g_animSmoke.smokeCtrlAnyOk &&
              g_animSmoke.smokeCtrlRoPlayOk && g_animSmoke.smokeCtrlZoomOk &&
              g_animSmoke.smokeCtrlClickOk;
     std::printf("[lemon] smoke-anim: prog(maxFrame=%u slice=%s booked=%u)%s "
@@ -2207,7 +2254,7 @@ bool EditorApp::SmokeAnimVerdict() {
                 "pick(click=%s shift=%s all=%s sheet(all=%s clear=%s close=%s row=%s)) "
                 "multiadd(count=%s order=%s) create(folder=%s dblclip=%s adopt=%s) "
                 "drag(item=%s) leftcol(meta=%s) ctrl(open=%s load=%s save=%s gate=%s "
-                "layout=%s edge=%s ro=%s zoom=%s click=%s) "
+                "layout=%s edge=%s any=%s ro=%s zoom=%s click=%s) "
                 "=> %s\n",
                 (unsigned)g_animSmoke.smokeAnimMax[0], g_animSmoke.smokeAnimSlice[0] ? "YES" : "NO",
                 sh ? sh->sliceCount : 0, yami, hitBooked ? "booked" : "MISSING",
@@ -2232,6 +2279,7 @@ bool EditorApp::SmokeAnimVerdict() {
                 g_animSmoke.smokeCtrlSaveOk ? "YES" : "NO", g_animSmoke.smokeCtrlGateOk ? "YES" : "NO",
                 g_animSmoke.smokeCtrlCanvasOk ? "YES" : "NO",
                 g_animSmoke.smokeCtrlEdgeOk ? "YES" : "NO",
+                g_animSmoke.smokeCtrlAnyOk ? "YES" : "NO",
                 g_animSmoke.smokeCtrlRoPlayOk ? "YES" : "NO",
                 g_animSmoke.smokeCtrlZoomOk ? "YES" : "NO",
                 g_animSmoke.smokeCtrlClickOk ? "YES" : "NO",

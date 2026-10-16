@@ -9,9 +9,12 @@
 //     "states": ["Idle","Run","Attack"],                  // 状态名 = 集内段名
 //     "transitions": [
 //       {"from":"Idle","to":"Run","when":[{"param":"speed",">":0.1}]},
-//       {"from":"Attack","to":"Idle","on":"exitTime"} ] } // 段末过渡；可并 "when"
-// 边界纪律（ADR-013 D4）：无 any-state/blend/layer；同一 from 按文件序评估首条
-// 命中即切；空 conds 且非 exitTime = 无条件即切 → 解析期拒绝（作者错误拦在写盘前）。
+//       {"from":"Attack","to":"Idle","on":"exitTime"},    // 段末过渡；可并 "when"
+//       {"from":"*","to":"Hit","when":[{"trigger":"hit"}]} ] } // any-state（批⑪）
+// 边界纪律（ADR-013 D4 修订 2026-10-16）：any-state 开禁（from="*"——任意当前状态
+// 出发，受击/死亡等全局中断族；求值序 = any 边先于状态边、组内文件序、首条命中即切，
+// 编译期前置实现）；无 blend/layer/sub-FSM（红线维持）。自环 from==to 拒（图切换
+// 无重启语义——重启走脚本 Play）；空 conds 且非 exitTime = 无条件即切 → 解析期拒绝。
 // 序列化手写（非 nlohmann dump）：字段序/缩进与 ClipToJson 同型——保存后 diff 最小。
 #pragma once
 
@@ -21,6 +24,11 @@
 #include <vector>
 
 namespace lemon::assets {
+
+/// any-state 出边源哨兵（M8 批⑪，ADR-013 D4 修订）：from == "*" = 从任意当前
+/// 状态出发（受击/死亡等全局中断族）。状态名域保留字——ParseControllerJson 拒
+/// 状态名 "*"；to 不接受哨兵（to 必须列于 states）。
+inline constexpr const char* kControllerAnyFrom = "*";
 
 /// 参数（kind 值域 = AnimParamKind：0 float / 1 bool / 2 trigger）
 struct ControllerParamEdit {
@@ -69,8 +77,9 @@ struct ControllerData {
 };
 
 /// .controller JSON 文本 → ControllerData。states[] 必需非空；params/entry/
-/// transitions/editor 可缺省。状态重名/参数 >8 或重名/from-to- entry 引用未列状态/
-/// op-on-kind 字符串未识别/空 conds 非 exitTime → ok=false + error（首错即返）。
+/// transitions/editor 可缺省。状态重名或为 "*"（any 哨兵）/参数 >8 或重名/
+/// from-to-entry 引用未列状态（from 可为 "*"）/自环 from==to/op-on-kind 字符串
+/// 未识别/空 conds 非 exitTime → ok=false + error（首错即返）。
 /// editor.nodes 为编辑面附加块：容错读取（未列状态键/坏坐标 = 忽略单项，不拦
 /// 解析），读取按 states 序归一（序列化同序——roundtrip 等值的前提）。
 ControllerData ParseControllerJson(std::string_view text);

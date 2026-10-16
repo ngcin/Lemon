@@ -79,6 +79,8 @@ ControllerData ParseControllerJson(std::string_view text) {
         const size_t idx = out.states.size();
         if (!st.is_string() || st.get<std::string>().empty())
             return Fail("状态名非字符串/为空", idx);
+        if (st.get<std::string>() == kControllerAnyFrom)
+            return Fail("状态名不可为 \"*\"（any-state 哨兵保留字，批⑪）", idx);
         for (const std::string& prev : out.states)
             if (prev == st.get<std::string>())
                 return Fail("状态重名（词表内必须唯一）", idx);
@@ -123,13 +125,16 @@ ControllerData ParseControllerJson(std::string_view text) {
             ControllerTransitionEdit t;
             t.from = tr.at("from").get<std::string>();
             t.to = tr.at("to").get<std::string>();
-            bool fromOk = false, toOk = false;
+            // any-state（批⑪）：from == "*" = 任意当前状态出发（免列校验）；to 仍须列出
+            bool fromOk = t.from == kControllerAnyFrom, toOk = false;
             for (const std::string& s : out.states) {
                 fromOk |= s == t.from;
                 toOk |= s == t.to;
             }
             if (!fromOk) return Fail("from 引用了未列出的状态", idx);
             if (!toOk) return Fail("to 引用了未列出的状态", idx);
+            if (t.from == t.to) // B16：图切换无重启语义（同段 no-op 只吃 trigger 遮出边）
+                return Fail("自环过渡（from == to）——重启动画走脚本 Play，图不做", idx);
             if (tr.contains("on")) {
                 if (!tr.at("on").is_string() || tr.at("on").get<std::string>() != "exitTime")
                     return Fail("on 未识别（仅支持 \"exitTime\"）", idx);
@@ -185,6 +190,15 @@ ControllerData ParseControllerJson(std::string_view text) {
                     if (!(*it)[0].is_number() || !(*it)[1].is_number()) continue;
                     out.layout.push_back(
                         {s, (int)std::lround((*it)[0].get<double>()),
+                         (int)std::lround((*it)[1].get<double>())});
+                }
+                // Any 节点保留键 "*"（批⑪ 五轮：可拖/持久化；states 词面禁 "*"，
+                // 键位无碰撞；规范序 = states 后置 any 尾——与序列化同构）
+                if (const auto it = ni->find(kControllerAnyFrom);
+                    it != ni->end() && it->is_array() && it->size() == 2 &&
+                    (*it)[0].is_number() && (*it)[1].is_number()) {
+                    out.layout.push_back(
+                        {kControllerAnyFrom, (int)std::lround((*it)[0].get<double>()),
                          (int)std::lround((*it)[1].get<double>())});
                 }
             }
@@ -258,10 +272,11 @@ std::string ControllerToJson(const ControllerData& c) {
     }
     out += c.transitions.empty() ? "]" : "\n  ]";
     // editor 块（仅当有仍列于 states 的布局项时写出；悬空键丢弃 = 保存即清洗；
-    // states 序——与解析归一序同构，roundtrip 等值的前提）
+    // states 序——与解析归一序同构，roundtrip 等值的前提；保留键 "*" = Any 节点位
+    // 置（批⑪ 五轮），规范序恒居尾）
     std::string edNodes;
     for (const ControllerNodePos& np : c.layout) {
-        if (StateIdx(c, np.state) < 0) continue;
+        if (np.state != kControllerAnyFrom && StateIdx(c, np.state) < 0) continue;
         edNodes += edNodes.empty() ? "\n      " : ",\n      ";
         edNodes += JsonEscape(np.state);
         edNodes += ": [";
@@ -288,7 +303,9 @@ std::vector<uint8_t> ControllerReachability(const ControllerData& c) {
     std::vector<int> queue{entry};
     for (size_t qi = 0; qi < queue.size(); ++qi) {
         for (const ControllerTransitionEdit& t : c.transitions) {
-            if (t.from != c.states[(size_t)queue[qi]]) continue;
+            // any 边（from="*"）= 每个已访状态都有此出边（批⑪）——目标恒可达
+            if (t.from != kControllerAnyFrom && t.from != c.states[(size_t)queue[qi]])
+                continue;
             const int to = StateIdx(c, t.to);
             if (to >= 0 && !reach[(size_t)to]) {
                 reach[(size_t)to] = 1;
@@ -327,7 +344,9 @@ std::vector<ControllerNodePos> ControllerAutoLayoutNodes(const ControllerData& c
         for (size_t qi = 0; qi < queue.size(); ++qi) {
             const int cur = queue[qi];
             for (const ControllerTransitionEdit& t : c.transitions) {
-                if (t.from != c.states[(size_t)cur]) continue;
+                // any 边跟随（批⑪）：目标经任意已访状态可达 → 层 = 当前层 + 1
+                if (t.from != kControllerAnyFrom && t.from != c.states[(size_t)cur])
+                    continue;
                 const int to = StateIdx(c, t.to);
                 if (to >= 0 && layer[(size_t)to] < 0) {
                     layer[(size_t)to] = layer[(size_t)cur] + 1;

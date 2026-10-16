@@ -1352,11 +1352,12 @@ void AnimGraphSystem::Tick(World& world, Scene& scene, float dt) {
             continue;
         }
         const float* pv = params ? params->v : zeroParams;
-        // 出边评估：同 from 按文件序，首条命中即切（每实体每 tick 至多一条，无级联
-        // ——确定性）。exitTime = 非 loop 段收尾边沿（an.ended，#13 钳 total 时置位；
-        // loop 段 exitTime 不触发，挂起项）。缺绑目标 = warn-once 保持当前状态。
+        // 出边评估：any 边（from=kAnimAnyFrom，批⑪）先于状态边、组内文件序，首条
+        // 命中即切（每实体每 tick 至多一条，无级联——确定性；编译期前置实现序）。
+        // exitTime = 非 loop 段收尾边沿（an.ended，#13 钳 total 时置位；loop 段
+        // exitTime 不触发，挂起项）。缺绑目标 = warn-once 保持当前状态。
         for (const AnimTransitionDef& t : ctrl->transitions) {
-            if (t.from != (uint16_t)cur) continue;
+            if (t.from != kAnimAnyFrom && t.from != (uint16_t)cur) continue;
             if (!AnimCondsHold(*ctrl, t, pv)) continue;
             if (t.exitTime && !an.ended) continue;
             const uint32_t cid = t.to < ctrl->states.size()

@@ -35,6 +35,8 @@ namespace {
 #define ED_CLIPREF(tip) { FieldHint::ClipRef, 0, 0, nullptr, 0, tip } // M5 批③
 #define ED_RMLREF(tip) { FieldHint::RmlRef, 0, 0, nullptr, 0, tip } // M6b 批③d 前置
 #define ED_AUDIOREF(tip) { FieldHint::AudioRef, 0, 0, nullptr, 0, tip } // M6c 批③
+#define ED_SETREF(tip) { FieldHint::AnimSetRef, 0, 0, nullptr, 0, tip } // T3d 批①（批⑪ 七轮接通）
+#define ED_CTRLREF(tip) { FieldHint::ControllerRef, 0, 0, nullptr, 0, tip } // T3d 批①（批⑪ 七轮接通）
 
 // ---- Core（id 0..4）----
 constexpr FieldMeta kTransform2D[] = {
@@ -103,8 +105,10 @@ constexpr FieldMeta kAnimGraph[] = {
     FIELD(AnimGraph, controllerGuid, UInt64), FIELD(AnimGraph, setGuid, UInt64),
     FIELD_RT(AnimGraph, inited, UInt8)};
 constexpr FieldEditorMeta kEdAnimGraph[] = {
-    ED_TIP("状态机资产槽（.controller GUID；0 = 无图，仅集绑定用于按名解析）"),
-    ED_TIP("动画集资产槽（.ani 集资产 GUID；按名解析作用域 + 图状态绑定的集）"),
+    // 批⑪ 七轮：接通 GUID 资产槽（原 ED_TIP 裸十进制直出——Inspector 读不懂；
+    // hint 就位后走 DrawGuidSlot：路径名显示 + 下拉/拖入/右键清空）
+    ED_CTRLREF("状态机资产槽（.controller；下拉全列 / AssetBrowser 拖入 / 右键清空；0 = 无图，仅集绑定用于按名解析）"),
+    ED_SETREF("动画集资产槽（.ani 集；按名解析作用域 + 图状态绑定的集）"),
     ED_HIDE};
 // T3d 批②：参数黑板 8 槽（数组无逐槽名，手动行——Projectile.hitMemory 同法；
 // 全 FIELD_RT：入状态哈希不入档，每局由 controller 默认值重播种）

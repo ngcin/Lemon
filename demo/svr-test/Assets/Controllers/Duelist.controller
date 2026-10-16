@@ -10,18 +10,23 @@
   "entry": "Idle",
   "states": ["Idle", "Walk", "Attack", "Hit", "Death"],
   "transitions": [
+    { "from": "*", "to": "Death", "when": [{ "trigger": "death" }] },
+    { "from": "*", "to": "Hit", "when": [{ "trigger": "hit" }] },
     { "from": "Idle", "to": "Walk", "when": [{ "param": "speed", ">": 0.1 }] },
     { "from": "Walk", "to": "Idle", "when": [{ "param": "speed", "<=": 0.1 }] },
     { "from": "Idle", "to": "Attack", "when": [{ "trigger": "attack" }] },
     { "from": "Walk", "to": "Attack", "when": [{ "trigger": "attack" }] },
     { "from": "Attack", "to": "Idle", "on": "exitTime" },
-    { "from": "Idle", "to": "Hit", "when": [{ "trigger": "hit" }] },
-    { "from": "Walk", "to": "Hit", "when": [{ "trigger": "hit" }] },
-    { "from": "Attack", "to": "Hit", "when": [{ "trigger": "hit" }] },
-    { "from": "Hit", "to": "Idle", "on": "exitTime" },
-    { "from": "Idle", "to": "Death", "when": [{ "trigger": "death" }] },
-    { "from": "Walk", "to": "Death", "when": [{ "trigger": "death" }] },
-    { "from": "Attack", "to": "Death", "when": [{ "trigger": "death" }] },
-    { "from": "Hit", "to": "Death", "when": [{ "trigger": "death" }] }
-  ]
+    { "from": "Hit", "to": "Idle", "on": "exitTime" }
+  ],
+  "editor": {
+    "nodes": {
+      "Idle": [0, 96],
+      "Walk": [168, 272],
+      "Attack": [416, 104],
+      "Hit": [0, -48],
+      "Death": [464, -160],
+      "*": [32, -168]
+    }
+  }
 }

@@ -18,6 +18,12 @@
 
 namespace lemon::ecs {
 
+/// any-state 出边源哨兵（M8 批⑪，ADR-013 D4 修订）：states 下标域外保留字——
+/// 命中任意当前状态。编译期（BuildControllerCache）any 边稳定前置（组内文件序
+/// 不变）→ 求值循环单遍即得"any 先评、首条命中即切"（Unity/Cocos 全局中断优先
+/// 口径）；无 any 边的档序与文件序逐位一致（既有行为零漂移）。
+inline constexpr uint16_t kAnimAnyFrom = 0xFFFF;
+
 /// 参数种类（AnimParams.v[] 槽的值域约定；trigger = 非 0 待消费，消费即清 0）
 enum class AnimParamKind : uint8_t { Float = 0, Bool = 1, Trigger = 2 };
 
@@ -36,8 +42,9 @@ struct AnimCondDef {
     float value = 0.0f;
 };
 
-/// 出边：from/to = states 下标；exitTime = 段末过渡（非 loop 段收尾即切，语义 =
-/// Queue 的图化形态，吸收 T3c 遗留"段末自动过渡表"）；conds 全 and 首条出边胜
+/// 出边：from/to = states 下标（from 另有 any 哨兵 kAnimAnyFrom——批⑪）；
+/// exitTime = 段末过渡（非 loop 段收尾即切，语义 = Queue 的图化形态，吸收 T3c
+/// 遗留"段末自动过渡表"）；conds 全 and 首条出边胜
 struct AnimTransitionDef {
     uint16_t from = 0, to = 0;
     bool exitTime = false;

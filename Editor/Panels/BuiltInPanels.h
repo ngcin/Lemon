@@ -549,8 +549,11 @@ public:
     // ---- 批⑩b：连线/撤销（冒烟：建边 +1 / 删边 -1 / undo-redo 往返）----
     size_t TransitionCountForTest() const { return edit_.ok ? edit_.transitions.size() : 0; }
     /// 语义直调：建边（与画布拖线/检查器「+ 出边」同入口 AddTransitionByIndex；
-    /// 含撤销压栈）；返回新边下标，-1 = 拒（下标无效）
+    /// 含撤销压栈）；返回新边下标，-1 = 拒（下标无效或 from==to 自环，批⑪ B16）
     int AddTransitionForTest(int fromIdx, int toIdx) { return AddTransitionByIndex(fromIdx, toIdx); }
+    /// 语义直调：建 any 边（与 Any 节点把手拖线/右键「新建出边」同入口；from="*"，
+    /// 批⑪）——目标 = 任意当前状态出发的全局中断边
+    int AddAnyTransitionForTest(int toIdx) { return AddAnyTransitionByIndex(toIdx); }
     /// 语义直调：删边（与 Del/检查器删边同入口）；false = 下标无效
     bool DeleteTransitionForTest(int idx) { return DeleteTransition(idx); }
     bool UndoForTest() { return UndoLocal(); }
@@ -591,7 +594,10 @@ private:
     void SelectEdge(int idx);
     void CommitStateRename(int idx, const std::string& newName); // 空/重名 = 静默保旧
     void DeleteState(int idx);                                   // 级联过渡 + 布局键
-    int AddTransitionByIndex(int fromIdx, int toIdx); // 起步条件 b9 规则；-1 = 拒
+    int AddTransitionByIndex(int fromIdx, int toIdx); // 起步条件 b9 规则；-1 = 拒（B16 自环同拒）
+    int AddAnyTransitionByIndex(int toIdx);           // any 边（from="*"，批⑪）；-1 = 拒
+    /// 建边单一落点（状态/any 源共用；批⑪ 抽取）：起步条件 b9 规则 + 新边即选
+    int AddTransitionInternal(const std::string& from, int toIdx);
     bool DeleteTransition(int idx);
     void PushUndo() {
         if (edit_.ok) undoStack_.Push(edit_);
@@ -605,8 +611,13 @@ private:
     int LayoutIndexOf(const std::string& state) const; // -1 = 无布局项
     /// 缺失状态补自动布局（不改 dirty——打开旧档不显"未保存"）；幂等
     void EnsureLayout();
-    /// 归一 states 序 + 丢弃悬空键（序列化/roundtrip 等值前提；TrySave 前必调）
+    /// 归一 states 序 + 丢弃悬空键（序列化/roundtrip 等值前提；TrySave 前必调）；
+    /// 保留键 "*"（Any 节点，批⑪ 五轮）恒居尾
     void NormalizeLayout();
+    /// Any 节点图空间矩形：editor.nodes 保留键 "*"（未拖过 = 无档键，取布局
+    /// 包围盒左外侧缺省——自动布局 x≥0 恒不重叠）（批⑪ 五轮：可拖/持久化）；
+    /// 本头不引 imgui.h——ImVec4 组装在 .cpp
+    void AnyRectGraph(float& x, float& y, float& z, float& w) const;
     /// 落位单一入口（画布拖动与 ForTest 同通道）：网格量化 + dirty；
     /// true = 坐标实际变化（拖动手势行为"松手拍一次"撤销判定）
     bool SetNodePosition(const std::string& state, int x, int y);
@@ -643,9 +654,12 @@ private:
     assets::ControllerData preDrag_;
     bool dragMutated_ = false;
     // 拖线建边（批⑩b）：源状态下标 + 是否按住（把手拖出 = true；右键菜单
-    // 「新建出边」= false 的待点模式——下一左键落目标节点/空处取消）
+    // 「新建出边」= false 的待点模式——下一左键落目标节点/空处取消）。
+    // 批⑪：-2 = kEdgeDragAny（源 = Any 节点，from="*"）——"无手势"判据一律
+    // 用 == -1（-2 也是手势中，勿用 >= 0/< 0 判）
     int edgeDragFrom_ = -1;
     bool edgeDragHeld_ = false;
+    int edgeDragSide_ = 0; // 抓取的四向把手（0 右/1 左/2 上/3 下——幽灵线起点；批⑪ 三轮）
     // review B1：按住拖会话的起手屏幕坐标——松手位移 < 6px = 单击误触把手，不落边
     float edgeDragStartX_ = 0.0f, edgeDragStartY_ = 0.0f;
     // 最近一次绘制的画布原点（屏幕）——StateHandlePosForTest 用（B1 冒烟注入锚）

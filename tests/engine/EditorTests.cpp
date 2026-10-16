@@ -756,6 +756,90 @@ void TestControllerAndGraph() {
     Expect(assets::ControllerSnapGrid(7) == 8 && assets::ControllerSnapGrid(-5) == -8 &&
                assets::ControllerSnapGrid(8) == 8 && assets::ControllerSnapGrid(3) == 0,
            "画布网格量化（8px 最近格）");
+
+    // -- M8 批⑪：any-state（from="*"）解析/roundtrip/可达性/布局 + B16 自环拒 --
+    Expect(!assets::ParseControllerJson(R"({ "states": ["*"] })").ok,
+           "状态名 \"*\" 保留字拒绝");
+    Expect(!assets::ParseControllerJson(
+               R"({ "states": ["A","B"], "transitions": [{"from":"A","to":"A","on":"exitTime"}] })")
+               .ok,
+           "自环过渡拒绝（B16：图切换无重启语义）");
+    assets::ControllerData anyC;
+    anyC.ok = true;
+    anyC.states = {"A", "B", "C"};
+    anyC.entry = "A";
+    anyC.params = {{"hit", 2, 0.0f}};
+    anyC.transitions = {{"A", "B", true, {}}, {"*", "C", false, {{"hit", 5, 0.0f}}}};
+    const std::string anyJson = assets::ControllerToJson(anyC);
+    Expect(anyJson.find("\"from\": \"*\"") != std::string::npos, "any 边序列化字面");
+    const assets::ControllerData anyBack = assets::ParseControllerJson(anyJson);
+    Expect(anyBack.ok && anyBack.transitions == anyC.transitions, "any 边 roundtrip 等值");
+    { // 批⑪ 五轮：Any 节点位置持久化——editor.nodes 保留键 "*"（解析 states 序
+      // 归一 + any 恒居尾 = 规范序；与状态节点同通道量化/roundtrip）
+        assets::ControllerData anyL;
+        anyL.ok = true;
+        anyL.states = {"A", "B"};
+        anyL.entry = "A";
+        anyL.params = {{"hit", 2, 0.0f}};
+        anyL.transitions = {{"*", "B", false, {{"hit", 5, 0.0f}}}};
+        anyL.layout = {{"*", -168, 0}, {"B", 192, 0}, {"A", 0, 0}}; // 乱序布局入
+        const assets::ControllerData back =
+            assets::ParseControllerJson(assets::ControllerToJson(anyL));
+        Expect(back.ok && back.layout.size() == 3 && back.layout[0].state == "A" &&
+                   back.layout[1].state == "B" && back.layout[2].state == "*" &&
+                   back.layout[2].x == -168 && back.layout[2].y == 0,
+               "any 布局键 \"*\" 解析（states 序归一 + any 恒居尾）");
+        const std::string anyLJson = assets::ControllerToJson(back);
+        Expect(anyLJson.find("\"*\": [-168, 0]") != std::string::npos,
+               "any 布局键序列化字面");
+        Expect(assets::ParseControllerJson(anyLJson).layout == back.layout,
+               "any 布局键 roundtrip 等值（规范序不动点）");
+        const assets::ControllerData anyBad = assets::ParseControllerJson(
+            R"({ "states": ["A","B"], "entry": "A",
+                 "transitions": [{"from":"A","to":"B","on":"exitTime"}],
+                 "editor": { "nodes": { "*": "bad" } } })");
+        Expect(anyBad.ok && assets::ControllerToJson(anyBad).find("\"*\"") ==
+                                      std::string::npos,
+               "any 布局键坏项容错（忽略单项不拦解析，保存即清洗）");
+    }
+    const std::vector<uint8_t> rchAny = assets::ControllerReachability(anyC);
+    Expect(rchAny.size() == 3 && rchAny[0] && rchAny[1] && rchAny[2],
+           "any 边目标恒可达（C 无普通入边）");
+    assets::ControllerData alAny = al; // E 原 不可达尾列；补 any→E 后经任意态可达
+    alAny.transitions.push_back({"*", "E", true, {}});
+    const std::vector<assets::ControllerNodePos> alA1 =
+        assets::ControllerAutoLayoutNodes(alAny);
+    bool anyECol = false;
+    for (const assets::ControllerNodePos& np : alA1)
+        if (np.state == "E") anyECol = np.x == 192; // any 边跟随 → E 层 1（列 192）
+    Expect(anyECol && alA1 == assets::ControllerAutoLayoutNodes(alAny),
+           "any 边参与自动布局分层（E 不再尾列）+ 确定性保持");
+    const std::vector<uint8_t> rchAny2 = assets::ControllerReachability(alAny);
+    Expect(rchAny2[4], "any 边可达性位图（E 转可达）");
+    // 求值序（表级模拟 AnimGraphSystem 单遍扫描）：any 边先于状态边命中即中断优先
+    ecs::ControllerDef ad;
+    ad.states = {"A", "B", "C"};
+    ad.params = {{"hit", ecs::AnimParamKind::Trigger, 0.0f}};
+    ecs::AnimTransitionDef anyE;
+    anyE.from = ecs::kAnimAnyFrom;
+    anyE.to = 2;
+    anyE.conds.push_back({0, AnimCondOp::Trigger, 0.0f});
+    ecs::AnimTransitionDef stateE;
+    stateE.from = 0;
+    stateE.to = 1;
+    stateE.exitTime = true;
+    ad.transitions = {anyE, stateE}; // any 前置 = 编译序（BuildControllerCache 两遍）
+    float pv[8] = {};
+    pv[0] = 1.0f; // hit 触发
+    int32_t cur = 0, hitTo = -1;
+    for (const ecs::AnimTransitionDef& t : ad.transitions) {
+        if (t.from != ecs::kAnimAnyFrom && t.from != (uint16_t)cur) continue;
+        if (!ecs::AnimCondsHold(ad, t, pv)) continue;
+        if (t.exitTime) continue; // 模拟未收尾（an.ended = 0）
+        hitTo = t.to;
+        break;
+    }
+    Expect(hitTo == 2, "any 边先于状态边命中（全局中断优先，kAnimAnyFrom 匹配任意态）");
 }
 #endif // LEMON_EDITOR_CORE
 

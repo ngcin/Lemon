@@ -1,7 +1,7 @@
 # ADR-013：动画控制面分层与资产族对齐（.controller / .override / .anim）
 
 - 日期：2026-09-27
-- 状态：**已采纳，D2 于 2026-10-13 修订，D6 于 2026-10-16 增补**（M6a 批② T3d 落地同日定稿——四小批 + ani.scene 双怪对决终验，
+- 状态：**已采纳，D2 于 2026-10-13 修订，D6 于 2026-10-16 增补，D4 于 2026-10-16 修订（any-state 开禁）**（M6a 批② T3d 落地同日定稿——四小批 + ani.scene 双怪对决终验，
   [DevLog](../DevLog/2026-09-27-m6a-b2-t3d-anim-controller.md)；批④迁移注记：历史
   文档中 `.clip/.ani` 字样按 `.anim/.override` 映射读取，ADR-012 `.table→.tab` 同款；
   **2026-10-13 D2 修订**：实用反馈推翻 Unity 对齐命名，`.anim→.clip`、`.override→.ani`
@@ -9,7 +9,10 @@
   历史文档中 `.anim/.override` 字样按 `.clip/.ani` 映射读取；
   **2026-10-16 D6 增补**：精简可视化图编辑纳入 v1——b9 三表工作台实测"表单形态不可用"
   改道，图管结构 + 检查器管细节；布局随 `.controller` 顶层 `editor` 字段持久化
-  （运行时零感知），[批文件](../Plans/M8/2026-10-16-b10-anim-graph-editor.md)）
+  （运行时零感知），[批文件](../Plans/M8/2026-10-16-b10-anim-graph-editor.md)；
+  **2026-10-16 D4 修订**：any-state 开禁（触发条件当日命中——svr-test 实测每态手抄
+  受击/死亡边成扇入乱麻），求值序/自环/编辑面语义见 D4 注记修订段，
+  [批⑪ 批文件](../Plans/M8/2026-10-16-b11-any-state.md)）
 - 影响：`03-ECS-Runtime.md` §8.1（图评估系统/参数组件）、`04-CSharp-Scripting.md`（Lemon.Anim 参数面）、`05-Editor.md` §3/§7（绑定槽/工作台）、`06-Asset-Pipeline-Out-of-Box.md` §2.2（资产族后缀）、`08-Development-Roadmap.md`（M6a T3d）、`Editor/Assets/AssetDatabase.*`（扩展名四行）、`Engine/ECS/ClipTable.*`（按名解析作用域）、新组件 `AnimGraph`/`AnimParams`、新系统 `AnimGraphSystem`
 
 ## 背景
@@ -86,16 +89,28 @@ vs-survivor `PlayerCombat.cs:16-50` 与 demo/svr-test `PlayerBehaviour.cs:108-11
   warn-once 丢队列"哲学）。
 - v1 过渡条件最小面：参数比较（float `<`/`<=`/`>`/`>=`，bool，trigger）+ 段末
   （exitTime，= Queue 的图化形态，**吸收 T3c 遗留的"段末自动过渡表"**）。
-- **不抄 mecanim 全量**：无 blend tree / layers / sub-state machine / any-state /
+- **不抄 mecanim 全量**：无 blend tree / layers / sub-state machine /
   姿态混合（CrossFade = 延迟切换的 M6a 批①定案不变；帧动画无姿态可混）。
-- **D4 红线复杂度注记（2026-10-16 批⑩ 立项时结算）**——四项均为批级**全栈**工作
-  （运行时 + schema + 编辑器 + 校验 + 金回放重录），且互相耦合（单做一项易产出
-  与后续打架的临时语义，mecanim 是耦合系统，不做半套）：
-  - **any-state**（从任意状态出发的过渡）：运行时加第二遍全局边扫描 + 与常规边
-    的优先级规定；难点在语义非代码——自环防重（to==当前态时 bool 会每帧重切）、
-    trigger 消费归属、与 exitTime 互斥。**~1–1.5 批**。复活触发 = 作者反馈
-    "每个状态手抄受击边"成高频痛点（当前替代 = 脚本 Play 强切，D1 已定职责 +
-    Hurt 段正常出边完成回位）。
+  **any-state 已于 2026-10-16 批⑪ 开禁**（见下方修订段）；blend tree / layers /
+  sub-FSM 维持红线。
+- **D4 红线复杂度注记（2026-10-16 批⑩ 立项时结算；any-state 段已按批⑪ 修订）**——
+  四项均为批级**全栈**工作（运行时 + schema + 编辑器 + 校验 + 金回放重录），且互相
+  耦合（单做一项易产出与后续打架的临时语义，mecanim 是耦合系统，不做半套）：
+  - **any-state** ~~（从任意状态出发的过渡）~~ **→ 2026-10-16 批⑪ 开禁**（触发条件
+    当日命中：svr-test Duelist 实测 13 边中 9 条为 ×→Hit/×→Death 扇入手抄，Unity
+    Mecanim / Cocos Marionette 同款节点，Godot 无——其惯用替代 = 代码直跳，本引擎
+    C# `Anim.Play` 同型出口本就存在，D1 脚本优先）。定形语义：
+    schema `from: "*"`（状态名 `*` 保留字拒；仓内零存量自环已核——自环 from==to
+    解析拒，图切换无重启语义，重启归脚本 Play 同段重播）；
+    **求值序 = any 边先于状态边、组内文件序、首条命中即切、每 tick 至多一条**
+    （编译期稳定前置实现，无 any 档序与文件序逐位一致——金回放零重录口径）；
+    当初预判的三难点落地口径：自环防重 = 切换体 `cid != an.clipId` 守卫天然 no-op
+    （= Unity Can-Transition-To-Self 默认关）；trigger 消费 = 命中边消费即清（含
+    同态 no-op——保守不误清）；exitTime 不互斥 = any+exitTime 合法（"任意当前段
+    收尾时切"，an.ended 语义照用）。编辑面 = Any 节点（批⑪ 五轮：图空间可拖 +
+    位置随 `editor.nodes` 保留键 `"*"` 持久化（未拖过 = 无档键、缺省布局包围盒
+    左外侧，惰性落位不污染旧档）+ 右键「删除」= 清空全局边——节点本体恒在 =
+    建边入口（Unity Any State 同款不可移除））+ 把手拖线/右键建边。
   - **sub-FSM**（子状态机）：状态标识从名字变路径（状态名即集绑定键、全局唯一，
     嵌套必撞名）、评估递归化、当前状态反推变"叶子→路径映射"、编辑器加钻取
     导航。**~2–3 批**。复活触发 = 真实项目单控制器 >15–20 态（目标品类
@@ -129,17 +144,18 @@ vs-survivor `PlayerCombat.cs:16-50` 与 demo/svr-test `PlayerBehaviour.cs:108-11
 定形 = **图管结构 + 检查器管细节**——节点=状态、边=transition 的画布编辑
 （拖动/连线/选中/删除），条件与字段细节恒在选中检查器（复用 b9 控件）；布局随
 `.controller` 顶层可选 `editor` 字段持久化（旧档缺省 = 确定性自动布局；解析器
-白名单读取，未知字段天然忽略 → 运行时/旧档零感知）。**D4 红线不变**：无
-any-state / blend tree / layers / sub-FSM；运行时求值语义零改动。交互清单与
-验收判据见 [批文件](../Plans/M8/2026-10-16-b10-anim-graph-editor.md)。
+白名单读取，未知字段天然忽略 → 运行时/旧档零感知）。**D4 红线除 any-state 外
+不变**（2026-10-16 批⑪ 开禁 any-state，见 D4 修订段）：无 blend tree / layers /
+sub-FSM。交互清单与验收判据见 [批文件](../Plans/M8/2026-10-16-b10-anim-graph-editor.md)。
 
 ## 后果
 
 - 正面：N 角色一份状态机逻辑（OnHit 复制粘贴止于现状两处）；消灭 GUID 魔法常量与
   隐式集作用域；资产族/目录与 Unity 肌肉记忆一致；骨骼接入时控制面零改动。
 - 负面/边界：v1 含**精简**可视化图编辑（2026-10-16 D6 增补；原"JSON 手写 + Inspector"
-  形态由 b9 实测推翻）；mecanim 全量（blend tree / layers / any-state / sub-FSM）仍为
-  红线；EnterPlay 快照语义不变（Play 中改 .controller 当局不生效）；
+  形态由 b9 实测推翻）+ any-state 全局中断边（2026-10-16 D4 修订开禁；求值序 =
+  any 先评）；mecanim 全量（blend tree / layers / sub-FSM）仍为红线；
+  EnterPlay 快照语义不变（Play 中改 .controller 当局不生效）；
   后缀迁移触碰存量模板/demo/smoke 种子（保 GUID 迁移，独立小批走，见批次文件）。
 - 关联：T3c §6"下批（T3d 候选）"由本 ADR 升格定形；批次分解与验收见
   [Plans/M6a/2026-09-27-b2-t3d-anim-controller.md](../Plans/M6a/2026-09-27-b2-t3d-anim-controller.md)。

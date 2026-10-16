@@ -13,6 +13,7 @@
 
 #include "App/EditorApp.h"
 #include "Assets/AssetDatabase.h"
+#include "Assets/ControllerAsset.h" // assets::ParseControllerJson（AnimParams 具名化，批⑪ 七轮）
 #include "Components/BehaviorComponents.h"
 #include "Components/CoreComponents.h"
 #include "Components/LightComponents.h"
@@ -1279,6 +1280,91 @@ bool InspectorPanel::CreateNewScript(EditorApp& app, const std::string& name,
     return true;
 }
 
+/// 批⑪ 七轮：AnimParams 参数黑板按所绑控制器词面具名化（原 param0..7 匿名槽
+/// 直出——"作为开发者完全没法理解"实测反馈）。词面 = 同实体 AnimGraph.
+/// controllerGuid → .controller 参数表（(guid,hash) 单槽缓存，Rescan 变更失效）；
+/// 值面分态：编辑态只读显控制器默认（组件值 FIELD_RT 不落档，进 Play 播种）；
+/// Play 态实时读写（v1.1"参数实时调"的最小落地——直写 Play World 组件，图评估
+/// 下一 tick 消费；trigger = 激发按钮写 1，命中即清 = Anim.Trigger 同语义）。
+/// 不进属性轨/Undo：RT 组件无落盘语义（Stop 即丢）。
+void DrawAnimParamsBody(EditorApp& app, ecs::Entity e) {
+    using lemon::editor::loc::tr;
+    using lemon::editor::loc::trFmt;
+    EditorContext& ctx = app.Ctx();
+    static assets::ControllerData s_cache;
+    static uint64_t s_guid = 0, s_hash = 0;
+
+    const ecs::AnimGraph* ag = ctx.ActiveScene().TryGet<ecs::AnimGraph>(e);
+    const AssetEntry* entry =
+        ag && ag->controllerGuid != 0 ? ctx.Assets().FindByGuid(ag->controllerGuid) : nullptr;
+    if (!entry || entry->missing || entry->type != AssetType::Controller) {
+        ImGui::TextDisabled("%s", tr("insp.animparams.noctrl"));
+        return;
+    }
+    if (s_guid != entry->guid || s_hash != entry->hash) {
+        std::ifstream f(ctx.Assets().AbsolutePath(*entry), std::ios::binary);
+        if (!f) {
+            ImGui::TextDisabled("%s", trFmt("insp.animparams.badctrl_fmt", {entry->relPath})
+                                           .c_str());
+            return;
+        }
+        std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        s_cache = assets::ParseControllerJson(text);
+        s_guid = entry->guid;
+        s_hash = entry->hash;
+    }
+    if (!s_cache.ok) {
+        ImGui::TextDisabled("%s", trFmt("insp.animparams.badctrl_fmt", {entry->relPath}).c_str());
+        return;
+    }
+    ecs::AnimParams* pm = ctx.ActiveScene().TryGet<ecs::AnimParams>(e);
+    if (!pm) return;
+    static const char* kKindNames[] = {"float", "bool", "trigger"};
+    if (!ImGui::BeginTable("animparams", 2, ImGuiTableFlags_SizingStretchProp)) return;
+    ImGui::TableSetupColumn("name", ImGuiTableColumnFlags_WidthFixed,
+                            ImGui::CalcTextSize("sortingLayer").x + 20);
+    ImGui::TableSetupColumn("value");
+    for (size_t i = 0; i < s_cache.params.size() && i < 8; ++i) {
+        const assets::ControllerParamEdit& p = s_cache.params[i];
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted(p.name.c_str());
+        ImGui::SameLine();
+        ImGui::TextDisabled(" %s", kKindNames[p.kind <= 2 ? p.kind : 0]);
+        ImGui::TableNextColumn();
+        ImGui::PushID(p.name.c_str());
+        ImGui::SetNextItemWidth(-1);
+        if (ctx.Playing()) {
+            float& v = pm->v[i];
+            if (p.kind == 2) { // trigger：激发按钮（写 1 待发；图命中即清）
+                char lbl[96];
+                std::snprintf(lbl, sizeof(lbl), "%s%s###fire", v != 0.0f ? "[\xE2\x97\x8F] " : "",
+                              tr("insp.animparams.fire"));
+                if (ImGui::Button(lbl)) v = 1.0f;
+            } else if (p.kind == 1) { // bool
+                bool b = v != 0.0f;
+                if (ImGui::Checkbox("##b", &b)) v = b ? 1.0f : 0.0f;
+            } else {
+                ImGui::DragFloat("##v", &v, 0.05f);
+            }
+        } else {
+            ImGui::BeginDisabled(); // 编辑态：只读显默认（值不落档，进 Play 播种）
+            float dv = p.def;
+            if (p.kind == 1) {
+                bool b = dv != 0.0f;
+                ImGui::Checkbox("##b", &b);
+            } else {
+                ImGui::DragFloat("##v", &dv, 0.05f);
+            }
+            ImGui::EndDisabled();
+        }
+        ImGui::PopID();
+    }
+    ImGui::EndTable();
+    if (!ctx.Playing())
+        ImGui::TextDisabled("%s", tr("insp.animparams.edit_hint"));
+}
+
 void InspectorPanel::DrawComponent(EditorApp& app, const ComponentMeta& meta, ecs::Entity e) {
     using lemon::editor::loc::tr;
     using lemon::editor::loc::trFmt;
@@ -1346,7 +1432,10 @@ void InspectorPanel::DrawComponent(EditorApp& app, const ComponentMeta& meta, ec
         return; // 池可能重排：comp 指针已失效，本帧不画字段表（下帧重取）
     }
     if (expanded) {
-        if (meta.fieldCount > 0 && ImGui::BeginTable("fields", 2, ImGuiTableFlags_SizingStretchProp)) {
+        if (std::strcmp(meta.name, "AnimParams") == 0) {
+            // 批⑪ 七轮：参数黑板按控制器词面具名化（替换 param0..7 匿名槽直出）
+            DrawAnimParamsBody(app, e);
+        } else if (meta.fieldCount > 0 && ImGui::BeginTable("fields", 2, ImGuiTableFlags_SizingStretchProp)) {
             ImGui::TableSetupColumn("name", ImGuiTableColumnFlags_WidthFixed,
                                     ImGui::CalcTextSize("sortingLayer").x + 20);
             ImGui::TableSetupColumn("value");

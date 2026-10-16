@@ -42,7 +42,7 @@ v1 面板清单：
 | **Console** | 日志分级过滤、脚本异常红字、点击跳脚本行 | — |
 | **TilePalette** | 图块选择（含自动瓦片变体预览）、笔刷/矩形/洪水/取色/擦除 | §7 |
 | **AnimationEditor** | 帧动画时间轴、拖帧、预览、帧事件打点 | §7 |
-| **AnimController** | .controller 状态机画布工作台：节点/连线可视化图（摆位/拖线建边/选中删改）+ 选中驱动检查器（节点/边/参数表）+ 编辑期校验（不可达灰化 lint / exitTime×Loop 跨资产黄字 / 保存门禁）+ 面板本地撤销重做——ADR-013 D6（M8 批⑩ 交付，批⑨ 三表版被替换） | §7 |
+| **AnimController** | .controller 状态机画布工作台：节点/连线可视化图（摆位/拖线建边/选中删改）+ Any 节点全局中断边（`from:"*"`，M8 批⑪）+ 选中驱动检查器（节点/边/参数表）+ 编辑期校验（不可达灰化 lint / exitTime×Loop 跨资产黄字 / 保存门禁）+ 面板本地撤销重做——ADR-013 D6（M8 批⑩ 交付，批⑨ 三表版被替换） | §7 |
 | **ParticleEditor** | 发射器参数实时调（Play 预览）、曲线编辑 | §7 |
 | **ProfilerPanel** | F3 性能面板（§9） | yami 统计项照抄 + Tracy 桥 |
 | **TeamEditor** | 势力关系矩阵编辑 | yami teams.json 的可视化 |
@@ -204,8 +204,17 @@ struct Chase { LEMON_FIELD(speed, Range{0,500}); LEMON_FIELD(aggroRange); LEMON_
 > 汇总；未选中：参数表默认折叠）+ 面板本地撤销栈（`SnapshotStack`，容量 50，
 > Ctrl+Z/Shift+Z/Y 聚焦内优先；与场景结构轨 Undo 不互通——登记后续统一）+
 > 布局随 `.controller` 顶层 `editor.nodes` 持久化（容错读/8px 量化/states 序
-> 稳定写出/旧档自动布局 entry BFS）。b9 校验/保存/新建管线与 i18n 全复用；
-> mecanim 全量（any-state/blend tree/layers/sub-FSM）维持 D4 永久红线。
+> 稳定写出/旧档自动布局 entry BFS）。b9 校验/保存/新建管线与 i18n 全复用。
+>
+> **M8 批⑪ 落地口径（2026-10-16，any-state 开禁 + 七轮实测修）**：ADR-013 D4
+> 修订（触发 = svr-test 实测 ×→受击/死亡扇入手抄成乱麻）。Any 节点（图空间
+> 可拖 + 位置随 `editor.nodes` 保留键 `"*"` 持久化，五轮起；右键「删除」=
+> 清空全局边——本体 = 建边入口恒在）拖线/右键建 `from:"*"` 全局中断边——
+> 求值序 = any 边先于状态边、组内文件序、首条命中即切（编译期稳定前置，无 any
+> 档逐位不变）；同态命中 `cid != an.clipId` 守卫天然 no-op（= Unity
+> Can-Transition-To-Self 默认关）。B16 自环三入口禁（图切换无重启语义——重启
+> 归脚本 Play 同段重播）；B17-1 边锚点改节点边界交点 + 直线边定形（四轮：
+> 双向对 = 平行双线）。blend tree / layers / sub-FSM 维持 D4 红线。
 
 ## 8. 编辑器扩展性
 
