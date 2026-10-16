@@ -42,6 +42,7 @@ v1 面板清单：
 | **Console** | 日志分级过滤、脚本异常红字、点击跳脚本行 | — |
 | **TilePalette** | 图块选择（含自动瓦片变体预览）、笔刷/矩形/洪水/取色/擦除 | §7 |
 | **AnimationEditor** | 帧动画时间轴、拖帧、预览、帧事件打点 | §7 |
+| **AnimController** | .controller 状态机工作台：参数表/状态词表/出边表三表编辑 + 编辑期校验（不可达 lint / exitTime×Loop 跨资产黄字 / 保存门禁）——ADR-013 v1 编辑面（M8 批⑨ 交付） | §7 |
 | **ParticleEditor** | 发射器参数实时调（Play 预览）、曲线编辑 | §7 |
 | **ProfilerPanel** | F3 性能面板（§9） | yami 统计项照抄 + Tracy 桥 |
 | **TeamEditor** | 势力关系矩阵编辑 | yami teams.json 的可视化 |
@@ -186,6 +187,14 @@ struct Chase { LEMON_FIELD(speed, Range{0,500}); LEMON_FIELD(aggroRange); LEMON_
 > 可单测数据面）。裁剪 = per-frame 时长（schema 冻结全片 fps）、LoopMode 五
 > 模式（bool loop）、帧事件打点、Play 中热改——登记 v1.1 候补（上表"每帧
 > 时长/Loop 模式/帧事件打点"为候补全量形态）。ADR-013 集容器口径。
+>
+> **M8 批⑨ 落地口径（2026-10-16，AnimController 工作台）**：`.controller`
+> 三表工作台（参数 ≤8 + 状态词表 + 选中状态出边表，`ControllerAsset` 数据面
+> 复用零引擎改动新增）+ 编辑期校验三件（`ControllerStructuralWarnings` 可达
+> lint 引擎同源 / exitTime×Loop 跨资产黄字（扫项目 .ani 集，clip 解析
+> (guid,hash) 缓存）/ 保存门禁 = ParseControllerJson 判据 + roundtrip 预验）。
+> 可视化图维持 ADR-013 挂起；浮动默认（不预挂底部标签组——与 Animation 抢
+> 活动标签互踩，实测教训落 `BuiltInPanels.h` 注）。
 
 ## 8. 编辑器扩展性
 

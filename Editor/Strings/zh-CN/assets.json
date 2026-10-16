@@ -52,5 +52,7 @@
   "assets.audio.jitter_range_fmt": "%.3f  (0=关闭)",
   "assets.audio.baked_fmt": "已烤 {0}ch / {1}s / 48kHz",
   "assets.audio.not_baked": "未烤（进 Play / 试听时现烤）",
-  "assets.audio.tip_actions": "\n双击：试听 / 停止\n右键：音频参数…（循环、加载方式、播放效果）"
+  "assets.audio.tip_actions": "\n双击：试听 / 停止\n右键：音频参数…（循环、加载方式、播放效果）",
+
+  "assets.ctx.new_controller": "新建动画状态机…"
 }

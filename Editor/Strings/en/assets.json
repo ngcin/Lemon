@@ -52,5 +52,7 @@
   "assets.audio.jitter_range_fmt": "%.3f  (0 = off)",
   "assets.audio.baked_fmt": "Baked: {0}ch / {1}s / 48kHz",
   "assets.audio.not_baked": "Not baked yet (baked on demand at Play / preview)",
-  "assets.audio.tip_actions": "\nDouble-click: preview / stop\nRight-click: audio settings... (loop, loading mode, playback effects)"
+  "assets.audio.tip_actions": "\nDouble-click: preview / stop\nRight-click: audio settings... (loop, loading mode, playback effects)",
+
+  "assets.ctx.new_controller": "New Animation Controller..."
 }

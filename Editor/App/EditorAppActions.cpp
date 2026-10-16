@@ -270,6 +270,27 @@ void EditorApp::OpenAnimationCreateSet(const std::string& relDir) {
     }
 }
 
+void EditorApp::OpenAnimControllerEditor(uint64_t guid) {
+    // M8 批⑨：.controller 双击 → 状态机工作台（Animation 通道同款——open 置位 +
+    // 设目标）；EnsureLoaded 急切装载 = 窗口落位即有编辑态（无集归并形态：
+    // controller 是独立资产）
+    if (PanelRegistry::Entry* en = panels_.FindEntry("AnimController")) {
+        en->open = true;
+        AnimControllerPanel* panel = static_cast<AnimControllerPanel*>(en->panel);
+        panel->SetTarget(guid);
+        panel->EnsureLoaded(*this);
+    }
+}
+
+void EditorApp::OpenAnimControllerCreate(const std::string& relDir) {
+    // M8 批⑨：空白区右键"新建动画状态机…"——开面板空态新建表单；落点跟随
+    // 浏览器当前目录（空 = ADR-013 D3 约定的 Assets/Controllers）
+    if (PanelRegistry::Entry* en = panels_.FindEntry("AnimController")) {
+        en->open = true;
+        static_cast<AnimControllerPanel*>(en->panel)->StartCreate(relDir);
+    }
+}
+
 void EditorApp::ClosePanel(const char* name) {
     if (PanelRegistry::Entry* en = panels_.FindEntry(name)) en->open = false;
 }

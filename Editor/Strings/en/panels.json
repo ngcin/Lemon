@@ -6,5 +6,7 @@
   "panel.assets": "Assets",
   "panel.console": "Console",
   "panel.animation": "Animation",
-  "panel.profiler": "Profiler"
+  "panel.profiler": "Profiler",
+
+  "panel.animcontroller": "Anim Controller"
 }

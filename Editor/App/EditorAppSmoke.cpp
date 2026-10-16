@@ -31,6 +31,7 @@
 #include "ECS/Hierarchy.h"
 #include "Core/Log.h"
 #include "EditorContext.h"
+#include "Localization/Localization.h" // M8 批⑨ f129 焦点交还（tr 标题重构）
 #include "Panels/BuiltInPanels.h" // SceneViewPanel 完整类型（smoke-drag/ui 注入走 scenePanel_-> 方法；标记表只认类型名漏了成员名）
 #include "Ui/UiSubsystem.h" // 批③a（ADR-014）：游戏 UI 层（RmlUi）
 #include "imgui.h"
@@ -1267,6 +1268,10 @@ struct AnimSmokeState {
     bool smokeSegAdoptOk = false; // 2026-10-12 修复回归位：移除出集后同名重建 = 接回既有 .clip
     bool smokeDragItemOk = false; // T3-UX9：帧格交互件回归位（项 ID 非零）
     bool smokeLeftColOk = false, smokeLeftColDone = false; // 三图优化点①：左列段行元信息
+    // M8 批⑨：AnimController 工作台四链——双击路由置位 / 面板装载+结构 lint /
+    // 语义直调编辑→保存→盘上 roundtrip / 悬空引用被保存门禁拒（档不被写坏）
+    bool smokeCtrlOpenOk = false, smokeCtrlLoadOk = false, smokeCtrlSaveOk = false,
+         smokeCtrlGateOk = false;
     Vec2 smokeCreatePt{-1.0e9f, -1.0e9f};
     Vec2 smokePickPt{-1.0e9f, -1.0e9f};
     Vec2 smokeSheetPt{-1.0e9f, -1.0e9f};
@@ -1406,6 +1411,18 @@ void EditorApp::SmokeAnimSeed() {
                 static_cast<AnimationPanel*>(en->panel)->SetGuidForTest() == kAnimSetGuid;
         if (!g_animSmoke.smokeSetOpenOk)
             LEMON_ERROR("smoke-anim：双击 .ani 未开集（setGuid_ 未置位）");
+        // M8 批⑨：.controller 双击路由置位 + 急切装载（装载/lint/保存/门禁四链
+        // 全无头——不开窗口：AnimController 与 Animation 同泊底部标签组，开窗
+        // 会抢活动标签页把 Animation 的注入点击链全打断（首轮实测教训））
+        if (PanelRegistry::Entry* en = panels_.FindEntry("AnimController")) {
+            AnimControllerPanel* cp = static_cast<AnimControllerPanel*>(en->panel);
+            cp->SetTarget(kAnimGraphGuid);
+            cp->EnsureLoaded(*this);
+            g_animSmoke.smokeCtrlOpenOk = cp->TargetGuidForTest() == kAnimGraphGuid &&
+                                          cp->LoadedForTest();
+        }
+        if (!g_animSmoke.smokeCtrlOpenOk)
+            LEMON_ERROR("smoke-anim：.controller 路由/急切装载链不符（target 未置位或未装载）");
         // 2026-09-27 热修②回归：右键"新建动画集…"必须清残留编辑态（弹窗背后曾
         // 照渲染上一个集——真人实测报告）。须在下方归并重开之前断言：归并路径
         // 会重置 setGuid_，后置断言会假通过（与 open 同理）；归并照旧保住面板
@@ -1530,6 +1547,76 @@ void EditorApp::SmokeAnimFrame(uint64_t frame) {
                 }
                 if (!g_animSmoke.smokeLeftColOk)
                     LEMON_ERROR("smoke-anim：左列段行元信息未填充/帧数不符（优化点①）");
+            }
+            // ---- M8 批⑨：AnimController 工作台链（面板 seed 已开，f0 起每帧
+            // OnGui 装载；SmokeAnimFrame 先于 OnGui → 断言用实时算的语义直调面）。
+            // f33 装载+孤岛 lint；f34 语义直调改表 → 保存 → 盘上 roundtrip；
+            // f35 跨资产黄字（walk 段末边 × walk.clip=Loop）+ 悬空引用门禁拒。
+            else if (frame == 33) {
+                if (PanelRegistry::Entry* en = panels_.FindEntry("AnimController")) {
+                    AnimControllerPanel* cp = static_cast<AnimControllerPanel*>(en->panel);
+                    cp->AddStateForTest("Dead"); // 孤岛状态 → 结构 lint 实时应告警
+                    g_animSmoke.smokeCtrlLoadOk =
+                        cp->LoadedForTest() && cp->StateCountForTest() == 4 &&
+                        cp->WarningCountForTest() >= 1;
+                }
+                if (!g_animSmoke.smokeCtrlLoadOk)
+                    LEMON_ERROR("smoke-anim：状态机工作台装载/结构 lint 链不符");
+            } else if (frame == 34) {
+                if (PanelRegistry::Entry* en = panels_.FindEntry("AnimController")) {
+                    AnimControllerPanel* cp = static_cast<AnimControllerPanel*>(en->panel);
+                    // 原 3 条 + hit→Dead 段末（Dead 获入边）+ walk→whole 段末
+                    //（walk.clip=Loop → f35 跨资产黄字原料）
+                    std::vector<assets::ControllerTransitionEdit> ts = {
+                        {"whole", "walk", false, {{"speed", 2, 0.1f}}},
+                        {"walk", "hit", false, {{"atk", 5, 0.0f}}},
+                        {"hit", "whole", true, {}},
+                        {"hit", "Dead", true, {}},
+                        {"walk", "whole", true, {}},
+                    };
+                    cp->SetTransitionsForTest(std::move(ts));
+                    if (cp->SaveForTest(*this)) {
+                        // 盘上真相（不信面板内存态）：重读 roundtrip
+                        const std::filesystem::path gp = std::filesystem::path(
+                                                             ctx_.Assets().ProjectRoot()) /
+                                                         "Assets" / "anim-graph.controller";
+                        std::ifstream vf(gp, std::ios::binary);
+                        std::string vtext((std::istreambuf_iterator<char>(vf)),
+                                          std::istreambuf_iterator<char>());
+                        const assets::ControllerData v = assets::ParseControllerJson(vtext);
+                        g_animSmoke.smokeCtrlSaveOk =
+                            v.ok && v.states.size() == 4 && v.transitions.size() == 5 &&
+                            v.transitions[3].to == "Dead" && v.transitions[3].exitTime &&
+                            v.transitions[4].to == "whole" && v.transitions[4].exitTime;
+                    }
+                }
+                if (!g_animSmoke.smokeCtrlSaveOk)
+                    LEMON_ERROR("smoke-anim：状态机工作台保存 roundtrip 不符");
+            } else if (frame == 35) {
+                if (PanelRegistry::Entry* en = panels_.FindEntry("AnimController")) {
+                    AnimControllerPanel* cp = static_cast<AnimControllerPanel*>(en->panel);
+                    // 跨资产黄字：EnsureLoaded 同步（f34 保存后 hash 变 → 重读盘
+                    // + lint 重算）——walk→whole 段末边 × walk.clip=Loop 应告警
+                    cp->EnsureLoaded(*this);
+                    const bool crossWarn = cp->WarningCountForTest() >= 1;
+                    // 悬空 to：序列化可过、解析门禁必拒（档不被写坏）
+                    std::vector<assets::ControllerTransitionEdit> bad = {
+                        {"whole", "Nope", false, {{"speed", 2, 0.1f}}},
+                    };
+                    cp->SetTransitionsForTest(std::move(bad));
+                    const bool rejected = !cp->SaveForTest(*this);
+                    // 恢复合法形态收尾（后续无消费者，纯卫生）
+                    std::vector<assets::ControllerTransitionEdit> good = {
+                        {"whole", "walk", false, {{"speed", 2, 0.1f}}},
+                        {"walk", "hit", false, {{"atk", 5, 0.0f}}},
+                        {"hit", "whole", true, {}},
+                        {"hit", "Dead", true, {}},
+                    };
+                    cp->SetTransitionsForTest(std::move(good));
+                    g_animSmoke.smokeCtrlGateOk = crossWarn && rejected && cp->SaveForTest(*this);
+                }
+                if (!g_animSmoke.smokeCtrlGateOk)
+                    LEMON_ERROR("smoke-anim：状态机保存门禁未拒悬空引用/跨资产黄字缺席");
             }
         } else if (frame == 40) {
             ImVec2 mn, mx;
@@ -1845,6 +1932,27 @@ void EditorApp::SmokeAnimFrame(uint64_t frame) {
                             p && run ? (p->TargetGuidForTest() == run->guid ? 1 : 0) : 0,
                             p ? p->SegRowFramesForTest(4) : -1);
         }
+        // ---- M8 批⑨ 渲染面收口（f123 后全链静默，开窗不扰注入锚）：f126 真实
+        // 双击通道开窗 + 选状态（出边表进绘制路径）；f129 探针证 OnGui 真画了
+        //（此前 ctrl 四链全无头语义直调，渲染路径零覆盖——补盲区）
+        else if (frame == 126) {
+            OpenAnimControllerEditor(kAnimGraphGuid);
+            if (PanelRegistry::Entry* en = panels_.FindEntry("AnimController"))
+                static_cast<AnimControllerPanel*>(en->panel)->SelectStateForTest(0);
+        } else if (frame == 129) {
+            ImVec2 a, b;
+            // begin = 全量绘制（浮动窗不遮即真画）；skip = OnGui 拉起但窗口被
+            // 遮/折叠（Begin false）——两键都只能从 OnGui 内部落，渲染链断言等价
+            const bool drew =
+                testhooks::Find("animctrl.begin", a, b) || testhooks::Find("animctrl.skip", a, b);
+            if (!drew)
+                LEMON_ERROR("smoke-anim：状态机工作台未进渲染链（animctrl.begin/skip 探针双缺席）");
+        } else if (frame == 130) {
+            // 探针毕即关窗：开窗态会被 ini 持久化（开 + 浮动位置），同项目复跑
+            // 时该窗从 f0 起浮在 FilePicker 默认落位上方吃注入点击 → picker/
+            // folder 三链假红（复跑实测）。关闭态与 fresh 跑一致 = 跨跑稳定。
+            ClosePanel("AnimController");
+        }
     }
 }
 
@@ -1934,14 +2042,17 @@ bool EditorApp::SmokeAnimVerdict() {
              g_animSmoke.smokeFolderCreateOk && g_animSmoke.smokeDblClipOk &&
              g_animSmoke.smokeSegAdoptOk &&
              g_animSmoke.smokeDragItemOk &&
-             g_animSmoke.smokeLeftColOk;
+             g_animSmoke.smokeLeftColOk &&
+             g_animSmoke.smokeCtrlOpenOk && g_animSmoke.smokeCtrlLoadOk &&
+             g_animSmoke.smokeCtrlSaveOk && g_animSmoke.smokeCtrlGateOk;
     std::printf("[lemon] smoke-anim: prog(maxFrame=%u slice=%s booked=%u)%s "
                 "queue(hitClip=%s hit=%s back=%s) fx(text/bar=%s) "
                 "edit(rt=%s cache=%s whole=%s) set(rt=%s cache=%s open=%s "
                 "create=%s flow=%s) graph(rt=%s cache=%s switch=%s) "
                 "pick(click=%s shift=%s all=%s sheet(all=%s clear=%s close=%s row=%s)) "
                 "multiadd(count=%s order=%s) create(folder=%s dblclip=%s adopt=%s) "
-                "drag(item=%s) leftcol(meta=%s) => %s\n",
+                "drag(item=%s) leftcol(meta=%s) ctrl(open=%s load=%s save=%s gate=%s) "
+                "=> %s\n",
                 (unsigned)g_animSmoke.smokeAnimMax[0], g_animSmoke.smokeAnimSlice[0] ? "YES" : "NO",
                 sh ? sh->sliceCount : 0, yami, hitBooked ? "booked" : "MISSING",
                 g_animSmoke.smokeQueueHit ? "YES" : "NO", g_animSmoke.smokeQueueBack ? "YES" : "NO",
@@ -1961,6 +2072,8 @@ bool EditorApp::SmokeAnimVerdict() {
                 g_animSmoke.smokeSegAdoptOk ? "YES" : "NO",
                 g_animSmoke.smokeDragItemOk ? "YES" : "NO",
                 g_animSmoke.smokeLeftColOk ? "YES" : "NO",
+                g_animSmoke.smokeCtrlOpenOk ? "YES" : "NO", g_animSmoke.smokeCtrlLoadOk ? "YES" : "NO",
+                g_animSmoke.smokeCtrlSaveOk ? "YES" : "NO", g_animSmoke.smokeCtrlGateOk ? "YES" : "NO",
                 animOk ? "OK" : "FAIL");
     return animOk;
 }

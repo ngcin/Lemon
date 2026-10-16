@@ -201,6 +201,12 @@ public:
     /// 空白区右键"新建动画集…"（M6a 批② T3c）：开新建集弹窗（源目录非空 =
     /// 显示"并建首段"勾选）；落点 = AssetBrowser 当前浏览目录
     void OpenAnimationCreateSet(const std::string& relDir);
+    /// 双击 .controller → 打开 AnimController 状态机工作台（M8 批⑨——
+    /// Animation 通道同款：open 置位 + 设目标；装载惰性在面板 OnGui）
+    void OpenAnimControllerEditor(uint64_t guid);
+    /// 空白区右键"新建动画状态机…"（M8 批⑨）：开面板并进入空态新建表单
+    ///（落点 = AssetBrowser 当前浏览目录，空则 ADR-013 D3 的 Assets/Controllers）
+    void OpenAnimControllerCreate(const std::string& relDir);
     /// 双击 .rml → 装载到游戏 UI（M6b 批③b，ADR-014）：文档名 = relPath（热重载
     /// 对账键）；Play 中 GameView 即显，非 Play 提示。③c C# 装载通道落地前的手动通道
     void LoadUiDocument(uint64_t guid);

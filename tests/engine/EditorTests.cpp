@@ -678,6 +678,26 @@ void TestControllerAndGraph() {
     Expect(c.error.empty(), "好档无 error");
     assets::ControllerData bad = assets::ParseControllerJson("{ \"states\": [] }");
     Expect(!bad.ok && assets::ControllerToJson(bad).empty(), "坏档 ToJson 空串");
+
+    // -- M8 批⑨：结构 lint（可达性——编辑期校验的数据面，工作台每帧同源调用）--
+    //（golden 档本身 Attack 无入边 = 不可达，不适合作"全可达"夹具——独立构造）
+    assets::ControllerData l;
+    l.ok = true;
+    l.states = {"A", "B"};
+    l.entry = "A";
+    l.transitions = {{"A", "B", true, {}}};
+    Expect(assets::ControllerStructuralWarnings(l).empty(), "全可达零告警");
+    l.states.push_back("C"); // 孤岛状态（无入边）
+    const std::vector<std::string> w = assets::ControllerStructuralWarnings(l);
+    Expect(w.size() == 1 && w[0].find("C") != std::string::npos, "不可达状态点名");
+    l.transitions.push_back({"B", "C", false, {}}); // 补入边（lint 只管可达性，
+    // 不重复解析器的空条件判据）
+    l.transitions.back().exitTime = true;
+    Expect(assets::ControllerStructuralWarnings(l).empty(), "补入边后告警清");
+    l.entry = "B"; // 换 entry：A 侧断源（A 无其他入边）
+    const std::vector<std::string> w2 = assets::ControllerStructuralWarnings(l);
+    Expect(w2.size() == 1 && w2[0].find("A") != std::string::npos, "换 entry 后旧入口不可达");
+    Expect(assets::ControllerStructuralWarnings(bad).empty(), "坏档 lint 不炸（空返）");
 }
 #endif // LEMON_EDITOR_CORE
 
@@ -1285,8 +1305,10 @@ void TestProjectWizard() {
     Expect(!root.empty(), "wizard created project");
     Expect(spawnGuid != 0, "spawn asset guid returned");
 
-    // 06 §1 布局全项
-    for (const char* dir : {"Assets", "Scenes", "Prefabs", "Game", "Data", "Builds"}) {
+    // 06 §1 布局全项（2026-10-14 布局归一 3d021e0：顶层 Game/ 并入 Assets/Scripts/
+    //——本断言当时未随迁，存量红至 M8 批⑨ 顺手修齐；清单对齐 ProjectWizard 骨架）
+    for (const char* dir : {"Assets", "Assets/anims", "Assets/sprites", "Assets/Scripts",
+                            "Scenes", "Prefabs", "Data", "Builds"}) {
         const bool ok = fs::is_directory(fs::path(root) / dir, ec);
         Expect(ok, ok ? "wizard dir" : (std::string("wizard dir missing: ") + dir).c_str());
     }
@@ -1303,7 +1325,7 @@ void TestProjectWizard() {
         std::string meta((std::istreambuf_iterator<char>(m)), std::istreambuf_iterator<char>());
         Expect(meta.find(lemon::editor::AssetDatabase::GuidToHex(spawnGuid)) != std::string::npos,
                "spawn meta carries returned guid");
-        std::ifstream cs(fs::path(root) / "Game" / "SpawnerBehaviour.cs");
+        std::ifstream cs(fs::path(root) / "Assets" / "Scripts" / "SpawnerBehaviour.cs");
         std::string src((std::istreambuf_iterator<char>(cs)), std::istreambuf_iterator<char>());
         Expect(src.find(lemon::editor::AssetDatabase::GuidToHex(spawnGuid)) != std::string::npos,
                "SpawnerBehaviour.cs references spawn guid");
@@ -1312,7 +1334,7 @@ void TestProjectWizard() {
     }
     // csproj：HintPath 指向 sdkDir；Main.scene 可被 SceneArchive 解码
     {
-        std::ifstream f(fs::path(root) / "Game" / "MyGame.csproj");
+        std::ifstream f(fs::path(root) / "Assets" / "Scripts" / "MyGame.csproj");
         std::string cs((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
         Expect(cs.find("/nonexistent-sdk/Lemon.SDK.dll") != std::string::npos,
                "csproj HintPath points at sdkDir");
@@ -1376,7 +1398,7 @@ void TestEditorUsability() {
     d.sdkDir = "/nonexistent-sdk";
     d.engineVersion = "0.4.0-m4";
     const std::string root = ProjectWizard::Create(d);
-    const std::string gameDir = root + "/Game";
+    const std::string gameDir = root + "/Assets/Scripts"; // 2026-10-14 布局归一（原 /Game）
     Expect(!root.empty(), "wizard project for new-script test");
 
     Expect(ProjectWizard::AddBehaviourScript(gameDir, "ProbeBehaviour"), "script created");

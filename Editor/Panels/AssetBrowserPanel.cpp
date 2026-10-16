@@ -308,6 +308,9 @@ void AssetBrowserPanel::OnGui(EditorApp& app) {
         if (ImGui::MenuItem(tr("menu.import_file"))) app.MenuImportAsset();
         ImGui::Separator();
         if (ImGui::MenuItem(tr("assets.ctx.new_anim_set"))) app.OpenAnimationCreateSet(entryDir);
+        // M8 批⑨：新建动画状态机（.controller——状态机库是全项目共享，落点默认
+        // Assets/Controllers；此处仍跟随浏览器目录，作者自选）
+        if (ImGui::MenuItem(tr("assets.ctx.new_controller"))) app.OpenAnimControllerCreate(entryDir);
         ImGui::EndPopup();
     }
     // 拖 prefab 进空区 = 实例化到编辑相机中心
@@ -615,6 +618,8 @@ void AssetBrowserPanel::DrawItem(EditorApp& app, const AssetEntry& e) {
     // 通道（EditorApp 汇聚：.clip 归属集解析 → 集工作台选中该段；.ani 直接开集）
     if (doubleClicked && e.type == AssetType::Clip) app.OpenAnimationEditor(e.guid);
     if (doubleClicked && e.type == AssetType::AnimSet) app.OpenAnimationEditor(e.guid);
+    // 双击 .controller = AnimController 状态机工作台（M8 批⑨）
+    if (doubleClicked && e.type == AssetType::Controller) app.OpenAnimControllerEditor(e.guid);
 
     // 双击 .rml = 装载到游戏 UI（批③b：③c C# 装载通道落地前的手动通道；
     // 文档热重载对账键 = relPath）。.rcss 无独立操作（<link> 消费 + 热重载）。

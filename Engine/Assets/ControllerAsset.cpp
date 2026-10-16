@@ -232,4 +232,34 @@ std::string ControllerToJson(const ControllerData& c) {
     return out;
 }
 
+std::vector<std::string> ControllerStructuralWarnings(const ControllerData& c) {
+    std::vector<std::string> out;
+    if (!c.ok || c.states.empty()) return out;
+    auto indexOf = [&](const std::string& name) {
+        for (size_t i = 0; i < c.states.size(); ++i)
+            if (c.states[i] == name) return (int)i;
+        return -1;
+    };
+    const int entry = indexOf(c.entry.empty() ? c.states.front() : c.entry);
+    if (entry < 0) return out; // 悬空 entry 归解析器管（不可达词面不重复报）
+    std::vector<char> reach(c.states.size(), 0);
+    reach[entry] = 1;
+    std::vector<int> queue{entry};
+    for (size_t qi = 0; qi < queue.size(); ++qi) {
+        for (const ControllerTransitionEdit& t : c.transitions) {
+            if (t.from != c.states[queue[qi]]) continue;
+            const int to = indexOf(t.to);
+            if (to >= 0 && !reach[to]) {
+                reach[to] = 1;
+                queue.push_back(to);
+            }
+        }
+    }
+    for (size_t i = 0; i < c.states.size(); ++i) {
+        if (!reach[i])
+            out.push_back(c.states[i] + "：从 entry 不可达（无入边可达——死状态）");
+    }
+    return out;
+}
+
 } // namespace lemon::assets

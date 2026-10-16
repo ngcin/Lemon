@@ -66,4 +66,10 @@ ControllerData ParseControllerJson(std::string_view text);
 /// ControllerData → .controller JSON 文本（手写定版格式，见文件头）。ok=false → 空串。
 std::string ControllerToJson(const ControllerData& c);
 
+/// 结构 lint（M8 批⑨）：解析管"引用悬空"，这里管"逻辑死状态"——entry 出发
+/// 沿 transitions 可达性 BFS，不可达状态逐个点名。返回告警文案（空 = 干净）；
+/// 与解析错误不同，告警不拦解析（ok=true 的档也可能有死状态——作者面提示）。
+/// 编辑器工作台每帧展示、EditorTests 单测同源。
+std::vector<std::string> ControllerStructuralWarnings(const ControllerData& c);
+
 } // namespace lemon::assets

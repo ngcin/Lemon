@@ -2297,7 +2297,7 @@ void AnimationPanel::OnGui(EditorApp& app) {
     bool winOpen = true;
     keysFocused_ = false; // 先清（Begin 失败/窗口不绘制时不吃键——防陈旧 true 卡全局）
     // i18n 批3a：标题显示名走 tr；### 后段 = 窗口身份（停靠/ini 持久化不随语言变）
-    const std::string title = std::string(tr("panel.clipation")) + "###" + Name();
+    const std::string title = std::string(tr("panel.animation")) + "###" + Name();
     if (!ImGui::Begin(title.c_str(), &winOpen, ImGuiWindowFlags_NoCollapse)) {
         ImGui::End();
         testhooks::Stash("animpanel.skip", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());

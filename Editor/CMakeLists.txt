@@ -77,6 +77,7 @@ add_executable(lemon-editor
   Localization/Localization.cpp
   Panels/Panels.cpp
   Panels/AnimationPanel.cpp
+  Panels/AnimControllerPanel.cpp
   Panels/AssetBrowserPanel.cpp
   Panels/HierarchyPanel.cpp
   Panels/InspectorPanel.cpp

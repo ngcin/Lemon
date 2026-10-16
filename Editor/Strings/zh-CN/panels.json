@@ -6,5 +6,7 @@
   "panel.assets": "资源",
   "panel.console": "控制台",
   "panel.animation": "动画",
-  "panel.profiler": "性能分析器"
+  "panel.profiler": "性能分析器",
+
+  "panel.animcontroller": "动画状态机"
 }

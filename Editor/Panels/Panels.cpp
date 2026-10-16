@@ -151,6 +151,9 @@ std::vector<std::unique_ptr<IEditorPanel>> CreateAllPanels() {
     // M6a 批② T3：Animation（05 §3 冻结的既列解冻件，唯一一件；OpenByDefault
     // = false——按需窗口，双击 .clip 资产 / Window 菜单进入）
     out.push_back(std::make_unique<AnimationPanel>());
+    // M8 批⑨：AnimController（.controller 状态机工作台——Animation 同款按需窗，
+    // 双击 .controller / 浏览器右键新建进入；不占默认布局位）
+    out.push_back(std::make_unique<AnimControllerPanel>());
     return out;
 }
 

@@ -12,6 +12,7 @@
 
 #include "Assets/AssetDatabase.h"
 #include "Assets/AnimAsset.h" // assets::ClipData（AnimationPanel 编辑态副本）
+#include "Assets/ControllerAsset.h" // assets::ControllerData（AnimControllerPanel 编辑态）
 #include "Assets/TableAsset.h" // assets::TableData（AssetBrowserPanel .tab 表格区缓存）
 #include "Components/CoreComponents.h"
 #include "ECS/ComponentRegistry.h"
@@ -478,6 +479,99 @@ private:
     std::string setCreateSrc_;                // 源目录（非空 = 显示"并建首段"勾选）
     bool setCreateWithSeg_ = false;
     std::string setErr_;
+};
+
+/// AnimController（M8 批⑨）：.controller 状态机工作台——ADR-013 登记的 v1 形态
+/// （"JSON 手写 + Inspector 编辑"）编辑面补全。**不做可视化图**（"游戏阻塞
+/// 触发"挂起项不动，ADR-013 D4 极简词面：无 blend tree/layers/sub-FSM）。
+/// 布局 = 三张表：左列参数表（name/kind/def，≤8 拦——AnimParams 黑板上限）+
+/// 状态词表（选中/inline 改名/增删，entry 徽标）；右区选中状态出边表
+/// （to 下拉 + exitTime 勾选 + 条件行 param/op/value；trigger 参数固定 op）+
+/// 入边只读行。灵魂 = 编辑期校验：结构 lint（不可达状态，引擎
+/// ControllerStructuralWarnings 同源）+ 跨资产黄字（exitTime 出边状态在项目
+/// .ani 集中绑定的 clip 为 Loop 模式 → 段末边沿永不触发——Systems exitTime
+/// 只认非 loop 收尾的登记边角，编辑面堵而非改运行时求值）；保存门禁拦
+/// 悬空引用/空条件/超 8 参数（ParseControllerJson 同一判据）。保存走 Animation
+/// 面板三关范式（校验 → 序列化 → roundtrip 预验 → 原子写 → Rescan）。Play 态
+/// 只读（快照语义横幅）。新建 = 空态 inline（落 Assets/Controllers/，ADR-013
+/// D3）。双击 AssetBrowser 的 .controller 进入。
+class AnimControllerPanel final : public IEditorPanel {
+public:
+    const char* Name() const override { return "AnimController"; }
+    /// 按需窗口（Animation 同款：双击资产/Window 菜单打开）。浮动默认（不进
+    /// DockBuilder，Audio Mixer 工具窗同款）——预挂进 bottomId 会与 Animation
+    /// 抢同一标签组（双击 .controller 把胶片带压成后台标签 + smoke 复跑 ini
+    /// 恢复态互踩，批⑨ 实测）；表单型工作台对窗形不挑，用户停靠一次 ini 记忆
+    bool OpenByDefault() const override { return false; }
+    void OnGui(EditorApp& app) override;
+    /// AssetBrowser 双击 .controller → EditorApp::OpenAnimControllerEditor 落点
+    void SetTarget(uint64_t guid) { targetGuid_ = guid; }
+    /// 急切装载（OpenAnimControllerEditor 与冒烟无头路径共用）：目标有效且缓存
+    /// 键失效即 LoadFrom——窗口不开/被标签页遮住（Begin 折叠不绘制）也持有
+    /// 编辑态，语义直调面可用。OnGui 的缓存键判定照旧（外部改动仍能失效重读）
+    void EnsureLoaded(EditorApp& app);
+    /// 空白区右键「新建动画状态机…」入口：开面板并进入空态新建表单
+    void StartCreate(const std::string& relDir);
+    // ---- 冒烟回归钩子（--smoke-anim 扩展，M8 批⑨）----
+    uint64_t TargetGuidForTest() const { return targetGuid_; }
+    /// 装载链证据：OnGui 缓存键命中后为真（f33 断言装载、非仅 setter 置位）
+    bool LoadedForTest() const { return loadedGuid_ != 0; }
+    size_t StateCountForTest() const { return edit_.ok ? edit_.states.size() : 0; }
+    /// 当前编辑期告警条数（结构 lint 实时算 + 跨资产黄字缓存——与 OnGui 渲染面
+    /// 同源；SmokeAnimFrame 先于 OnGui 跑，实时算保证断言不依赖上一帧渲染）
+    size_t WarningCountForTest() const {
+        return warnings_.size() + assets::ControllerStructuralWarnings(edit_).size();
+    }
+    /// 语义直调：加状态（与「+ 状态」按钮同入口——不绕过 dirty/重算告警）
+    void AddStateForTest(const std::string& name) { AddState(name); }
+    /// 语义直调：整表替换过渡（冒烟构造合法/非法形态用；走同一 dirty 通道）
+    void SetTransitionsForTest(std::vector<assets::ControllerTransitionEdit> ts) {
+        edit_.transitions = std::move(ts);
+        MarkDirty();
+    }
+    /// 语义直调：选中状态（冒烟渲染面——让右区出边表进绘制路径）
+    void SelectStateForTest(int idx) { selState_ = idx; }
+    /// 语义直调：保存（与「保存」按钮同入口——门禁/roundtrip/落盘全链）
+    bool SaveForTest(EditorApp& app);
+
+private:
+    void LoadFrom(const AssetDatabase& db, const AssetEntry& e); // 缓存键失效 → 重读
+    bool TrySave(EditorApp& app, const AssetEntry& e); // 校验 + roundtrip 预验 + 原子写
+    bool TryCreate(EditorApp& app, const std::string& dir, const std::string& name,
+                   std::string& err); // 新建落盘（撞路双查 + Rescan + SetTarget）
+    void AddState(const std::string& name);
+    void MarkDirty() {
+        dirty_ = true;
+        lintDirty_ = true; // 结构变更 → 跨资产 lint 重算（结构 lint 每帧 O(N+M) 直算）
+    }
+    void DrawCreateForm(EditorApp& app, bool ro);  // 空态新建表单（边沿开）
+    void DrawParamsTable(EditorApp& app);          // 左列上：参数（≤8 拦）
+    void DrawStatesList(EditorApp& app);           // 左列下：状态词表 + inline 改名
+    void DrawTransitions(EditorApp& app);          // 右区：出边表 + 入边只读行
+    void RecomputeLint(EditorApp& app); // 跨资产 lint（exitTime×Loop 扫集，缓存剪枝）
+    /// 状态名 → 下标（-1 = 未列；combo/入边归一单源）
+    int StateIndex(const std::string& name) const;
+
+    uint64_t targetGuid_ = 0;
+    uint64_t loadedGuid_ = 0, loadedHash_ = 0; // 缓存键（外部改动/保存回读 = 重读）
+    assets::ControllerData edit_;              // 编辑态副本（ok=false = 坏档红字只读态）
+    bool dirty_ = false;
+    std::string saveMsg_;  // 上次保存/校验结果（红/绿一行）
+    bool saveOk_ = false;
+    std::vector<std::string> warnings_; // 跨资产黄字（缓存）；结构 lint 每帧直算
+    bool lintDirty_ = true;             // 跨资产 lint 失效位（结构变更/装载置位）
+    int selState_ = -1;                // 选中状态（右区出边宿主；-1 = 未选）
+    // inline 改名（状态行双击进入，AnimationPanel 段改名同款交互）
+    int renameIdx_ = -1;
+    std::string renameBuf_;
+    bool renameFocus_ = false;
+    std::string paramRenameOld_; // 参数名编辑会话起拍快照（改名传播到条件引用）
+    std::string stNewName_;      // 状态 inline 新建输入
+    // 新建表单（空态 + 浏览器右键入口；边沿触发同 Animation 弹窗纪律）
+    bool createOpen_ = false;
+    std::string createDir_; // 落点目录（相对项目根；空 = Assets/Controllers）
+    std::string createName_ = "new-controller";
+    std::string createErr_;
 };
 
 } // namespace lemon::editor

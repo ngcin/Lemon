@@ -74,6 +74,11 @@ void EditorApp::SetupDefaultLayout() {
     // T3b：Animation 落底部区（Unity 同款——宽矮窗配横排胶片带；不开在中央区，
     // 否则打开即抢 Scene 标签页 → 视口像素断言/编辑视图被盖）
     ImGui::DockBuilderDockWindow("Animation", bottomId);
+    // M8 批⑨：AnimController 不预挂停靠（Audio Mixer 工具窗同款浮动默认）——
+    // 预挂进 bottomId 会与 Animation 抢同一标签组：双击 .controller 把胶片带
+    // 压成后台标签（真人编辑流互踩）；smoke-anim 同项目复跑 ini 恢复"活动 =
+    // AnimController" → Animation 的 Begin false → 注入链全断（首轮实测）。
+    // 表单型工作台对窗形不挑（三表竖排浮动即可），用户停靠一次 ini 记忆。
     ImGui::DockBuilderFinish(dock);
     LEMON_LOG("editor: default layout built");
 }
