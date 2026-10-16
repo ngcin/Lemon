@@ -147,6 +147,17 @@ bool AnimControllerPanel::NodePosForTest(const std::string& state, int& x, int& 
     return true;
 }
 
+bool AnimControllerPanel::StateHandlePosForTest(int stateIdx, float& x, float& y) const {
+    if (stateIdx < 0 || stateIdx >= (int)edit_.states.size()) return false;
+    const int li = LayoutIndexOf(edit_.states[(size_t)stateIdx]);
+    if (li < 0) return false;
+    // 与 DrawCanvas 的 handlePos 同式（节点右侧中点；用最近一次绘制的画布原点）
+    const assets::ControllerNodePos& np = edit_.layout[(size_t)li];
+    x = lastCanvasP0X_ + ((float)np.x + kNodeW) * canvasZoom_ + canvasPanX_;
+    y = lastCanvasP0Y_ + ((float)np.y + kNodeH * 0.5f) * canvasZoom_ + canvasPanY_;
+    return true;
+}
+
 void AnimControllerPanel::EnsureLoaded(EditorApp& app) {
     const AssetEntry* e = app.Ctx().Assets().FindByGuid(targetGuid_);
     if (e && !e->missing && e->type == AssetType::Controller &&
@@ -260,6 +271,11 @@ bool AnimControllerPanel::TrySave(EditorApp& app, const AssetEntry& e) {
         return false;
     }
     app.RescanAssets();
+    // review B3：保存回读零副作用——落盘内容 = edit_ 序列化（roundtrip 已证等值），
+    // loadedHash_ 直接同步新档 hash → 下一帧 OnGui 缓存键命中不触发 LoadFrom
+    //（撤销栈/画布相机/选择全保留；换档/外部改动路径照旧重读）
+    if (const AssetEntry* e2 = app.Ctx().Assets().FindByGuid(targetGuid_))
+        loadedHash_ = e2->hash;
     dirty_ = false;
     lintDirty_ = true;
     saveOk_ = true;
@@ -827,6 +843,8 @@ void AnimControllerPanel::DrawCanvas(EditorApp& app, bool ro) {
     using lemon::editor::loc::tr;
     EnsureLayout();
     const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    lastCanvasP0X_ = p0.x;
+    lastCanvasP0Y_ = p0.y;
     ImVec2 avail = ImGui::GetContentRegionAvail();
     if (avail.x < 64.0f) avail.x = 64.0f;
     if (avail.y < 64.0f) avail.y = 64.0f;
@@ -949,15 +967,17 @@ void AnimControllerPanel::DrawCanvas(EditorApp& app, bool ro) {
     };
 
     // ---- 相机操作：滚轮缩放（锚定光标）/ F 适配 / 中键或 空格+左键 平移 ----
-    if (hovered && io.MouseWheel != 0.0f) {
+    // review B4：相机键不吃文本焦点（检查器输入框打字时悬停画布的 f/空格不误触）
+    const bool textFocus = io.WantTextInput;
+    if (!textFocus && hovered && io.MouseWheel != 0.0f) {
         const ImVec2 anchor = toGraph(io.MousePos);
         canvasZoom_ =
             std::clamp(canvasZoom_ * std::pow(1.15f, io.MouseWheel), 0.25f, 2.0f);
         canvasPanX_ = io.MousePos.x - p0.x - anchor.x * canvasZoom_;
         canvasPanY_ = io.MousePos.y - p0.y - anchor.y * canvasZoom_;
     }
-    if (hovered && ImGui::IsKeyPressed(ImGuiKey_F)) FitCanvas(avail.x, avail.y);
-    const bool spaceDown = ImGui::IsKeyDown(ImGuiKey_Space);
+    if (!textFocus && hovered && ImGui::IsKeyPressed(ImGuiKey_F)) FitCanvas(avail.x, avail.y);
+    const bool spaceDown = !textFocus && ImGui::IsKeyDown(ImGuiKey_Space);
     if (dragNode_ < 0 && ImGui::IsItemActive() &&
         (ImGui::IsMouseDragging(ImGuiMouseButton_Middle) ||
          (spaceDown && ImGui::IsMouseDragging(ImGuiMouseButton_Left)))) {
@@ -978,6 +998,8 @@ void AnimControllerPanel::DrawCanvas(EditorApp& app, bool ro) {
                 if (si >= 0) {
                     edgeDragFrom_ = si;
                     edgeDragHeld_ = true;
+                    edgeDragStartX_ = io.MousePos.x; // review B1：松开阈值判"拖 vs 点"
+                    edgeDragStartY_ = io.MousePos.y;
                     SelectState(si);
                 }
                 break;
@@ -1101,7 +1123,12 @@ void AnimControllerPanel::DrawCanvas(EditorApp& app, bool ro) {
             dl->AddCircleFilled(io.MousePos, 4.0f, ImGui::GetColorU32(ImGuiCol_ButtonActive));
             if (edgeDragHeld_) {
                 if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-                    if (tgtSi >= 0) AddTransitionByIndex(edgeDragFrom_, tgtSi);
+                    // review B1：单击未拖动（<6px 阈值，SceneView 拖拽同款）= 误触
+                    // 右缘把手——取消会话不落边（未动时 tgt = 源节点自身 → 自环）
+                    const float mdx = io.MousePos.x - edgeDragStartX_;
+                    const float mdy = io.MousePos.y - edgeDragStartY_;
+                    if (mdx * mdx + mdy * mdy >= 36.0f && tgtSi >= 0)
+                        AddTransitionByIndex(edgeDragFrom_, tgtSi);
                     edgeDragFrom_ = -1;
                     edgeDragHeld_ = false;
                 }
@@ -1203,7 +1230,8 @@ void AnimControllerPanel::DrawCanvas(EditorApp& app, bool ro) {
         dl->AddText(ImVec2(p0.x + 8.0f, p0.y + 26.0f), ImGui::GetColorU32(ImGuiCol_Text),
                     tr("animctrl.canvas.edge_drag_hint"));
     dl->AddText(ImVec2(p0.x + 8.0f, p0.y + avail.y - 20.0f),
-                ImGui::GetColorU32(ImGuiCol_TextDisabled), tr("animctrl.canvas.hint"));
+                ImGui::GetColorU32(ImGuiCol_TextDisabled),
+                tr(ro ? "animctrl.canvas.hint_play" : "animctrl.canvas.hint")); // review B15
     dl->PopClipRect();
 }
 
@@ -1326,6 +1354,10 @@ void AnimControllerPanel::OnGui(EditorApp& app) {
         ImGui::PopTextWrapPos();
         ImGui::PopStyleColor();
     }
+    // review B2：只读禁用域到此收束（顶栏/表单），画布是观察行为不是编辑行为——
+    // 留在 disabled 域会让 ImGui 拒绝 hovered/ActiveId → Play 态滚轮/F/平移全灭
+    //（Play 当前态高亮看得见但视野锁死）。编辑类操作各自有 !ro 门禁收账。
+    if (ro) ImGui::EndDisabled();
 
     // ---- 画布（左）+ 检查器（右）——窄窗上下堆叠。检查器选择驱动
     // （ADR-013 D6：图管结构 + 检查器管细节）：边选中 → 条件详情 + 求值序；
@@ -1352,7 +1384,9 @@ void AnimControllerPanel::OnGui(EditorApp& app) {
         ImGui::EndChild();
         ImGui::SameLine();
         ImGui::BeginChild("##ctrlinspector");
+        if (ro) ImGui::BeginDisabled(); // 检查器 = 编辑面，随只读禁用
         drawInspector();
+        if (ro) ImGui::EndDisabled();
         ImGui::EndChild();
     } else {
         ImGui::BeginChild("##ctrlcanvas_col", ImVec2(0, availH * 0.55f), ImGuiChildFlags_None,
@@ -1360,11 +1394,12 @@ void AnimControllerPanel::OnGui(EditorApp& app) {
         DrawCanvas(app, ro);
         ImGui::EndChild();
         ImGui::BeginChild("##ctrlinspector");
+        if (ro) ImGui::BeginDisabled();
         drawInspector();
+        if (ro) ImGui::EndDisabled();
         ImGui::EndChild();
     }
 
-    if (ro) ImGui::EndDisabled();
     ImGui::End();
 }
 

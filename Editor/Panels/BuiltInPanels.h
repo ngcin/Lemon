@@ -527,7 +527,7 @@ public:
     size_t WarningCountForTest() const {
         return warnings_.size() + assets::ControllerStructuralWarnings(edit_).size();
     }
-    /// 语义直调：加状态（与「+ 状态」按钮同入口——不绕过 dirty/重算告警）
+    /// 语义直调：加状态（与画布右键「新建状态」同入口——不绕过 dirty/重算告警）
     void AddStateForTest(const std::string& name) { AddState(name); }
     /// 语义直调：整表替换过渡（冒烟构造合法/非法形态用；走同一 dirty 通道）
     void SetTransitionsForTest(std::vector<assets::ControllerTransitionEdit> ts) {
@@ -555,6 +555,15 @@ public:
     bool DeleteTransitionForTest(int idx) { return DeleteTransition(idx); }
     bool UndoForTest() { return UndoLocal(); }
     bool RedoForTest() { return RedoLocal(); }
+    // ---- review 修复回归位（2026-10-16 B1/B2）：Play 态相机 + 把手单击防误触 ----
+    /// 当前画布缩放（Play 态滚轮注入后断言变化——B2 回归位）
+    float CanvasZoomForTest() const { return canvasZoom_; }
+    /// 状态下标 → 右侧把手屏幕坐标（与 DrawCanvas handlePos 同式；需窗口画过一帧）
+    bool StateHandlePosForTest(int stateIdx, float& x, float& y) const;
+    /// 建边会话源状态下标（-1 = 无——B1 单击不落边后应回 -1）
+    int EdgeDragFromForTest() const { return edgeDragFrom_; }
+    /// 选中状态下标（B3 回归位：保存回读不再清选择）
+    int SelStateForTest() const { return selState_; }
 
 private:
     void LoadFrom(const AssetDatabase& db, const AssetEntry& e); // 缓存键失效 → 重读
@@ -637,6 +646,10 @@ private:
     // 「新建出边」= false 的待点模式——下一左键落目标节点/空处取消）
     int edgeDragFrom_ = -1;
     bool edgeDragHeld_ = false;
+    // review B1：按住拖会话的起手屏幕坐标——松手位移 < 6px = 单击误触把手，不落边
+    float edgeDragStartX_ = 0.0f, edgeDragStartY_ = 0.0f;
+    // 最近一次绘制的画布原点（屏幕）——StateHandlePosForTest 用（B1 冒烟注入锚）
+    float lastCanvasP0X_ = 0.0f, lastCanvasP0Y_ = 0.0f;
     bool keysFocused_ = false; // 键仲裁（上一帧值；EditorApp 快捷键先行一帧）
     SnapshotStack<assets::ControllerData> undoStack_; // 面板本地撤销/重做（容量 50）
 };

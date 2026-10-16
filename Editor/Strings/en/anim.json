@@ -178,6 +178,7 @@
   "animctrl.ctx.delete_state": "Delete state",
   "animctrl.ctx.new_state": "New state",
   "animctrl.canvas.hint": "Middle-drag to pan · wheel to zoom · F to fit · drag nodes to move · drag the right-edge dot to connect · double-click a node to rename · right-click for menu (Space+LMB = pan)",
+  "animctrl.canvas.hint_play": "Play read-only · middle-drag to pan · wheel to zoom · F to fit",
   "animctrl.canvas.edge_drag_hint": "Release to drop on a node · click a node to connect · Esc / empty space cancels",
   "animctrl.trans.exit_time": "on end",
   "animctrl.trans.add_cond": "+ Cond",

@@ -178,6 +178,7 @@
   "animctrl.ctx.delete_state": "删除状态",
   "animctrl.ctx.new_state": "新建状态",
   "animctrl.canvas.hint": "中键拖动平移 · 滚轮缩放 · F 适配视图 · 拖节点移位 · 拖右缘圆点连线 · 双击节点改名 · 右键菜单（空格+左键 = 平移）",
+  "animctrl.canvas.hint_play": "Play 只读 · 中键拖动平移 · 滚轮缩放 · F 适配视图",
   "animctrl.canvas.edge_drag_hint": "松开 = 落到目标节点 · 点目标 = 连接 · Esc/空处 = 取消",
   "animctrl.trans.exit_time": "段末",
   "animctrl.trans.add_cond": "+ 条件",

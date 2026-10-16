@@ -5,7 +5,12 @@ ctest 4/4/smoke-anim zh+en `ctrl(... layout=YES edge=YES)`（f37 边链 4→5→
 f129 canvas/insp.node 双探针）/回归 full 25+1（bench-survivor 热态 76 vs 76.5 单
 尖刺→隔离复跑 78 PASS；anim zh 回归内一次抖动→隔离双绿，均为已登记家族）/金回放
 零重录（⑩b 零 Engine 运行时文件，⑩a 跨版本证据沿用）；DevLog
-`docs/DevLog/2026-10-16-m8-b10-anim-graph-editor.md`；真人 15 分钟观感待用户窗口，
+`docs/DevLog/2026-10-16-m8-b10-anim-graph-editor.md`；**review 修复同日落账**（B1
+把手单击误建自环 / B2 Play 态相机被只读域冻结 / B3 保存后回读清选择+撤销栈 / B4
+相机键缺 WantTextInput 守卫，+B15 文案——smoke 帧预算 134 + 三变异验证，
+[DevLog](../../DevLog/2026-10-16-m8-b10-review-fixes.md)，review 报告
+[Reports](../../Reports/2026-10-16-anim-graph-editor-review.md)；B5–B7/P3 档登记
+不修）；真人 15 分钟观感待用户窗口，
 组合验收归批⑫。原立项文字：2026-10-16 用户拍板：可视化图编辑**精简版**插队——
 b9 三表工作台机器面全绿但真人"完全不会用"，对照 Unity/Godot 定为图管结构 +
 检查器管细节，不抄 mecanim 全量；原系列 ⑩ 帧事件 UI / ⑪ 样本+手册+模板顺延为
