@@ -1281,6 +1281,12 @@ struct AnimSmokeState {
     // M8 批⑪：any-state 链——建 any 边（from="*"）+ 撤销往返 + B16 自环拒 +
     // 保存后盘上 "from": "*" roundtrip（f38）
     bool smokeCtrlAnyOk = false, smokeCtrlAnyDone = false;
+    // M8 批⑫：帧事件链（f39——API 级走 UI 同款提交路径 AddEventForTest=
+    // CommitEvent；纯内存 + 全量还原不动种子档盘面，盘上 events roundtrip 由
+    // TestClipEventRemap/Bounds 单测 golden 钉）：添加 / 完全重复拒 / 升序
+    // 不变式 / 头插-头删的重映射往返 / 删除还原
+    bool smokeEventsAddOk = false, smokeEventsDupOk = false, smokeEventsRtOk = false,
+         smokeEventsSyncOk = false, smokeEventsDelOk = false, smokeEventsDone = false;
     // review 修复回归（2026-10-16）：B2 Play 只读态画布滚轮缩放 + B1 把手单击
     // 不落自环边（f125 再进 Play → f128 滚轮注入 → f129/f130 单击注入）
     bool smokeCtrlRoPlayOk = false, smokeCtrlZoomOk = false, smokeCtrlClickOk = false;
@@ -1742,6 +1748,63 @@ void EditorApp::SmokeAnimFrame(uint64_t frame) {
                 }
                 if (!g_animSmoke.smokeCtrlAnyOk)
                     LEMON_ERROR("smoke-anim：any-state 链不符（建 any 边/撤销/B16 自环拒/盘上 roundtrip）");
+            }
+            // M8 批⑫：帧事件链（f39 空位）。面板目标 = Seed 尾置的 anim-edit.clip
+            //（2 帧 0 事件——f30 探针同源）。全部走 UI 同款提交路径；插删帧走
+            // 右键/Del 同款原语（重映射核心）。**纯内存 + 全量还原**——种子档
+            // 盘面零改动（b11 教训：冒烟会话不重写共享种子档）。
+            else if (frame == 39 && !g_animSmoke.smokeEventsDone) {
+                g_animSmoke.smokeEventsDone = true;
+                if (PanelRegistry::Entry* en = panels_.FindEntry("Animation")) {
+                    AnimationPanel* ap = static_cast<AnimationPanel*>(en->panel);
+                    const size_t n0 = ap->EditFrameCountForTest();
+                    const size_t e0 = ap->EventCountForTest();
+                    const bool baseOk = n0 >= 2 && e0 == 0;
+                    // add：帧 1 打点 id=1
+                    g_animSmoke.smokeEventsAddOk = baseOk && ap->AddEventForTest(1, 1);
+                    // dup：完全重复 (frame,id) 拒（运行时会双发——编辑面堵）
+                    g_animSmoke.smokeEventsDupOk =
+                        g_animSmoke.smokeEventsAddOk && !ap->AddEventForTest(1, 1);
+                    // rt：档面升序不变式——再打帧 0 id=2，乱序提交应得 [(0,2),(1,1)]
+                    bool ordered = false;
+                    if (g_animSmoke.smokeEventsDupOk && ap->AddEventForTest(0, 2) &&
+                        ap->EventCountForTest() == 2)
+                        ordered = ap->EventFrameAtForTest(0) == 0 &&
+                                  ap->EventIdAtForTest(0) == 2 &&
+                                  ap->EventFrameAtForTest(1) == 1 &&
+                                  ap->EventIdAtForTest(1) == 1;
+                    g_animSmoke.smokeEventsRtOk = ordered;
+                    // sync：头插 0 位 → 事件整体后移（(1,1)→(2,1)）；头删 0 位 →
+                    // 复位（帧表与事件双双回到基线）
+                    bool sync = false;
+                    if (ordered) {
+                        ap->InsertFrameHeadForTest();
+                        const bool insOk = ap->EventCountForTest() == 2 &&
+                                           ap->EventFrameAtForTest(0) == 1 &&
+                                           ap->EventFrameAtForTest(1) == 2 &&
+                                           ap->EditFrameCountForTest() == n0 + 1;
+                        ap->DeleteFrameAtForTest(0);
+                        sync = insOk && ap->EventCountForTest() == 2 &&
+                               ap->EventFrameAtForTest(0) == 0 &&
+                               ap->EventFrameAtForTest(1) == 1 &&
+                               ap->EditFrameCountForTest() == n0;
+                    }
+                    g_animSmoke.smokeEventsSyncOk = sync;
+                    // del：清干净（基线还原 = 后续帧链零污染）
+                    g_animSmoke.smokeEventsDelOk = sync && ap->DeleteEventForTest(0, 2) &&
+                                                   ap->DeleteEventForTest(1, 1) &&
+                                                   ap->EventCountForTest() == e0;
+                    if (!g_animSmoke.smokeEventsAddOk || !g_animSmoke.smokeEventsDupOk ||
+                        !g_animSmoke.smokeEventsRtOk || !g_animSmoke.smokeEventsSyncOk ||
+                        !g_animSmoke.smokeEventsDelOk)
+                        LEMON_ERROR("smoke-anim：帧事件链不符（add=%d dup=%d rt=%d "
+                                    "sync=%d del=%d）",
+                                    (int)g_animSmoke.smokeEventsAddOk,
+                                    (int)g_animSmoke.smokeEventsDupOk,
+                                    (int)g_animSmoke.smokeEventsRtOk,
+                                    (int)g_animSmoke.smokeEventsSyncOk,
+                                    (int)g_animSmoke.smokeEventsDelOk);
+                }
             }
         } else if (frame == 40) {
             ImVec2 mn, mx;
@@ -2246,7 +2309,10 @@ bool EditorApp::SmokeAnimVerdict() {
              g_animSmoke.smokeCtrlCanvasOk && g_animSmoke.smokeCtrlEdgeOk &&
              g_animSmoke.smokeCtrlAnyOk &&
              g_animSmoke.smokeCtrlRoPlayOk && g_animSmoke.smokeCtrlZoomOk &&
-             g_animSmoke.smokeCtrlClickOk;
+             g_animSmoke.smokeCtrlClickOk &&
+             g_animSmoke.smokeEventsAddOk && g_animSmoke.smokeEventsDupOk &&
+             g_animSmoke.smokeEventsRtOk && g_animSmoke.smokeEventsSyncOk &&
+             g_animSmoke.smokeEventsDelOk;
     std::printf("[lemon] smoke-anim: prog(maxFrame=%u slice=%s booked=%u)%s "
                 "queue(hitClip=%s hit=%s back=%s) fx(text/bar=%s) "
                 "edit(rt=%s cache=%s whole=%s) set(rt=%s cache=%s open=%s "
@@ -2255,6 +2321,7 @@ bool EditorApp::SmokeAnimVerdict() {
                 "multiadd(count=%s order=%s) create(folder=%s dblclip=%s adopt=%s) "
                 "drag(item=%s) leftcol(meta=%s) ctrl(open=%s load=%s save=%s gate=%s "
                 "layout=%s edge=%s any=%s ro=%s zoom=%s click=%s) "
+                "events(add=%s dup=%s rt=%s sync=%s del=%s) "
                 "=> %s\n",
                 (unsigned)g_animSmoke.smokeAnimMax[0], g_animSmoke.smokeAnimSlice[0] ? "YES" : "NO",
                 sh ? sh->sliceCount : 0, yami, hitBooked ? "booked" : "MISSING",
@@ -2283,6 +2350,11 @@ bool EditorApp::SmokeAnimVerdict() {
                 g_animSmoke.smokeCtrlRoPlayOk ? "YES" : "NO",
                 g_animSmoke.smokeCtrlZoomOk ? "YES" : "NO",
                 g_animSmoke.smokeCtrlClickOk ? "YES" : "NO",
+                g_animSmoke.smokeEventsAddOk ? "YES" : "NO",
+                g_animSmoke.smokeEventsDupOk ? "YES" : "NO",
+                g_animSmoke.smokeEventsRtOk ? "YES" : "NO",
+                g_animSmoke.smokeEventsSyncOk ? "YES" : "NO",
+                g_animSmoke.smokeEventsDelOk ? "YES" : "NO",
                 animOk ? "OK" : "FAIL");
     return animOk;
 }

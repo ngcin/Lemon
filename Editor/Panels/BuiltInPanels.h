@@ -324,6 +324,37 @@ public:
         segNewName_ = name;
         QuickCreateSegment(app);
     }
+    // ---- 帧事件（M8 批⑫）冒烟钩子：全部走 UI 同款提交路径（f39 链）----
+    size_t EventCountForTest() const { return edit_.events.size(); }
+    /// 越界哨兵 = 0xFFFFFFFF（事件帧号/id 均不可能取到）
+    uint32_t EventFrameAtForTest(size_t i) const {
+        return i < edit_.events.size() ? edit_.events[i].frame : 0xFFFFFFFFu;
+    }
+    uint32_t EventIdAtForTest(size_t i) const {
+        return i < edit_.events.size() ? edit_.events[i].id : 0xFFFFFFFFu;
+    }
+    /// 添加打点（模态「确定」同一条 CommitEvent 路径；完全重复 (frame,id) 拒）
+    bool AddEventForTest(uint32_t frame, uint32_t id) { return CommitEvent(frame, id, kEventNew); }
+    /// 删指定 (frame,id)（命中删 = true）
+    bool DeleteEventForTest(uint32_t frame, uint32_t id) {
+        for (size_t k = 0; k < edit_.events.size(); ++k)
+            if (edit_.events[k].frame == frame && edit_.events[k].id == id) {
+                DeleteEventAt(k);
+                return true;
+            }
+        return false;
+    }
+    /// 以真实 UI 路径头插一帧（右键「在之前插入」同款——重映射回归位）
+    void InsertFrameHeadForTest() {
+        if (!edit_.frames.empty()) InsertFrameAfter(-1, edit_.frames.front());
+    }
+    /// 以真实 UI 路径删帧（选中 → DeleteSelectedFrames——重映射回归位）
+    void DeleteFrameAtForTest(int idx) {
+        if (idx < 0 || idx >= (int)edit_.frames.size()) return;
+        selFrame_ = idx;
+        selSet_.assign(1, idx);
+        DeleteSelectedFrames();
+    }
 
 private:
     void LoadFrom(const AssetDatabase& db, const AssetEntry& e); // 缓存键失效 → 重读
@@ -346,6 +377,20 @@ private:
     void DrawPreview(EditorApp& app, bool ro, int shown); // 大预览（fit ≤512）+拖入加帧+信息角标
     void DrawFilmstrip(EditorApp& app, bool ro, int playFrame); // 胶片带（v3）
     void HandleKeys(bool ro); // 键盘帧操作（焦点/WantTextInput/弹窗守卫）
+    // ---- 帧事件（M8 批⑫）：角标在 DrawFilmstrip、chips 行在 DrawPreview ----
+    /// 事件 chips 行（预览条下方）：全部打点一览（点击跳帧选中 / × 删除 /
+    /// 右键编辑）+ ＋ 在选中帧打点；流式折行（M7c 批⑫ 越窗教训）
+    void DrawEventRow(EditorApp& app, bool ro);
+    /// 编辑模态（边沿触发同 wiz/pick 族）：帧号（0 起，与 events[].frame 同基）
+    /// + 事件 id（0..65535——运行时 ClipEventDef u16 收窄，防静默截断）
+    void DrawEventModal();
+    /// 入口统一（右键帧格/chips 右键/＋）：editIdx = kEventNew 新建（frame =
+    /// 预填帧号）；否则编辑该下标（frame 被事件自身帧号覆盖）
+    void OpenEventModal(int frame, size_t editIdx);
+    /// 提交一条打点：帧界内 / id ≤ 65535 / (frame,id) 无完全重复，三关过则按
+    /// (frame,id) 升序落位 + dirty；失败写 evErr_ 返 false（模态保持开）
+    bool CommitEvent(uint32_t frame, uint32_t id, size_t idx);
+    void DeleteEventAt(size_t idx); // 下标删（chips × / 模态删除共用）
     /// 极简文件夹创建框（T3-UX7：三 tab 向导退役——单页无 tab，保存位置只读）
     void DrawFolderCreate(EditorApp& app);
     // ---- 从精灵表添加帧 v3.1（用户实测反馈重做）：文件选择 → 选帧对话框 ----
@@ -440,6 +485,13 @@ private:
     int pickFlow_ = 0;           // 0 无 / 1 精灵表单图（编辑态）/ 2 多图整图入帧
     FilePicker picker_;          // 面板私有文件选择器（v3.1：选图入口）
     bool clipPickOpen_ = false, clipPickPending_ = false; // 从 .anim 复制列表弹窗
+    // ---- 帧事件（M8 批⑫）：编辑模态（边沿触发同 wiz/pick 族）----
+    static constexpr size_t kEventNew = static_cast<size_t>(-1); // 新建哨兵
+    bool evModalOpen_ = false, evModalPending_ = false;
+    size_t evEditIdx_ = kEventNew; // 编辑目标下标（kEventNew = 新建）
+    int evFrame_ = 0;              // 模态字段：帧号（0 起；DragInt 钳 0..n-1）
+    int evId_ = 1;                 // 模态字段：事件 id（DragInt 钳 0..65535）
+    std::string evErr_;            // 模态内校验消息（越界/超上限/完全重复）
     // ---- T3c 动画集工作台（目标 = .ani；段编辑复用上方 clip 机制——集模式下
     // targetGuid_ 指向当前段，setGuid_ 指向集容器）----
     uint64_t setGuid_ = 0;                    // 当前集（0 = 裸 clip 传统模式）

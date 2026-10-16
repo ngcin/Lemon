@@ -210,9 +210,10 @@ bool AnimationPanel::TrySave(EditorApp& app, const AssetEntry& e) {
         return false;
     }
     // 落盘前 roundtrip 预验（review 2026-10-02 #5）：坏 JSON 直接拒写——序列化器
-    // 缺陷不再能覆写原档（数据丢失防线；正常路径 Parse(assets::ClipToJson(x)) 恒过）
+    // 缺陷不再能覆写原档（数据丢失防线；正常路径 Parse(assets::ClipToJson(x)) 恒过）。
+    // M8 批⑫：等值面补 events（原只比 name/frames——事件序列化缺陷同属覆写险）
     if (assets::ClipData back = assets::ParseClipJson(json); !back.ok || back.name != edit_.name ||
-        back.frames != edit_.frames) {
+        back.frames != edit_.frames || back.events != edit_.events) {
         saveMsg_ = tr("anim.err.roundtrip_clip");
         saveOk_ = false;
         return false;
@@ -283,6 +284,10 @@ void AnimationPanel::InsertFrameAfter(int idx, const assets::ClipFrame& f) {
     // Monster03 四 clip 实测 014..000）——契约以本注释为准，勿再改回。
     if (idx < -1 || idx >= (int)edit_.frames.size()) idx = (int)edit_.frames.size() - 1;
     edit_.frames.insert(edit_.frames.begin() + idx + 1, f);
+    // M8 批⑫：事件随帧序——插入位 p = idx+1，其后的事件后移（副本不携带事件）
+    assets::RemapClipEvents(edit_.events, [p = idx + 1](uint32_t fr) -> int64_t {
+        return fr >= (uint32_t)p ? (int64_t)fr + 1 : fr;
+    });
     selFrame_ = idx + 1;
     selSet_.clear();
     selSet_.push_back(selFrame_);
@@ -304,6 +309,14 @@ void AnimationPanel::DuplicateSelectedFrames() {
         if (i < 0 || i >= (int)edit_.frames.size()) continue;
         edit_.frames.insert(edit_.frames.begin() + i + 1, edit_.frames[(size_t)i]);
     }
+    // M8 批⑫：副本不携带事件；被跨过的原帧事件按前插量后移（new = f + |{o<f}|，
+    // 与帧插入同一段旋转数学——见 TestClipEventRemap 的推导样例）
+    assets::RemapClipEvents(edit_.events, [&ord](uint32_t fr) -> int64_t {
+        size_t below = 0;
+        for (int o : ord)
+            if (o >= 0 && (uint32_t)o < fr) ++below;
+        return (int64_t)fr + (int64_t)below;
+    });
     std::vector<int> dup;
     for (size_t k = 0; k < ord.size(); ++k)
         dup.push_back(ord[k] + 1 + (int)k);
@@ -326,13 +339,19 @@ void AnimationPanel::DeleteSelectedFrames() {
     for (int idx : ord)
         if (idx >= 0 && idx < (int)edit_.frames.size())
             edit_.frames.erase(edit_.frames.begin() + idx);
-    // M7a 批① M22：删帧后清越界帧事件——事件无 UI 编辑入口（作者面 = 手写/表
-    // 驱动），留着必被 TrySave 的 roundtrip 预验拒绝（解析侧硬拒）= 保存链自锁
+    // M8 批⑫：事件随帧删——被删帧的事件随删、其余按前缀删除量前缩（remap 后
+    // 构造性无越界；原 M7a M22"删帧即清越界 + 提示"退役，Sanitize 只剩
+    // TrySave 兜底位与 sheet picker「替换为」路径）
+    assets::RemapClipEvents(edit_.events, [&ord](uint32_t fr) -> int64_t {
+        size_t below = 0;
+        for (int d : ord) {
+            if (d < 0) continue;
+            if ((uint32_t)d == fr) return -1;
+            if ((uint32_t)d < fr) ++below;
+        }
+        return (int64_t)fr - (int64_t)below;
+    });
     saveMsg_.clear(); // 旧消息不滞留（"√ 已保存"挂在 dirty 态上误导）
-    if (const size_t dropped = assets::SanitizeClipEvents(edit_); dropped > 0) {
-        using lemon::editor::loc::trFmt;
-        saveMsg_ = trFmt("anim.err.events_dropped_fmt", {std::to_string(dropped)});
-    }
     selSet_.clear();
     selAnchor_ = -1;
     selFrame_ = edit_.frames.empty() ? -1 : std::min(firstDel, (int)edit_.frames.size() - 1);
@@ -348,13 +367,22 @@ void AnimationPanel::HandleKeys(bool ro) {
     if (ro) return;
     if (segNewActive_ || segEditIdx_ >= 0) return;
     if (ImGui::GetIO().WantTextInput) return;
-    if (wizOpen_ || pickOpen_ || setCreateOpen_ || pickFlow_ != 0 || clipPickOpen_) return;
+    if (wizOpen_ || pickOpen_ || setCreateOpen_ || pickFlow_ != 0 || clipPickOpen_ ||
+        evModalOpen_) // M8 批⑫：帧事件模态开着时空格/删帧不得抢键
+        return;
     if (!keysFocused_) return;
     const int n = (int)edit_.frames.size();
     if (n == 0) return;
     const bool ctrl = ImGui::GetIO().KeyCtrl;
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false) && selFrame_ > 0) {
         std::swap(edit_.frames[(size_t)selFrame_ - 1], edit_.frames[(size_t)selFrame_]);
+        // M8 批⑫：内容互换 ⇒ 两帧事件位互换（事件跟的是"该时刻的画面"）
+        {
+            const int a = selFrame_ - 1, b = selFrame_;
+            assets::RemapClipEvents(edit_.events, [a, b](uint32_t fr) -> int64_t {
+                return fr == (uint32_t)a ? b : (fr == (uint32_t)b ? a : (int64_t)fr);
+            });
+        }
         --selFrame_;
         selSet_.clear();
         selAnchor_ = selFrame_;
@@ -365,6 +393,13 @@ void AnimationPanel::HandleKeys(bool ro) {
     if (ctrl && ImGui::IsKeyPressed(ImGuiKey_RightArrow, false) && selFrame_ >= 0 &&
         selFrame_ < n - 1) {
         std::swap(edit_.frames[(size_t)selFrame_], edit_.frames[(size_t)selFrame_ + 1]);
+        // M8 批⑫：内容互换 ⇒ 两帧事件位互换（同左向换位）
+        {
+            const int a = selFrame_, b = selFrame_ + 1;
+            assets::RemapClipEvents(edit_.events, [a, b](uint32_t fr) -> int64_t {
+                return fr == (uint32_t)a ? b : (fr == (uint32_t)b ? a : (int64_t)fr);
+            });
+        }
         ++selFrame_;
         selSet_.clear();
         selAnchor_ = selFrame_;
@@ -413,6 +448,10 @@ void AnimationPanel::DrawFilmstrip(EditorApp& app, bool ro, int playFrame) {
         ImGui::TextDisabled("%s", tr("anim.frame.empty_hint"));
         return;
     }
+    // M8 批⑫：每帧事件计数（角标数据面）——O(n+e) 预聚合，循环内零查找
+    std::vector<int> evCount((size_t)n, 0);
+    for (const auto& e : edit_.events)
+        if (e.frame < (uint32_t)n) ++evCount[(size_t)e.frame];
     const float avail = ImGui::GetContentRegionAvail().x;
     const ImGuiStyle& st = ImGui::GetStyle();
     // T3-UX9a：每格真实占宽 = 图宽 + 行距（帧格是 InvisibleButton 直贴，无
@@ -443,6 +482,17 @@ void AnimationPanel::DrawFilmstrip(EditorApp& app, bool ro, int playFrame) {
                                                 rmax + ImVec2(2.5f, 2.5f),
                                                 ImGui::GetColorU32(theme::kTextBright), 0.0f, 0,
                                                 1.5f);
+        if (evCount[(size_t)i] > 0) { // M8 批⑫：帧事件角标（右上旗点；多事件外
+            // 细环；播放游标扫过提亮 = 命中反馈——判定帧在预览里可见地"炸"）
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            const bool hit = playFrame == i;
+            const float r = hit ? 5.0f : 3.5f;
+            const ImVec2 c(rmax.x - 6.0f, rmin.y + 6.0f);
+            dl->AddCircleFilled(c, r,
+                                ImGui::GetColorU32(hit ? theme::kTextBright : theme::kTextWarn));
+            if (evCount[(size_t)i] > 1)
+                dl->AddCircle(c, r + 2.0f, ImGui::GetColorU32(theme::kTextWarn), 12, 1.5f);
+        }
         if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
             selFrame_ = i;
             if (ImGui::GetIO().KeyCtrl) { // Ctrl = 多选切换
@@ -463,7 +513,18 @@ void AnimationPanel::DrawFilmstrip(EditorApp& app, bool ro, int playFrame) {
             previewFrame_ = i; // v3：选中即预览（取代旧"双击跳帧"）
             previewing_ = false;
         }
-        // 右键帧菜单：插入/删除（删除主入口之一——属性行退役后此处在位）
+        // M8 批⑫：事件帧 tooltip——该帧全部打点（chip 同款字面；空帧不出）
+        if (evCount[(size_t)i] > 0 && ImGui::IsItemHovered()) {
+            std::string ids;
+            for (const auto& e : edit_.events)
+                if (e.frame == (uint32_t)i) {
+                    if (!ids.empty()) ids += "  ";
+                    ids += "#" + std::to_string(e.id);
+                }
+            ImGui::SetTooltip(
+                "%s", trFmt("anim.event.tip_fmt", {std::to_string(i), ids}).c_str());
+        }
+        // 右键帧菜单：插入/删除/帧事件（删除主入口之一——属性行退役后此处在位）
         if (ImGui::BeginPopupContextItem("##framectx")) {
             if (ImGui::MenuItem(tr("anim.frame.ctx_insert_before")))
                 InsertFrameAfter(i - 1, edit_.frames[(size_t)i]);
@@ -475,6 +536,18 @@ void AnimationPanel::DrawFilmstrip(EditorApp& app, bool ro, int playFrame) {
                 selSet_.clear();
                 selSet_.push_back(i);
                 DeleteSelectedFrames();
+            }
+            // M8 批⑫：帧事件入口——添加预填本帧；编辑打开该帧首个事件（多事件
+            // 帧的多点编辑走预览条 chips 行的右键）
+            ImGui::Separator();
+            if (ImGui::MenuItem(tr("anim.event.ctx_add")))
+                OpenEventModal(i, kEventNew);
+            if (evCount[(size_t)i] > 0 && ImGui::MenuItem(tr("anim.event.ctx_edit"))) {
+                for (size_t k = 0; k < edit_.events.size(); ++k)
+                    if (edit_.events[k].frame == (uint32_t)i) {
+                        OpenEventModal(-1, k);
+                        break;
+                    }
             }
             ImGui::EndPopup();
         }
@@ -495,6 +568,26 @@ void AnimationPanel::DrawFilmstrip(EditorApp& app, bool ro, int playFrame) {
                     // 注释/实现/高亮三者矛盾；erase 后目标帧在 i-1，前插 = i-1
                     const int dst = src < i ? i - 1 : i;
                     edit_.frames.insert(edit_.frames.begin() + dst, f);
+                    // M8 批⑫：事件随段旋转（与帧同一段旋转：src<i 时 f==src→i-1、
+                    // src<f<i→f-1；src>i 时 f==src→i、i≤f<src→f+1）
+                    if (src < i)
+                        assets::RemapClipEvents(edit_.events,
+                                                [src, i](uint32_t fr) -> int64_t {
+                                                    if (fr == (uint32_t)src) return i - 1;
+                                                    return (fr > (uint32_t)src &&
+                                                            fr < (uint32_t)i)
+                                                               ? (int64_t)fr - 1
+                                                               : fr;
+                                                });
+                    else
+                        assets::RemapClipEvents(edit_.events,
+                                                [src, i](uint32_t fr) -> int64_t {
+                                                    if (fr == (uint32_t)src) return i;
+                                                    return (fr >= (uint32_t)i &&
+                                                            fr < (uint32_t)src)
+                                                               ? (int64_t)fr + 1
+                                                               : fr;
+                                                });
                     selFrame_ = dst;
                     selSet_.clear();
                     dirty_ = true;
@@ -987,6 +1080,14 @@ void AnimationPanel::DrawSheetPicker(EditorApp& app) {
         ImGui::SameLine();
         if (ImGui::Button(b2.c_str(), ImVec2(bw, 0))) {
             edit_.frames = buildFrames();
+            // M8 批⑫：整表替换 = 旧帧序失效——保守只清必然越界者（等长换皮表
+            // 保事件），非等长必清的走黄字告警（SanitizeClipEvents 判据同源）。
+            // 消息在尾部统一落（原尾部 clear 改为仅无告警时清）
+            size_t droppedEvents = 0;
+            std::string droppedMsg;
+            if ((droppedEvents = assets::SanitizeClipEvents(edit_)) > 0)
+                droppedMsg =
+                    trFmt("anim.err.events_dropped_fmt", {std::to_string(droppedEvents)});
             const bool needMeta =
                 cols * rows > 1 && (!sh->Sliced() || sh->gridCols != cols ||
                                     sh->gridRows != rows || sh->cellW != cw || sh->cellH != ch);
@@ -1003,7 +1104,8 @@ void AnimationPanel::DrawSheetPicker(EditorApp& app) {
             selSet_.clear();
             selAnchor_ = -1;
             dirty_ = true;
-            saveMsg_.clear();
+            saveMsg_ = droppedMsg; // 空 = 清（无告警路径零残留）
+            saveOk_ = false;       // review：丢弃告警不得沿用上次保存的绿色着色
             pickOpen_ = false;
             ImGui::CloseCurrentPopup();
         }
@@ -1110,6 +1212,11 @@ void AnimationPanel::ResetEditingState() {
     segFilter_.clear();
     // M25：集面脏标随集清（新集 LoadSetFrom 会重置 setLoadedName_）
     setDirty_ = false;
+    // M8 批⑫：帧事件模态随编辑态清（背景弹窗背后不得挂旧事件编辑）
+    evModalOpen_ = false;
+    evModalPending_ = false;
+    evEditIdx_ = kEventNew;
+    evErr_.clear();
 }
 
 void AnimationPanel::StartImageFilePick(EditorApp& app) {
@@ -2242,6 +2349,184 @@ void AnimationPanel::DrawPreview(EditorApp& app, bool ro, int shown) {
                                  : edit_.loopMode == 1 ? tr("anim.loop")
                                                        : tr("anim.status.once_clamped"));
     ImGui::EndGroup();
+    DrawEventRow(app, ro); // M8 批⑫：事件 chips 行（预览条下方；空表且 ro 隐）
+}
+
+// ------------------------------------------------------------ 帧事件（M8 批⑫）----
+
+void AnimationPanel::DrawEventRow(EditorApp& app, bool ro) {
+    // 全部打点 chips：点击跳帧选中（导航，ro 同样可用——传输键先例）/ × 删除 /
+    // 右键编辑；＋ 在选中帧打点。流式折行（剩余宽不够即换行——M7c 批⑫ 越窗
+    // 教训：不硬塞一行）；超 32 个打点截断 + "+K…"（tooltip 补全量——病态长表
+    // 不拖死布局）。
+    (void)app;
+    using lemon::editor::loc::tr;
+    using lemon::editor::loc::trFmt;
+    const int n = (int)edit_.frames.size();
+    if (edit_.events.empty() && ro) return; // ro 且无事件 = 不占位
+    ImGui::TextDisabled("%s", tr("anim.event.row_label"));
+    const ImGuiStyle& st = ImGui::GetStyle();
+    const size_t total = edit_.events.size();
+    const size_t cap = std::min<size_t>(total, 32);
+    for (size_t k = 0; k < cap; ++k) {
+        const auto& e = edit_.events[k];
+        const std::string chip = trFmt("anim.event.chip_fmt",
+                                       {std::to_string(e.frame), std::to_string(e.id)});
+        // 流式折行：chip + × 放得下当前行才 SameLine，放不下自然落下一行
+        // （M7c 批⑫ 越窗教训：不硬塞一行；GetContentRegionAvail = 当行剩余宽）
+        const float need = ImGui::CalcTextSize(chip.c_str()).x + st.FramePadding.x * 2.0f +
+                           st.ItemSpacing.x * 2.0f + 22.0f /*× 钮*/;
+        if (need <= ImGui::GetContentRegionAvail().x) ImGui::SameLine();
+        ImGui::PushID((int)k);
+        const bool hot = (int)e.frame == selFrame_;
+        if (hot) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetColorU32(theme::kAccent));
+        if (ImGui::SmallButton(chip.c_str())) { // 跳帧选中（选中即预览跟随）
+            selFrame_ = (int)e.frame;
+            selSet_.assign(1, selFrame_);
+            selAnchor_ = selFrame_;
+            previewFrame_ = selFrame_;
+            previewing_ = false;
+        }
+        if (hot) ImGui::PopStyleColor();
+        if (ImGui::BeginPopupContextItem("##evctx")) { // 右键 = 编辑（多事件帧的
+            // 多点编辑入口——帧格右键只开该帧首个）
+            if (ImGui::MenuItem(tr("anim.event.ctx_edit"))) OpenEventModal(-1, k);
+            if (ImGui::MenuItem(tr("common.delete"))) DeleteEventAt(k);
+            ImGui::EndPopup();
+        }
+        ImGui::SameLine();
+        ImGui::BeginDisabled(ro);
+        if (ImGui::SmallButton("×##evdel")) DeleteEventAt(k);
+        ImGui::EndDisabled();
+        ImGui::PopID();
+    }
+    if (total > cap) { // 截断指示（tooltip 给余量）
+        const std::string more = trFmt("anim.event.more_fmt", {std::to_string(total - cap)});
+        if (ImGui::CalcTextSize(more.c_str()).x + st.ItemSpacing.x <=
+            ImGui::GetContentRegionAvail().x)
+            ImGui::SameLine();
+        ImGui::TextDisabled("%s", more.c_str());
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s", trFmt("anim.event.more_tip_fmt",
+                                          {std::to_string(total - cap)})
+                                         .c_str());
+    }
+    ImGui::BeginDisabled(ro || n == 0 || selFrame_ < 0);
+    if (ImGui::CalcTextSize(tr("anim.event.add")).x + st.FramePadding.x * 2.0f +
+            st.ItemSpacing.x <=
+        ImGui::GetContentRegionAvail().x)
+        ImGui::SameLine();
+    if (ImGui::SmallButton(tr("anim.event.add"))) // ＋ 在选中帧打点
+        OpenEventModal(selFrame_, kEventNew);
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("%s", trFmt("anim.event.add_tip_fmt",
+                                      {std::to_string(std::max(selFrame_, 0))})
+                                     .c_str());
+}
+
+void AnimationPanel::OpenEventModal(int frame, size_t editIdx) {
+    // 入口统一（帧格右键/chips 右键/＋）：编辑态预填事件自身字段，新建预填入口
+    // 帧（缺省回落当前选中帧）；边沿触发一次 OpenPopup（同 wiz/pick 族）
+    if (editIdx < edit_.events.size()) {
+        evFrame_ = (int)edit_.events[editIdx].frame;
+        evId_ = (int)edit_.events[editIdx].id;
+    } else {
+        evFrame_ = frame >= 0 ? frame : std::max(selFrame_, 0);
+        evId_ = 1;
+    }
+    evEditIdx_ = editIdx;
+    evErr_.clear();
+    evModalOpen_ = true;
+    evModalPending_ = true;
+}
+
+bool AnimationPanel::CommitEvent(uint32_t frame, uint32_t id, size_t idx) {
+    // 三关：帧界内（DragInt 已钳，双保险）/ id ≤ 65535（运行时 ClipEventDef
+    // u16 收窄——超限静默截断是数据损坏面）/ (frame,id) 无完全重复（运行时
+    // 线性扫会双发）。过则按 (frame,id) 升序落位（档面约定；stable_sort 对已
+    // 序表零重排 = no-edit 往返逐字节不变的根源）
+    using lemon::editor::loc::tr;
+    using lemon::editor::loc::trFmt;
+    evErr_.clear();
+    if (frame >= edit_.frames.size()) {
+        evErr_ = trFmt("anim.event.err_frame_fmt", {std::to_string(edit_.frames.size())});
+        return false;
+    }
+    if (id > 65535u) {
+        evErr_ = tr("anim.event.err_id_range");
+        return false;
+    }
+    for (size_t k = 0; k < edit_.events.size(); ++k)
+        if (k != idx && edit_.events[k].frame == frame && edit_.events[k].id == id) {
+            evErr_ = tr("anim.event.err_dup");
+            return false;
+        }
+    if (idx < edit_.events.size())
+        edit_.events[idx] = {frame, id};
+    else
+        edit_.events.push_back({frame, id});
+    std::stable_sort(edit_.events.begin(), edit_.events.end(),
+                     [](const assets::ClipEventEdit& a, const assets::ClipEventEdit& b) {
+                         return a.frame != b.frame ? a.frame < b.frame : a.id < b.id;
+                     });
+    dirty_ = true;
+    saveMsg_.clear();
+    return true;
+}
+
+void AnimationPanel::DeleteEventAt(size_t idx) {
+    if (idx >= edit_.events.size()) return;
+    edit_.events.erase(edit_.events.begin() + idx);
+    dirty_ = true;
+    saveMsg_.clear();
+}
+
+void AnimationPanel::DrawEventModal() {
+    if (!evModalOpen_) return;
+    using lemon::editor::loc::tr;
+    // review：编辑目标被外部路径删掉（面板内不可达——模态吃输入；冒烟钩子可
+    // 达）时陈旧下标降级为新建——CommitEvent 对越界 idx 走 push_back，语义
+    // 恰合；标题/按钮随降级。
+    const bool isNew =
+        evEditIdx_ == kEventNew || evEditIdx_ >= edit_.events.size();
+    const char* title = tr(isNew ? "anim.event.modal_new" : "anim.event.modal_edit");
+    if (evModalPending_) { // OpenPopup/BeginPopupModal 同帧同串（pick 先例）
+        ImGui::OpenPopup(title);
+        evModalPending_ = false;
+    }
+    const int n = (int)edit_.frames.size();
+    if (!ImGui::BeginPopupModal(title, nullptr, ImGuiWindowFlags_NoSavedSettings)) {
+        evModalOpen_ = false; // 被外力关——复位，下次入口重开
+        return;
+    }
+    ImGui::DragInt(tr("anim.event.frame"), &evFrame_, 0.05f, 0, std::max(n - 1, 0));
+    ImGui::DragInt(tr("anim.event.id"), &evId_, 0.1f, 0, 65535);
+    ImGui::TextDisabled("%s", tr("anim.event.hint"));
+    if (!evErr_.empty()) ImGui::TextColored(theme::kTextError, "%s", evErr_.c_str());
+    ImGui::BeginDisabled(n == 0);
+    // CommitEvent 拒（重复/越界）时模态保持开 + 红字（&& 短路天然成立）
+    if (ImGui::Button(tr("common.ok")) &&
+        CommitEvent((uint32_t)std::clamp(evFrame_, 0, std::max(n - 1, 0)),
+                    (uint32_t)std::clamp(evId_, 0, 65535), evEditIdx_)) {
+        evModalOpen_ = false;
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (!isNew && evEditIdx_ < edit_.events.size()) {
+        if (ImGui::Button(tr("common.delete"))) {
+            DeleteEventAt(evEditIdx_);
+            evModalOpen_ = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+    }
+    if (ImGui::Button(tr("common.cancel"))) {
+        evModalOpen_ = false;
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
 }
 
 void AnimationPanel::DrawRightArea(EditorApp& app, bool ro) {
@@ -2319,6 +2604,7 @@ void AnimationPanel::OnGui(EditorApp& app) {
     DrawSheetPicker(app);
     DrawSetModals(app);
     DrawClipPickModal(app);
+    DrawEventModal(); // M8 批⑫：帧事件编辑模态（边沿触发）
     HandlePickerResult(app);
 
     const AssetEntry* target = db.FindByGuid(targetGuid_);

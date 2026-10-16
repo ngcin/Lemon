@@ -12,6 +12,7 @@
 //   * fps 整值输出整数、非整值一位小数（面板 DragInt 恒整；手写档 7.5 兼容）。
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -100,5 +101,29 @@ bool ValidateAssetName(std::string_view n, std::string* why = nullptr);
 /// 数。事件无 UI 编辑入口（作者面 = 手写/表驱动），删帧后不清 → TrySave 的
 /// roundtrip 预验必拒（解析侧对越界事件硬拒）→ 保存链自锁。
 size_t SanitizeClipEvents(ClipData& c);
+
+/// 帧序变更 → 事件帧重映射（M8 批⑫）：事件绑定帧**下标**，插帧/删帧/换位/拖拽
+/// 重排若不动 events 即语义漂移（删帧 3 后原帧 6 的事件仍挂下标 6，视觉内容已
+/// 换）。map(oldFrame) 返回新帧号，负值 = 随帧删除。落尾按 (frame,id) 稳定重排
+/// ——档面升序约定不因换位/旋转类映射失序（对已序表零重排）。纯函数，调用点
+/// 各传一段小 lambda：
+///   插入位 p   ： f >= p ? f+1 : f
+///   删除集 D   ： f∈D ? -1 : f - |{d∈D: d<f}|
+///   相邻换位   ： 两帧互换
+///   拖拽重排   ： 段旋转（见 AnimationPanel 调用点注释）
+template <typename F>
+void RemapClipEvents(std::vector<ClipEventEdit>& events, F&& map) {
+    std::vector<ClipEventEdit> out;
+    out.reserve(events.size());
+    for (const ClipEventEdit& e : events) {
+        const int64_t nf = map(e.frame);
+        if (nf >= 0) out.push_back({(uint32_t)nf, e.id});
+    }
+    std::stable_sort(out.begin(), out.end(),
+                     [](const ClipEventEdit& a, const ClipEventEdit& b) {
+                         return a.frame != b.frame ? a.frame < b.frame : a.id < b.id;
+                     });
+    events.swap(out);
+}
 
 } // namespace lemon::assets

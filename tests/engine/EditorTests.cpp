@@ -495,6 +495,119 @@ void TestClipEventBounds() {
     Expect(assets::SanitizeClipEvents(c) == 1 && c.events.empty(),
            "events: empty frame table clears all events");
 }
+
+// ---- M8 批⑫：帧序变更 → 事件帧重映射（assets::RemapClipEvents）----
+// 缺陷本体：事件绑定帧下标，插帧/删帧/换位/拖拽重排若不动 events 即漂移——
+// 删帧 3 后原帧 6 事件仍挂下标 6。各映射语义与 AnimationPanel 五个调用点同源。
+// （与 TestClipEventBounds 同宿一个 LEMON_EDITOR_CORE 块）
+
+void TestClipEventRemap() {
+    using lemon::assets::ClipData;
+    using lemon::assets::ClipEventEdit;
+    using lemon::assets::RemapClipEvents;
+
+    const auto ev = [](std::vector<ClipEventEdit> v) { return v; };
+    const auto framesOf = [](size_t n) {
+        return std::vector<lemon::assets::ClipFrame>(n, {0x5bd31a7c10000001ull, 0});
+    };
+
+    // 插入位 p（InsertFrameAfter：f >= p 后移 +1；副本不携带事件——原帧事件留原地）
+    {
+        auto e = ev({{2, 1}, {5, 2}});
+        RemapClipEvents(e, [](uint32_t f) -> int64_t { return f >= 3 ? f + 1 : f; });
+        Expect((e == ev({{2, 1}, {6, 2}})), "remap: insert-at shifts tail by one");
+    }
+    // 删除单帧 i（f==i 随删、f>i 前缩）
+    {
+        auto e = ev({{1, 1}, {3, 2}, {6, 3}});
+        RemapClipEvents(e, [](uint32_t f) -> int64_t {
+            return f == 3 ? -1 : (f > 3 ? (int64_t)f - 1 : f);
+        });
+        Expect((e == ev({{1, 1}, {5, 3}})), "remap: delete-one drops and compacts");
+    }
+    // 删除集合 D（多选批量：f∈D 随删，其余按前缀删除量前缩）
+    {
+        auto e = ev({{0, 1}, {2, 2}, {3, 3}, {5, 4}, {7, 5}});
+        const uint32_t D[] = {2, 3, 6};
+        RemapClipEvents(e, [&](uint32_t f) -> int64_t {
+            size_t below = 0;
+            for (uint32_t d : D) {
+                if (d == f) return -1;
+                if (d < f) ++below;
+            }
+            return (int64_t)f - (int64_t)below;
+        });
+        Expect((e == ev({{0, 1}, {3, 4}, {4, 5}})), "remap: delete-set compacts by prefix count");
+    }
+    // 相邻换位（Ctrl+←/→：内容互换 ⇒ 两帧事件位互换）
+    {
+        auto e = ev({{3, 1}, {4, 2}, {6, 3}});
+        RemapClipEvents(e, [](uint32_t f) -> int64_t {
+            return f == 3 ? 4 : (f == 4 ? 3 : f);
+        });
+        Expect((e == ev({{3, 2}, {4, 1}, {6, 3}})), "remap: adjacent swap exchanges event slots");
+    }
+    // 拖拽重排 = 段旋转（与 DrawFilmstrip 落靶同款数学：erase src 后插到目标前）
+    {
+        // src < i：f==src → i-1；src<f<i → f-1；其余不动
+        auto e = ev({{0, 1}, {1, 2}, {2, 3}, {3, 4}, {4, 5}});
+        const uint32_t src = 1, i = 3;
+        RemapClipEvents(e, [&](uint32_t f) -> int64_t {
+            if (f == src) return i - 1;
+            return (f > src && f < i) ? (int64_t)f - 1 : f;
+        });
+        Expect((e == ev({{0, 1}, {1, 3}, {2, 2}, {3, 4}, {4, 5}})),
+               "remap: drag rotation (src<i)");
+    }
+    {
+        // src > i：f==src → i；i≤f<src → f+1；其余不动
+        auto e = ev({{0, 1}, {1, 2}, {2, 3}, {3, 4}});
+        const uint32_t src = 3, i = 1;
+        RemapClipEvents(e, [&](uint32_t f) -> int64_t {
+            if (f == src) return i;
+            return (f >= i && f < src) ? (int64_t)f + 1 : f;
+        });
+        Expect((e == ev({{0, 1}, {1, 4}, {2, 2}, {3, 3}})),
+               "remap: drag rotation (src>i)");
+    }
+    // 空事件表 no-op；全删清空
+    {
+        auto e = ev({});
+        RemapClipEvents(e, [](uint32_t) -> int64_t { return -1; });
+        Expect(e.empty(), "remap: empty table stays empty");
+        e = ev({{0, 1}, {1, 2}});
+        RemapClipEvents(e, [](uint32_t) -> int64_t { return -1; });
+        Expect(e.empty(), "remap: drop-all clears");
+    }
+    // Monster01 同型真实档（demo/svr-test Attack.clip 形态）：no-edit 往返稳定 +
+    // 事件行 golden 字面（真实档 13 帧 frame=6 id=1，同构缩样）
+    {
+        ClipData c;
+        c.ok = true;
+        c.name = "Monster01-Attack";
+        c.fps = 14;
+        c.loopMode = 0;
+        c.frames = framesOf(13);
+        c.events = {{6, 1}};
+        const std::string out = lemon::assets::ClipToJson(c);
+        const ClipData back = lemon::assets::ParseClipJson(out);
+        Expect(back.ok && back.events == c.events && back.frames == c.frames,
+               "remap: events clip no-edit roundtrip stable");
+        Expect(out.find("    { \"frame\": 6, \"id\": 1 }\n  ]\n}") != std::string::npos,
+               "remap: events golden literal shape");
+    }
+    // id=0 合法（序列化省略 id 字段，解析回读 0）——与运行时 (clipId,id) 分发兼容
+    {
+        ClipData c;
+        c.ok = true;
+        c.name = "z";
+        c.fps = 8;
+        c.frames = framesOf(4);
+        c.events = {{1, 0}, {2, 9}};
+        const ClipData back = lemon::assets::ParseClipJson(lemon::assets::ClipToJson(c));
+        Expect(back.ok && back.events == c.events, "remap: id=0 omitted-then-restored");
+    }
+}
 #endif // LEMON_EDITOR_CORE
 
 // ---- M6a 批② T3c：.ani 动画集解析/序列化 + ClipTable 集按名索引 ----
@@ -1688,6 +1801,9 @@ void RunEditorTests() {
 #endif
 #ifdef LEMON_EDITOR_CORE
     TestClipEventBounds();
+#endif
+#ifdef LEMON_EDITOR_CORE
+    TestClipEventRemap();
 #endif
 #ifdef LEMON_EDITOR_CORE
     TestAnimSetAndClipIndex();

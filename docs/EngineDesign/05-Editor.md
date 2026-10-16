@@ -183,10 +183,21 @@ struct Chase { LEMON_FIELD(speed, Range{0,500}); LEMON_FIELD(aggroRange); LEMON_
 > **M6a 批② 落地口径（2026-09-26，AnimationEditor 最小版 → v3.1 工作台）**：
 > 已交付 = `.ani` 动画集工作台（左列动画清单工具条化 + 右区帧网格/大预览/
 > 胶片带；键盘化帧操作 ←/→/Del/Ctrl+D/Space；加帧四通道含从精灵表选帧
-> 对话框；统一保存段+集）+ clip 编辑链 roundtrip（`Editor/Assets/ClipEdit`
-> 可单测数据面）。裁剪 = per-frame 时长（schema 冻结全片 fps）、LoopMode 五
-> 模式（bool loop）、帧事件打点、Play 中热改——登记 v1.1 候补（上表"每帧
-> 时长/Loop 模式/帧事件打点"为候补全量形态）。ADR-013 集容器口径。
+> 对话框；统一保存段+集）+ clip 编辑链 roundtrip（数据面 = `Engine/Assets/
+> AnimAsset`，M7a 批② 自 `Editor/Assets/ClipEdit` 下沉）。裁剪 = per-frame
+> 时长（schema 冻结全片 fps）、LoopMode 五模式（bool loop）、Play 中热改——
+> 登记 v1.1 候补（~~帧事件打点~~ **已于 M8 批⑫ 交付**，见下）。ADR-013 集容器口径。
+>
+> **M8 批⑫ 落地口径（2026-10-16，帧事件打点）**：AnimationPanel 补 `.clip
+> events[]` 编辑面（此前作者面 = 手写 JSON）。交付 = 胶片带事件角标（旗点 +
+> 多事件计数环 + 播放游标扫过提亮 = 命中反馈 + tooltip）+ 预览条事件 chips 行
+> （点击跳帧选中 / × 删除 / 右键编辑 / ＋ 选中帧打点；流式折行 + 32 截断）+
+> 右键帧格入口 + 编辑模态（帧号 0 起 / id 钳 0–65535——运行时 `ClipEventDef`
+> u16 收窄防静默截断；同帧同 id 完全重复拒；(frame,id) 升序落位）+
+> **RemapClipEvents**（引擎纯函数，`SanitizeClipEvents` 同居）：事件随帧序——
+> 插帧后移/删帧随删前缩/换位互换/拖拽段旋转/复制不带事件/整表替换保守清越界
+> （此前五路径全不动 events = 语义漂移缺陷随批修）+ TrySave roundtrip 预验补
+> events 等值。命名事件/payload 维持 v1.1；无本地撤销（归批⑩ 登记）。
 >
 > **M8 批⑨ 落地口径（2026-10-16，AnimController 工作台）**：`.controller`
 > 三表工作台（参数 ≤8 + 状态词表 + 选中状态出边表，`ControllerAsset` 数据面
