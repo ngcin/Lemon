@@ -1275,6 +1275,9 @@ struct AnimSmokeState {
     // M8 批⑩a：画布布局链——自动布局（旧档缺 editor 块）+ 拖拽同通道移动 + 保存
     // → 盘上 editor 块 roundtrip（API 级：窗口不开——b9 标签组通道冲突教训）
     bool smokeCtrlCanvasOk = false, smokeCtrlCanvasDone = false;
+    // M8 批⑩b：连线链——建边（AddTransitionByIndex 同入口）→ 撤销 → 重做 → 删边
+    //（面板本地快照栈；计数往返断言）
+    bool smokeCtrlEdgeOk = false, smokeCtrlEdgeDone = false;
     Vec2 smokeCreatePt{-1.0e9f, -1.0e9f};
     Vec2 smokePickPt{-1.0e9f, -1.0e9f};
     Vec2 smokeSheetPt{-1.0e9f, -1.0e9f};
@@ -1654,6 +1657,30 @@ void EditorApp::SmokeAnimFrame(uint64_t frame) {
                 }
                 if (!g_animSmoke.smokeCtrlCanvasOk)
                     LEMON_ERROR("smoke-anim：画布布局链不符（自动布局/移动落盘/editor 块）");
+            } else if (frame == 37 && !g_animSmoke.smokeCtrlEdgeDone) {
+                // M8 批⑩b：连线链（API 级同入口——画布拖线/检查器按钮均走
+                // AddTransitionByIndex/DeleteTransition）：建边 → 撤销 → 重做 →
+                // 删边，计数往返 = 面板本地快照栈（PushUndo/UndoLocal/RedoLocal）
+                // 全链证据。f35 收尾档 = 4 条过渡（f36 只动布局）
+                g_animSmoke.smokeCtrlEdgeDone = true;
+                if (PanelRegistry::Entry* en = panels_.FindEntry("AnimController")) {
+                    AnimControllerPanel* cp = static_cast<AnimControllerPanel*>(en->panel);
+                    cp->EnsureLoaded(*this); // f36 保存（布局）后 hash 变 → 重读
+                    const size_t t0 = cp->TransitionCountForTest();
+                    const int ni = cp->AddTransitionForTest(0, 2); // whole→hit（新对）
+                    const size_t t1 = cp->TransitionCountForTest();
+                    const bool undoOk = cp->UndoForTest();
+                    const size_t t2 = cp->TransitionCountForTest();
+                    const bool redoOk = cp->RedoForTest();
+                    const size_t t3 = cp->TransitionCountForTest();
+                    const bool delOk = cp->DeleteTransitionForTest(ni);
+                    const size_t t4 = cp->TransitionCountForTest();
+                    g_animSmoke.smokeCtrlEdgeOk =
+                        t0 == 4 && ni == (int)t0 && t1 == t0 + 1 && undoOk && t2 == t0 &&
+                        redoOk && t3 == t0 + 1 && delOk && t4 == t0;
+                }
+                if (!g_animSmoke.smokeCtrlEdgeOk)
+                    LEMON_ERROR("smoke-anim：连线链不符（建边/撤销/重做/删边计数往返）");
             }
         } else if (frame == 40) {
             ImVec2 mn, mx;
@@ -1974,16 +2001,27 @@ void EditorApp::SmokeAnimFrame(uint64_t frame) {
         //（此前 ctrl 四链全无头语义直调，渲染路径零覆盖——补盲区）
         else if (frame == 126) {
             OpenAnimControllerEditor(kAnimGraphGuid);
+        } else if (frame == 127) {
+            // f126 OnGui 才装载（LoadFrom 清选择）→ f127 再选（批⑩b：选择驱动
+            // 检查器——f129 断言 insp.node 探针在场）
             if (PanelRegistry::Entry* en = panels_.FindEntry("AnimController"))
                 static_cast<AnimControllerPanel*>(en->panel)->SelectStateForTest(0);
         } else if (frame == 129) {
-            ImVec2 a, b;
+            ImVec2 a, b, c, d;
             // begin = 全量绘制（浮动窗不遮即真画）；skip = OnGui 拉起但窗口被
             // 遮/折叠（Begin false）——两键都只能从 OnGui 内部落，渲染链断言等价
-            const bool drew =
-                testhooks::Find("animctrl.begin", a, b) || testhooks::Find("animctrl.skip", a, b);
-            if (!drew)
+            const bool skip = testhooks::Find("animctrl.skip", a, b);
+            const bool began = testhooks::Find("animctrl.begin", c, d);
+            if (!skip && !began)
                 LEMON_ERROR("smoke-anim：状态机工作台未进渲染链（animctrl.begin/skip 探针双缺席）");
+            if (began) {
+                // 批⑩b：全量路径须有画布 + 节点检查器探针（选择驱动面进绘制）
+                ImVec2 e1, e2;
+                if (!testhooks::Find("animctrl.canvas", e1, e2) ||
+                    !testhooks::Find("animctrl.insp.node", e1, e2))
+                    LEMON_ERROR("smoke-anim：工作台全量路径缺画布/节点检查器探针"
+                                "（canvas/insp.node）");
+            }
         } else if (frame == 130) {
             // 探针毕即关窗：开窗态会被 ini 持久化（开 + 浮动位置），同项目复跑
             // 时该窗从 f0 起浮在 FilePicker 默认落位上方吃注入点击 → picker/
@@ -2082,7 +2120,7 @@ bool EditorApp::SmokeAnimVerdict() {
              g_animSmoke.smokeLeftColOk &&
              g_animSmoke.smokeCtrlOpenOk && g_animSmoke.smokeCtrlLoadOk &&
              g_animSmoke.smokeCtrlSaveOk && g_animSmoke.smokeCtrlGateOk &&
-             g_animSmoke.smokeCtrlCanvasOk;
+             g_animSmoke.smokeCtrlCanvasOk && g_animSmoke.smokeCtrlEdgeOk;
     std::printf("[lemon] smoke-anim: prog(maxFrame=%u slice=%s booked=%u)%s "
                 "queue(hitClip=%s hit=%s back=%s) fx(text/bar=%s) "
                 "edit(rt=%s cache=%s whole=%s) set(rt=%s cache=%s open=%s "
@@ -2090,7 +2128,7 @@ bool EditorApp::SmokeAnimVerdict() {
                 "pick(click=%s shift=%s all=%s sheet(all=%s clear=%s close=%s row=%s)) "
                 "multiadd(count=%s order=%s) create(folder=%s dblclip=%s adopt=%s) "
                 "drag(item=%s) leftcol(meta=%s) ctrl(open=%s load=%s save=%s gate=%s "
-                "layout=%s) "
+                "layout=%s edge=%s) "
                 "=> %s\n",
                 (unsigned)g_animSmoke.smokeAnimMax[0], g_animSmoke.smokeAnimSlice[0] ? "YES" : "NO",
                 sh ? sh->sliceCount : 0, yami, hitBooked ? "booked" : "MISSING",
@@ -2114,6 +2152,7 @@ bool EditorApp::SmokeAnimVerdict() {
                 g_animSmoke.smokeCtrlOpenOk ? "YES" : "NO", g_animSmoke.smokeCtrlLoadOk ? "YES" : "NO",
                 g_animSmoke.smokeCtrlSaveOk ? "YES" : "NO", g_animSmoke.smokeCtrlGateOk ? "YES" : "NO",
                 g_animSmoke.smokeCtrlCanvasOk ? "YES" : "NO",
+                g_animSmoke.smokeCtrlEdgeOk ? "YES" : "NO",
                 animOk ? "OK" : "FAIL");
     return animOk;
 }

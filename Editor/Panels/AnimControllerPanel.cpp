@@ -22,7 +22,10 @@
 
 #include "App/EditorApp.h"
 #include "Assets/AssetDatabase.h"
+#include "Components/RenderComponents.h" // AnimGraph/Animator2D（Play 当前态高亮）
 #include "Core/Log.h"
+#include "ECS/ClipTable.h"
+#include "ECS/Scene.h"
 #include "EditorContext.h"
 #include "Localization/Localization.h"
 #include "Panels/BuiltInPanels.h"
@@ -60,7 +63,11 @@ void AnimControllerPanel::LoadFrom(const AssetDatabase& db, const AssetEntry& e)
     loadedHash_ = e.hash;
     dirty_ = false;
     selState_ = -1;
-    renameIdx_ = -1;
+    selEdge_ = -1;
+    edgeDragFrom_ = -1;
+    dragNode_ = -1;
+    renameBuf_.clear();
+    undoStack_.Clear(); // 新目标 = 新会话（跨档撤销无意义）
     std::ifstream f(db.AbsolutePath(e), std::ios::binary);
     if (f) {
         std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
@@ -119,16 +126,17 @@ void AnimControllerPanel::NormalizeLayout() {
     edit_.layout = std::move(out);
 }
 
-void AnimControllerPanel::SetNodePosition(const std::string& state, int x, int y) {
-    if (!edit_.ok) return;
+bool AnimControllerPanel::SetNodePosition(const std::string& state, int x, int y) {
+    if (!edit_.ok) return false;
     EnsureLayout();
     const int li = LayoutIndexOf(state);
-    if (li < 0) return;
+    if (li < 0) return false;
     const int nx = assets::ControllerSnapGrid(x), ny = assets::ControllerSnapGrid(y);
-    if (edit_.layout[(size_t)li].x == nx && edit_.layout[(size_t)li].y == ny) return;
+    if (edit_.layout[(size_t)li].x == nx && edit_.layout[(size_t)li].y == ny) return false;
     edit_.layout[(size_t)li].x = nx;
     edit_.layout[(size_t)li].y = ny;
     dirty_ = true; // 布局不碰结构——不动 lintDirty_（跨资产扫描免重算）
+    return true;
 }
 
 bool AnimControllerPanel::NodePosForTest(const std::string& state, int& x, int& y) const {
@@ -313,10 +321,177 @@ bool AnimControllerPanel::TryCreate(EditorApp& app, const std::string& dir,
 
 void AnimControllerPanel::AddState(const std::string& name) {
     if (!edit_.ok || name.empty() || StateIndex(name) >= 0) return;
+    PushUndo();
     edit_.states.push_back(name);
-    selState_ = (int)edit_.states.size() - 1;
     EnsureLayout(); // 新状态补自动布局位（画布立即可见）
+    SelectState((int)edit_.states.size() - 1);
     MarkDirty();
+}
+
+// ------------------------------------------------- 结构变更（批⑩b）----
+// 撤销语义 = 变更前压快照（PushUndo）；拖动类手势在会话起拍、松手有实际位移
+// 才 Push（"松手拍一次"）——所有变更走这里的单一入口。
+
+void AnimControllerPanel::SelectState(int idx) {
+    selState_ = idx;
+    selEdge_ = -1;
+    renameBuf_ = (idx >= 0 && idx < (int)edit_.states.size()) ? edit_.states[(size_t)idx] : "";
+    renameFocus_ = false;
+}
+
+void AnimControllerPanel::SelectEdge(int idx) {
+    selEdge_ = idx;
+    // 节点选保留（源状态方位感）——检查器按"边优先"渲染
+}
+
+void AnimControllerPanel::CommitStateRename(int idx, const std::string& newName) {
+    if (idx < 0 || idx >= (int)edit_.states.size() || newName.empty() ||
+        newName == edit_.states[(size_t)idx] || StateIndex(newName) >= 0)
+        return; // 空/重名/同名 = 静默保旧（段改名 CommitSegRename 同款不扰邻语义）
+    PushUndo();
+    const std::string old = edit_.states[(size_t)idx];
+    edit_.states[(size_t)idx] = newName;
+    if (edit_.entry == old) edit_.entry = newName;
+    if (const int li = LayoutIndexOf(old); li >= 0) edit_.layout[(size_t)li].state = newName;
+    for (auto& t : edit_.transitions) { // 引用传播（from/to）
+        if (t.from == old) t.from = newName;
+        if (t.to == old) t.to = newName;
+    }
+    renameBuf_ = newName;
+    MarkDirty();
+}
+
+void AnimControllerPanel::DeleteState(int idx) {
+    if (idx < 0 || idx >= (int)edit_.states.size()) return;
+    PushUndo();
+    const std::string gone = edit_.states[(size_t)idx];
+    std::vector<assets::ControllerTransitionEdit> keep;
+    for (auto& t : edit_.transitions)
+        if (t.from != gone && t.to != gone) keep.push_back(std::move(t));
+    edit_.transitions = std::move(keep);
+    edit_.states.erase(edit_.states.begin() + (long)idx);
+    if (edit_.entry == gone)
+        edit_.entry = edit_.states.empty() ? std::string() : edit_.states[0];
+    if (const int li = LayoutIndexOf(gone); li >= 0)
+        edit_.layout.erase(edit_.layout.begin() + li);
+    if (selState_ == idx) {
+        SelectState(-1);
+    } else if (selState_ > idx) {
+        --selState_;
+        renameBuf_ = edit_.states[(size_t)selState_];
+    }
+    selEdge_ = -1;
+    MarkDirty();
+}
+
+int AnimControllerPanel::AddTransitionByIndex(int fromIdx, int toIdx) {
+    if (!edit_.ok || fromIdx < 0 || fromIdx >= (int)edit_.states.size() || toIdx < 0 ||
+        toIdx >= (int)edit_.states.size())
+        return -1;
+    PushUndo();
+    assets::ControllerTransitionEdit t;
+    t.from = edit_.states[(size_t)fromIdx];
+    t.to = edit_.states[(size_t)toIdx];
+    // 起步即合法（b9 规则）：有参数 → 默认一条首参条件；无参数 → exitTime
+    if (!edit_.params.empty()) {
+        const assets::ControllerParamEdit& p = edit_.params.front();
+        t.conds.push_back({p.name, OpForKind(2, p.kind), 0.0f});
+    } else {
+        t.exitTime = true;
+    }
+    edit_.transitions.push_back(std::move(t));
+    SelectState(fromIdx);
+    SelectEdge((int)edit_.transitions.size() - 1); // 新边即选 → 检查器转边详情
+    MarkDirty();
+    return (int)edit_.transitions.size() - 1;
+}
+
+bool AnimControllerPanel::DeleteTransition(int idx) {
+    if (idx < 0 || idx >= (int)edit_.transitions.size()) return false;
+    PushUndo();
+    edit_.transitions.erase(edit_.transitions.begin() + (long)idx);
+    if (selEdge_ == idx)
+        selEdge_ = -1;
+    else if (selEdge_ > idx)
+        --selEdge_;
+    MarkDirty();
+    return true;
+}
+
+bool AnimControllerPanel::UndoLocal() {
+    if (!edit_.ok) return false;
+    assets::ControllerData out;
+    if (!undoStack_.Undo(edit_, out)) return false;
+    edit_ = std::move(out);
+    AfterHistoryRestore();
+    return true;
+}
+
+bool AnimControllerPanel::RedoLocal() {
+    if (!edit_.ok) return false;
+    assets::ControllerData out;
+    if (!undoStack_.Redo(edit_, out)) return false;
+    edit_ = std::move(out);
+    AfterHistoryRestore();
+    return true;
+}
+
+void AnimControllerPanel::AfterHistoryRestore() {
+    if (selState_ >= (int)edit_.states.size()) selState_ = -1;
+    if (selEdge_ >= (int)edit_.transitions.size()) selEdge_ = -1;
+    edgeDragFrom_ = -1;
+    dragNode_ = -1;
+    renameBuf_ =
+        (selState_ >= 0 && selState_ < (int)edit_.states.size()) ? edit_.states[(size_t)selState_] : "";
+    EnsureLayout(); // 快照可能早于某次自动布局（幂等；restore 本就 dirty）
+    dirty_ = true;  // 撤销回到盘上态也不回退 dirty（简化——b9 dirty 语义 = 内存≠盘上）
+    lintDirty_ = true;
+}
+
+std::string AnimControllerPanel::EdgeSummary(const assets::ControllerTransitionEdit& t) const {
+    using lemon::editor::loc::tr;
+    std::string s;
+    if (t.exitTime) s = tr("animctrl.trans.exit_time");
+    for (size_t i = 0; i < t.conds.size(); ++i) {
+        if (i >= 2) {
+            s += " +" + std::to_string(t.conds.size() - 2);
+            break;
+        }
+        const assets::ControllerCondEdit& c = t.conds[i];
+        if (!s.empty()) s += " & ";
+        char buf[96];
+        if (c.op == 5) // trigger：无值
+            std::snprintf(buf, sizeof(buf), "%s", c.param.c_str());
+        else if (c.op == 4) // bool ==
+            std::snprintf(buf, sizeof(buf), "%s==%s", c.param.c_str(), c.value != 0.0f ? "1" : "0");
+        else
+            std::snprintf(buf, sizeof(buf), "%s%s%g", c.param.c_str(), OpLabel(c.op), c.value);
+        s += buf;
+    }
+    return s;
+}
+
+void AnimControllerPanel::HandleKeys(bool ro) {
+    if (ro || !keysFocused_) return;
+    if (ImGui::GetIO().WantTextInput) return;
+    if (dragNode_ >= 0 || edgeDragFrom_ >= 0) return; // 手势会话中不吃功能键
+    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Z)) {
+        if (ImGui::GetIO().KeyShift)
+            RedoLocal();
+        else
+            UndoLocal();
+        return;
+    }
+    if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Y)) {
+        RedoLocal();
+        return;
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_Delete, false)) {
+        if (selEdge_ >= 0)
+            DeleteTransition(selEdge_);
+        else if (selState_ >= 0)
+            DeleteState(selState_);
+    }
 }
 
 // ---------------------------------------------------------------- 表单 ----
@@ -329,6 +504,10 @@ void AnimControllerPanel::StartCreate(const std::string& relDir) {
     edit_ = assets::ControllerData{};
     warnings_.clear();
     selState_ = -1;
+    selEdge_ = -1;
+    edgeDragFrom_ = -1;
+    renameBuf_.clear();
+    undoStack_.Clear();
     createDir_ = relDir;
     while (createDir_.size() > 1 && createDir_.back() == '/') createDir_.pop_back();
     createOpen_ = true;
@@ -359,14 +538,16 @@ void AnimControllerPanel::DrawCreateForm(EditorApp& app, bool ro) {
 void AnimControllerPanel::DrawParamsTable(EditorApp& app) {
     using lemon::editor::loc::tr;
     (void)app;
-    if (!ImGui::CollapsingHeader(tr("animctrl.params.header"), ImGuiTreeNodeFlags_DefaultOpen))
-        return;
+    if (!ImGui::CollapsingHeader(tr("animctrl.params.header"))) return; // 默认折叠（批⑩b）
     ImGui::TextDisabled("%s", tr("animctrl.params.hint"));
     for (size_t i = 0; i < edit_.params.size(); ++i) {
         assets::ControllerParamEdit& p = edit_.params[i];
         ImGui::PushID((int)i);
         ImGui::InputText("##pname", &p.name);
-        if (ImGui::IsItemActivated()) paramRenameOld_ = p.name; // 编辑会话起拍快照
+        if (ImGui::IsItemActivated()) {
+            PushUndo();                 // 编辑会话起拍快照（撤销 = 改名前）
+            paramRenameOld_ = p.name;   // 改名传播源快照（InputText 就地改写前）
+        }
         if (ImGui::IsItemDeactivatedAfterEdit()) {
             // 改名传播到条件引用（防悬空——old 在 InputText 就地改写前快照）
             for (auto& t : edit_.transitions)
@@ -377,7 +558,8 @@ void AnimControllerPanel::DrawParamsTable(EditorApp& app) {
         ImGui::SameLine();
         if (ImGui::BeginCombo("##pkind", KindLabel(p.kind))) {
             for (int ki : {0, 1, 2})
-                if (ImGui::Selectable(KindLabel(ki), ki == p.kind)) {
+                if (ImGui::Selectable(KindLabel(ki), ki == p.kind) && ki != p.kind) {
+                    PushUndo();
                     p.kind = ki;
                     // kind 收窄 → 同名参数的既有条件算子跟随（float→trigger 尤甚）
                     for (auto& t : edit_.transitions)
@@ -390,11 +572,13 @@ void AnimControllerPanel::DrawParamsTable(EditorApp& app) {
         ImGui::SameLine();
         if (p.kind == 0) {
             if (ImGui::DragFloat("##pdef", &p.def, 0.01f, 0.0f, 0.0f, "%.2f")) MarkDirty();
+            if (ImGui::IsItemActivated()) PushUndo(); // 拖动按会话起拍（连续帧只压一次）
         } else {
             ImGui::TextDisabled("%s", tr("animctrl.params.def_none"));
         }
         ImGui::SameLine();
         if (ImGui::Button("×")) { // 删参数 → 引用它的条件一并清（防悬空）
+            PushUndo();
             const std::string gone = p.name;
             for (auto& t : edit_.transitions) {
                 std::vector<assets::ControllerCondEdit> keep;
@@ -413,6 +597,7 @@ void AnimControllerPanel::DrawParamsTable(EditorApp& app) {
     const bool full = edit_.params.size() >= 8;
     ImGui::BeginDisabled(full);
     if (ImGui::Button(tr("animctrl.params.add"))) {
+        PushUndo();
         edit_.params.push_back(
             {"param" + std::to_string(edit_.params.size() + 1), 0, 0.0f});
         MarkDirty();
@@ -421,89 +606,198 @@ void AnimControllerPanel::DrawParamsTable(EditorApp& app) {
     if (full && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tr("animctrl.params.full_tooltip"));
 }
 
-void AnimControllerPanel::DrawStatesList(EditorApp& app) {
+// ------------------------------------------------- 检查器（批⑩b）----
+// 选择驱动（ADR-013 D6："图管结构 + 检查器管细节"）：选中边 → 条件详情 +
+// 求值序；选中节点 → 名称/入口/出边汇总；未选中 → 参数表（默认折叠）。
+
+void AnimControllerPanel::DrawNodeInspector(EditorApp& app) {
     using lemon::editor::loc::tr;
     (void)app;
-    if (!ImGui::CollapsingHeader(tr("animctrl.states.header"), ImGuiTreeNodeFlags_DefaultOpen))
-        return;
-    const std::string entry = edit_.entry.empty()
-                                  ? (edit_.states.empty() ? std::string() : edit_.states[0])
-                                  : edit_.entry;
-    for (size_t i = 0; i < edit_.states.size(); ++i) {
-        ImGui::PushID((int)i);
-        const bool selected = (int)i == selState_;
-        if (ImGui::Selectable("##stsel", selected)) selState_ = (int)i;
+    const std::string& name = edit_.states[(size_t)selState_];
+    ImGui::TextUnformatted(tr("animctrl.node.header"));
+    testhooks::Stash("animctrl.insp.node", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputText("##nodename", &renameBuf_); // 改名缓冲（SelectState 时同步）
+    if (ImGui::IsItemDeactivatedAfterEdit()) {
+        CommitStateRename(selState_, renameBuf_);
+        renameBuf_ = edit_.states[(size_t)selState_]; // 拒收（空/重名）也回落显示
+    }
+    const std::string entryName =
+        edit_.entry.empty() ? (edit_.states.empty() ? std::string() : edit_.states[0])
+                            : edit_.entry;
+    const bool isEntry = name == entryName;
+    ImGui::BeginDisabled(isEntry);
+    if (ImGui::Button(tr("animctrl.node.entry_btn"))) {
+        PushUndo();
+        edit_.entry = name;
+        MarkDirty();
+    }
+    ImGui::EndDisabled();
+    if (isEntry) {
         ImGui::SameLine();
-        if ((int)i == renameIdx_) {
-            // inline 改名（段清单同款交互：双击进入、Enter/失焦提交；空名/重名
-            // 静默保旧名——CommitSegRename 同款不扰邻语义）
-            if (renameFocus_) {
-                ImGui::SetKeyboardFocusHere();
-                renameFocus_ = false;
-            }
-            ImGui::SetNextItemWidth(-30);
-            const bool commit = ImGui::InputText("##strename", &renameBuf_,
-                                                 ImGuiInputTextFlags_EnterReturnsTrue);
-            if (commit || ImGui::IsItemDeactivated()) {
-                if (!renameBuf_.empty() &&
-                    (renameBuf_ == edit_.states[i] || StateIndex(renameBuf_) < 0)) {
-                    const std::string old = edit_.states[i];
-                    edit_.states[i] = renameBuf_;
-                    if (edit_.entry == old) edit_.entry = renameBuf_;
-                    if (const int li = LayoutIndexOf(old); li >= 0)
-                        edit_.layout[(size_t)li].state = renameBuf_; // 布局键随迁
-                    for (auto& t : edit_.transitions) { // 引用传播（from/to）
-                        if (t.from == old) t.from = renameBuf_;
-                        if (t.to == old) t.to = renameBuf_;
-                    }
-                    MarkDirty();
-                }
-                renameIdx_ = -1;
-            }
-        } else {
-            ImGui::TextUnformatted(edit_.states[i].c_str());
-            if (edit_.states[i] == entry) {
-                ImGui::SameLine();
-                ImGui::TextDisabled("«%s", tr("animctrl.states.entry"));
-            }
-            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                renameIdx_ = (int)i;
-                renameBuf_ = edit_.states[i];
-                renameFocus_ = true;
-            }
-        }
-        ImGui::SameLine();
-        if (ImGui::SmallButton("×")) { // 删状态 → 相触及的过渡一并清 + entry 回退
-            const std::string gone = edit_.states[i];
-            std::vector<assets::ControllerTransitionEdit> keep;
-            for (auto& t : edit_.transitions)
-                if (t.from != gone && t.to != gone) keep.push_back(t);
-            edit_.transitions = std::move(keep);
-            edit_.states.erase(edit_.states.begin() + (long)i);
-            if (edit_.entry == gone)
-                edit_.entry = edit_.states.empty() ? std::string() : edit_.states[0];
-            if (selState_ == (int)i) selState_ = -1;
-            else if (selState_ > (int)i) --selState_;
-            MarkDirty();
-            ImGui::PopID();
-            return; // 迭代器失效——本帧收手
-        }
+        ImGui::TextDisabled("%s", tr("animctrl.node.entry_is"));
+    }
+
+    // 出边汇总（行点击 → 边检查器；同 from 求值序在边详情面显示）
+    ImGui::Spacing();
+    ImGui::TextDisabled("%s", tr("animctrl.node.out_header"));
+    for (size_t i = 0; i < edit_.transitions.size(); ++i) {
+        const assets::ControllerTransitionEdit& t = edit_.transitions[i];
+        if (t.from != name) continue;
+        ImGui::PushID(("oe" + std::to_string(i)).c_str());
+        const std::string label = "→ " + t.to + "  ·  " + EdgeSummary(t);
+        if (ImGui::Selectable(label.c_str(), (int)i == selEdge_)) SelectEdge((int)i);
         ImGui::PopID();
     }
-    // inline 新建（Enter/「+」；重名/空名不动——输入保持可改）
-    ImGui::SetNextItemWidth(-30);
-    if (ImGui::InputTextWithHint("##stnew", tr("animctrl.states.new_hint"), &stNewName_,
-                                 ImGuiInputTextFlags_EnterReturnsTrue)) {
-        if (!stNewName_.empty() && StateIndex(stNewName_) < 0) {
-            AddState(stNewName_);
-            stNewName_.clear();
+    ImGui::BeginDisabled(edit_.states.size() < 2);
+    if (ImGui::Button(tr("animctrl.trans.add"))) { // 起步条件 b9 规则（同画布拖线）
+        int to = 0;
+        for (size_t j = 0; j < edit_.states.size(); ++j)
+            if ((int)j != selState_) {
+                to = (int)j;
+                break;
+            }
+        AddTransitionByIndex(selState_, to);
+    }
+    ImGui::EndDisabled();
+    if (edit_.states.size() < 2 && ImGui::IsItemHovered())
+        ImGui::SetTooltip("%s", tr("animctrl.trans.need_two"));
+    ImGui::Spacing();
+    if (ImGui::Button(tr("animctrl.node.delete_btn"))) {
+        DeleteState(selState_);
+        return; // name 引用已失效——本帧收手
+    }
+}
+
+void AnimControllerPanel::DrawEdgeInspector(EditorApp& app) {
+    using lemon::editor::loc::tr;
+    using lemon::editor::loc::trFmt;
+    (void)app;
+    assets::ControllerTransitionEdit& t = edit_.transitions[(size_t)selEdge_];
+    ImGui::Text("%s → %s", t.from.c_str(), t.to.c_str());
+    testhooks::Stash("animctrl.insp.edge", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+    int order = 0, total = 0; // 同 from 文件序 = 运行时评估序（首条命中即切）
+    for (size_t i = 0; i < edit_.transitions.size(); ++i)
+        if (edit_.transitions[i].from == t.from) {
+            ++total;
+            if ((int)i == selEdge_) order = total;
+        }
+    ImGui::TextDisabled(
+        "%s", trFmt("animctrl.edge.order_fmt", {std::to_string(order), std::to_string(total)}).c_str());
+    ImGui::SetNextItemWidth(160);
+    if (ImGui::BeginCombo(tr("animctrl.edge.to"), t.to.c_str())) {
+        for (size_t j = 0; j < edit_.states.size(); ++j)
+            if (ImGui::Selectable(edit_.states[j].c_str(), edit_.states[j] == t.to) &&
+                edit_.states[j] != t.to) {
+                PushUndo();
+                t.to = edit_.states[j];
+                MarkDirty();
+            }
+        ImGui::EndCombo();
+    }
+    ImGui::SameLine();
+    {
+        bool et = t.exitTime; // 本地承接（PushUndo 前快照 = 切换前态）
+        if (ImGui::Checkbox(tr("animctrl.trans.exit_time"), &et)) {
+            PushUndo();
+            t.exitTime = et;
+            MarkDirty();
+        }
+    }
+    for (size_t j = 0; j < t.conds.size(); ++j)
+        if (DrawCondRow(t, j)) return; // 行删——迭代器失效，本帧收手
+    ImGui::Indent(24.0f);
+    ImGui::BeginDisabled(edit_.params.empty());
+    if (ImGui::SmallButton(tr("animctrl.trans.add_cond"))) {
+        PushUndo();
+        const assets::ControllerParamEdit& p = edit_.params.front();
+        t.conds.push_back({p.name, OpForKind(2, p.kind), 0.0f});
+        MarkDirty();
+    }
+    ImGui::EndDisabled();
+    ImGui::Unindent(24.0f);
+    if (t.conds.empty() && !t.exitTime) { // 解析器拒的形态——行内红字即时提示
+        ImGui::TextColored(theme::kTextError, "%s", tr("animctrl.trans.empty_cond"));
+    }
+    ImGui::Spacing();
+    if (ImGui::Button(tr("animctrl.edge.delete_btn"))) {
+        DeleteTransition(selEdge_);
+        return; // t 引用已失效——本帧收手
+    }
+}
+
+bool AnimControllerPanel::DrawCondRow(assets::ControllerTransitionEdit& t, size_t j) {
+    using lemon::editor::loc::tr;
+    assets::ControllerCondEdit& c = t.conds[j];
+    ImGui::PushID((int)j);
+    ImGui::Indent(24.0f);
+    int pi = -1;
+    for (size_t k = 0; k < edit_.params.size(); ++k)
+        if (edit_.params[k].name == c.param) pi = (int)k;
+    if (pi < 0 && !edit_.params.empty()) {
+        c.param = edit_.params[0].name; // 引用被删回落（保存门禁兜底）
+        pi = 0;
+        MarkDirty();
+    }
+    if (edit_.params.empty()) {
+        ImGui::TextDisabled("%s", tr("animctrl.trans.no_params"));
+    } else {
+        if (ImGui::BeginCombo("##cparam", c.param.c_str())) {
+            for (const auto& p : edit_.params)
+                if (ImGui::Selectable(p.name.c_str(), p.name == c.param) && p.name != c.param) {
+                    PushUndo();
+                    c.param = p.name;
+                    c.op = OpForKind(c.op, p.kind);
+                    MarkDirty();
+                }
+            ImGui::EndCombo();
+        }
+        ImGui::SameLine();
+        const int kind = edit_.params[(size_t)pi].kind;
+        if (kind == 2) {
+            ImGui::TextUnformatted("trigger");
+        } else if (kind == 1) {
+            if (ImGui::BeginCombo("##cop", "==")) {
+                if (ImGui::Selectable("==") && c.op != 4) {
+                    PushUndo();
+                    c.op = 4;
+                    MarkDirty();
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::SameLine();
+            bool b = c.value != 0.0f;
+            if (ImGui::Checkbox("##cval", &b)) {
+                PushUndo();
+                c.value = b ? 1.0f : 0.0f;
+                MarkDirty();
+            }
+        } else {
+            if (ImGui::BeginCombo("##cop", OpLabel(c.op))) {
+                for (int op = 0; op <= 4; ++op)
+                    if (ImGui::Selectable(OpLabel(op), c.op == op) && op != c.op) {
+                        PushUndo();
+                        c.op = op;
+                        MarkDirty();
+                    }
+                ImGui::EndCombo();
+            }
+            ImGui::SameLine();
+            if (ImGui::DragFloat("##cval", &c.value, 0.01f, 0.0f, 0.0f, "%.2f")) MarkDirty();
+            if (ImGui::IsItemActivated()) PushUndo(); // 拖动会话起拍（连续帧只压一次）
         }
     }
     ImGui::SameLine();
-    if (ImGui::Button("+") && !stNewName_.empty() && StateIndex(stNewName_) < 0) {
-        AddState(stNewName_);
-        stNewName_.clear();
+    bool deleted = false;
+    if (ImGui::SmallButton("×")) {
+        PushUndo();
+        t.conds.erase(t.conds.begin() + (long)j);
+        MarkDirty();
+        deleted = true;
     }
+    ImGui::Unindent(24.0f);
+    ImGui::PopID();
+    return deleted;
 }
 
 // ---------------------------------------------------------------- 画布 ----
@@ -531,7 +825,6 @@ void AnimControllerPanel::FitCanvas(float availW, float availH) {
 
 void AnimControllerPanel::DrawCanvas(EditorApp& app, bool ro) {
     using lemon::editor::loc::tr;
-    (void)app;
     EnsureLayout();
     const ImVec2 p0 = ImGui::GetCursorScreenPos();
     ImVec2 avail = ImGui::GetContentRegionAvail();
@@ -564,6 +857,96 @@ void AnimControllerPanel::DrawCanvas(EditorApp& app, bool ro) {
         return ImVec4{(float)np.x, (float)np.y, (float)np.x + kNodeW, (float)np.y + kNodeH};
     };
     const ImVec2 gm = toGraph(io.MousePos);
+    const float fs = std::max(13.0f * canvasZoom_, 8.0f);
+    const std::string entryName =
+        edit_.entry.empty() ? (edit_.states.empty() ? std::string() : edit_.states[0])
+                            : edit_.entry;
+
+    // ---- 命中工具（绘制与命中同源）----
+    auto hitNodeLi = [&](const ImVec2& p) -> int {
+        for (size_t li = 0; li < edit_.layout.size(); ++li) {
+            const ImVec4 r = nodeRectGraph((int)li);
+            if (p.x >= r.x && p.x <= r.z && p.y >= r.y && p.y <= r.w) return (int)li;
+        }
+        return -1;
+    };
+    auto handlePos = [&](int li) {
+        const ImVec4 r = nodeRectGraph(li);
+        return toScreen(r.z, (r.y + r.w) * 0.5f); // 节点右侧中点把手
+    };
+    struct EdgePath {
+        bool ok = false, loop = false;
+        ImVec2 a, b, c1, c2, mid, loopC;
+        float loopR = 0.0f;
+    };
+    auto edgePath = [&](size_t ti) {
+        EdgePath ep;
+        const assets::ControllerTransitionEdit& t = edit_.transitions[ti];
+        const int fi = LayoutIndexOf(t.from), tj = LayoutIndexOf(t.to);
+        if (fi < 0 || tj < 0) return ep;
+        const ImVec4 fr = nodeRectGraph(fi), trr = nodeRectGraph(tj);
+        int dup = 0; // 同 from/to 多条边垂直偏移（绘制/命中同源）
+        for (size_t j = 0; j < ti; ++j)
+            if (edit_.transitions[j].from == t.from && edit_.transitions[j].to == t.to) ++dup;
+        if (fi == tj) { // 自环（trigger 重启等合法形态）：右侧环线
+            ep.ok = true;
+            ep.loop = true;
+            ep.loopC = toScreen(fr.z, (fr.y + fr.w) * 0.5f);
+            ep.loopR = (24.0f + (float)dup * 16.0f) * canvasZoom_;
+            ep.mid = ImVec2(ep.loopC.x + ep.loopR, ep.loopC.y);
+            return ep;
+        }
+        ep.ok = true;
+        ep.a = toScreen((fr.x + fr.z) * 0.5f, (fr.y + fr.w) * 0.5f);
+        ep.b = toScreen((trr.x + trr.z) * 0.5f, (trr.y + trr.w) * 0.5f);
+        const float off = 24.0f * canvasZoom_;
+        const float offY = (float)dup * 16.0f * canvasZoom_;
+        ep.c1 = ImVec2(ep.a.x + (ep.b.x >= ep.a.x ? off : -off), ep.a.y + offY);
+        ep.c2 = ImVec2(ep.b.x - (ep.b.x >= ep.a.x ? off : -off), ep.b.y + offY);
+        ep.mid = ImVec2((ep.a.x + 3.0f * ep.c1.x + 3.0f * ep.c2.x + ep.b.x) * 0.125f,
+                        (ep.a.y + 3.0f * ep.c1.y + 3.0f * ep.c2.y + ep.b.y) * 0.125f);
+        return ep;
+    };
+    auto hitEdge = [&](const ImVec2& mouse) -> int {
+        int best = -1;
+        float bestD = 6.0f; // 屏幕像素阈值
+        for (size_t ti = 0; ti < edit_.transitions.size(); ++ti) {
+            const EdgePath ep = edgePath(ti);
+            if (!ep.ok) continue;
+            if (ep.loop) {
+                const float d = std::abs(
+                    std::hypot(mouse.x - ep.loopC.x, mouse.y - ep.loopC.y) - ep.loopR);
+                if (d < bestD) {
+                    bestD = d;
+                    best = (int)ti;
+                }
+                continue;
+            }
+            for (int k = 0; k < 24; ++k) { // 曲线采样命中（24 段折线）
+                auto bez = [&](float tt) {
+                    const float u = 1.0f - tt;
+                    return ImVec2(
+                        u * u * u * ep.a.x + 3 * u * u * tt * ep.c1.x +
+                            3 * u * tt * tt * ep.c2.x + tt * tt * tt * ep.b.x,
+                        u * u * u * ep.a.y + 3 * u * u * tt * ep.c1.y +
+                            3 * u * tt * tt * ep.c2.y + tt * tt * tt * ep.b.y);
+                };
+                const ImVec2 q0 = bez((float)k / 24.0f), q1 = bez((float)(k + 1) / 24.0f);
+                const float vx = q1.x - q0.x, vy = q1.y - q0.y;
+                const float wx = mouse.x - q0.x, wy = mouse.y - q0.y;
+                const float len2 = vx * vx + vy * vy;
+                const float tt =
+                    len2 > 1.0e-6f ? std::clamp((wx * vx + wy * vy) / len2, 0.0f, 1.0f) : 0.0f;
+                const float dx = wx - vx * tt, dy = wy - vy * tt;
+                const float d = std::sqrt(dx * dx + dy * dy);
+                if (d < bestD) {
+                    bestD = d;
+                    best = (int)ti;
+                }
+            }
+        }
+        return best;
+    };
 
     // ---- 相机操作：滚轮缩放（锚定光标）/ F 适配 / 中键或 空格+左键 平移 ----
     if (hovered && io.MouseWheel != 0.0f) {
@@ -582,70 +965,212 @@ void AnimControllerPanel::DrawCanvas(EditorApp& app, bool ro) {
         canvasPanY_ += io.MouseDelta.y;
     }
 
-    // ---- 节点命中/拖动（左键按下命中=选中+拖动；空格按住不选）----
-    if (!ro && dragNode_ < 0 && hovered && !spaceDown &&
+    // ---- 交互（编辑态；Play = 只读 + 当前状态高亮）----
+    const int hoveredLi = hovered ? hitNodeLi(gm) : -1;
+    if (!ro && edgeDragFrom_ < 0 && hovered && !spaceDown &&
         ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        // 拖线建边：节点右侧把手按下即起（优先于节点拖动）
         for (size_t li = 0; li < edit_.layout.size(); ++li) {
-            const ImVec4 r = nodeRectGraph((int)li);
-            if (gm.x >= r.x && gm.x <= r.z && gm.y >= r.y && gm.y <= r.w) {
-                dragNode_ = StateIndex(edit_.layout[li].state);
-                if (dragNode_ >= 0) {
-                    selState_ = dragNode_;
-                    dragStartGX_ = gm.x;
-                    dragStartGY_ = gm.y;
-                    dragOrigX_ = edit_.layout[li].x;
-                    dragOrigY_ = edit_.layout[li].y;
+            const ImVec2 h = handlePos((int)li);
+            const float dx = io.MousePos.x - h.x, dy = io.MousePos.y - h.y;
+            if (dx * dx + dy * dy <= 64.0f) { // 8px 半径
+                const int si = StateIndex(edit_.layout[li].state);
+                if (si >= 0) {
+                    edgeDragFrom_ = si;
+                    edgeDragHeld_ = true;
+                    SelectState(si);
                 }
                 break;
             }
         }
     }
+    if (!ro && dragNode_ < 0 && edgeDragFrom_ < 0 && hovered && !spaceDown &&
+        ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        if (hoveredLi >= 0) {
+            const int si = StateIndex(edit_.layout[(size_t)hoveredLi].state);
+            if (si >= 0) {
+                dragNode_ = si;
+                SelectState(si);
+                dragStartGX_ = gm.x;
+                dragStartGY_ = gm.y;
+                dragOrigX_ = edit_.layout[(size_t)hoveredLi].x;
+                dragOrigY_ = edit_.layout[(size_t)hoveredLi].y;
+                preDrag_ = edit_; // 拖动撤销"松手拍一次"会话起拍
+                dragMutated_ = false;
+            }
+        } else if (const int ei = hitEdge(io.MousePos); ei >= 0) {
+            SelectEdge(ei); // 边点选（曲线采样命中 + 中点小圆点辅助）
+        } else {
+            SelectState(-1); // 空点 = 全清（检查器回参数表）
+        }
+    }
     if (dragNode_ >= 0 && dragNode_ < (int)edit_.states.size() &&
         ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-        SetNodePosition(edit_.states[(size_t)dragNode_],
-                        dragOrigX_ + (int)std::lround(gm.x - dragStartGX_),
-                        dragOrigY_ + (int)std::lround(gm.y - dragStartGY_));
+        if (SetNodePosition(edit_.states[(size_t)dragNode_],
+                            dragOrigX_ + (int)std::lround(gm.x - dragStartGX_),
+                            dragOrigY_ + (int)std::lround(gm.y - dragStartGY_)))
+            dragMutated_ = true;
     }
-    if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) dragNode_ = -1;
+    if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+        if (dragNode_ >= 0 && dragMutated_) undoStack_.Push(preDrag_); // 拖动 = 一步撤销
+        dragNode_ = -1;
+        dragMutated_ = false;
+    }
+    // 右键菜单 + 双击改名（编辑态）
+    if (!ro && hovered && ImGui::IsMouseReleased(ImGuiMouseButton_Right)) {
+        if (hoveredLi >= 0) {
+            const int si = StateIndex(edit_.layout[(size_t)hoveredLi].state);
+            if (si >= 0) {
+                SelectState(si);
+                ImGui::OpenPopup("ctrlctx_node");
+            }
+        } else {
+            SelectState(-1);
+            ImGui::OpenPopup("ctrlctx_canvas");
+        }
+    }
+    if (!ro && hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && hoveredLi >= 0) {
+        const int si = StateIndex(edit_.layout[(size_t)hoveredLi].state);
+        if (si >= 0) {
+            SelectState(si);
+            renameBuf_ = edit_.states[(size_t)si];
+            renameFocus_ = true;
+            ImGui::OpenPopup("ctrlrename");
+        }
+    }
+    if (!ro && ImGui::BeginPopup("ctrlctx_node")) {
+        if (selState_ >= 0 && selState_ < (int)edit_.states.size()) {
+            const std::string& nm = edit_.states[(size_t)selState_];
+            const bool isEntry = nm == entryName;
+            if (ImGui::MenuItem(tr("animctrl.ctx.set_entry"), nullptr, false, !isEntry)) {
+                PushUndo();
+                edit_.entry = nm;
+                MarkDirty();
+            }
+            if (ImGui::MenuItem(tr("animctrl.ctx.new_edge"), nullptr, false,
+                                edit_.states.size() >= 2)) {
+                edgeDragFrom_ = selState_;
+                edgeDragHeld_ = false; // 待点模式：下一左键落目标节点（空处取消）
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem(tr("animctrl.ctx.delete_state"))) DeleteState(selState_);
+        }
+        ImGui::EndPopup();
+    }
+    if (!ro && ImGui::BeginPopup("ctrlctx_canvas")) {
+        if (ImGui::MenuItem(tr("animctrl.ctx.new_state"))) {
+            PushUndo();
+            std::string nm = "State";
+            for (int k = 2; StateIndex(nm) >= 0; ++k) nm = "State" + std::to_string(k);
+            edit_.states.push_back(nm);
+            EnsureLayout();
+            SetNodePosition(nm, (int)std::lround(gm.x - kNodeW * 0.5f),
+                            (int)std::lround(gm.y - kNodeH * 0.5f)); // 落点 = 右键处
+            SelectState((int)edit_.states.size() - 1);
+            MarkDirty();
+        }
+        ImGui::EndPopup();
+    }
+    if (!ro && ImGui::BeginPopup("ctrlrename")) {
+        ImGui::TextUnformatted(tr("animctrl.rename.title"));
+        if (renameFocus_) {
+            ImGui::SetKeyboardFocusHere();
+            renameFocus_ = false;
+        }
+        ImGui::SetNextItemWidth(180);
+        if (ImGui::InputText("##rn", &renameBuf_, ImGuiInputTextFlags_EnterReturnsTrue)) {
+            if (selState_ >= 0 && selState_ < (int)edit_.states.size())
+                CommitStateRename(selState_, renameBuf_);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+    // 拖线建边推进/收尾（按住拖 = 松开落点；待点模式 = 下一左键落点）
+    if (edgeDragFrom_ >= 0) {
+        const int hli = edgeDragFrom_ < (int)edit_.states.size()
+                            ? LayoutIndexOf(edit_.states[(size_t)edgeDragFrom_])
+                            : -1;
+        if (hli < 0) {
+            edgeDragFrom_ = -1;
+            edgeDragHeld_ = false;
+        } else {
+            const ImVec2 h = handlePos(hli);
+            const int tgtLi = hovered ? hitNodeLi(gm) : -1;
+            const int tgtSi = tgtLi >= 0 ? StateIndex(edit_.layout[(size_t)tgtLi].state) : -1;
+            dl->AddLine(h, io.MousePos, ImGui::GetColorU32(ImGuiCol_ButtonActive), 2.0f);
+            dl->AddCircleFilled(io.MousePos, 4.0f, ImGui::GetColorU32(ImGuiCol_ButtonActive));
+            if (edgeDragHeld_) {
+                if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                    if (tgtSi >= 0) AddTransitionByIndex(edgeDragFrom_, tgtSi);
+                    edgeDragFrom_ = -1;
+                    edgeDragHeld_ = false;
+                }
+            } else if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+                edgeDragFrom_ = -1;
+            } else if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                if (tgtSi >= 0) AddTransitionByIndex(edgeDragFrom_, tgtSi);
+                edgeDragFrom_ = -1;
+            }
+        }
+    }
 
     // ---- 绘制：先边后节点（节点盖住线心）；不可达灰化 = 引擎可达性同源 ----
     const std::vector<uint8_t> reach = assets::ControllerReachability(edit_);
     const ImU32 edgeCol = ImGui::GetColorU32(ImGuiCol_TextDisabled);
-    for (const assets::ControllerTransitionEdit& t : edit_.transitions) {
-        const int fi = LayoutIndexOf(t.from), ti = LayoutIndexOf(t.to);
-        if (fi < 0 || ti < 0) continue;
-        const ImVec4 fr = nodeRectGraph(fi), trr = nodeRectGraph(ti);
-        if (fi == ti) { // 自环（trigger 重启等合法形态）：右侧环线
-            const ImVec2 c = toScreen(fr.z, (fr.y + fr.w) * 0.5f);
-            dl->AddCircle(c, 24.0f * canvasZoom_, edgeCol, 0, 1.5f * canvasZoom_);
+    const ImU32 edgeSelCol = ImGui::GetColorU32(ImGuiCol_ButtonActive);
+    for (size_t ti = 0; ti < edit_.transitions.size(); ++ti) {
+        const EdgePath ep = edgePath(ti);
+        if (!ep.ok) continue;
+        const bool selE = (int)ti == selEdge_;
+        const ImU32 col = selE ? edgeSelCol : edgeCol;
+        const float w = (selE ? 2.5f : 1.5f) * canvasZoom_;
+        const std::string summary = EdgeSummary(edit_.transitions[ti]);
+        if (ep.loop) {
+            dl->AddCircle(ep.loopC, ep.loopR, col, 0, w);
+            dl->AddCircleFilled(ep.mid, selE ? 4.0f : 3.0f, col);
+            dl->AddText(ImGui::GetFont(), fs,
+                        ImVec2(ep.loopC.x + ep.loopR + 6.0f, ep.loopC.y - fs * 0.5f), col,
+                        summary.c_str());
             continue;
         }
-        const ImVec2 a = toScreen((fr.x + fr.z) * 0.5f, (fr.y + fr.w) * 0.5f);
-        const ImVec2 b = toScreen((trr.x + trr.z) * 0.5f, (trr.y + trr.w) * 0.5f);
-        const float off = 24.0f * canvasZoom_;
-        const ImVec2 c1{a.x + (b.x >= a.x ? off : -off), a.y};
-        const ImVec2 c2{b.x - (b.x >= a.x ? off : -off), b.y};
-        dl->AddBezierCubic(a, c1, c2, b, edgeCol, 1.5f * canvasZoom_);
+        dl->AddBezierCubic(ep.a, ep.c1, ep.c2, ep.b, col, w);
         // 箭头：线从目标节点边框穿出处
-        const float dx = b.x - a.x, dy = b.y - a.y;
+        const float dx = ep.b.x - ep.a.x, dy = ep.b.y - ep.a.y;
         const float len = std::sqrt(dx * dx + dy * dy);
-        if (len < 1.0e-3f) continue;
-        const float hw = (trr.z - trr.x) * 0.5f * canvasZoom_;
-        const float hh = (trr.w - trr.y) * 0.5f * canvasZoom_;
-        const float s = std::min(hw / std::max(std::abs(dx), 1.0e-4f),
-                                 hh / std::max(std::abs(dy), 1.0e-4f));
-        const ImVec2 tip{b.x - dx * s, b.y - dy * s};
-        const ImVec2 u{dx / len, dy / len};
-        const ImVec2 n{-u.y, u.x};
-        const float as = 9.0f * canvasZoom_;
-        dl->AddTriangleFilled(
-            tip, ImVec2(tip.x - u.x * as + n.x * as * 0.5f, tip.y - u.y * as + n.y * as * 0.5f),
-            ImVec2(tip.x - u.x * as - n.x * as * 0.5f, tip.y - u.y * as - n.y * as * 0.5f),
-            edgeCol);
+        if (len > 1.0e-3f) {
+            const ImVec4 trr = nodeRectGraph(LayoutIndexOf(edit_.transitions[ti].to));
+            const float hw = (trr.z - trr.x) * 0.5f * canvasZoom_;
+            const float hh = (trr.w - trr.y) * 0.5f * canvasZoom_;
+            const float s = std::min(hw / std::max(std::abs(dx), 1.0e-4f),
+                                     hh / std::max(std::abs(dy), 1.0e-4f));
+            const ImVec2 tip{ep.b.x - dx * s, ep.b.y - dy * s};
+            const ImVec2 u{dx / len, dy / len};
+            const ImVec2 nrm{-u.y, u.x};
+            const float as = 9.0f * canvasZoom_;
+            dl->AddTriangleFilled(
+                tip,
+                ImVec2(tip.x - u.x * as + nrm.x * as * 0.5f, tip.y - u.y * as + nrm.y * as * 0.5f),
+                ImVec2(tip.x - u.x * as - nrm.x * as * 0.5f, tip.y - u.y * as - nrm.y * as * 0.5f),
+                col);
+        }
+        dl->AddCircleFilled(ep.mid, selE ? 4.0f : 3.0f, col); // 中点小圆点（点选辅助）
+        dl->AddText(ImGui::GetFont(), fs, ImVec2(ep.mid.x + 6.0f, ep.mid.y - fs - 2.0f), col,
+                    summary.c_str());
     }
-    const std::string entryName =
-        edit_.entry.empty() ? (edit_.states.empty() ? std::string() : edit_.states[0])
-                            : edit_.entry;
+    // Play 态当前状态高亮（数据面：AnimGraph.controllerGuid + Animator2D.clipId
+    // → 集绑定反推段名 = 状态名，ADR-013 D4 约定）
+    std::string playState;
+    if (ro) {
+        ecs::Scene& ps = app.Ctx().ActiveScene();
+        const ecs::ClipTable& clips = app.Ctx().ActiveWorld().Clips();
+        for (auto [ent, g, an] : ps.View<ecs::AnimGraph, ecs::Animator2D>().each()) {
+            (void)ent;
+            if (g.controllerGuid != targetGuid_) continue;
+            if (const std::string* n = clips.NameOfClip((uint32_t)g.setGuid, an.clipId))
+                playState = *n;
+            break;
+        }
+    }
     for (size_t li = 0; li < edit_.layout.size(); ++li) {
         const int si = StateIndex(edit_.layout[li].state);
         if (si < 0) continue;
@@ -656,10 +1181,8 @@ void AnimControllerPanel::DrawCanvas(EditorApp& app, bool ro) {
         dl->AddRectFilled(a, b, ImGui::GetColorU32(ImGuiCol_FrameBg, sel ? 1.0f : 0.7f),
                           kNodeRad * canvasZoom_);
         dl->AddRect(a, b,
-                    sel ? ImGui::GetColorU32(ImGuiCol_ButtonActive)
-                        : ImGui::GetColorU32(ImGuiCol_Border),
-                    kNodeRad * canvasZoom_, 0, (sel ? 2.0f : 1.0f) * canvasZoom_);
-        const float fs = std::max(13.0f * canvasZoom_, 8.0f);
+                    sel ? edgeSelCol : ImGui::GetColorU32(ImGuiCol_Border), kNodeRad * canvasZoom_,
+                    0, (sel ? 2.0f : 1.0f) * canvasZoom_);
         dl->AddText(ImGui::GetFont(), fs,
                     ImVec2(a.x + 10.0f * canvasZoom_, (a.y + b.y) * 0.5f - fs * 0.5f),
                     reachable ? ImGui::GetColorU32(ImGuiCol_Text)
@@ -668,173 +1191,20 @@ void AnimControllerPanel::DrawCanvas(EditorApp& app, bool ro) {
         if (edit_.layout[li].state == entryName)
             dl->AddText(ImGui::GetFont(), fs * 0.8f,
                         ImVec2(b.x - 40.0f * canvasZoom_, a.y + 5.0f * canvasZoom_),
-                        ImGui::GetColorU32(ImGuiCol_TextDisabled),
-                        tr("animctrl.states.entry"));
+                        ImGui::GetColorU32(ImGuiCol_TextDisabled), tr("animctrl.states.entry"));
+        if (!playState.empty() && edit_.layout[li].state == playState) // Play 当前态高亮
+            dl->AddRect(ImVec2(a.x - 2.0f, a.y - 2.0f), ImVec2(b.x + 2.0f, b.y + 2.0f),
+                        ImGui::GetColorU32(theme::kTextWarn), kNodeRad * canvasZoom_ + 2.0f, 0,
+                        3.0f * canvasZoom_);
+        if (!ro && (int)li == hoveredLi) // 拖线把手（hover 显现）
+            dl->AddCircleFilled(handlePos((int)li), 5.0f, edgeSelCol);
     }
+    if (edgeDragFrom_ >= 0) // 建边会话提示（按住拖 = 松开落点；待点 = 点目标/空处取消）
+        dl->AddText(ImVec2(p0.x + 8.0f, p0.y + 26.0f), ImGui::GetColorU32(ImGuiCol_Text),
+                    tr("animctrl.canvas.edge_drag_hint"));
     dl->AddText(ImVec2(p0.x + 8.0f, p0.y + avail.y - 20.0f),
                 ImGui::GetColorU32(ImGuiCol_TextDisabled), tr("animctrl.canvas.hint"));
     dl->PopClipRect();
-}
-
-void AnimControllerPanel::DrawTransitions(EditorApp& app) {
-    using lemon::editor::loc::tr;
-    (void)app;
-    if (selState_ < 0 || selState_ >= (int)edit_.states.size()) {
-        ImGui::TextDisabled("%s", tr("animctrl.trans.no_state"));
-        return;
-    }
-    const std::string& from = edit_.states[selState_];
-    ImGui::Text("%s: %s", tr("animctrl.trans.out_header"), from.c_str());
-
-    // ---- 出边表（from 固定 = 选中状态；同 from 按文件序首条命中即切 = 运行时
-    // 评估序，表序即生效序——增删按显示序落盘）----
-    for (size_t i = 0; i < edit_.transitions.size(); ++i) {
-        assets::ControllerTransitionEdit& t = edit_.transitions[i];
-        if (t.from != from) continue;
-        ImGui::PushID(("out" + std::to_string(i)).c_str());
-        ImGui::Bullet();
-        ImGui::SameLine();
-        int to = StateIndex(t.to);
-        if (to < 0) to = selState_;
-        if (ImGui::BeginCombo("##to", edit_.states[to].c_str())) {
-            // 全部状态（含自身——trigger 重启是合法形态）
-            for (size_t j = 0; j < edit_.states.size(); ++j)
-                if (ImGui::Selectable(edit_.states[j].c_str(), (int)j == to)) {
-                    t.to = edit_.states[j];
-                    MarkDirty();
-                }
-            ImGui::EndCombo();
-        }
-        ImGui::SameLine();
-        if (ImGui::Checkbox(tr("animctrl.trans.exit_time"), &t.exitTime)) MarkDirty();
-        ImGui::SameLine();
-        if (ImGui::SmallButton("×")) {
-            edit_.transitions.erase(edit_.transitions.begin() + (long)i);
-            MarkDirty();
-            ImGui::PopID();
-            return; // 迭代器失效——本帧收手
-        }
-        // 条件行（AND 语义；trigger 参数固定 op、无值；bool 参数 == 0/1）
-        for (size_t j = 0; j < t.conds.size(); ++j) {
-            assets::ControllerCondEdit& c = t.conds[j];
-            ImGui::PushID((int)j);
-            ImGui::Indent(24.0f);
-            int pi = -1;
-            for (size_t k = 0; k < edit_.params.size(); ++k)
-                if (edit_.params[k].name == c.param) pi = (int)k;
-            if (pi < 0 && !edit_.params.empty()) {
-                c.param = edit_.params[0].name; // 引用被删回落（保存门禁兜底）
-                pi = 0;
-                MarkDirty();
-            }
-            if (edit_.params.empty()) {
-                ImGui::TextDisabled("%s", tr("animctrl.trans.no_params"));
-            } else {
-                if (ImGui::BeginCombo("##cparam", c.param.c_str())) {
-                    for (const auto& p : edit_.params)
-                        if (ImGui::Selectable(p.name.c_str(), p.name == c.param)) {
-                            c.param = p.name;
-                            c.op = OpForKind(c.op, p.kind);
-                            MarkDirty();
-                        }
-                    ImGui::EndCombo();
-                }
-                ImGui::SameLine();
-                const int kind = edit_.params[pi].kind;
-                if (kind == 2) {
-                    ImGui::TextUnformatted("trigger");
-                } else if (kind == 1) {
-                    if (ImGui::BeginCombo("##cop", "==")) {
-                        if (ImGui::Selectable("==")) {
-                            c.op = 4;
-                            MarkDirty();
-                        }
-                        ImGui::EndCombo();
-                    }
-                    ImGui::SameLine();
-                    bool b = c.value != 0.0f;
-                    if (ImGui::Checkbox("##cval", &b)) {
-                        c.value = b ? 1.0f : 0.0f;
-                        MarkDirty();
-                    }
-                } else {
-                    if (ImGui::BeginCombo("##cop", OpLabel(c.op))) {
-                        for (int op = 0; op <= 4; ++op)
-                            if (ImGui::Selectable(OpLabel(op), c.op == op)) {
-                                c.op = op;
-                                MarkDirty();
-                            }
-                        ImGui::EndCombo();
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::DragFloat("##cval", &c.value, 0.01f, 0.0f, 0.0f, "%.2f"))
-                        MarkDirty();
-                }
-            }
-            ImGui::SameLine();
-            if (ImGui::SmallButton("×")) {
-                t.conds.erase(t.conds.begin() + (long)j);
-                MarkDirty();
-                ImGui::Unindent(24.0f);
-                ImGui::PopID();
-                ImGui::PopID();
-                return; // 迭代器失效——本帧收手
-            }
-            ImGui::Unindent(24.0f);
-            ImGui::PopID();
-        }
-        ImGui::Indent(24.0f);
-        ImGui::BeginDisabled(edit_.params.empty());
-        if (ImGui::SmallButton(tr("animctrl.trans.add_cond"))) {
-            const assets::ControllerParamEdit& p = edit_.params.front();
-            t.conds.push_back({p.name, OpForKind(2, p.kind), 0.0f});
-            MarkDirty();
-        }
-        ImGui::EndDisabled();
-        ImGui::Unindent(24.0f);
-        // 无条件且非 exitTime = 解析器拒的形态——行内红字即时提示
-        if (t.conds.empty() && !t.exitTime) {
-            ImGui::Indent(24.0f);
-            ImGui::TextColored(theme::kTextError, "%s", tr("animctrl.trans.empty_cond"));
-            ImGui::Unindent(24.0f);
-        }
-        ImGui::PopID();
-    }
-    ImGui::BeginDisabled(edit_.states.size() < 2);
-    if (ImGui::Button(tr("animctrl.trans.add"))) {
-        // 新出边起步即合法：有参数 → 默认一条首参条件；无参数 → exitTime
-        assets::ControllerTransitionEdit t;
-        t.from = from;
-        for (size_t j = 0; j < edit_.states.size(); ++j)
-            if ((int)j != selState_) {
-                t.to = edit_.states[j];
-                break;
-            }
-        if (!edit_.params.empty()) {
-            const assets::ControllerParamEdit& p = edit_.params.front();
-            t.conds.push_back({p.name, OpForKind(2, p.kind), 0.0f});
-        } else {
-            t.exitTime = true;
-        }
-        edit_.transitions.push_back(std::move(t));
-        MarkDirty();
-    }
-    ImGui::EndDisabled();
-    if (edit_.states.size() < 2 && ImGui::IsItemHovered())
-        ImGui::SetTooltip("%s", tr("animctrl.trans.need_two"));
-
-    // ---- 入边只读行（编辑面在各自源状态；这里只做方位感）----
-    bool any = false;
-    for (const auto& t : edit_.transitions) {
-        if (t.to != from) continue;
-        if (!any) {
-            ImGui::Spacing();
-            ImGui::TextDisabled("%s", tr("animctrl.trans.in_header"));
-            any = true;
-        }
-        ImGui::BulletText("%s → %s", t.from.c_str(),
-                          t.exitTime ? tr("animctrl.trans.in_exit") : "");
-    }
 }
 
 // ---------------------------------------------------------------- OnGui ----
@@ -843,6 +1213,7 @@ void AnimControllerPanel::OnGui(EditorApp& app) {
     using lemon::editor::loc::tr;
     using lemon::editor::loc::trFmt;
     bool winOpen = true;
+    keysFocused_ = false; // 先清（Begin 失败/窗口不绘制时不吃键——防陈旧 true 卡全局）
     const std::string title = std::string(tr("panel.animcontroller")) + "###" + Name();
     if (!ImGui::Begin(title.c_str(), &winOpen, ImGuiWindowFlags_NoCollapse)) {
         ImGui::End();
@@ -855,6 +1226,7 @@ void AnimControllerPanel::OnGui(EditorApp& app) {
     // 冒烟探针（AnimationPanel animpanel.begin 同款）：Begin 成功 = 全量绘制路径
     testhooks::Stash("animctrl.begin", ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
     if (!winOpen) app.ClosePanel(Name());
+    keysFocused_ = ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows); // 键捕获仲裁（批⑩b）
 
     EditorContext& ctx = app.Ctx();
     AssetDatabase& db = ctx.Assets();
@@ -892,6 +1264,10 @@ void AnimControllerPanel::OnGui(EditorApp& app) {
         lintDirty_ = false;
     }
 
+    // 面板本地编辑键（批⑩b）：Ctrl+Z/Ctrl+Shift+Z/Ctrl+Y/Del——只读态与输入中
+    // 自守卫；EditorApp 侧经 CapturesUndoKeys 让位（BuildShortcuts）
+    HandleKeys(ro);
+
     if (ro) {
         ImGui::TextColored(theme::kTextWarn, "%s", tr("animctrl.ro_banner"));
         ImGui::BeginDisabled();
@@ -900,6 +1276,7 @@ void AnimControllerPanel::OnGui(EditorApp& app) {
     // ---- 顶栏：名字 / entry / 保存 ----
     ImGui::SetNextItemWidth(180);
     ImGui::InputText(tr("anim.name_label"), &edit_.name);
+    if (ImGui::IsItemActivated()) PushUndo(); // 编辑会话起拍快照
     if (ImGui::IsItemDeactivatedAfterEdit()) MarkDirty();
     ImGui::SameLine();
     ImGui::SetNextItemWidth(140);
@@ -909,7 +1286,8 @@ void AnimControllerPanel::OnGui(EditorApp& app) {
                                     : edit_.entry;
         if (ImGui::BeginCombo(tr("animctrl.entry"), cur.c_str())) {
             for (const std::string& s : edit_.states)
-                if (ImGui::Selectable(s.c_str(), s == cur)) {
+                if (ImGui::Selectable(s.c_str(), s == cur) && s != cur) {
+                    PushUndo();
                     edit_.entry = s;
                     MarkDirty();
                 }
@@ -949,14 +1327,23 @@ void AnimControllerPanel::OnGui(EditorApp& app) {
         ImGui::PopStyleColor();
     }
 
-    // ---- 画布（左）+ 检查器（右）——窄窗上下堆叠（⑩a：b9 三表整体搬右列）----
+    // ---- 画布（左）+ 检查器（右）——窄窗上下堆叠。检查器选择驱动
+    // （ADR-013 D6：图管结构 + 检查器管细节）：边选中 → 条件详情 + 求值序；
+    // 节点选中 → 名称/入口/出边汇总；未选中 → 参数表（默认折叠）+ 操作提示 ----
     const float availW = ImGui::GetContentRegionAvail().x;
     const float availH = ImGui::GetContentRegionAvail().y;
     auto drawInspector = [&]() {
-        DrawParamsTable(app);
-        DrawStatesList(app);
-        ImGui::Separator();
-        DrawTransitions(app);
+        if (selEdge_ >= 0 && selEdge_ < (int)edit_.transitions.size()) {
+            DrawEdgeInspector(app);
+        } else if (selState_ >= 0 && selState_ < (int)edit_.states.size()) {
+            DrawNodeInspector(app);
+        } else {
+            DrawParamsTable(app);
+            ImGui::Separator();
+            ImGui::PushTextWrapPos(0.0f);
+            ImGui::TextDisabled("%s", tr("animctrl.insp.hint"));
+            ImGui::PopTextWrapPos();
+        }
     };
     if (availW >= 640.0f) {
         ImGui::BeginChild("##ctrlcanvas_col", ImVec2(availW * 0.58f, 0), ImGuiChildFlags_None,

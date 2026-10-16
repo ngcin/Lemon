@@ -26,6 +26,10 @@ public:
     /// 防"删帧顺手删实体"双触发。焦点 = 面板 OnGui 内记录的上一帧值（本帧
     /// 快捷键先行于面板绘制，滞后一帧无碍）。默认 false（既有面板零影响）。
     virtual bool CapturesGlobalKeys() const { return false; }
+    /// 撤销键捕获声明（批⑩b）：返回 true = 面板持焦点且自持撤销栈（如
+    /// AnimController 画布），EditorApp 跳过全局 Ctrl+Z/Ctrl+Y——独立于
+    /// CapturesGlobalKeys（后者语义面更宽，逐步收口，不扩大既有面板影响）。
+    virtual bool CapturesUndoKeys() const { return false; }
 };
 
 class PanelRegistry {

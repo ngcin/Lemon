@@ -42,7 +42,7 @@ v1 面板清单：
 | **Console** | 日志分级过滤、脚本异常红字、点击跳脚本行 | — |
 | **TilePalette** | 图块选择（含自动瓦片变体预览）、笔刷/矩形/洪水/取色/擦除 | §7 |
 | **AnimationEditor** | 帧动画时间轴、拖帧、预览、帧事件打点 | §7 |
-| **AnimController** | .controller 状态机工作台：参数表/状态词表/出边表三表编辑 + 编辑期校验（不可达 lint / exitTime×Loop 跨资产黄字 / 保存门禁）——ADR-013 v1 编辑面（M8 批⑨ 交付） | §7 |
+| **AnimController** | .controller 状态机画布工作台：节点/连线可视化图（摆位/拖线建边/选中删改）+ 选中驱动检查器（节点/边/参数表）+ 编辑期校验（不可达灰化 lint / exitTime×Loop 跨资产黄字 / 保存门禁）+ 面板本地撤销重做——ADR-013 D6（M8 批⑩ 交付，批⑨ 三表版被替换） | §7 |
 | **ParticleEditor** | 发射器参数实时调（Play 预览）、曲线编辑 | §7 |
 | **ProfilerPanel** | F3 性能面板（§9） | yami 统计项照抄 + Tracy 桥 |
 | **TeamEditor** | 势力关系矩阵编辑 | yami teams.json 的可视化 |
@@ -195,6 +195,17 @@ struct Chase { LEMON_FIELD(speed, Range{0,500}); LEMON_FIELD(aggroRange); LEMON_
 > (guid,hash) 缓存）/ 保存门禁 = ParseControllerJson 判据 + roundtrip 预验）。
 > 可视化图维持 ADR-013 挂起；浮动默认（不预挂底部标签组——与 Animation 抢
 > 活动标签互踩，实测教训落 `BuiltInPanels.h` 注）。
+>
+> **M8 批⑩ 落地口径（2026-10-16，精简可视化图——b9 三表版被替换）**：ADR-013
+> D6 定形"图管结构 + 检查器管细节"（b9 表单实测不可用，同日改道插队）。交付 =
+> 画布（节点=状态/边=transition；ImDrawList 自绘：平移/缩放/F 适配/拖节点/
+> 把手拖线建边/边采样命中/右键菜单/双击改名；不可达灰化 + Play 当前态高亮）+
+> 选择驱动检查器（边：条件详情 + 同 from 求值序 N/总；节点：改名/入口/出边
+> 汇总；未选中：参数表默认折叠）+ 面板本地撤销栈（`SnapshotStack`，容量 50，
+> Ctrl+Z/Shift+Z/Y 聚焦内优先；与场景结构轨 Undo 不互通——登记后续统一）+
+> 布局随 `.controller` 顶层 `editor.nodes` 持久化（容错读/8px 量化/states 序
+> 稳定写出/旧档自动布局 entry BFS）。b9 校验/保存/新建管线与 i18n 全复用；
+> mecanim 全量（any-state/blend tree/layers/sub-FSM）维持 D4 永久红线。
 
 ## 8. 编辑器扩展性
 

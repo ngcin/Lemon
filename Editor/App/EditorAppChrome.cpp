@@ -533,12 +533,15 @@ void EditorApp::BuildShortcuts() {
     // §2.3 键位：输入框聚焦（WantTextInput）时全部屏蔽（IME 冒烟检查项）
     if (ImGui::GetIO().WantTextInput) return;
     // 键仲裁（动画工作台 v3）：持有焦点的面板声明捕获时，实体级 Delete/Ctrl+D
-    // 跳过——这两键在 Animation 面板内是帧操作，双触发会顺手删掉场景选中实体
+    // 跳过——这两键在 Animation 面板内是帧操作，双触发会顺手删掉场景选中实体；
+    // 批⑩b 追加撤销位：持本地撤销栈的面板（AnimController）吃 Ctrl+Z/Y
     bool panelCapturesKeys = false;
+    bool panelCapturesUndo = false;
     for (auto& e : panels_.Entries())
-        if (e.open && e.panel->CapturesGlobalKeys()) {
-            panelCapturesKeys = true;
-            break;
+        if (e.open) {
+            if (e.panel->CapturesGlobalKeys()) panelCapturesKeys = true;
+            if (e.panel->CapturesUndoKeys()) panelCapturesUndo = true;
+            if (panelCapturesKeys && panelCapturesUndo) break;
         }
     if (!picker_.IsOpen()) {
         if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_S) && !playing_) MenuSaveScene();
@@ -600,10 +603,12 @@ void EditorApp::BuildShortcuts() {
         if (ImGui::IsKeyPressed(ImGuiKey_W)) tool_ = EditTool::Move;
         if (ImGui::IsKeyPressed(ImGuiKey_E)) tool_ = EditTool::Rotate;
         if (ImGui::IsKeyPressed(ImGuiKey_R)) tool_ = EditTool::Scale;
-        if (!ctx_.Playing() && ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Z)) {
+        if (!ctx_.Playing() && !panelCapturesUndo &&
+            ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Z)) {
             if (!ctx_.Undo().Undo()) LEMON_LOG("Undo：栈空");
         }
-        if (!ctx_.Playing() && ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Y))
+        if (!ctx_.Playing() && !panelCapturesUndo &&
+            ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Y))
             ctx_.Undo().Redo();
         if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_P)) {
             if (ctx_.Playing()) {

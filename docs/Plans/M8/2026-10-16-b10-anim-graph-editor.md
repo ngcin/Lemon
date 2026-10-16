@@ -1,9 +1,15 @@
 # M8 批⑩ —— 精简可视化图编辑（.controller 画布工作台）
 
-Status: planned（2026-10-16 用户拍板：可视化图编辑**精简版**插队——b9 三表工作台
-机器面全绿但真人"完全不会用"，对照 Unity/Godot 定为图管结构 + 检查器管细节，不抄
-mecanim 全量；原系列 ⑩ 帧事件 UI / ⑪ 样本+手册+模板顺延为 ⑪/⑫，真人走查归批⑫
-组合验收。设计定形 = [ADR-013](../../ADR/ADR-013-Anim-Control-Layer-And-Asset-Family.md)
+Status: done（2026-10-16 当日 ⑩a+⑩b 机器面全过——构建零警告/单测 34,959（+22）/
+ctest 4/4/smoke-anim zh+en `ctrl(... layout=YES edge=YES)`（f37 边链 4→5→4→5→4 +
+f129 canvas/insp.node 双探针）/回归 full 25+1（bench-survivor 热态 76 vs 76.5 单
+尖刺→隔离复跑 78 PASS；anim zh 回归内一次抖动→隔离双绿，均为已登记家族）/金回放
+零重录（⑩b 零 Engine 运行时文件，⑩a 跨版本证据沿用）；DevLog
+`docs/DevLog/2026-10-16-m8-b10-anim-graph-editor.md`；真人 15 分钟观感待用户窗口，
+组合验收归批⑫。原立项文字：2026-10-16 用户拍板：可视化图编辑**精简版**插队——
+b9 三表工作台机器面全绿但真人"完全不会用"，对照 Unity/Godot 定为图管结构 +
+检查器管细节，不抄 mecanim 全量；原系列 ⑩ 帧事件 UI / ⑪ 样本+手册+模板顺延为
+⑪/⑫，真人走查归批⑫ 组合验收。设计定形 = [ADR-013](../../ADR/ADR-013-Anim-Control-Layer-And-Asset-Family.md)
 D6（2026-10-16 增补）。开工前置 = 批⑨ 先提交（工作树洁净进入））
 
 ## 1. 输入条件

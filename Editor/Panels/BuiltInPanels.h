@@ -18,6 +18,7 @@
 #include "ECS/ComponentRegistry.h"
 #include "ECS/Entity.h"
 #include "Panels/Panel.h"
+#include "SnapshotStack.h" // 批⑩b：AnimControllerPanel 面板本地撤销栈（editor-core 头）
 #include "Tooling/FilePicker.h" // AnimationPanel 面板私有文件选择器（v3.1 选图）
 #include "Renderer/Camera2D.h"
 
@@ -504,6 +505,10 @@ public:
     /// 恢复态互踩，批⑨ 实测）；表单型工作台对窗形不挑，用户停靠一次 ini 记忆
     bool OpenByDefault() const override { return false; }
     void OnGui(EditorApp& app) override;
+    /// 键仲裁（批⑩b）：面板持焦点时吃 Del（删节点/边）；撤销位独立声明
+    ///（CapturesUndoKeys）——Ctrl+Z/Y 走面板本地栈，EditorApp 跳全局结构轨
+    bool CapturesGlobalKeys() const override { return keysFocused_; }
+    bool CapturesUndoKeys() const override { return keysFocused_; }
     /// AssetBrowser 双击 .controller → EditorApp::OpenAnimControllerEditor 落点
     void SetTarget(uint64_t guid) { targetGuid_ = guid; }
     /// 急切装载（OpenAnimControllerEditor 与冒烟无头路径共用）：目标有效且缓存
@@ -529,8 +534,9 @@ public:
         edit_.transitions = std::move(ts);
         MarkDirty();
     }
-    /// 语义直调：选中状态（冒烟渲染面——让右区出边表进绘制路径）
-    void SelectStateForTest(int idx) { selState_ = idx; }
+    /// 语义直调：选中状态（冒烟渲染面——让检查器进绘制路径；同 UI 入口
+    /// SelectState：清边选 + 同步改名缓冲）
+    void SelectStateForTest(int idx) { SelectState(idx); }
     /// 语义直调：保存（与「保存」按钮同入口——门禁/roundtrip/落盘全链）
     bool SaveForTest(EditorApp& app);
     // ---- 批⑩a：画布布局（冒烟：拖拽同通道移动 + 盘上 editor 块 roundtrip）----
@@ -540,6 +546,15 @@ public:
     void MoveNodeForTest(const std::string& state, int x, int y) {
         SetNodePosition(state, x, y);
     }
+    // ---- 批⑩b：连线/撤销（冒烟：建边 +1 / 删边 -1 / undo-redo 往返）----
+    size_t TransitionCountForTest() const { return edit_.ok ? edit_.transitions.size() : 0; }
+    /// 语义直调：建边（与画布拖线/检查器「+ 出边」同入口 AddTransitionByIndex；
+    /// 含撤销压栈）；返回新边下标，-1 = 拒（下标无效）
+    int AddTransitionForTest(int fromIdx, int toIdx) { return AddTransitionByIndex(fromIdx, toIdx); }
+    /// 语义直调：删边（与 Del/检查器删边同入口）；false = 下标无效
+    bool DeleteTransitionForTest(int idx) { return DeleteTransition(idx); }
+    bool UndoForTest() { return UndoLocal(); }
+    bool RedoForTest() { return RedoLocal(); }
 
 private:
     void LoadFrom(const AssetDatabase& db, const AssetEntry& e); // 缓存键失效 → 重读
@@ -553,20 +568,39 @@ private:
     }
     void DrawCreateForm(EditorApp& app, bool ro);  // 空态新建表单（边沿开）
     void DrawCanvas(EditorApp& app, bool ro);      // 左画布（批⑩a：节点/边/拖动/相机）
+    void DrawNodeInspector(EditorApp& app);        // 检查器：选中节点（批⑩b）
+    void DrawEdgeInspector(EditorApp& app);        // 检查器：选中边（批⑩b）
+    /// 条件行控件（b9 出边表提取——参数 combo/算子按 kind 收窄/值/删行）；
+    /// true = 本行已删（调用方收手，迭代器失效）
+    bool DrawCondRow(assets::ControllerTransitionEdit& t, size_t j);
     void DrawParamsTable(EditorApp& app);          // 检查器：参数（≤8 拦）
-    void DrawStatesList(EditorApp& app);           // 检查器：状态词表 + inline 改名
-    void DrawTransitions(EditorApp& app);          // 检查器：出边表 + 入边只读行
     void RecomputeLint(EditorApp& app); // 跨资产 lint（exitTime×Loop 扫集，缓存剪枝）
     /// 状态名 → 下标（-1 = 未列；combo/入边归一单源）
     int StateIndex(const std::string& name) const;
+    /// 选中/删除/建边/改名/撤销共用的结构变更（批⑩b）
+    void SelectState(int idx); // 联动：清边选 + 改名缓冲同步
+    void SelectEdge(int idx);
+    void CommitStateRename(int idx, const std::string& newName); // 空/重名 = 静默保旧
+    void DeleteState(int idx);                                   // 级联过渡 + 布局键
+    int AddTransitionByIndex(int fromIdx, int toIdx); // 起步条件 b9 规则；-1 = 拒
+    bool DeleteTransition(int idx);
+    void PushUndo() {
+        if (edit_.ok) undoStack_.Push(edit_);
+    }
+    bool UndoLocal();
+    bool RedoLocal();
+    void AfterHistoryRestore(); // 选择面收口 + dirty/lint + 布局补齐
+    std::string EdgeSummary(const assets::ControllerTransitionEdit& t) const; // 边标签
+    void HandleKeys(bool ro); // Del / Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y（焦点内）
     // ---- 批⑩a：布局（editor.nodes）----
     int LayoutIndexOf(const std::string& state) const; // -1 = 无布局项
     /// 缺失状态补自动布局（不改 dirty——打开旧档不显"未保存"）；幂等
     void EnsureLayout();
     /// 归一 states 序 + 丢弃悬空键（序列化/roundtrip 等值前提；TrySave 前必调）
     void NormalizeLayout();
-    /// 落位单一入口（画布拖动与 ForTest 同通道）：网格量化 + dirty
-    void SetNodePosition(const std::string& state, int x, int y);
+    /// 落位单一入口（画布拖动与 ForTest 同通道）：网格量化 + dirty；
+    /// true = 坐标实际变化（拖动手势行为"松手拍一次"撤销判定）
+    bool SetNodePosition(const std::string& state, int x, int y);
     void FitCanvas(float availW, float availH); // F/首次打开：全节点适配视图
 
     uint64_t targetGuid_ = 0;
@@ -577,13 +611,12 @@ private:
     bool saveOk_ = false;
     std::vector<std::string> warnings_; // 跨资产黄字（缓存）；结构 lint 每帧直算
     bool lintDirty_ = true;             // 跨资产 lint 失效位（结构变更/装载置位）
-    int selState_ = -1;                // 选中状态（右区出边宿主；-1 = 未选）
-    // inline 改名（状态行双击进入，AnimationPanel 段改名同款交互）
-    int renameIdx_ = -1;
+    int selState_ = -1;                // 选中状态（检查器宿主；-1 = 未选）
+    int selEdge_ = -1;                 // 选中边（transitions 全局下标；-1 = 无；优先于 selState_）
+    // inline 改名（画布双击 / 检查器名称栏；AnimationPanel 段改名同款交互）
     std::string renameBuf_;
     bool renameFocus_ = false;
     std::string paramRenameOld_; // 参数名编辑会话起拍快照（改名传播到条件引用）
-    std::string stNewName_;      // 状态 inline 新建输入
     // 新建表单（空态 + 浏览器右键入口；边沿触发同 Animation 弹窗纪律）
     bool createOpen_ = false;
     std::string createDir_; // 落点目录（相对项目根；空 = Assets/Controllers）
@@ -597,6 +630,15 @@ private:
     int dragNode_ = -1;            // 拖动中的状态下标（-1 = 无）
     float dragStartGX_ = 0.0f, dragStartGY_ = 0.0f;
     int dragOrigX_ = 0, dragOrigY_ = 0;
+    // 拖动撤销按"松手拍一次"：会话起拍快照，松手时有实际位移才 Push（批⑩b）
+    assets::ControllerData preDrag_;
+    bool dragMutated_ = false;
+    // 拖线建边（批⑩b）：源状态下标 + 是否按住（把手拖出 = true；右键菜单
+    // 「新建出边」= false 的待点模式——下一左键落目标节点/空处取消）
+    int edgeDragFrom_ = -1;
+    bool edgeDragHeld_ = false;
+    bool keysFocused_ = false; // 键仲裁（上一帧值；EditorApp 快捷键先行一帧）
+    SnapshotStack<assets::ControllerData> undoStack_; // 面板本地撤销/重做（容量 50）
 };
 
 } // namespace lemon::editor

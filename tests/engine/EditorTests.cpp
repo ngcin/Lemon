@@ -83,6 +83,7 @@
 #include "Assets/FileWatcher.h"
 #include "Assets/ProjectWizard.h"
 #include "EditorContext.h"
+#include "SnapshotStack.h" // M8 批⑩b：面板本地撤销栈（纯逻辑，直测）
 #include "Serialization/SceneArchive.h"
 #include "ECS/World.h"
 #include "Scripting/ScriptBox.h"
@@ -755,6 +756,42 @@ void TestControllerAndGraph() {
     Expect(assets::ControllerSnapGrid(7) == 8 && assets::ControllerSnapGrid(-5) == -8 &&
                assets::ControllerSnapGrid(8) == 8 && assets::ControllerSnapGrid(3) == 0,
            "画布网格量化（8px 最近格）");
+}
+#endif // LEMON_EDITOR_CORE
+
+// ---- M8 批⑩b：面板本地快照撤销栈（Push/Undo/Redo/容量封顶/重做分支）----
+
+#ifdef LEMON_EDITOR_CORE
+void TestSnapshotStack() {
+    lemon::editor::SnapshotStack<int> s(3);
+    int out = -1;
+    Expect(!s.CanUndo() && !s.CanRedo(), "空栈不可撤销/重做");
+    Expect(!s.Undo(0, out) && !s.Redo(0, out), "空栈 Undo/Redo false（当前态不动）");
+    s.Push(1);
+    s.Push(2);
+    s.Push(3);
+    Expect(s.UndoDepth() == 3 && s.RedoDepth() == 0, "Push 深度");
+    int cur = 4;
+    Expect(s.Undo(cur, out) && out == 3, "Undo 返回上一快照");
+    cur = out;
+    Expect(s.Undo(cur, out) && out == 2 && s.RedoDepth() == 2, "连续 Undo + 重做分支累积");
+    cur = out;
+    Expect(s.Redo(cur, out) && out == 3, "Redo 往返");
+    s.Push(9); // 新变更落地 → 重做分支作废（分叉）
+    Expect(!s.CanRedo(), "Push 清空重做分支");
+    // 容量封顶：cap=3 压 4 条只留最近 3（丢最旧）
+    lemon::editor::SnapshotStack<int> c(3);
+    for (int i = 1; i <= 4; ++i) c.Push(i);
+    Expect(c.UndoDepth() == 3, "容量封顶丢最旧");
+    int o2 = 0;
+    Expect(c.Undo(99, o2) && o2 == 4 && c.Undo(4, o2) && o2 == 3 && c.Undo(3, o2) && o2 == 2 &&
+               !c.CanUndo(),
+           "封顶后可见序列 = 2/3/4（1 已丢）");
+    c.Clear();
+    Expect(!c.CanUndo() && !c.CanRedo() && c.UndoDepth() == 0, "Clear 清双栈");
+    lemon::editor::SnapshotStack<int> z(0); // 容量 0 兜底 = 1（不炸不无限）
+    z.Push(7);
+    Expect(z.UndoDepth() == 1 && z.Undo(8, o2) && o2 == 7, "容量 0 兜底为 1");
 }
 #endif // LEMON_EDITOR_CORE
 
@@ -1573,6 +1610,9 @@ void RunEditorTests() {
 #endif
 #ifdef LEMON_EDITOR_CORE
     TestControllerAndGraph();
+#endif
+#ifdef LEMON_EDITOR_CORE
+    TestSnapshotStack();
 #endif
 #ifdef LEMON_EDITOR_CORE
     TestTableAssetImport();
