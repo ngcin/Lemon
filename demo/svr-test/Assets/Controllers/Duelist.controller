@@ -9,6 +9,7 @@
   ],
   "entry": "Idle",
   "states": ["Idle", "Walk", "Attack", "Hit", "Death"],
+  "terminal": ["Death"],
   "transitions": [
     { "from": "*", "to": "Death", "when": [{ "trigger": "death" }] },
     { "from": "*", "to": "Hit", "when": [{ "trigger": "hit" }] },

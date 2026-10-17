@@ -1307,6 +1307,11 @@ struct AnimSmokeState {
     // 条，编辑态未保存即见）+ ②③ 空订阅者门（临时项目无脚本装载 = 抑制）；
     // 清理后归零
     bool smokeLintHitOk = false, smokeLintCleanOk = false;
+    // M8 批⑮a：终态链（f138-140，Edit 态）：toggle walk（条件出边 → lint 黄字
+    // +1）/ toggle hit（exitTime 出边 → 不告警）/ 基线还原。徽记/复选数据面
+    // 同一 edit_.terminal（渲染位零独立逻辑）
+    bool smokeTermToggleOk = false, smokeTermLintOk = false, smokeTermCleanOk = false;
+    size_t smokeTermWarnBase = 0;
     // review 修复回归（2026-10-16）：B2 Play 只读态画布滚轮缩放 + B1 把手单击
     // 不落自环边（f125 再进 Play → f128 滚轮注入 → f129/f130 单击注入）
     bool smokeCtrlRoPlayOk = false, smokeCtrlZoomOk = false, smokeCtrlClickOk = false;
@@ -2317,6 +2322,49 @@ void EditorApp::SmokeAnimFrame(uint64_t frame) {
                 }
             }
         }
+        // M8 批⑮a：终态链（f138-140，Edit 态）——toggle/lint/基线还原（语义直调
+        // 面 = 检查器复选与右键菜单同落点 ToggleTerminalState；盘上 roundtrip 由
+        // 单测 golden 钉，种子档内存级改动零落盘）
+        else if (frame == 138) {
+            OpenAnimControllerEditor(kAnimGraphGuid); // EnsureLoaded 急切装载
+        } else if (frame == 139) {
+            if (PanelRegistry::Entry* en = panels_.FindEntry("AnimController")) {
+                AnimControllerPanel* cp = static_cast<AnimControllerPanel*>(en->panel);
+                g_animSmoke.smokeTermWarnBase = cp->WarningCountForTest(); // 基线
+                //（exitTime×Loop 跨资产黄字随档在场——终态断言用增量不用绝对值）
+                cp->ToggleTerminalForTest(1); // walk：条件出边（trigger atk）→ 黄字 +1
+                g_animSmoke.smokeTermToggleOk = cp->TerminalForTest(1) &&
+                                                cp->WarningCountForTest() ==
+                                                    g_animSmoke.smokeTermWarnBase + 1;
+                if (!g_animSmoke.smokeTermToggleOk)
+                    LEMON_ERROR("smoke-anim：终态链不符（toggle 后旗标/黄字增量缺失："
+                                "term=%d warn %zu→%zu）",
+                                (int)cp->TerminalForTest(1), g_animSmoke.smokeTermWarnBase,
+                                cp->WarningCountForTest());
+            }
+        } else if (frame == 140) {
+            if (PanelRegistry::Entry* en = panels_.FindEntry("AnimController")) {
+                AnimControllerPanel* cp = static_cast<AnimControllerPanel*>(en->panel);
+                cp->ToggleTerminalForTest(1); // walk 还原
+                g_animSmoke.smokeTermLintOk =
+                    !cp->TerminalForTest(1) &&
+                    cp->WarningCountForTest() == g_animSmoke.smokeTermWarnBase;
+                cp->ToggleTerminalForTest(2); // hit：出边 = 纯 exitTime → 不告警
+                g_animSmoke.smokeTermCleanOk = g_animSmoke.smokeTermLintOk &&
+                                               cp->TerminalForTest(2) &&
+                                               cp->WarningCountForTest() ==
+                                                   g_animSmoke.smokeTermWarnBase;
+                cp->ToggleTerminalForTest(2); // 基线还原（种子档零污染）
+                if (!g_animSmoke.smokeTermLintOk || !g_animSmoke.smokeTermCleanOk ||
+                    cp->WarningCountForTest() != g_animSmoke.smokeTermWarnBase)
+                    LEMON_ERROR("smoke-anim：终态链不符（lint=%d clean=%d 还原后 warn=%zu "
+                                "基线=%zu）",
+                                (int)g_animSmoke.smokeTermLintOk,
+                                (int)g_animSmoke.smokeTermCleanOk,
+                                cp->WarningCountForTest(), g_animSmoke.smokeTermWarnBase);
+            }
+            ClosePanel("AnimController"); // f133 同款：关窗防 ini 持久化吃后续注入
+        }
     }
 }
 
@@ -2418,7 +2466,9 @@ bool EditorApp::SmokeAnimVerdict() {
              g_animSmoke.smokeEventsDelOk &&
              g_animSmoke.smokeRegCreateOk && g_animSmoke.smokeRegPickOk &&
              g_animSmoke.smokeRegUnregOk && g_animSmoke.smokeRegDelOk &&
-             g_animSmoke.smokeLintHitOk && g_animSmoke.smokeLintCleanOk;
+             g_animSmoke.smokeLintHitOk && g_animSmoke.smokeLintCleanOk &&
+             g_animSmoke.smokeTermToggleOk && g_animSmoke.smokeTermLintOk &&
+             g_animSmoke.smokeTermCleanOk;
     std::printf("[lemon] smoke-anim: prog(maxFrame=%u slice=%s booked=%u)%s "
                 "queue(hitClip=%s hit=%s back=%s) fx(text/bar=%s) "
                 "edit(rt=%s cache=%s whole=%s) set(rt=%s cache=%s open=%s "
@@ -2430,6 +2480,7 @@ bool EditorApp::SmokeAnimVerdict() {
                 "events(add=%s dup=%s rt=%s sync=%s del=%s) "
                 "reg(create=%s pick=%s unreg=%s del=%s) "
                 "lint(hit=%s clean=%s) "
+                "term(toggle=%s lint=%s clean=%s) "
                 "=> %s\n",
                 (unsigned)g_animSmoke.smokeAnimMax[0], g_animSmoke.smokeAnimSlice[0] ? "YES" : "NO",
                 sh ? sh->sliceCount : 0, yami, hitBooked ? "booked" : "MISSING",
@@ -2469,6 +2520,9 @@ bool EditorApp::SmokeAnimVerdict() {
                 g_animSmoke.smokeRegDelOk ? "YES" : "NO",
                 g_animSmoke.smokeLintHitOk ? "YES" : "NO",
                 g_animSmoke.smokeLintCleanOk ? "YES" : "NO",
+                g_animSmoke.smokeTermToggleOk ? "YES" : "NO",
+                g_animSmoke.smokeTermLintOk ? "YES" : "NO",
+                g_animSmoke.smokeTermCleanOk ? "YES" : "NO",
                 animOk ? "OK" : "FAIL");
     return animOk;
 }

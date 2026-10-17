@@ -167,6 +167,12 @@ void BuildControllerCache(ecs::World& world, const PlayCacheSource& src) {
         def.states = c.states;
         def.entry = c.entry.empty() ? 0 : def.StateIndex(c.entry);
         if (def.entry < 0) def.entry = 0; // 解析已拦，防御手改档
+        // 终态位图（批⑮a）：terminal 白名单 → states 序位图（缺省空 = 全非终态，
+        // 旧行为逐位不变）
+        def.terminal.assign(c.states.size(), 0);
+        for (const std::string& term : c.terminal)
+            if (const int32_t ti = def.StateIndex(term); ti >= 0)
+                def.terminal[(size_t)ti] = 1; // 解析已拦悬空，防御手改档
         for (const ControllerParamEdit& p : c.params)
             def.params.push_back({p.name, (ecs::AnimParamKind)p.kind, p.def});
         // 批⑪ 求值序 = any 边（from="*"）先于状态边、组内保持文件序——编译期稳定

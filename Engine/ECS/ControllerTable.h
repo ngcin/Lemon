@@ -56,10 +56,18 @@ public:
     std::vector<AnimParamDef> params;    // ≤8（编辑器拦；评估槽 = 下标）
     std::vector<std::string> states;     // 状态名 = 集内段名（绑定键，ADR-013 D2/D4）
     int32_t entry = 0;                   // 入口状态下标（缺省 0）
+    /// 终态位图（M8 批⑮a，states 序；BuildControllerCache 自 .controller 顶层
+    /// terminal 白名单编译）。语义 = any 边在该状态不命中；缺省空位图 = 全非
+    /// 终态 = 旧行为逐位不变。显式 from 边不受影响（复活流作者自决）。
+    std::vector<uint8_t> terminal;
     std::vector<AnimTransitionDef> transitions; // 同 from 按文件序评估，首条命中即切
 
     int32_t StateIndex(std::string_view name) const; // -1 = 无此状态
     int32_t ParamIndex(std::string_view name) const; // -1 = 无此参数
+    /// 终态判定（批⑮a）：越界/空位图 = false（宽容——手改档防御）
+    bool IsTerminal(uint16_t stateIdx) const {
+        return stateIdx < terminal.size() && terminal[stateIdx] != 0;
+    }
 };
 
 /// 条件评估（纯函数，engine-tests 直测）：trigger 算子命中即视为"已消费"——

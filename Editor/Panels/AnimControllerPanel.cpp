@@ -296,8 +296,8 @@ bool AnimControllerPanel::TrySave(EditorApp& app, const AssetEntry& e) {
         return false;
     }
     if (back.name != edit_.name || back.entry != edit_.entry || back.states != edit_.states ||
-        back.params != edit_.params || back.transitions != edit_.transitions ||
-        back.layout != edit_.layout) {
+        back.params != edit_.params || back.terminal != edit_.terminal ||
+        back.transitions != edit_.transitions || back.layout != edit_.layout) {
         saveMsg_ = tr("animctrl.err.roundtrip");
         saveOk_ = false;
         return false;
@@ -406,6 +406,8 @@ void AnimControllerPanel::CommitStateRename(int idx, const std::string& newName)
     const std::string old = edit_.states[(size_t)idx];
     edit_.states[(size_t)idx] = newName;
     if (edit_.entry == old) edit_.entry = newName;
+    for (std::string& term : edit_.terminal) // 终态白名单引用传播（⑮a）
+        if (term == old) term = newName;
     if (const int li = LayoutIndexOf(old); li >= 0) edit_.layout[(size_t)li].state = newName;
     for (auto& t : edit_.transitions) { // 引用传播（from/to）
         if (t.from == old) t.from = newName;
@@ -423,6 +425,7 @@ void AnimControllerPanel::DeleteState(int idx) {
     for (auto& t : edit_.transitions)
         if (t.from != gone && t.to != gone) keep.push_back(std::move(t));
     edit_.transitions = std::move(keep);
+    std::erase_if(edit_.terminal, [&](const std::string& t) { return t == gone; }); // ⑮a
     edit_.states.erase(edit_.states.begin() + (long)idx);
     if (edit_.entry == gone)
         edit_.entry = edit_.states.empty() ? std::string() : edit_.states[0];
@@ -435,6 +438,20 @@ void AnimControllerPanel::DeleteState(int idx) {
         renameBuf_ = edit_.states[(size_t)selState_];
     }
     selEdge_ = -1;
+    MarkDirty();
+}
+
+// 终态 toggle（批⑮a）：白名单进出（States 域内名——悬空不可能，解析器已拦；
+// 删除/改名走传播）。检查器复选与右键菜单共用本落点（撤销/dirty 同通道）。
+void AnimControllerPanel::ToggleTerminalState(int idx) {
+    if (idx < 0 || idx >= (int)edit_.states.size()) return;
+    PushUndo();
+    const std::string& name = edit_.states[(size_t)idx];
+    if (const auto it = std::find(edit_.terminal.begin(), edit_.terminal.end(), name);
+        it != edit_.terminal.end())
+        edit_.terminal.erase(it);
+    else
+        edit_.terminal.push_back(name);
     MarkDirty();
 }
 
@@ -703,6 +720,14 @@ void AnimControllerPanel::DrawNodeInspector(EditorApp& app) {
     if (isEntry) {
         ImGui::SameLine();
         ImGui::TextDisabled("%s", tr("animctrl.node.entry_is"));
+    }
+    // 终态（⑮a）：any 边在该状态不命中（不可被全局中断打断）；显式 from 边照常
+    {
+        const auto it = std::find(edit_.terminal.begin(), edit_.terminal.end(), name);
+        bool term = it != edit_.terminal.end();
+        if (ImGui::Checkbox(tr("animctrl.node.terminal"), &term)) ToggleTerminalState(selState_);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("%s", tr("animctrl.node.terminal_tooltip"));
     }
 
     // 出边汇总（行点击 → 边检查器；同 from 求值序在边详情面显示）
@@ -1245,6 +1270,12 @@ void AnimControllerPanel::DrawCanvas(EditorApp& app, bool ro) {
                 edit_.entry = nm;
                 MarkDirty();
             }
+            // 终态 toggle（⑮a）：勾态 = 白名单在场（检查器复选同落点）
+            if (ImGui::MenuItem(
+                    tr("animctrl.ctx.terminal"), nullptr,
+                    std::find(edit_.terminal.begin(), edit_.terminal.end(), nm) !=
+                        edit_.terminal.end()))
+                ToggleTerminalState(selState_);
             if (ImGui::MenuItem(tr("animctrl.ctx.new_edge"), nullptr, false,
                                 edit_.states.size() >= 2)) {
                 edgeDragFrom_ = selState_;
@@ -1415,6 +1446,18 @@ void AnimControllerPanel::DrawCanvas(EditorApp& app, bool ro) {
             dl->AddText(ImGui::GetFont(), fs * 0.8f,
                         ImVec2(b.x - 40.0f * canvasZoom_, a.y + 5.0f * canvasZoom_),
                         ImGui::GetColorU32(ImGuiCol_TextDisabled), tr("animctrl.states.entry"));
+        if (std::find(edit_.terminal.begin(), edit_.terminal.end(),
+                      edit_.layout[li].state) != edit_.terminal.end()) {
+            // 终态徽记（⑮a）：双圈 + 角标字（any 边不命中——画布一眼可辨）
+            dl->AddRect(ImVec2(a.x + 3.0f * canvasZoom_, a.y + 3.0f * canvasZoom_),
+                        ImVec2(b.x - 3.0f * canvasZoom_, b.y - 3.0f * canvasZoom_),
+                        ImGui::GetColorU32(ImGuiCol_Border), kNodeRad * canvasZoom_, 0,
+                        1.0f * canvasZoom_);
+            dl->AddText(ImGui::GetFont(), fs * 0.8f,
+                        ImVec2(a.x + 6.0f * canvasZoom_, b.y - fs * 0.8f - 4.0f * canvasZoom_),
+                        ImGui::GetColorU32(ImGuiCol_TextDisabled),
+                        tr("animctrl.node.terminal_badge"));
+        }
         if (!playState.empty() && edit_.layout[li].state == playState) // Play 当前态高亮
             dl->AddRect(ImVec2(a.x - 2.0f, a.y - 2.0f), ImVec2(b.x + 2.0f, b.y + 2.0f),
                         ImGui::GetColorU32(theme::kTextWarn), kNodeRad * canvasZoom_ + 2.0f, 0,

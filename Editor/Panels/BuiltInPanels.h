@@ -1,6 +1,7 @@
 // Lemon 编辑器 — 内建面板声明（实现分布见同名 .cpp；CreateAllPanels 统一注册）
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <string>
@@ -663,6 +664,15 @@ public:
     int EdgeDragFromForTest() const { return edgeDragFrom_; }
     /// 选中状态下标（B3 回归位：保存回读不再清选择）
     int SelStateForTest() const { return selState_; }
+    // ---- 批⑮a：终态（terminal）——徽记/toggle 数据面（冒烟断言位）----
+    /// 状态是否终态（false = 未列/无效）
+    bool TerminalForTest(int stateIdx) const {
+        return stateIdx >= 0 && stateIdx < (int)edit_.states.size() &&
+               std::find(edit_.terminal.begin(), edit_.terminal.end(),
+                         edit_.states[(size_t)stateIdx]) != edit_.terminal.end();
+    }
+    /// 语义直调：终态 toggle（与检查器复选/右键菜单同入口——含撤销压栈）
+    void ToggleTerminalForTest(int stateIdx) { ToggleTerminalState(stateIdx); }
 
 private:
     void LoadFrom(const AssetDatabase& db, const AssetEntry& e); // 缓存键失效 → 重读
@@ -690,6 +700,7 @@ private:
     void SelectEdge(int idx);
     void CommitStateRename(int idx, const std::string& newName); // 空/重名 = 静默保旧
     void DeleteState(int idx);                                   // 级联过渡 + 布局键
+    void ToggleTerminalState(int idx); // 终态白名单进出（⑮a；复选/右键共用落点）
     int AddTransitionByIndex(int fromIdx, int toIdx); // 起步条件 b9 规则；-1 = 拒（B16 自环同拒）
     int AddAnyTransitionByIndex(int toIdx);           // any 边（from="*"，批⑪）；-1 = 拒
     /// 建边单一落点（状态/any 源共用；批⑪ 抽取）：起步条件 b9 规则 + 新边即选

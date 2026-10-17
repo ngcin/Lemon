@@ -7,6 +7,8 @@
 //                 {"name":"attack","kind":"trigger"} ],   // ≤8；kind 缺省 float
 //     "entry": "Idle",                                    // 缺省 = states[0]
 //     "states": ["Idle","Run","Attack"],                  // 状态名 = 集内段名
+//     "terminal": ["Death"],                              // 终态白名单（⑮a，可选——
+//                                                          //  any 边在终态不命中）
 //     "transitions": [
 //       {"from":"Idle","to":"Run","when":[{"param":"speed",">":0.1}]},
 //       {"from":"Attack","to":"Idle","on":"exitTime"},    // 段末过渡；可并 "when"
@@ -72,6 +74,11 @@ struct ControllerData {
     std::vector<ControllerParamEdit> params;
     std::vector<std::string> states;
     std::string entry; // 缺省 ""（= states[0]）
+    /// 终态白名单（M8 批⑮a，顶层可选 terminal 数组——additive：旧引擎读新档忽略
+    /// 该块、新引擎读旧档缺省空，双向兼容）。语义 = 该状态的 any 边（from="*"）
+    /// 不再命中（不可被全局中断打断；显式 from 边不拦——复活流作者自决）。
+    /// 缺省空 = 旧行为逐位不变（零重录前提）。
+    std::vector<std::string> terminal;
     std::vector<ControllerTransitionEdit> transitions;
     std::vector<ControllerNodePos> layout; // 画布布局（可选块；恒按 states 序归一）
 };

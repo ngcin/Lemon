@@ -265,6 +265,7 @@ public readonly struct Transform               // 视图结构：逐属性访问
 - **同实体同类型脚本唯一**（M6a 批⓪ 决策，与 Unity 相反）：同类型重复挂载在三个入口被拦——Inspector 同名置灰、`AddComponent<LemonBehaviour>` 幂等 get-or-add、`Behaviours.Attach` 红字断言（真泄漏响亮）；格式宽容（scripts[] 可存重复项，加载保序留首见 + 告警）。无每实例参数下重复表达力为零、StateBag 键 `(class, entity)` 会冲突——每实例字段（05 §5）落地时再评估放开；
 - **`RemoveComponent<LemonBehaviour>` = 卸单槽单实例**（op5，M6a 批⓪）：OnDestroy + 实例级订阅退订 + 槽保序移除（区别于实体销毁时按实体清全量）；自卸（`RemoveComponent<自己的类型>`）合法，帧首生效（≈ Unity `Destroy(this)`）；
 - **`Anim.CrossFade(fade)` 无姿态混合**（M6a 批①）：帧动画本质是换帧不是姿态——fade 语义 = 倒计时延迟切段（非 loop 当前段提前收尾立即切），不做双精灵 alpha 混合。`Anim.Play/Queue/Pause/Resume/IsPlaying/Queued` 为静态类方法（非 Unity `GetComponent<Animator>()` 实例面——Animator2D 是数据组件，切段 = 纯字段写零 C ABI）；Queue 是 Lemon 特有（受击段播完自动回行走的标准组合拳）；
+- **终态语义在图侧不在脚本侧**（M8 批⑮a）：`.controller` 顶层 `terminal` 白名单声明终态后，any（全局中断）边在该状态不命中——"死亡中不受击/不被任何全局边打断"不必再写脚本 HP 门控（svr-test DuelBehaviour 已删门控实证；显式 from 复活边照常求值）。缺省空 = 旧行为；语义详见 ADR-013 D4 增补段；
 - 脚本异常自动隔离禁用（§7），引擎永不崩。
 
 ### 3.3 Unity → Lemon 移植指南（一页）

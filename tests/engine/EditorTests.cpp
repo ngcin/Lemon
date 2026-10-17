@@ -953,6 +953,92 @@ void TestControllerAndGraph() {
         break;
     }
     Expect(hitTo == 2, "any 边先于状态边命中（全局中断优先，kAnimAnyFrom 匹配任意态）");
+
+    // -- M8 批⑮a：terminal（终态）解析/roundtrip/lint/评估（any 边终态不命中）--
+    Expect(!assets::ParseControllerJson(R"({ "states": ["A","B"], "terminal": ["C"] })")
+                .ok,
+           "terminal 引用未列状态拒绝");
+    Expect(!assets::ParseControllerJson(R"({ "states": ["A","B"], "terminal": ["A","A"] })")
+                .ok,
+           "terminal 重名拒绝");
+    Expect(assets::ControllerToJson(c).find("terminal") == std::string::npos,
+           "缺省空不写 terminal 块（旧格式逐位不变——零重录前提）");
+    assets::ControllerData term;
+    term.ok = true;
+    term.states = {"A", "C"};
+    term.entry = "A";
+    term.params = {{"hit", 2, 0.0f}};
+    // any→C（C 经 any 可达——夹具不触死状态告警）+ C→A 复活边（显式 from）
+    term.transitions = {{"*", "C", false, {{"hit", 5, 0.0f}}},
+                        {"C", "A", false, {{"hit", 5, 0.0f}}}};
+    term.terminal = {"C"};
+    // lint：终态挂条件出边 → 黄字（info 级，复活流确认）；exitTime 出边不告警
+    {
+        const std::vector<std::string> tw = assets::ControllerStructuralWarnings(term);
+        Expect(tw.size() == 1 && tw[0].find("C") != std::string::npos &&
+                   tw[0].find("复活") != std::string::npos,
+               "终态条件出边 lint 点名");
+        assets::ControllerData termEt = term;
+        termEt.transitions.back().conds.clear();
+        termEt.transitions.back().exitTime = true; // 无条件 exitTime = 合法自动续
+        Expect(assets::ControllerStructuralWarnings(termEt).empty(),
+               "终态 exitTime 出边不告警");
+        assets::ControllerData noTerm = term; // 非终态条件出边 = 常规图，零告警
+        noTerm.terminal.clear();
+        Expect(assets::ControllerStructuralWarnings(noTerm).empty(),
+               "无 terminal 档 lint 逐位同（缺省零漂移）");
+    }
+    // 评估三例（表级模拟 AnimGraphSystem 单遍扫描 + ⑮a 守卫——与 Systems.cpp
+    // 循环过滤同式）：①any 边终态不命中 ②显式 from 边终态照常 ③缺省空逐位同
+    {
+        // 编译态（BuildControllerCache 同构）：terminal 白名单 → states 序位图
+        ecs::ControllerDef td;
+        td.states = term.states;
+        td.params = {{"hit", ecs::AnimParamKind::Trigger, 0.0f}};
+        td.terminal.assign(td.states.size(), 0);
+        for (const std::string& t : term.terminal)
+            td.terminal[(size_t)td.StateIndex(t)] = 1;
+        for (const assets::ControllerTransitionEdit& t : term.transitions) {
+            ecs::AnimTransitionDef ed;
+            ed.from = t.from == assets::kControllerAnyFrom
+                          ? ecs::kAnimAnyFrom
+                          : (uint16_t)td.StateIndex(t.from);
+            ed.to = (uint16_t)td.StateIndex(t.to);
+            for (const assets::ControllerCondEdit& cd : t.conds)
+                ed.conds.push_back({(uint16_t)td.ParamIndex(cd.param),
+                                    (ecs::AnimCondOp)cd.op, cd.value});
+            td.transitions.push_back(ed);
+        }
+        auto evalFirst = [&td](int32_t cur, const float* pv, uint16_t skipGuard) -> int {
+            for (const ecs::AnimTransitionDef& t : td.transitions) {
+                if (t.from != ecs::kAnimAnyFrom && t.from != (uint16_t)cur) continue;
+                if (t.from == ecs::kAnimAnyFrom && skipGuard == (uint16_t)cur) continue;
+                if (!ecs::AnimCondsHold(td, t, pv)) continue;
+                if (t.exitTime) continue;
+                return (int)t.to;
+            }
+            return -1; // 无命中（驻留）
+        };
+        float pv[8] = {};
+        pv[0] = 1.0f; // hit 触发
+        // 对照组（守卫关）：any→C 文件序第一 → 命中 C（批⑪ 全局中断优先）
+        Expect(evalFirst(1, pv, 0xFFFF) == 1, "无守卫时 any 边先命中（对照组）");
+        // ① any 边在终态 C 不命中 → 复活显式边（C→A）胜出（核心断言）
+        Expect(evalFirst(1, pv, 1) == 0, "any 边在终态不命中（⑮a 守卫）");
+        // ② 显式 from 边在终态照常求值（复活流自决——①的胜出边即显式边）
+        Expect(evalFirst(1, pv, 1) == 0 && td.transitions[1].from == 1,
+               "显式 from 边在终态照常（复活流自决）");
+        // ③ 缺省空位图 = 全非终态（无 terminal 档旧行为逐位同）
+        Expect(td.IsTerminal(1) && !td.IsTerminal(0) && !td.IsTerminal(999),
+               "IsTerminal 位图判定（越界 false）");
+        Expect(evalFirst(0, pv, 0xFFFF) == 1, "非终态 any 边照常命中");
+        ecs::ControllerDef noBitmap = td;
+        noBitmap.terminal.clear();
+        // 空位图 → IsTerminal 恒 false → 守卫永不激活（= 上方对照组行为）
+        Expect(!noBitmap.IsTerminal(0) && !noBitmap.IsTerminal(1) &&
+                   evalFirst(1, pv, 0xFFFF) == 1,
+               "空位图 = 全非终态（无 terminal 档旧行为）");
+    }
 }
 #endif // LEMON_EDITOR_CORE
 

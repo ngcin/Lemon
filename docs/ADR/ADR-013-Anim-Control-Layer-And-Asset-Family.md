@@ -12,7 +12,10 @@
   （运行时零感知），[批文件](../Plans/M8/2026-10-16-b10-anim-graph-editor.md)；
   **2026-10-16 D4 修订**：any-state 开禁（触发条件当日命中——svr-test 实测每态手抄
   受击/死亡边成扇入乱麻），求值序/自环/编辑面语义见 D4 注记修订段，
-  [批⑪ 批文件](../Plans/M8/2026-10-16-b11-any-state.md)）
+  [批⑪ 批文件](../Plans/M8/2026-10-16-b11-any-state.md)；
+  **2026-10-17 D4 增补**：terminal 终态白名单（any 边在终态不命中——"死亡中
+  不受击"从脚本门控升格为图声明式语义），见 D4 注记修订段，
+  [批⑮ 批文件](../Plans/M8/2026-10-17-b15-anim-runtime-semantics.md)）
 - 影响：`03-ECS-Runtime.md` §8.1（图评估系统/参数组件）、`04-CSharp-Scripting.md`（Lemon.Anim 参数面）、`05-Editor.md` §3/§7（绑定槽/工作台）、`06-Asset-Pipeline-Out-of-Box.md` §2.2（资产族后缀）、`08-Development-Roadmap.md`（M6a T3d）、`Editor/Assets/AssetDatabase.*`（扩展名四行）、`Engine/ECS/ClipTable.*`（按名解析作用域）、新组件 `AnimGraph`/`AnimParams`、新系统 `AnimGraphSystem`
 
 ## 背景
@@ -111,6 +114,18 @@ vs-survivor `PlayerCombat.cs:16-50` 与 demo/svr-test `PlayerBehaviour.cs:108-11
     位置随 `editor.nodes` 保留键 `"*"` 持久化（未拖过 = 无档键、缺省布局包围盒
     左外侧，惰性落位不污染旧档）+ 右键「删除」= 清空全局边——节点本体恒在 =
     建边入口（Unity Any State 同款不可移除））+ 把手拖线/右键建边。
+  - **terminal（终态白名单）→ 2026-10-17 批⑮a 增补**（触发条件 = 批⑪ 验收语
+    "死亡中不受击属脚本侧门"升格为图语义——把 Death 从"无出边自然滞留"的拓扑
+    事实变为声明式"不可被全局中断打断"）。定形：`.controller` 顶层可选
+    `terminal: ["Death", …]` 字符串数组（additive——旧引擎读新档忽略、新引擎读
+    旧档缺省空，双向兼容；空档不落该键 = 旧格式逐位不变，金回放零重录前提）；
+    运行时语义 = **any 边（`from:"*"`）在终态不命中**（AnimGraphSystem 出边
+    循环单条件守卫，编译期 states 序位图 `ControllerDef::IsTerminal`）；显式
+    from 边不拦（复活流作者自决——图不越权口径延续）。编辑面 = 节点双圈徽记 +
+    检查器复选 + 右键 toggle；lint = 终态挂条件出边 → info 级黄字（复活边合法
+    但提示确认；无条件 exitTime 出边不告警）。消费者实证 = svr-test Duelist
+    Death 落标记 + DuelBehaviour 删 HP>0 受击门控（anytest 探针 7/7，
+    [批⑮ 批文件](../Plans/M8/2026-10-17-b15-anim-runtime-semantics.md)）。
   - **sub-FSM**（子状态机）：状态标识从名字变路径（状态名即集绑定键、全局唯一，
     嵌套必撞名）、评估递归化、当前状态反推变"叶子→路径映射"、编辑器加钻取
     导航。**~2–3 批**。复活触发 = 真实项目单控制器 >15–20 态（目标品类

@@ -1358,6 +1358,10 @@ void AnimGraphSystem::Tick(World& world, Scene& scene, float dt) {
         // exitTime 不触发，挂起项）。缺绑目标 = warn-once 保持当前状态。
         for (const AnimTransitionDef& t : ctrl->transitions) {
             if (t.from != kAnimAnyFrom && t.from != (uint16_t)cur) continue;
+            // 终态守卫（批⑮a）：any 边在终态不命中（声明式"不可被全局中断打断"，
+            // 替代"无出边自然滞留"的拓扑事实）；显式 from 边不拦（复活流自决）。
+            // 无 terminal 档位图全 0 → 路径逐位不变（零重录前提）。
+            if (t.from == kAnimAnyFrom && ctrl->IsTerminal((uint16_t)cur)) continue;
             if (!AnimCondsHold(*ctrl, t, pv)) continue;
             if (t.exitTime && !an.ended) continue;
             const uint32_t cid = t.to < ctrl->states.size()

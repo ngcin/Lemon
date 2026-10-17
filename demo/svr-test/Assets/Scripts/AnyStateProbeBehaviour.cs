@@ -15,8 +15,9 @@ using Lemon.Interop;
 ///      本场核心断言**：段中打断 = 比 exitTime 早即证
 ///   ⑤ Hit 段末 → Idle（exitTime 回位）
 ///   ⑥ death 触发 → Death（any 边，终态驻留）
-///   ⑦ 观察（不计分）：Death 中再发 hit → 拓扑事实 = any→Hit 对 Death 也生效；
-///      "死亡中不受击"属伤害脚本代码侧门（Unity 同款惯例），非图职责
+///   ⑦ Death 中再发 hit → **仍驻留 Death**（批⑮a 核心断言：Death 落 terminal
+///      白名单后 any 边在终态不命中——"死亡中不受击"从脚本门控升格为图的声明
+///      式语义；DuelBehaviour 的 HP>0 受击门控因此可删）
 /// 段 hex = Monster02.ani 五段 clip GUID（与 DuelBehaviour 血条皮肤同款
 /// hex 引用风格，非裸魔法数）。验收出口 = [anytest] 结论行 + 存档键
 /// anytest.verdict（DuelBehaviour duel.winner 同款无头口径）。</summary>
@@ -32,7 +33,7 @@ public sealed class AnyStateProbeBehaviour : LemonBehaviour
 
     private Phase _phase = Phase.WaitIdle;
     private float _t;      // 相内计时
-    private int _pass, _total = 6;
+    private int _pass, _total = 7;
     private string _failAt = "";
 
     private static string Name(uint clipId) => clipId == kIdle ? "Idle" : clipId == kWalk ? "Walk"
@@ -130,11 +131,17 @@ public sealed class AnyStateProbeBehaviour : LemonBehaviour
             case Phase.Observe:
                 if (_t > 0.6f)
                 {
-                    Console.WriteLine($"[anytest] 观察（不计分）：Death 中再发 hit → {Name(cur)}——" +
-                                      "any→Hit 对 Death 同样生效（拓扑事实）；'死亡中不受击' = 伤害脚本" +
-                                      "代码侧门职责（Unity 同款惯例），图不越权");
-                    Verdict();
-                    Next();
+                    // 批⑮a：Death 落 terminal 后 any→Hit 不命中——驻留即语义加固实证
+                    if (cur == kDeath)
+                    {
+                        Ok("Death 中再发 hit → 驻留 Death（终态 any 边不命中，⑮a）");
+                        Verdict();
+                        Next();
+                    }
+                    else
+                    {
+                        Fail("Death 终态应驻留（any 边不应命中）"); // Fail 内含 Verdict + Done
+                    }
                 }
                 break;
         }

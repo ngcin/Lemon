@@ -138,7 +138,10 @@ public sealed class DuelBehaviour : LemonBehaviour
     {
         if (_dead || _foe == 0) return;
         GameObject foe = GameObject.From(new EntityHandle { Id = _foe });
-        if (!foe.Alive || !foe.TryGetComponent<Health>(out var fh) || fh.Cur <= 0f) return;
+        // 批⑮a：删"对手已亡不再受击"的 HP>0 门控——Death 已落 terminal 白名单
+        //（Duelist.controller），any→Hit 边在终态不命中 = 图侧声明式挡下；脚本
+        // 只保留存活/组件存在性检查（实体销毁防御）
+        if (!foe.Alive || !foe.TryGetComponent<Health>(out var fh)) return;
         if (!gameObject.TryGetComponent<Transform2D>(out var me) ||
             !foe.TryGetComponent<Transform2D>(out var ot)) return;
         float dx = ot.Pos.X - me.Pos.X, dy = ot.Pos.Y - me.Pos.Y;
@@ -217,7 +220,7 @@ public sealed class DuelBehaviour : LemonBehaviour
         if (_hudT <= 0f) {
             _hudT = 0.25f;
             string foeHp = foeGo.Entity.Id != 0 && foeGo.Alive &&
-                           foeGo.TryGetComponent<Health>(out var f2)
+                           foeGo.TryGetComponent<Health>(out var f2) && f2.Cur > 0f
                        ? f2.Cur.ToString("F0") : "已倒下";
             Ui.Set("duel", $"对决  我方 {hp.Cur:F0} HP   对手 {foeHp} HP", hp.Cur / hp.Max,
                   0xFF30B0F0u);

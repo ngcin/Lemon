@@ -115,6 +115,20 @@ ControllerData ParseControllerJson(std::string_view text) {
             out.params.push_back(p);
         }
     }
+    // terminal（批⑮a）：顶层可选终态白名单——additive 块（旧引擎忽略/旧档缺省
+    // 空）。条目须列于 states 且不重名；语义 = any 边在该状态不命中。
+    if (doc.contains("terminal")) {
+        if (!doc.at("terminal").is_array()) return Fail("terminal 非 JSON 数组", 0);
+        for (const nlohmann::json& tm : doc.at("terminal")) {
+            const size_t idx = out.terminal.size();
+            if (!tm.is_string()) return Fail("terminal 条目非字符串", idx);
+            const std::string& s = tm.get<std::string>();
+            if (StateIdx(out, s) < 0) return Fail("terminal 引用了未列出的状态", idx);
+            for (const std::string& prev : out.terminal)
+                if (prev == s) return Fail("terminal 重名", idx);
+            out.terminal.push_back(s);
+        }
+    }
     if (doc.contains("transitions")) {
         if (!doc.at("transitions").is_array()) return Fail("transitions 非 JSON 数组", 0);
         for (const nlohmann::json& tr : doc.at("transitions")) {
@@ -239,7 +253,17 @@ std::string ControllerToJson(const ControllerData& c) {
         out += i ? ", " : "";
         out += JsonEscape(c.states[i]);
     }
-    out += "],\n  \"transitions\": [";
+    out += "]";
+    // terminal（批⑮a）：仅非空写出——空档不落该键，旧格式逐位不变（零重录前提）
+    if (!c.terminal.empty()) {
+        out += ",\n  \"terminal\": [";
+        for (size_t i = 0; i < c.terminal.size(); ++i) {
+            out += i ? ", " : "";
+            out += JsonEscape(c.terminal[i]);
+        }
+        out += "]";
+    }
+    out += ",\n  \"transitions\": [";
     for (size_t i = 0; i < c.transitions.size(); ++i) {
         const ControllerTransitionEdit& t = c.transitions[i];
         out += i ? ",\n    { \"from\": " : "\n    { \"from\": ";
@@ -324,6 +348,16 @@ std::vector<std::string> ControllerStructuralWarnings(const ControllerData& c) {
     for (size_t i = 0; i < c.states.size(); ++i) {
         if (!reach[i])
             out.push_back(c.states[i] + "：从 entry 不可达（无入边可达——死状态）");
+    }
+    // 批⑮a：终态挂条件出边（when/trigger）→ info 级提示——显式 from 边在终态照常
+    // 求值，条件出边会打断"驻留到局末"的终态语义（复活流合法但请确认）；无条件
+    // exitTime 出边 = 合法自动续，不告警。
+    for (const std::string& term : c.terminal) {
+        for (const ControllerTransitionEdit& t : c.transitions) {
+            if (t.from != term || t.conds.empty()) continue;
+            out.push_back(term + " 为终态但挂条件出边 → " + t.to +
+                          "（终态出边将打断驻留语义，复活流请确认）");
+        }
     }
     return out;
 }
