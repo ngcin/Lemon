@@ -138,6 +138,12 @@ public:
     ecs::Scene& ActiveScene() { return Playing() ? *playScene_ : *scene_; }
     /// 上次 Stop 校验：editScene 序列化 == 进 Play 前快照（逐字节；§3.4 验收 #5）
     bool LastExitVerified() const { return lastExitVerified_; }
+    /// M8 ⑮d：Play 中动画族资产（.controller/.clip/.ani）磁盘变更被 watcher 捕获
+    /// → 置位（RescanAssets 三条件过滤：Play 态 + IsAnimFamily + 本轮变更集）。
+    /// 快照语义保留——当局不生效，AnimControllerPanel 顶部横幅提示"退 Play 后
+    /// 生效"；EnterPlay/ExitPlay 清位（退 Play 快照重建自然消）。
+    bool AnimHotChanged() const { return animHotChanged_; }
+    void SetAnimHotChanged() { animHotChanged_ = true; }
     double LastEnterPlayMs() const { return lastEnterMs_; }
     double LastExitPlayMs() const { return lastExitMs_; }
     /// Play 中编辑落 Play World（决议 #5）—— dirty 不置位（Stop 即丢，不动编辑侧）
@@ -212,6 +218,7 @@ private:
     double lastEnterMs_ = 0.0, lastExitMs_ = 0.0;
     // M8 批⑬：注册表注入变更门（条目 guid+hash；Play 冻结期不推进）
     uint64_t animEventsGuid_ = 0, animEventsHash_ = 0;
+    bool animHotChanged_ = false; // M8 ⑮d：Play 态动画族热改横幅标志
     UndoStack undo_;
 };
 

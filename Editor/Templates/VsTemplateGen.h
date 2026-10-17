@@ -35,6 +35,9 @@ constexpr uint64_t kMonsterClip = 0x5bd31a7c20000002ull;
 // 切片，不入 yami 包目录防污染；生成器直写模板 Assets）
 constexpr uint64_t kHeroHitClip = 0x5bd31a7c20000003ull;
 constexpr uint64_t kMonsterHitClip = 0x5bd31a7c20000004ull;
+// M8 批⑭ 去 GUID 化：怪动画集（walk/hit 两段 → 上两 clip；Mob.prefab AnimGraph
+// 绑定为按名解析作用域——脚本 Anim.Play(g,"hit") 不再持 clip GUID）
+constexpr uint64_t kMobAni = 0x5bd31a7c30000007ull; // mob.ani
 // M6a 批② T4：数值配置表（Assets/tables/；独立 7e572000 段区别 png/prefab 段。
 // 消费面 = PlayerCombat（武器参数/升级池）+ GameMain 侧 balance 写 xpCurveK）
 constexpr uint64_t kWeaponsTab = 0x7e57200000100001ull;  // weapons.tab

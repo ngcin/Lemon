@@ -1556,6 +1556,8 @@ void AnimControllerPanel::OnGui(EditorApp& app) {
 
     if (ro) {
         ImGui::TextColored(theme::kTextWarn, "%s", tr("animctrl.ro_banner"));
+        if (ctx.AnimHotChanged()) // M8 ⑮d：Play 中磁盘改档提示（快照语义——退 Play 后生效）
+            ImGui::TextColored(theme::kTextError, "%s", tr("animctrl.hot_banner"));
         ImGui::BeginDisabled();
     }
 

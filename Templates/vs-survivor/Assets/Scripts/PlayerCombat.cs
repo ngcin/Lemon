@@ -27,9 +27,8 @@ public sealed class PlayerCombat : LemonBehaviour
     private const string kUpgradesTable = "7e57200000100002";
     private const string kBalanceTable = "7e57200000100003";
 
-    // 批①受击段 clip（Anim.ClipId = GUID 低 32 位自算；Assets/monster-hit.clip）
-    private static readonly uint kMobWalk = Anim.ClipId("5bd31a7c20000002");
-    private static readonly uint kMobHit = Anim.ClipId("5bd31a7c20000004");
+    // 批⑭ 去 GUID 化：怪两段经 mob.ani 段名播放（AnimGraph 绑定集 = 按名解析
+    // 作用域；clip GUID 只活在 .ani 绑定表与 prefab 的 Animator2D 初始槽里）
 
     // ---- 批② T4 表载缓存（Start 一次载入；Play 中改表下一局生效——快照语义）----
     private sealed class WeaponRow
@@ -78,8 +77,8 @@ public sealed class PlayerCombat : LemonBehaviour
         if (!victim.Alive || !victim.TryGetComponent<Meta>(out var meta)) return;
         if (meta.Team == 1) { // 怪受击
             Audio.PlayOneShot(kSfxHit, 0.45f); // M6c 批④：受击音（高命中率小音量）
-            Anim.Play(victim, kMobHit, false); // 受击段立即打断
-            Anim.Queue(victim, kMobWalk);      // 播完（0.1667s）自动回行走
+            Anim.Play(victim, "hit", false); // 受击段立即打断（段名 → mob.ani）
+            Anim.Queue(victim, "walk");      // 播完（0.1667s）自动回行走
             // 批③d-2 D3：飘字/血条 = 设置开关门控（Settings 档持久化，即时生效）
             if (GameMain.Settings.FxText &&
                 victim.TryGetComponent<Transform2D>(out var tf))

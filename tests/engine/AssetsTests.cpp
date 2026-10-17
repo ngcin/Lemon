@@ -1920,6 +1920,21 @@ void TestClipCacheBadArchive() {
     fs::remove_all(root, ec);
 }
 
+void TestAnimFamilyPredicate() {
+    // M8 ⑮d：热改横幅过滤面——动画族三类型（.clip/.ani/.controller）命中，
+    // 其余类型（含同属配置面的 Table/UI 的 Rml）不命中：误报会把无关重扫顶成
+    // 横幅，漏报则 .controller 磁盘改动静默无感（b5 走查实报族）。
+    using namespace lemon::assets;
+    Expect(IsAnimFamily(AssetType::Clip), "clip is anim-family");
+    Expect(IsAnimFamily(AssetType::AnimSet), "aniset is anim-family");
+    Expect(IsAnimFamily(AssetType::Controller), "controller is anim-family");
+    Expect(!IsAnimFamily(AssetType::Table), "table not anim-family");
+    Expect(!IsAnimFamily(AssetType::Rml), "rml not anim-family");
+    Expect(!IsAnimFamily(AssetType::Sprite), "sprite not anim-family");
+    Expect(!IsAnimFamily(AssetType::Audio), "audio not anim-family");
+    Expect(!IsAnimFamily(AssetType::Generic), "generic not anim-family");
+}
+
 void TestAnimEventRegistry() {
     // M8 批⑬：项目级帧事件注册表——.tab 轨道解析（列头契约）/行级冲突拒/
     // id 漂移（以表为准）/缺表保底。进程级状态：测试尾清空还原（裸 id 模式）。
@@ -2109,4 +2124,5 @@ void RunAssetsTests() {
 #endif
     TestAnimEventRegistry(); // M8 批⑬：帧事件注册表（表解析/冲突行拒/id 漂移）
     TestAnimEventLint();     // M8 批⑬b：反向 lint 三件（订阅者记录/空门/去重）
+    TestAnimFamilyPredicate(); // M8 ⑮d：Play 态热改横幅过滤面
 }

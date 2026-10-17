@@ -101,6 +101,19 @@ void WriteHitClips(const std::filesystem::path& assetsDir) {
         m << "{\n  \"guid\": \"" << AssetDatabase::GuidToHex(sp.guid)
           << "\",\n  \"type\": \"clip\",\n  \"hash\": 0,\n  \"importedAt\": 0\n}\n";
     }
+    // 批⑭ 去 GUID 化：怪动画集（walk/hit 段名 → clip 绑定；Mob.prefab AnimGraph
+    // 绑定本集，脚本按段名播放——clip GUID 只活在绑定表与 Animator2D 初始槽里）
+    {
+        std::ofstream f(assetsDir / "mob.ani", std::ios::trunc);
+        f << "{\n  \"schemaVersion\": 1,\n  \"name\": \"mob\",\n  \"segments\": [\n"
+          << "    { \"name\": \"walk\", \"clip\": \"" << AssetDatabase::GuidToHex(kMonsterClip)
+          << "\" },\n"
+          << "    { \"name\": \"hit\", \"clip\": \"" << AssetDatabase::GuidToHex(kMonsterHitClip)
+          << "\" }\n  ]\n}\n";
+        std::ofstream m(assetsDir / "mob.ani.meta", std::ios::trunc);
+        m << "{\n  \"guid\": \"" << AssetDatabase::GuidToHex(kMobAni)
+          << "\",\n  \"type\": \"animset\",\n  \"hash\": 0,\n  \"importedAt\": 0\n}\n";
+    }
 }
 
 /// M6c 批④：模板音频七件（Samples/Assets/cc0-audio CC0 包 → Assets/Audio/；
@@ -1247,9 +1260,8 @@ public sealed class PlayerCombat : LemonBehaviour
     private const string kUpgradesTable = "{GUID:kUpgradesTab}";
     private const string kBalanceTable = "{GUID:kBalanceTab}";
 
-    // 批①受击段 clip（Anim.ClipId = GUID 低 32 位自算；Assets/monster-hit.clip）
-    private static readonly uint kMobWalk = Anim.ClipId("{GUID:kMonsterClip}");
-    private static readonly uint kMobHit = Anim.ClipId("{GUID:kMonsterHitClip}");
+    // 批⑭ 去 GUID 化：怪两段经 mob.ani 段名播放（AnimGraph 绑定集 = 按名解析
+    // 作用域；clip GUID 只活在 .ani 绑定表与 prefab 的 Animator2D 初始槽里）
 
     // ---- 批② T4 表载缓存（Start 一次载入；Play 中改表下一局生效——快照语义）----
     private sealed class WeaponRow
@@ -1298,8 +1310,8 @@ public sealed class PlayerCombat : LemonBehaviour
         if (!victim.Alive || !victim.TryGetComponent<Meta>(out var meta)) return;
         if (meta.Team == 1) { // 怪受击
             Audio.PlayOneShot(kSfxHit, 0.45f); // M6c 批④：受击音（高命中率小音量）
-            Anim.Play(victim, kMobHit, false); // 受击段立即打断
-            Anim.Queue(victim, kMobWalk);      // 播完（0.1667s）自动回行走
+            Anim.Play(victim, "hit", false); // 受击段立即打断（段名 → mob.ani）
+            Anim.Queue(victim, "walk");      // 播完（0.1667s）自动回行走
             // 批③d-2 D3：飘字/血条 = 设置开关门控（Settings 档持久化，即时生效）
             if (GameMain.Settings.FxText &&
                 victim.TryGetComponent<Transform2D>(out var tf))
@@ -2172,6 +2184,9 @@ bool GenerateVsTemplate(EditorContext& ctx, uint32_t spriteIdBase,
             s.Emplace<ecs::Knockback>(e);
             s.Emplace<ecs::Velocity>(e);
             s.Emplace<ecs::Animator2D>(e).clipId = (uint32_t)kMonsterClip;
+            // 批⑭ 去 GUID 化：AnimGraph 绑定 mob.ani（controller 0 = 纯按名解析
+            // 模式）——脚本 Anim.Play(g,"hit") 的段名作用域
+            s.Emplace<ecs::AnimGraph>(e).setGuid = kMobAni;
             s.Emplace<ecs::BlobShadow2D>(e, // M8 批⑤：贴地暗斑（小一号；offsetY 贴脚）
                 ecs::BlobShadow2D{.radius = 24.0f, .aspect = 1.2f,
                                   .offsetY = 10.0f, .opacity = 0.5f});

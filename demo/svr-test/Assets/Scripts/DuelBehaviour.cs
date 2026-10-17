@@ -122,8 +122,11 @@ public sealed class DuelBehaviour : LemonBehaviour
             if (id != gameObject.Entity.Id) { _foe = id; break; }
         // 攻击打点（命名事件，M8 批⑬：注册表 Assets/tables/anim-events.tab 的
         // attack-hit → id 1，与 Attack.clip 帧 6 打点逐位一致）→ 出伤；实例级
-        // 订阅 OnDestroy 自动退订（原 m.User == 1 魔法数字形态退役）
-        OnFrame("attack-hit", Strike);
+        // 订阅 OnDestroy 自动退订（原 m.User == 1 魔法数字形态退役）。
+        // 批⑭：msg 重载（⑬c val 载荷端到端样本）——m.P0 = 帧号、m.P1 = 打点
+        // "val":7；本消费者不读 P1（伤害走 Strike 常量）→ 行为零漂移，载荷通道
+        // 仅供需要数值的消费者（如按打点值缩放伤害）
+        OnFrame("attack-hit", m => Strike());
         // 受击闪色回程：闪入补间（Once）完成事件 → 补回本色
         Subscribe(GameEvent.TweenFinished, m => {
             if (_flashFoe != 0 && (ulong)_flashHandle == m.UserArg) {

@@ -193,6 +193,7 @@
   "animctrl.create.open_btn": "New Controller...",
   "animctrl.create.title": "New Animation Controller (.controller)",
   "animctrl.ro_banner": "Play in progress: panel is read-only (the running game uses the snapshot taken at Enter Play; changes apply next run)",
+  "animctrl.hot_banner": "Animation assets were modified on disk during Play (controller/clip/ani) — not applied to the running game; exit Play and re-enter to pick them up",
   "animctrl.entry": "entry",
   "animctrl.params.header": "Params (blackboard, max 8)",
   "animctrl.params.hint": "float with default / bool / trigger — graph evaluation reads values written by scripts this tick",

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "name": "mob",
+  "segments": [
+    { "name": "walk", "clip": "5bd31a7c20000002" },
+    { "name": "hit", "clip": "5bd31a7c20000004" }
+  ]
+}

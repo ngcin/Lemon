@@ -200,6 +200,19 @@ void EditorApp::RescanAssets() {
     // 状态对账（无条件——cs 空也要跑：被裸 Rescan 吞掉事件的墓碑正是靠这拍自愈）
     ReconcileUiDocuments();
     ctx_.RefreshAnimEventRegistry(); // M8 批⑬：anim-events.tab 变更 → 进程级注册表（hash 门）
+    // M8 ⑮d：Play 中动画族资产（.clip/.ani/.controller）磁盘变更 → 横幅标志 +
+    // Console info（快照语义保留——当局不生效；非 Play 态变更零提示零成本）。
+    // "mtime 新于 EnterPlay" 由 watcher 基线机制天然满足（500ms 轮询比对的是
+    // 上拍快照，Play 中取到的脏必发生在本 Play 会话内）。
+    if (ctx_.Playing()) {
+        for (uint64_t g : cs.modified)
+            if (const AssetEntry* e = db.FindByGuid(g);
+                e && assets::IsAnimFamily(e->type)) {
+                ctx_.SetAnimHotChanged();
+                LEMON_LOG("Play 中动画资产已改（退 Play 后下次进 Play 生效）：%s",
+                          e->relPath.c_str());
+            }
+    }
     db.SaveManifest();
     if (!cs.Empty())
         LEMON_LOG("资产重扫：+%zu ~%zu -%zu", cs.added.size(), cs.modified.size(),

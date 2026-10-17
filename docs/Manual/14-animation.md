@@ -63,7 +63,11 @@ trigger 的语义：激发后**保持待发**，直到被某条命中边消费�
 - 双击节点改名（改名会同步所有边引用和 `.ani` 段名预期）；
 - 右键节点「设为入口」：入口状态 = 实体进 Play 后的起始态，节点左上有「入口」
   标记；
-- 右键「删除状态」：级联删除它的所有出入边。
+- 右键「删除状态」：级联删除它的所有出入边；
+- **终态**（右键「设为终态」/检查器复选，节点双圈 + 「终」角标）：声明"进了
+  就不再被全局中断"——**any 边在终态不命中**（死亡态不再被受击边打断），
+  显式 from 边照常（复活流作者自决）。缺省不标记 = 旧行为（any 边可打进）。
+  终态挂条件出边会出黄字提示（复活边合法，但请确认）。
 
 ### 保存
 
@@ -130,8 +134,9 @@ exitTime。都是占位，选中后改。
 - 同态 no-op：any→X 命中时如果当前已经在 X，保持播放不重启（等于 Unity 的
   Can-Transition-To-Self 默认关）。**"重播当前动画"归脚本 `Anim.Play` 管**，图
   里没有也不需要自环边（from == to 会被三处入口拒绝）；
-- **死亡中再受击会切到 Hit**——这是拓扑事实，不是 bug。"死亡中不受击"属于伤害
-  逻辑的门，在脚本里加一句判断即可（见下文脚本示例）；
+- **死亡中再受击会切到 Hit**——这是拓扑事实，不是 bug。两种收法：把"死亡中
+  不受击"的门写进伤害脚本（见下文脚本示例），或者更省一句——把 Death 设成
+  **终态**（上节），any 边在终态天然不命中；
 - any 边也可以带 exitTime（"任意当前段播完时切"）。
 
 ## 运行时规则十条
@@ -171,6 +176,13 @@ exitTime。都是占位，选中后改。
 | `Anim.SetParam(g, "speed", 5f)` | 写 float/bool 参数 |
 | `Anim.GetParam(g, "speed")` | 读参数 |
 | `Anim.Trigger(g, "hit")` | 激发 trigger（= 写 1，图命中即清） |
+| `Anim.IsPlaying(g)` | 在播中？（= playOnStart 开关；Paused 态 false） |
+| `Anim.IsFinished(g)` | 非 loop 段播完？（Once 钳末帧后 true、loop 恒 false、Play 切段归零） |
+| `Anim.Queued(g)` | 有在途换段队列？（Queue/CrossFade 已排队未切） |
+
+播放状态三态口径：**Playing / Paused / Finished** 互斥面——前两态由
+`IsPlaying` 判（`Anim.Pause`/`Resume` 切换），末态由 `IsFinished` 判。注意 Once
+段播完钳末帧后组件仍"在播"（IsPlaying = true），"这段演完了没"问 IsFinished。
 
 走位与攻击（挂玩家实体，每帧；输入面 = `Input.Axis` 移动轴 / `Input.Attack`
 攻击键，见 [05-scripting.md](05-scripting.md)）：
@@ -210,41 +222,62 @@ public void ApplyDamage(GameObject target, float amount)
 - `Anim.CrossFade(g, "idle", 0.2f)` —— 延迟切换（帧动画无姿态混合，fade 是
   延迟不是渐变）。
 
-## 帧事件：在动画面板打点
+## 帧事件：命名事件 + 打点数值
 
 帧事件 = "clip 播到第几帧时发一个事件"，攻击判定帧、发射帧、脚步声这类
 **时机有视觉含义**的逻辑用它；冷却、DoT 跳动这类纯玩法计时不要塞进来（写脚本
 计时器/数值表）。
 
-打点三步（Animation 面板，双击 `.clip` 或在动画集左列选中段）：
+事件有**全局名字**：项目里有一张注册表 `Assets/Tables/anim-events.tab`
+（`名字 → id` 稳定分配，id 分配后永不复用）。打点、订阅全用名字，id 魔法数字
+不再进脚本。
+
+### 打点三步（Animation 面板，双击 `.clip` 或在动画集左列选中段）
 
 1. 胶片带选中目标帧（或点事件行里已有的 chip 跳过去），右键帧格
    「添加帧事件…」，或点预览条事件行的「＋ 打点」；
-2. 模态里填**帧号**（0 起，与 `.clip` 里 `events[].frame` 同基）和
-   **事件 id**（0–65535 的整数，同一项目内自定约定，如 1=出伤、2=发射）；
-3. C# 侧订阅：
+2. 模态里填**帧号**（0 起，与 `.clip` 里 `events[].frame` 同基）和**事件名**——
+   注册表在场就是下拉选（项 = `名字（#id）`）；要起新名字直接点内联
+   「新建事件…」，建行即写表，零门槛。还可以带一个**数值载荷（val）**——
+   打点想携带一个数（伤害系数、发射数量）就填它，不填 = 0；
+3. C# 侧按名订阅（推荐挂在角色实体脚本上，实例销毁自动退订）：
 
 ```csharp
-// 挂在该角色实体上的脚本（DuelBehaviour.cs 同款）
-Subscribe(GameEvent.AnimFrame, m => {
-    if (m.Src.Id == gameObject.Entity.Id && m.User == 1) Strike();
-});
+// GameMain.Configure 里对账一次（拼错/缺表 = 启动红字，不再静默）
+Lemon.AnimEvents.Define("attack-hit");
+
+// DuelBehaviour.cs 同款——不带载荷：
+OnFrame("attack-hit", Strike);
+// 带载荷（回调收 GameEventMsg：P0 = 帧号、P1 = 打点 val）：
+OnFrame("attack-hit", m => StrikeScaled(m.P1));
 ```
 
-面板里的配套件：事件帧在胶片带右上角有**旗点**（多个事件带细环；Space 预览
-播放扫过时提亮 = 命中反馈）；预览条事件行列全部打点（点 chip 跳帧、× 删除、
-右键编辑）。**事件跟着帧走**：插帧/删帧/换序/拖拽重排时打点自动随帧移动，
-删掉带事件的帧则事件一起删。
+未注册名字（表缺/拼错）= 启动红字 + 该订阅挂空（不影响其他订阅）；静态版
+`Anim.OnFrame(g, name, cb)` 也存在，但实例场景请用上面的 `LemonBehaviour.OnFrame`
+助手（自动退订，防实例反复生成销毁下无界累积）。
 
-两条护栏：同一帧同一 id 不允许重复（运行时会双发，编辑器直接拒）；id 超过
-65535 拒（运行时是 16 位）。命名事件（给 id 起全局名字、编辑器下拉选择、拼错
-名字启动时报错）已排批⑬——落地前 id 约定写在项目脚本里即可。被 any 边打断的段不会再发后续帧事件（见下 FAQ）。
+### 面板配套件与护栏
+
+- 事件帧在胶片带右上角有**旗点**（多个事件带细环；Space 预览播放扫过时提亮 =
+  命中反馈）；预览条事件行列全部打点（显名，点 chip 跳帧、× 删除、右键编辑）；
+- **事件跟着帧走**：插帧/删帧/换序/拖拽重排时打点自动随帧移动，删掉带事件的
+  帧则事件一起删；
+- 同一帧同一事件不允许重复（运行时会双发，编辑器直接拒）；
+- **反向 lint 三件**（编辑器Console/保存门）：打点用了未注册 id（红 badge
+  「未命名」）、注册表里的事件全项目无人订阅、订阅了却没有任何打点——配置
+  漂移在编辑期就看得见；
+- 旧档裸 id 打点**不迁移不重写**：显示层兜住（红 tint `帧·#N（未命名）`），
+  想命名随时在模态里补注册。被 any 边打断的段不会再发后续帧事件（见下 FAQ）。
 
 ## 调试
 
 - **Play 实时调参**：播放中选实体 → Inspector 动画参数区直接拖/激发，即时看
   状态切换；
 - **当前态高亮**：Play 中打开状态机工作台，当前状态节点黄框实时高亮（画布只读）；
+- **Play 中改档提示**：Play 中在外部改了 `.controller`/`.clip`/`.ani`（watcher
+  500ms 内捕获）→ Console 出一条 info，AnimController 工作台顶部追加红字横幅
+  「已在磁盘上被修改——当局不生效，退 Play 后再进 Play 生效」。当前局用的始终
+  是进 Play 时刻的快照（确定性根基）；退 Play 后横幅自动消；
 - **Console 红字速查**：
 
 | 提示 | 含义 | 处置 |
@@ -252,10 +285,17 @@ Subscribe(GameEvent.AnimFrame, m => {
 | 集内无段 'X'（红字一次） | 该角色 `.ani` 缺绑 X 段 | 有意缺绑可忽略；否则补段 |
 | Play 装配：脚本类型未注册 | 场景挂了脚本类但没在 GameMain 注册 | Configure() 里补 Register |
 | 参数 'x' 解析失败 | 写了控制器词表里没有的参数名 | 检查拼写或补参数 |
+| AnimEvents 'x' 未注册（启动红字） | Define/OnFrame 的名字不在 anim-events.tab | 检查拼写；或在打点模态「新建事件」入表 |
+| 终态出边将打断驻留语义（黄字） | 终态挂了条件出边 | 复活流属合法，确认即略；否则删边 |
 
 - **验收参考**：`Scenes/anytest.scene` + `AnyStateProbeBehaviour.cs` 是带断言的
   端到端样例（自动驱动 + `[anytest]` 日志逐项 PASS/FAIL），照抄结构可给自己的
-  状态机做无头回归。
+  状态机做无头回归；
+- **命名事件样例**：`DuelBehaviour.cs` 的 `OnFrame("attack-hit", m => …)` +
+  `anim-events.tab` + Attack.clip 帧 6 打点（`val: 7` 载荷）是注册表全链参考；
+- **按段名播放（去 GUID）样例**：vs-survivor 模板 `mob.ani`（walk/hit 两段）+
+  Mob.prefab 的 AnimGraph 绑定 + `PlayerCombat.cs` 的 `Anim.Play(victim, "hit")`
+  ——clip GUID 只活在绑定表里，脚本零魔法常量。
 
 ## 常见问题
 

@@ -774,6 +774,7 @@ void EditorContext::PruneSelection() {
 
 bool EditorContext::EnterPlay() {
     if (Playing()) return false;
+    animHotChanged_ = false; // M8 ⑮d：新局横幅清位（上局热改残留不跨局）
     const auto t0 = std::chrono::steady_clock::now();
     // M8 批⑬：注册表快照点（BuildPlayTableCache 同语义——本 Play 会话的名字↔id
     // 固化于进 Play 时刻；漏掉的 watcher 变更在此补注）
@@ -847,6 +848,7 @@ bool EditorContext::EnterPlay() {
 
 bool EditorContext::ExitPlay() {
     if (!Playing()) return false;
+    animHotChanged_ = false; // M8 ⑮d：退 Play 快照重建，横幅自然消
     const auto t0 = std::chrono::steady_clock::now();
     // M5 批④：存档兜底落盘（脚本显式 Flush 之外的保险——中断退 Play 不丢局）；
     // M6a 批② T5：三档逐档独立落盘（空档跳过；一档失败不断链）；M7a 批③ 起走

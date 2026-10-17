@@ -34,4 +34,10 @@ std::string GuidToHex(uint64_t guid);
 uint64_t HexToGuid(const char* hex);
 inline uint64_t HexToGuid(const std::string& hex) { return HexToGuid(hex.c_str()); }
 
+/// M8 ⑮d：动画族资产（.clip/.ani/.controller）——Play 态热改横幅的 watcher
+/// 过滤面（快照语义保留，只提示不热更）
+inline bool IsAnimFamily(AssetType t) {
+    return t == AssetType::Clip || t == AssetType::AnimSet || t == AssetType::Controller;
+}
+
 } // namespace lemon::assets

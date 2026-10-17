@@ -10,8 +10,8 @@
     [
       "attack-hit",
       "1",
-      "-",
-      "攻击判定帧（Monster01/02 Attack.clip 帧 6）"
+      "int",
+      "攻击判定帧（Monster01/02 Attack.clip 帧 6，val=7——批⑭ payload 通道样本）"
     ],
     [
       "test-event",

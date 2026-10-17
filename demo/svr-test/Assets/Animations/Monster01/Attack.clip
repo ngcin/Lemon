@@ -54,6 +54,6 @@
     }
   ],
   "events": [
-    { "frame": 6, "id": 1 }
+    { "frame": 6, "id": 1, "val": 7 }
   ]
 }

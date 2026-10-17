@@ -193,6 +193,7 @@
   "animctrl.create.open_btn": "新建状态机…",
   "animctrl.create.title": "新建动画状态机（.controller）",
   "animctrl.ro_banner": "Play 进行中：面板只读（当前局用进 Play 时刻快照，改动下一局生效）",
+  "animctrl.hot_banner": "Play 中检测到动画资产已在磁盘上被修改（controller/clip/ani）——当局不生效，退 Play 后再进 Play 生效",
   "animctrl.entry": "entry",
   "animctrl.params.header": "参数（黑板 ≤8）",
   "animctrl.params.hint": "float 带默认值 / bool / trigger——图评估读当 tick 脚本写入值",
