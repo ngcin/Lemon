@@ -157,12 +157,21 @@ public static class Anim
         g.SetComponent(an);
     }
 
-    /// <summary>是否在播（= playOnStart 开关；暂停 = false）。"非 loop 段播完"SDK
-    /// 侧不可判（total 在引擎 clip 表）——播完的可观测证据 = 排队的下一段已切
-    /// （Queued 变 false 且 ClipId 已变），或自查 Time 不再增长。</summary>
+    /// <summary>是否在播（= playOnStart 开关；暂停 = false）。三态口径（M8 ⑮c）：
+    /// Playing（在播）/ Paused（Pause 后）/ Finished（非 loop 段播完钳末帧）——
+    /// 前两态由本 API 判、末态由 <see cref="IsFinished"/> 判，互斥面组合完整。</summary>
     public static bool IsPlaying(GameObject g)
     {
         return g.TryGetComponent<Animator2D>(out var an) && an.PlayOnStart != 0;
+    }
+
+    /// <summary>非 loop 段是否已播完（直读 Animator2D.Ended 段末边沿镜像：引擎
+    /// Once 段钳 total 置位、Play 切段归零——零新桥零引擎改动）；loop 段恒 false
+    /// （ended 语义使然）。播完钳末帧后组件仍"在播"（playOnStart=1）——
+    /// IsPlaying 与本 API 不互斥，Finished 态的完整判 = IsFinished(g)。</summary>
+    public static bool IsFinished(GameObject g)
+    {
+        return g.TryGetComponent<Animator2D>(out var an) && an.Ended != 0;
     }
 
     /// <summary>是否有在途换段队列（Queue/CrossFade 已排队未切）。</summary>

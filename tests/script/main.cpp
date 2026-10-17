@@ -339,7 +339,7 @@ void TestDomainManager() {
         auto listFn = (int (*)(char*, int))GetExport("lemon_behaviours_list");
         char buf[4096];
         int n = listFn ? listFn(buf, (int)sizeof buf) : -1;
-        Expect(n == 28, "behaviours list after hot reload (+M11/M15/F-08.2/T3/b1/b2/T3c/T3d/A档tween/T5存档档/b3c UI/M6c b2 audio/M7c b1 fx/M7c b7 scene/M7c b8 async/b11 H1 stale/b11 R-a1 multi-slot/M8 b1 light/M8 b13 aname probes)");
+        Expect(n == 29, "behaviours list after hot reload (+M11/M15/F-08.2/T3/b1/b2/T3c/T3d/A档tween/T5存档档/b3c UI/M6c b2 audio/M7c b1 fx/M7c b7 scene/M7c b8 async/b11 H1 stale/b11 R-a1 multi-slot/M8 b1 light/M8 b13 aname/M8 b15c animfin probes)");
         // M4.6 回归（用户实测闪退根因）：相对路径进 dm_reload 曾抛 ArgumentException
         // 逃逸 UnmanagedCallersOnly → coreclr abort。拦截层必须转 0 返回且进程存活
         // （本断言能跑到 = 进程没死）。换装失败后旧域已弃——再换一次真路径恢复。
@@ -2379,6 +2379,63 @@ void TestAnimEventBridge() {
     g_sh.ResetPlayDomain();
 }
 
+// M8 ⑮c：Anim.IsFinished 直读 ended 镜像（AnimFinishedProbeBehaviour typeId 28
+// 表尾注册——0 基：第 29 个注册）。管线不含 AnimatorSystem——C++ 帧间直接改
+// Animator2D.ended 模拟引擎置位（Once 段钳 total = 1 / Play 切段 SDK 归零 = 0）。
+// 三分支：loop 恒 false（1570）/ 引擎段末置位 true（1571）/ Play 切段归零
+/// false（1572）。
+void TestAnimFinishedSdk() {
+    using namespace lemon::ecs;
+    auto timeResetFn = (void (*)())GetExport("lemon_time_reset");
+    Expect(timeResetFn, "animfin: time reset export resolved");
+    timeResetFn();
+
+    WorldDesc d;
+    d.threadCount = 1;
+    World w(d);
+    Scene& s = w.CreateScene("AnimFin");
+    w.SetActiveScene(&s);
+    w.SetScriptBackend(&g_sh);
+    w.Pipeline().AddSystem(std::make_unique<DestroyCommitSystem>());
+    w.Pipeline().AddSystem(std::make_unique<CSharpBatchSystem>());
+    w.Pipeline().AddSystem(std::make_unique<ScriptEventDispatchSystem>());
+    w.Pipeline().ResolveOrder();
+
+    int sawLoopFalse = 0, sawOnceTrue = 0, sawResetFalse = 0;
+    w.SetEventSink([&](World&, const EventPacket& p) {
+        if (p.type != GameEvent::Custom) return;
+        if (p.user == 1570) ++sawLoopFalse;
+        else if (p.user == 1571) ++sawOnceTrue;
+        else if (p.user == 1572) ++sawResetFalse;
+    });
+
+    Entity e = s.Create();
+    s.Emplace<Transform2D>(e);
+    Animator2D& an = s.Emplace<Animator2D>(e);
+    an.clipId = 0x77u; // walk 循环段（loop=1：ended 语义恒 0）
+    an.loop = 1;
+    g_sh.AttachBehaviour(w, s, e, 28); // AnimFinishedProbeBehaviour
+
+    w.Step(0.25f); // 帧1：loop 段 ended=0 → IsFinished false
+    Expect(sawLoopFalse == 1, "animfin: loop clip reads finished=false (1570)");
+
+    s.Get<Animator2D>(e).ended = 1; // 模拟引擎 Once 段钳 total 置位（批⑮a 前的既有语义）
+    w.Step(0.25f); // 帧2：ended=1 → IsFinished true
+    Expect(sawOnceTrue == 1, "animfin: engine-set ended reads finished=true (1571)");
+
+    w.Step(0.25f); // 帧3：Anim.Play 切段（SDK 写 ended=0，帧末落地）
+    {
+        const Animator2D& a = s.Get<Animator2D>(e);
+        Expect(a.clipId == 0x88u && a.ended == 0,
+               "animfin: Play wrote clip + ended=0 (切段归零)");
+    }
+    w.Step(0.25f); // 帧4：落地后读 → false + 自毁命令
+    Expect(sawResetFalse == 1 && sawLoopFalse == 1,
+           "animfin: Play resets ended → finished=false (1572, loop seen once)");
+    w.Step(0.25f); // 应用销毁
+    Expect(!s.Alive(e), "animfin: probe self-destroyed");
+}
+
 int main() {
     Expect(g_sh.Initialize(nullptr, LEMON_SCRIPT_DIR "/Lemon.Entry.runtimeconfig.json",
                             LEMON_SCRIPT_DIR "/Lemon.Entry.dll"),
@@ -2444,6 +2501,7 @@ int main() {
     TestMultiSlotDestroyOrder(); // 批⑪ R-a1：多槽销毁序 = 槽注册序升序（M12 索引化防回归）
     TestLightSdk();     // M8 批①：Light2D/BlobShadow2D 数据面 + 哈希入流证据
     TestAnimEventBridge(); // M8 批⑬：帧事件注册表桥（Define 对账 + OnFrame 双路径）
+    TestAnimFinishedSdk(); // M8 ⑮c：Anim.IsFinished 直读 ended 镜像三分支
 
     // M4.6 探针（编辑器切项目场景）：同进程二次 ScriptHost 生命周期。CoreCLR 运行时
     // 进程单例——第二次 Initialize 的真实行为必须钉板（成功/失败都合法，崩 = 缺陷）。

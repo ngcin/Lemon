@@ -3,7 +3,14 @@
 Status: planned → **⑮a 机器面收口 2026-10-17**（[DevLog](../../DevLog/2026-10-17-m8-b15a-terminal-state.md)：
 schema/位图/守卫/lint/编辑器/测试/Duelist 消费者全落；单测 35,024/script-tests
 1,918/回归 26 步全绿/金回放三档零重录/anytest 7/7/DuelBehaviour 对拍零漂移；
-smoke-anim 帧预算 138→141）——⑮c/⑬c/批⑭（带 ⑮d）顺延，⑮b 挪 M9 首批——
+smoke-anim 帧预算 138→141）→ **⑮c 机器面收口 2026-10-17**（[DevLog](../../DevLog/2026-10-17-m8-b15c-isfinished.md)：
+`Anim.IsFinished(g)` 直读 `Animator2D.Ended` 镜像（零新桥零引擎改动零 vtable）+
+`IsPlaying` 注释改三态口径（Playing/Paused/Finished）；script-tests 新增
+AnimFinishedProbeBehaviour（typeId 28 表尾）+ TestAnimFinishedSdk 三分支夹具
+（loop 恒 false / 引擎帧间注入 ended=1 → true / Play 切段 SDK 归零 → false——
+C++ 直改组件模拟段末置位；实测侧证：Native.Write 帧末落地、同帧读回旧值，
+探针读挪一帧）；单测 35,024 持平/script-tests 1,918→**1,924**/ctest 4/4；
+Manual 动画章口径随批⑭ 手册轨）——⑬c/批⑭（带 ⑮d）顺延，⑮b 挪 M9 首批——
 候选立项 2026-10-17；**排期同日用户拍板定形**——⑮a 紧随批⑬b、
 ⑮c 顺手、⑮d 随批⑭ 走查、**⑮b 挪 M9 首批**（8 向素材合流），见 §6）——立项输入：
 动画系统全量评估（会话结论四项推荐：终态显式建模 > facing 离散选择 > IsFinished

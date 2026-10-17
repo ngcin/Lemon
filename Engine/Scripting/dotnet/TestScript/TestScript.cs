@@ -88,6 +88,10 @@ public static class GameMain
         // TestAnimEventBridge 消费：AnimEvents.Define 对账红字面 + OnFrame 实例/
         // 静态双路径订阅 + AnimFrame 队列命中/错 id/错实体三分支）
         Lemon.Behaviours.Register<AnimEventProbeBehaviour>();
+        // M8 ⑮c：播放状态查询补齐（typeId 28，表尾注册同上约定——script-tests
+        // TestAnimFinishedSdk 消费：IsFinished 直读 ended 镜像三分支——loop 恒
+        // false / 引擎段末置位 true / Play 切段归零）
+        Lemon.Behaviours.Register<AnimFinishedProbeBehaviour>();
         // 批⑦：换场三事件订阅（Configure 期静态订阅，跨局存活）——事件序记录
         // "U:<name>:<valid>:<loaded>" / "L:<name>:<path>:<mode>" / "A:<old>><new>"
         Lemon.SceneManager.sceneUnloaded += st => SceneLog.Add(
@@ -1197,6 +1201,41 @@ public sealed class AnimEventProbeBehaviour : Lemon.LemonBehaviour
         } else if (fc == 4) {
             Lemon.Ui.Set("animreg-final", $"{_inst}|{_static}", -1f);
             Lemon.Events.Push(Lemon.Interop.GameEvent.Custom, 1360, default, default);
+            gameObject.Destroy();
+        }
+    }
+}
+
+/// <summary>M8 ⑮c（typeId 28）：IsFinished 直读 ended 镜像验收（script-tests
+/// TestAnimFinishedSdk）。管线不含 AnimatorSystem——C++ 帧间直接改 Animator2D.ended
+/// 模拟引擎置位（Once 段钳 total = 1 / Play 切段归零 = 0）。帧1 loop 段 ended=0 →
+/// IsFinished false → 1570；帧2（C++ 注入 ended=1）→ true → 1571；帧3
+/// Anim.Play 切段 → SDK 写 ended=0 → false → 1572 后自毁。</summary>
+public sealed class AnimFinishedProbeBehaviour : Lemon.LemonBehaviour
+{
+    private const uint kHit = 0x88;
+
+    protected override void Update()
+    {
+        var fc = Lemon.Time.FrameCount;
+        if (fc == 1) {
+            // loop 段（ended 语义使然恒 false——C++ 初始 ended=0）
+            Lemon.Events.Push(Lemon.Interop.GameEvent.Custom,
+                (ushort)(1570 + (Lemon.Anim.IsFinished(gameObject) ? 1 : 0)),
+                default, default);
+        } else if (fc == 2) {
+            // C++ 已注入 ended=1（模拟 Once 段钳 total 置位）；期望 true → 1571
+            Lemon.Events.Push(Lemon.Interop.GameEvent.Custom,
+                (ushort)(Lemon.Anim.IsFinished(gameObject) ? 1571 : 1573),
+                default, default);
+        } else if (fc == 3) {
+            Lemon.Anim.Play(gameObject, kHit, false); // 切段 → SDK 写 ended=0（帧末落地）
+        } else if (fc == 4) {
+            // 写已落地（Native.Write 帧末应用——同帧读回是旧值，探针读挪一帧）；
+            // 期望 false → 1572
+            Lemon.Events.Push(Lemon.Interop.GameEvent.Custom,
+                (ushort)(Lemon.Anim.IsFinished(gameObject) ? 1574 : 1572),
+                default, default);
             gameObject.Destroy();
         }
     }
