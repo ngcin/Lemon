@@ -362,11 +362,20 @@ public:
         std::string err;
         return CreateAnimEvent(app, name, err);
     }
-    /// 按名打点（模态下拉选中 → 确定同径：名字解析 id 后走 CommitEvent）
+    /// 按名打点（模态下拉选中 → 确定同径：下拉数据面 = 注册表条目，取条目 id
+    /// 走 CommitEvent——**不经 IdByName 桥**：桥查询 = C# 订阅者声明面（批⑬b
+    /// lint ② 数据源），编辑器侧调用会污染订阅者面）
     bool AddNamedEventForTest(uint32_t frame, const std::string& name) {
-        const uint32_t id = lemon::assets::AnimEventIdByName(name.c_str());
-        return id != 0 && CommitEvent(frame, id, kEventNew);
+        for (size_t i = 0; i < lemon::assets::AnimEventCount(); ++i) {
+            lemon::assets::AnimEventDef d;
+            if (lemon::assets::AnimEventAt(i, d) && d.name == name)
+                return CommitEvent(frame, d.id, kEventNew);
+        }
+        return false;
     }
+    // ---- 反向 lint（M8 批⑬b）冒烟钩子：强制重算（绕缓存）返回 lint 三件结果
+    const std::vector<lemon::assets::AnimEventLintItem>& RefreshEventLintForTest(
+        EditorApp& app);
 
 private:
     void LoadFrom(const AssetDatabase& db, const AssetEntry& e); // 缓存键失效 → 重读
@@ -409,6 +418,13 @@ private:
     /// 既有 tables/ 拼写）。成功后自证注册表解析吃到新行。
     bool CreateAnimEvent(EditorApp& app, const std::string& name, std::string& err);
     void DeleteEventAt(size_t idx); // 下标删（chips × / 模态删除共用）
+    // ---- 反向 lint 三件（M8 批⑬b）：项目级聚合黄字条（打点未注册 / 注册名无
+    // 订阅者 / 订阅名无打点）——聚合含当前编辑未保存态；订阅者面 = 引擎桥查询
+    /// 记录（AnimEventRegistry，Play 装载后有效；Edit 态显示"上次 Play"面）
+    void DrawEventLint(EditorApp& app);
+    /// 重算（缓存戳 = 注册表变更门 ^ DB 条目签名；force = 绕缓存——ForTest/编辑
+    /// 脏标置位后同帧取数）
+    void RecomputeEventLint(EditorApp& app, bool force);
     /// 极简文件夹创建框（T3-UX7：三 tab 向导退役——单页无 tab，保存位置只读）
     void DrawFolderCreate(EditorApp& app);
     // ---- 从精灵表添加帧 v3.1（用户实测反馈重做）：文件选择 → 选帧对话框 ----
@@ -515,6 +531,11 @@ private:
     bool evNewFocus_ = false;      // 打开拍聚焦输入框（SetKeyboardFocusHere 时序）
     char evNameNew_[80] = {};      // 新事件名输入（80 字节缓冲，校验 ≤64）
     std::string evNewErr_;         // 新建校验消息（非法名/重名/写盘失败）
+    // ---- 反向 lint（M8 批⑬b）：项目级聚合缓存—— stamps 变（注册表/DB）或
+    // 编辑脏标（CommitEvent/DeleteEventAt 置位）触发重算；面板常驻不失效
+    std::vector<lemon::assets::AnimEventLintItem> lintItems_;
+    uint64_t lintStamp_ = 0;
+    bool lintDirty_ = true;
     // ---- T3c 动画集工作台（目标 = .ani；段编辑复用上方 clip 机制——集模式下
     // targetGuid_ 指向当前段，setGuid_ 指向集容器）----
     uint64_t setGuid_ = 0;                    // 当前集（0 = 裸 clip 传统模式）

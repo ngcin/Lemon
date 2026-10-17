@@ -1,12 +1,20 @@
 # M8 批⑬ —— 帧事件注册表（命名事件 + 启动期校验 + 反向 lint）
 
-Status: ⑬a ✅ 机器面 2026-10-17（出口全绿：注册表 + 编辑器下拉 + C# 门面——
+Status: ⑬a ✅ + **⑬b ✅ 2026-10-17 机器面**（反向 lint 三件：订阅者面 = 引擎桥
+查询记录（**零新槽**——偏离 ⑬a "DefinedNames" 登记口径的实施裁决，见
+[DevLog](../../DevLog/2026-10-17-m8-b13b-anim-event-lint.md)）+ AnimEventLint
+纯函数（① 打点未注册聚合/② 注册名无订阅者（空订阅者门）/③ 死订阅 info）+
+AnimationPanel 项目级黄字条（聚合含未保存编辑态，缓存戳 = 注册表门 ^ DB 签名）+
+**编辑器侧桥污染修复四处**（RegistryIdOf 条目扫描——桥 = C# 订阅声明专用通道
+纪律沉淀）；单测 35,012（+11）/ctest 4/4/smoke-anim zh+en `lint(hit=YES clean=YES)`
+双绿（帧预算 138 不变，f137 空位即本链）/回放零重录口径维持；⑬c payload 类型化
+待开）——⑬a 原文：出口全绿：注册表 + 编辑器下拉 + C# 门面——
 打点全程不见裸数字 / 拼错名字启动红字 / 旧档兼容面绿；单测 35,001/script-tests
 1,918/smoke-anim zh+en reg 四位 YES（帧预算 134→138）/DuelBehaviour 新旧订阅
 伤害时间线逐位 IDENTICAL/回放三档 PASS/Attack.clip 盘面零改动；vtable 尾追
 animEventIdByName 59→60（装载期低频桥，"零新增"收窄为热路径口径——见
-[DevLog](../../DevLog/2026-10-17-m8-b13a-anim-event-registry.md)）；⑬b lint 三件
-/⑬c payload 类型化待开）——立项背景：用户拍板将 v1.1 登记项"命名事件"提前插队为
+[DevLog](../../DevLog/2026-10-17-m8-b13a-anim-event-registry.md)）——立项背景：
+用户拍板将 v1.1 登记项"命名事件"提前插队为
 批⑬，原⑬ 样本+手册+模板顺延为批⑭。设计定形于同日架构评审（会话记录见
 [DevLog 批⑫](../../DevLog/2026-10-16-m8-b12-frame-events-ui.md) 后续讨论）
 
@@ -66,7 +74,10 @@ animEventIdByName 59→60（装载期低频桥，"零新增"收窄为热路径�
 
 - **⑬a 注册表 + 编辑器下拉 + C# 门面**（治魔法数字 + 静默失败——性价比最高
   的一段先行）：出口 = 打点全程不见裸数字 / 拼错名字启动红字 / 旧档兼容面绿。
-- **⑬b 反向 lint 三件**：出口 = 三告警编辑期直算 + smoke 断言。
+- **⑬b 反向 lint 三件**：出口 = 三告警编辑期直算 + smoke 断言 —— **✅ 2026-10-17**
+  （三件 = AnimEventLint 纯函数 + AnimationPanel 黄字条 + f137 断言位；订阅者面
+  改桥查询记录（零新槽），编辑器侧桥污染四处随批修——详见
+  [DevLog](../../DevLog/2026-10-17-m8-b13b-anim-event-lint.md)）。
 - **⑬c payload 类型化**：出口 = `float:force` 类打点 → `m.F` 读取端到端 +
   回放零重录实证。
 

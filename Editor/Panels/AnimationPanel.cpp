@@ -2510,6 +2510,7 @@ bool AnimationPanel::CommitEvent(uint32_t frame, uint32_t id, size_t idx) {
                          return a.frame != b.frame ? a.frame < b.frame : a.id < b.id;
                      });
     dirty_ = true;
+    lintDirty_ = true; // 批⑬b：编辑态打点变化 → lint 聚合重算
     saveMsg_.clear();
     return true;
 }
@@ -2518,7 +2519,91 @@ void AnimationPanel::DeleteEventAt(size_t idx) {
     if (idx >= edit_.events.size()) return;
     edit_.events.erase(edit_.events.begin() + idx);
     dirty_ = true;
+    lintDirty_ = true; // 批⑬b：同上
     saveMsg_.clear();
+}
+
+namespace {
+/// 注册表按名取 id——条目扫描（AnimEventAt）。**不经 AnimEventIdByName 桥**：
+/// 桥查询 = C# 订阅者声明面（批⑬b lint ② 数据源），编辑器侧调用会污染
+/// 订阅者面（重名拒/建行自证/建行即选中三处 + 冒烟钩子同改，模态下拉本就
+/// 走条目数据面）。
+uint32_t RegistryIdOf(const std::string& name) {
+    for (size_t i = 0; i < assets::AnimEventCount(); ++i)
+        if (assets::AnimEventDef d; assets::AnimEventAt(i, d) && d.name == name)
+            return d.id;
+    return 0;
+}
+} // namespace
+
+// ---- 反向 lint 三件（M8 批⑬b）：项目级聚合黄字条 ------------------------------
+void AnimationPanel::RecomputeEventLint(EditorApp& app, bool force) {
+    // 聚合面 = 全部 .clip events[].id（磁盘）+ 当前编辑态（未保存打点即见 lint
+    // ——编辑目标跳盘读改用 edit_，免双份）。缓存戳 = 注册表变更门 ^ DB 条目
+    // 签名（guid/hash——Rescan/保存必变）；编辑脏标由 CommitEvent/DeleteEventAt
+    // 置位。坏档 clip 跳过（另有红字归口），id 0（无事件语义）引擎侧已滤。
+    EditorContext& ctx = app.Ctx();
+    const AssetDatabase& db = ctx.Assets();
+    uint64_t stamp = ctx.AnimEventTableStamp();
+    for (const AssetEntry& e : db.Entries())
+        stamp ^= e.guid * 0x9E3779B97F4A7C15ull ^ e.hash;
+    if (!force && !lintDirty_ && stamp == lintStamp_) return;
+    lintStamp_ = stamp;
+    lintDirty_ = false;
+    const uint64_t editGuid = edit_.ok ? loadedGuid_ : 0; // 编辑目标（0 = 未装载）
+    std::vector<assets::AnimEventUsage> used;
+    for (const AssetEntry& e : db.Entries()) {
+        if (e.type != AssetType::Clip || e.missing) continue;
+        std::string name = std::filesystem::path(e.relPath).filename().string();
+        if (e.guid == editGuid) {
+            for (const assets::ClipEventEdit& ev : edit_.events)
+                used.push_back({name, ev.id});
+            continue;
+        }
+        std::ifstream f(db.AbsolutePath(e), std::ios::binary);
+        if (!f) continue;
+        std::string text((std::istreambuf_iterator<char>(f)),
+                         std::istreambuf_iterator<char>());
+        assets::ClipData cd = assets::ParseClipJson(text);
+        if (!cd.ok) continue;
+        for (const assets::ClipEventEdit& ev : cd.events)
+            used.push_back({name, ev.id});
+    }
+    lintItems_ = assets::AnimEventLint(used);
+}
+
+void AnimationPanel::DrawEventLint(EditorApp& app) {
+    RecomputeEventLint(app, /*force=*/false);
+    if (lintItems_.empty()) return;
+    using lemon::editor::loc::tr;
+    using lemon::editor::loc::trFmt;
+    ImGui::TextColored(theme::kTextWarn, "%s", tr("anim.lint.title"));
+    const size_t kMaxShow = 5;
+    for (size_t i = 0; i < lintItems_.size() && i <= kMaxShow; ++i) {
+        if (i == kMaxShow) { // 折叠尾行（越窗教训：流式不硬塞）
+            ImGui::TextDisabled("%s", trFmt("anim.lint.more_fmt",
+                                            {std::to_string(lintItems_.size() - kMaxShow)})
+                                      .c_str());
+            break;
+        }
+        const assets::AnimEventLintItem& it = lintItems_[i];
+        const char* key = it.kind == 1     ? "anim.lint.unreg_fmt"
+                          : it.kind == 2   ? "anim.lint.nosub_fmt"
+                                           : "anim.lint.dead_fmt";
+        const std::string arg0 = it.kind == 1 ? it.clip : it.name;
+        const std::string line =
+            trFmt(key, {arg0, std::to_string(it.id)});
+        if (it.kind == 3) // info 级：灰显区分（死订阅不丢功能，优先级低）
+            ImGui::TextDisabled("  %s", line.c_str());
+        else
+            ImGui::TextColored(theme::kTextWarn, "  %s", line.c_str());
+    }
+}
+
+const std::vector<assets::AnimEventLintItem>& AnimationPanel::RefreshEventLintForTest(
+    EditorApp& app) {
+    RecomputeEventLint(app, /*force=*/true);
+    return lintItems_;
 }
 
 bool AnimationPanel::CreateAnimEvent(EditorApp& app, const std::string& name,
@@ -2535,7 +2620,7 @@ bool AnimationPanel::CreateAnimEvent(EditorApp& app, const std::string& name,
         err = tr("anim.event.err_bad_name");
         return false;
     }
-    if (assets::AnimEventIdByName(name.c_str()) != 0) {
+    if (RegistryIdOf(name) != 0) {
         err = tr("anim.event.err_dup_name");
         return false;
     }
@@ -2589,7 +2674,7 @@ bool AnimationPanel::CreateAnimEvent(EditorApp& app, const std::string& name,
         return false;
     }
     app.RescanAssets(); // 内含注册表注入（hash 门）——调用后面板侧条目须 guid 重查
-    if (assets::AnimEventIdByName(name.c_str()) == 0) {
+    if (RegistryIdOf(name) == 0) {
         err = tr("anim.event.err_load_reject");
         return false; // 写盘成功但装载拒（表内冲突行等）——交底不静默
     }
@@ -2683,7 +2768,7 @@ void AnimationPanel::DrawEventModal(EditorApp& app) {
         if (enter || ImGui::SmallButton(tr("anim.event.new_create"))) {
             std::string err;
             if (CreateAnimEvent(app, evNameNew_, err)) {
-                evId_ = (int)assets::AnimEventIdByName(evNameNew_); // 建行即选中
+                evId_ = (int)RegistryIdOf(evNameNew_); // 建行即选中（条目面，不过桥）
                 evNewOpen_ = false; // 下拉下一帧显新名
                 evNameNew_[0] = '\0';
                 evNewErr_.clear();
@@ -2798,6 +2883,7 @@ void AnimationPanel::OnGui(EditorApp& app) {
     DrawClipPickModal(app);
     DrawEventModal(app); // M8 批⑫：帧事件编辑模态（边沿触发；⑬ 下拉+新建事件）
     HandlePickerResult(app);
+    DrawEventLint(app); // M8 批⑬b：反向 lint 三件（项目级聚合，含未保存编辑态）
 
     const AssetEntry* target = db.FindByGuid(targetGuid_);
     const AssetEntry* setEntry = db.FindByGuid(setGuid_);

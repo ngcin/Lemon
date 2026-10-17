@@ -229,5 +229,10 @@
   "animctrl.err.save_bad_fmt": "× Save rejected (current file unparseable): {0}",
   "animctrl.err.gate_fmt": "× Save gate: {0}",
   "animctrl.err.roundtrip": "× Save rejected: roundtrip pre-verify mismatch (serializer defect — original file untouched)",
-  "animctrl.warn.exit_loop_fmt": "Out-edge \"on end\" from {0}: set \"{1}\" binds a clip in {2} mode — the end-of-clip edge never fires (set that clip to Once, or use a condition transition)"
+  "animctrl.warn.exit_loop_fmt": "Out-edge \"on end\" from {0}: set \"{1}\" binds a clip in {2} mode — the end-of-clip edge never fires (set that clip to Once, or use a condition transition)",
+  "anim.lint.title": "⚠ Anim event lint (project-wide)",
+  "anim.lint.unreg_fmt": "{0} keyframe event #{1} not registered (no row in anim-events.tab)",
+  "anim.lint.nosub_fmt": "Registered event \"{0}\" #{1} has no subscriber (no Define/OnFrame — as of last Play load)",
+  "anim.lint.dead_fmt": "Subscription \"{0}\" #{1} has no keyframe event project-wide (dead subscription)",
+  "anim.lint.more_fmt": "…{0} more"
 }

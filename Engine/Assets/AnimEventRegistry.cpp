@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "Assets/TableAsset.h" // ParseTableJson（.tab 轨道单源解析）
@@ -18,6 +19,10 @@ struct RegistryState {
     std::unordered_map<uint32_t, size_t> byId;          // id → defs 下标
     std::unordered_map<std::string, uint32_t> prevIds; // 上份快照（id 漂移告警）
     std::unordered_map<std::string, char> driftWarned;  // (name|old|new) → 已告警
+    // 批⑬b：订阅者声明面——AnimEventIdByName 桥查询名记录（首查询序，去重）。
+    // next 重建不搬（SetAnimEventTable 注入即清，语义见头注释）
+    std::vector<std::string> queried;
+    std::unordered_set<std::string> queriedSet;
 };
 
 RegistryState& State() {
@@ -140,7 +145,9 @@ bool SetAnimEventTable(std::string_view tabJson, std::string* error) {
 
 uint32_t AnimEventIdByName(const char* name) {
     if (!name || !*name) return 0;
-    const RegistryState& st = State();
+    RegistryState& st = State();
+    // 批⑬b：订阅者声明面记录（含未注册名——③ 死订阅的候选域；去重保首查询序）
+    if (st.queriedSet.insert(name).second) st.queried.emplace_back(name);
     const auto it = st.byName.find(name);
     return it != st.byName.end() ? it->second : 0;
 }
@@ -164,6 +171,54 @@ uint32_t AnimEventNextId() {
     uint32_t maxId = 0;
     for (const AnimEventDef& d : State().defs) maxId = std::max(maxId, d.id);
     return maxId + 1; // 空表 = 1；满 65535 依赖行级 id 校验兜底（65536 行注被拒）
+}
+
+size_t AnimEventSubscriberCount() { return State().queried.size(); }
+
+bool AnimEventSubscriberAt(size_t i, std::string& out) {
+    const RegistryState& st = State();
+    if (i >= st.queried.size()) return false;
+    out = st.queried[i];
+    return true;
+}
+
+std::vector<AnimEventLintItem> AnimEventLint(const std::vector<AnimEventUsage>& used) {
+    const RegistryState& st = State();
+    std::vector<AnimEventLintItem> out;
+    // ① 打点 id 未注册（used 序，同 (clip,id) 去重；id 0 = 无事件语义跳过）
+    std::unordered_set<std::string> seen;
+    for (const AnimEventUsage& u : used) {
+        if (u.id == 0 || st.byId.contains(u.id)) continue;
+        if (!seen.insert(u.clip + '#' + std::to_string(u.id)).second) continue;
+        AnimEventLintItem it;
+        it.kind = 1;
+        it.id = u.id;
+        it.clip = u.clip;
+        out.push_back(std::move(it));
+    }
+    if (st.queried.empty()) return out; // ②③ 门：订阅者面空 = 本会话未装载过脚本
+    // ② 注册名无订阅者（表行序）
+    for (const AnimEventDef& d : st.defs) {
+        if (st.queriedSet.contains(d.name)) continue;
+        AnimEventLintItem it;
+        it.kind = 2;
+        it.name = d.name;
+        it.id = d.id;
+        out.push_back(std::move(it));
+    }
+    // ③ 订阅名已注册但全项目无打点（首查询序；未注册订阅名归 ⑬a 启动红字不双报）
+    std::unordered_set<uint32_t> usedIds;
+    for (const AnimEventUsage& u : used) usedIds.insert(u.id);
+    for (const std::string& n : st.queried) {
+        const auto it = st.byName.find(n);
+        if (it == st.byName.end() || usedIds.contains(it->second)) continue;
+        AnimEventLintItem li;
+        li.kind = 3;
+        li.name = n;
+        li.id = it->second;
+        out.push_back(std::move(li));
+    }
+    return out;
 }
 
 } // namespace lemon::assets

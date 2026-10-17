@@ -150,6 +150,8 @@ public:
     // ——Play 期改表不生效，域线程只读 = 无并发写；Play 中漏掉的变更由 ExitPlay
     // 补注——冻结期不推进变更门记忆）----
     void RefreshAnimEventRegistry();
+    /// 注册表变更门读数（批⑬b lint 缓存戳用：guid/hash 组合，未装载 = 0）
+    uint64_t AnimEventTableStamp() const { return animEventsGuid_ * 0x9E3779B97F4A7C15ull ^ animEventsHash_; }
 
     // ---- Undo 双轨（§3.5；Play 中禁用）----
     UndoStack& Undo() { return undo_; }

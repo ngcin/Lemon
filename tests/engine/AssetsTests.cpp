@@ -1986,6 +1986,61 @@ void TestAnimEventRegistry() {
            "empty injection = bare-id mode (合法保底)");
 }
 
+void TestAnimEventLint() {
+    // M8 批⑬b：反向 lint 三件——① 打点未注册（聚合 + (clip,id) 去重）② 注册名
+    // 无订阅者（空订阅者门 = 未装载脚本不误报）③ 订阅名无打点（死订阅，未注册
+    // 订阅名不双报）。订阅者面 = AnimEventIdByName 桥查询记录（注入即清）。
+    using namespace lemon::assets;
+    std::string err;
+    const char* kTable = R"({"schemaVersion":1,"name":"anim-events","rows":[
+        ["name","id","payload","desc"],
+        ["a","1","-",""],
+        ["b","2","-",""],
+        ["c","3","-",""] ]})";
+    auto kindCount = [](const std::vector<AnimEventLintItem>& v, int k) {
+        return (size_t)std::count_if(v.begin(), v.end(),
+                                     [k](const AnimEventLintItem& i) { return i.kind == k; });
+    };
+
+    SetAnimEventTable(kTable, &err);
+    // 订阅者记录：已注册 a/c + 未注册 zz（Define/OnFrame 声明即过桥，含失败查询）
+    Expect(AnimEventIdByName("a") == 1 && AnimEventIdByName("zz") == 0 &&
+               AnimEventIdByName("c") == 3,
+           "queries resolve (zz unknown)");
+    Expect(AnimEventSubscriberCount() == 3, "bridge query recorded (incl. unknown)");
+    std::string sub;
+    Expect(AnimEventSubscriberAt(0, sub) && sub == "a" && AnimEventSubscriberAt(2, sub) &&
+               sub == "c",
+           "subscribers in first-query order");
+    Expect(!AnimEventSubscriberAt(3, sub), "subscriber At out-of-range = false");
+
+    // 用量：Attack#1（a 订阅且有打点）/ Attack#99（未注册，重复两次验去重）/
+    // Walk#2（b 有打点但无订阅）
+    std::vector<AnimEventUsage> used = {
+        {"Attack", 1}, {"Attack", 99}, {"Walk", 2}, {"Attack", 99}};
+    std::vector<AnimEventLintItem> items = AnimEventLint(used);
+    Expect(items.size() == 3 &&
+               kindCount(items, 1) == 1 && kindCount(items, 2) == 1 && kindCount(items, 3) == 1,
+           "three lints, one item each");
+    Expect(items[0].kind == 1 && items[0].id == 99 && items[0].clip == "Attack",
+           "① unregistered id aggregated + (clip,id) dedup");
+    Expect(items[1].kind == 2 && items[1].name == "b" && items[1].id == 2,
+           "② unsubscribed registry name (a/c queried, zz unregistered)");
+    Expect(items[2].kind == 3 && items[2].name == "c" && items[2].id == 3,
+           "③ dead subscription (c unused; a used; zz not double-reported)");
+
+    // 空订阅者门：重注入清记录 → ②③ 整组抑制（① 照常——作者笔误面不依赖脚本）
+    SetAnimEventTable(kTable, &err);
+    Expect(AnimEventSubscriberCount() == 0, "re-inject clears subscriber face");
+    items = AnimEventLint(used);
+    Expect(kindCount(items, 1) == 1 && kindCount(items, 2) == 0 && kindCount(items, 3) == 0,
+           "empty-subscriber gate suppresses ②③, keeps ①");
+
+    // 收尾清空还原（裸 id 模式）
+    SetAnimEventTable("", &err);
+    Expect(AnimEventCount() == 0 && AnimEventSubscriberCount() == 0, "cleanup");
+}
+
 void RunAssetsTests() {
 #ifdef LEMON_EDITOR_CORE
     TestProjectFile();
@@ -2050,4 +2105,5 @@ void RunAssetsTests() {
     TestClipCacheBadArchive(); // 批⑪ H2：坏 clip 红字跳过不炸 Play
 #endif
     TestAnimEventRegistry(); // M8 批⑬：帧事件注册表（表解析/冲突行拒/id 漂移）
+    TestAnimEventLint();     // M8 批⑬b：反向 lint 三件（订阅者记录/空门/去重）
 }

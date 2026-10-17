@@ -1244,6 +1244,16 @@ bool EditorApp::SmokeUiVerdict() {
 // ---- --smoke-anim 状态（批③c-3 自 Run 三段局部收敛；字段/注释逐项原样。
 // 前提：Run 进程单次调用 = EditorEntry 唯一入口——全局生命周期与 Run 局部等价）----
 namespace {
+/// 注册表按名取 id——条目扫描（模态下拉同数据面 AnimEventAt）。**不经
+/// AnimEventIdByName 桥**：桥查询 = C# 订阅者声明面（批⑬b lint ② 数据源），
+/// 编辑器侧调用会污染订阅者面（smoke 假红 ② 的实报根因）。
+uint32_t SmokeAnimEventId(const char* name) {
+    for (size_t i = 0; i < assets::AnimEventCount(); ++i)
+        if (assets::AnimEventDef d; assets::AnimEventAt(i, d) && d.name == name)
+            return d.id;
+    return 0;
+}
+
 struct AnimSmokeState {
     // M6a 批② T3：--smoke-anim 扩 clip 编辑链（验收②）。专档 anim-edit.clip
     //（固定 guid，幂等重写基线）走 AnimationPanel 数据面同款链路：落盘 →
@@ -1293,6 +1303,10 @@ struct AnimSmokeState {
     // 项目（会话即弃）——种子档盘面零改动（b11 教训续）
     bool smokeRegCreateOk = false, smokeRegPickOk = false, smokeRegUnregOk = false,
          smokeRegDelOk = false, smokeRegDone = false;
+    // M8 批⑬b：反向 lint 链（f137，Edit 态）：① 聚合告警（未注册打点 → lint
+    // 条，编辑态未保存即见）+ ②③ 空订阅者门（临时项目无脚本装载 = 抑制）；
+    // 清理后归零
+    bool smokeLintHitOk = false, smokeLintCleanOk = false;
     // review 修复回归（2026-10-16）：B2 Play 只读态画布滚轮缩放 + B1 把手单击
     // 不落自环边（f125 再进 Play → f128 滚轮注入 → f129/f130 单击注入）
     bool smokeCtrlRoPlayOk = false, smokeCtrlZoomOk = false, smokeCtrlClickOk = false;
@@ -2220,11 +2234,11 @@ void EditorApp::SmokeAnimFrame(uint64_t frame) {
             ClosePanel("AnimController");
             if (!StopPlay()) LEMON_ERROR("smoke-anim：review 回归段 Stop 失败");
         }
-        // M8 批⑬：帧事件注册表链（f134-136，Edit 态——f133 已 StopPlay）。临时
-        // 项目零表起步：create = 「新建事件」写表 + Rescan + 进程级注册表注入；
-        // pick = 按名打点（名字→id 落进档面 events[].id——id 线上格式不变）；
-        // unreg = 裸 id 打点未注册（badge 面：NameById == nullptr）；del = 还原
-        // 基线。表落在临时项目（smoke 会话即弃）——种子档盘面仍零改动。
+        // M8 批⑬：帧事件注册表链（f134-136，Edit 态）：新建事件写表+注入 / 按名
+        // 打点（档面 id = 注册表 id）/ 裸 id 未注册 badge 面 / 基线还原。表落在临时
+        // 项目（smoke 会话即弃）——种子档盘面仍零改动。按名解析走 SmokeAnimEventId
+        //（条目扫描，模态下拉同数据面）——不经 IdByName 桥（桥查询 = C# 订阅者
+        // 声明面，编辑器侧污染会假红 lint ②，批⑬b）
         else if (frame == 134 && !g_animSmoke.smokeRegDone) {
             g_animSmoke.smokeRegDone = true;
             if (PanelRegistry::Entry* en = panels_.FindEntry("Animation")) {
@@ -2233,7 +2247,7 @@ void EditorApp::SmokeAnimFrame(uint64_t frame) {
                 const bool created = ap->CreateAnimEventForTest(*this, "smoke-hit");
                 g_animSmoke.smokeRegCreateOk =
                     created &&
-                    assets::AnimEventIdByName("smoke-hit") == expectId &&
+                    SmokeAnimEventId("smoke-hit") == expectId &&
                     ctx_.Assets().FindByPathFold(assets::kAnimEventTableRelPath) != nullptr;
                 if (!g_animSmoke.smokeRegCreateOk)
                     LEMON_ERROR("smoke-anim：注册表链不符（建行未写表/未注入：created=%d）",
@@ -2242,7 +2256,7 @@ void EditorApp::SmokeAnimFrame(uint64_t frame) {
         } else if (frame == 135) {
             if (PanelRegistry::Entry* en = panels_.FindEntry("Animation")) {
                 AnimationPanel* ap = static_cast<AnimationPanel*>(en->panel);
-                const uint32_t id = assets::AnimEventIdByName("smoke-hit");
+                const uint32_t id = SmokeAnimEventId("smoke-hit");
                 // pick：按名打点 → 档面 id = 注册表 id（裸数字不出现在作者面）
                 g_animSmoke.smokeRegPickOk =
                     ap->AddNamedEventForTest(0, "smoke-hit") &&
@@ -2262,10 +2276,45 @@ void EditorApp::SmokeAnimFrame(uint64_t frame) {
                 AnimationPanel* ap = static_cast<AnimationPanel*>(en->panel);
                 g_animSmoke.smokeRegDelOk =
                     g_animSmoke.smokeRegPickOk && g_animSmoke.smokeRegUnregOk &&
-                    ap->DeleteEventForTest(0, assets::AnimEventIdByName("smoke-hit")) &&
+                    ap->DeleteEventForTest(0, SmokeAnimEventId("smoke-hit")) &&
                     ap->DeleteEventForTest(1, 99) && ap->EventCountForTest() == 0;
                 if (!g_animSmoke.smokeRegDelOk)
                     LEMON_ERROR("smoke-anim：注册表链不符（基线未还原）");
+            }
+        } else if (frame == 137) {
+            // M8 批⑬b：反向 lint 链（Edit 态）：裸 id 打点 → ① 聚合告警进 lint 条
+            //（编辑态未保存即见）；②③ 空订阅者门（临时项目无脚本 → 抑制不误报，
+            // 全部项应只 kind1）；清理后 id 99 归零
+            if (PanelRegistry::Entry* en = panels_.FindEntry("Animation")) {
+                AnimationPanel* ap = static_cast<AnimationPanel*>(en->panel);
+                if (ap->AddEventForTest(0, 99)) {
+                    bool has99 = false, onlyKind1 = true;
+                    for (const assets::AnimEventLintItem& it : ap->RefreshEventLintForTest(*this)) {
+                        if (it.kind != 1) onlyKind1 = false;
+                        if (it.kind == 1 && it.id == 99) has99 = true;
+                    }
+                    g_animSmoke.smokeLintHitOk = has99 && onlyKind1;
+                    ap->DeleteEventForTest(0, 99);
+                    bool gone99 = true;
+                    for (const assets::AnimEventLintItem& it : ap->RefreshEventLintForTest(*this))
+                        if (it.id == 99) gone99 = false;
+                    g_animSmoke.smokeLintCleanOk =
+                        g_animSmoke.smokeLintHitOk && gone99 && ap->EventCountForTest() == 0;
+                }
+                if (!g_animSmoke.smokeLintHitOk || !g_animSmoke.smokeLintCleanOk) {
+                    std::string dump;
+                    for (const assets::AnimEventLintItem& it :
+                         ap->RefreshEventLintForTest(*this))
+                        dump += " [k" + std::to_string(it.kind) + " #" +
+                                std::to_string(it.id) + " " + it.clip + it.name + "]";
+                    LEMON_ERROR("smoke-anim：lint 链不符（hit=%d clean=%d events=%zu "
+                                "subs=%zu reg=%zu items=%s）",
+                                (int)g_animSmoke.smokeLintHitOk,
+                                (int)g_animSmoke.smokeLintCleanOk,
+                                ap->EventCountForTest(),
+                                assets::AnimEventSubscriberCount(),
+                                assets::AnimEventCount(), dump.c_str());
+                }
             }
         }
     }
@@ -2368,7 +2417,8 @@ bool EditorApp::SmokeAnimVerdict() {
              g_animSmoke.smokeEventsRtOk && g_animSmoke.smokeEventsSyncOk &&
              g_animSmoke.smokeEventsDelOk &&
              g_animSmoke.smokeRegCreateOk && g_animSmoke.smokeRegPickOk &&
-             g_animSmoke.smokeRegUnregOk && g_animSmoke.smokeRegDelOk;
+             g_animSmoke.smokeRegUnregOk && g_animSmoke.smokeRegDelOk &&
+             g_animSmoke.smokeLintHitOk && g_animSmoke.smokeLintCleanOk;
     std::printf("[lemon] smoke-anim: prog(maxFrame=%u slice=%s booked=%u)%s "
                 "queue(hitClip=%s hit=%s back=%s) fx(text/bar=%s) "
                 "edit(rt=%s cache=%s whole=%s) set(rt=%s cache=%s open=%s "
@@ -2379,6 +2429,7 @@ bool EditorApp::SmokeAnimVerdict() {
                 "layout=%s edge=%s any=%s ro=%s zoom=%s click=%s) "
                 "events(add=%s dup=%s rt=%s sync=%s del=%s) "
                 "reg(create=%s pick=%s unreg=%s del=%s) "
+                "lint(hit=%s clean=%s) "
                 "=> %s\n",
                 (unsigned)g_animSmoke.smokeAnimMax[0], g_animSmoke.smokeAnimSlice[0] ? "YES" : "NO",
                 sh ? sh->sliceCount : 0, yami, hitBooked ? "booked" : "MISSING",
@@ -2416,6 +2467,8 @@ bool EditorApp::SmokeAnimVerdict() {
                 g_animSmoke.smokeRegPickOk ? "YES" : "NO",
                 g_animSmoke.smokeRegUnregOk ? "YES" : "NO",
                 g_animSmoke.smokeRegDelOk ? "YES" : "NO",
+                g_animSmoke.smokeLintHitOk ? "YES" : "NO",
+                g_animSmoke.smokeLintCleanOk ? "YES" : "NO",
                 animOk ? "OK" : "FAIL");
     return animOk;
 }

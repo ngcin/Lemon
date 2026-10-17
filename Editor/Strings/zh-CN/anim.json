@@ -229,5 +229,10 @@
   "animctrl.err.save_bad_fmt": "× 保存拒绝（当前档不可解析）：{0}",
   "animctrl.err.gate_fmt": "× 保存门禁：{0}",
   "animctrl.err.roundtrip": "× 保存拒绝：roundtrip 预验不符（序列化器异常——原档未动）",
-  "animctrl.warn.exit_loop_fmt": "{0} 的段末（exitTime）出边：集「{1}」绑定的 clip 为 {2} 模式——段末边沿永不触发（该 clip 改单次，或改用条件过渡）"
+  "animctrl.warn.exit_loop_fmt": "{0} 的段末（exitTime）出边：集「{1}」绑定的 clip 为 {2} 模式——段末边沿永不触发（该 clip 改单次，或改用条件过渡）",
+  "anim.lint.title": "⚠ 动画事件 lint（项目级）",
+  "anim.lint.unreg_fmt": "{0} 打点 #{1} 未注册（anim-events.tab 无此行）",
+  "anim.lint.nosub_fmt": "注册事件「{0}」#{1} 无订阅者（Define/OnFrame 未声明——上次 Play 装载面）",
+  "anim.lint.dead_fmt": "订阅「{0}」#{1} 全项目无打点（死订阅）",
+  "anim.lint.more_fmt": "……其余 {0} 项"
 }

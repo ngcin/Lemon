@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace lemon::assets {
 
@@ -61,5 +62,40 @@ inline constexpr const char* kAnimEventTableRelPath = "Assets/Tables/anim-events
 /// 事件名合法性（单源：引擎装载行检 + 编辑器「新建事件」预检共用）：
 /// 非空 / ≤64 字节 / 无控制字符与引号（跨界窄串 + 下拉字面约束）。
 bool ValidAnimEventName(std::string_view n);
+
+// ---- 订阅者声明面 + 反向 lint（M8 批⑬b）------------------------------------
+// 订阅者集合 = AnimEventIdByName 桥的查询名记录：C# 侧每个名字每域首解析必过桥
+//（AnimEvents.TryIdOf 缓存域装载起清空——Define/OnFrame 声明即查询），引擎侧
+// 顺手记录即得，零新增 vtable 槽、零 C# 改动；编辑器 C++ 走 NameById 不经此面
+//（无编辑器噪声）。SetAnimEventTable 注入即清（表换 = 比较基线换；编辑器同表
+// 重注入被 guid/hash 变更门拦 → 跨 Play 退出保留，Edit 态 lint 见"上次 Play"面）。
+
+/// 已记录订阅者数（行序 = 首查询序，确定）。
+size_t AnimEventSubscriberCount();
+/// 按首查询序取订阅者名；越界 = false。
+bool AnimEventSubscriberAt(size_t i, std::string& out);
+
+/// 项目内 clip 打点用量（lint 调用方聚合——编辑器扫全部 .clip events[].id，
+/// 含当前编辑未保存态）。
+struct AnimEventUsage {
+    std::string clip; // 显示名（clip 文件名）
+    uint32_t id = 0;
+};
+
+/// lint 三件结果项（kind 定序 ①②③；调用方按 kind 取 i18n 模板格式化）。
+struct AnimEventLintItem {
+    int kind = 0;     // 1=打点未注册 2=注册名无订阅者 3=订阅名无打点（info）
+    std::string name; // ②③ = 事件名；① = 空
+    uint32_t id = 0;  // 关联 id
+    std::string clip; // ① = 打点所在 clip；②③ = 空
+};
+
+/// 反向 lint 三件（批⑬b；纯函数——used = 全项目 clip 打点聚合，同 (clip,id)
+/// 去重）：① used 中 id 未注册（作者笔误面，badge 逐处的聚合告警）② 注册名
+/// ∉ 订阅者（漏接/死事件；订阅者面为空 = 本会话未装载过脚本 → 整组抑制不误报）
+/// ③ 订阅名已注册但全项目无打点（死订阅，info）。未注册订阅名不进 ③（⑬a
+/// 启动红字已覆盖，不双报）。结果按 kind 稳定定序（①used 序 / ②表行序 /
+/// ③首查询序）。
+std::vector<AnimEventLintItem> AnimEventLint(const std::vector<AnimEventUsage>& used);
 
 } // namespace lemon::assets
