@@ -284,4 +284,22 @@ public static class Anim
     /// trigger 保持待发，跨状态有效，Unity 同款）。</summary>
     public static void Trigger(GameObject g, string name)
         => SetParam(g, name, 1f);
+
+    // ---- M8 批⑬：帧事件命名订阅（AnimFrame 队列上的糖，零新增通道）----------
+    // 订阅期一次解析 name→id（AnimEvents 缓存），热路径 m.User 逐位比较 u16。
+    // 未注册（表缺失/拼错）= 启动红字 + 该订阅挂空（不影响其他订阅——批⑬a 出口：
+    /// 拼错名字不再静默）。**静态订阅**（域级生命周期）：行为体实例请用
+    /// LemonBehaviour.OnFrame（OnDestroy 自动退订——裸静态订阅在实例反复生成/销毁
+    /// 下无界增长，M15 同病程）。
+    public static void OnFrame(GameObject g, string eventName, Action cb)
+    {
+        if (cb == null || g.Entity.Id == 0) return;
+        if (!AnimEvents.TryIdOf(eventName, out ushort id)) {
+            AnimEvents.WarnUnresolved("Anim.OnFrame", eventName ?? "");
+            return;
+        }
+        Events.Subscribe(GameEvent.AnimFrame, m => {
+            if (m.User == id && m.Src.Id == g.Entity.Id) cb();
+        });
+    }
 }

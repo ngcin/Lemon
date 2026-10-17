@@ -1,9 +1,14 @@
 # M8 批⑬ —— 帧事件注册表（命名事件 + 启动期校验 + 反向 lint）
 
-Status: queued（2026-10-17 立项——用户拍板将 v1.1 登记项"命名事件"提前插队为
+Status: ⑬a ✅ 机器面 2026-10-17（出口全绿：注册表 + 编辑器下拉 + C# 门面——
+打点全程不见裸数字 / 拼错名字启动红字 / 旧档兼容面绿；单测 35,001/script-tests
+1,918/smoke-anim zh+en reg 四位 YES（帧预算 134→138）/DuelBehaviour 新旧订阅
+伤害时间线逐位 IDENTICAL/回放三档 PASS/Attack.clip 盘面零改动；vtable 尾追
+animEventIdByName 59→60（装载期低频桥，"零新增"收窄为热路径口径——见
+[DevLog](../../DevLog/2026-10-17-m8-b13a-anim-event-registry.md)）；⑬b lint 三件
+/⑬c payload 类型化待开）——立项背景：用户拍板将 v1.1 登记项"命名事件"提前插队为
 批⑬，原⑬ 样本+手册+模板顺延为批⑭。设计定形于同日架构评审（会话记录见
-[DevLog 批⑫](../../DevLog/2026-10-16-m8-b12-frame-events-ui.md) 后续讨论）；
-开工时本行补机器面出口）
+[DevLog 批⑫](../../DevLog/2026-10-16-m8-b12-frame-events-ui.md) 后续讨论）
 
 ## 1. 输入与定形（用户 2026-10-17 拍板）
 

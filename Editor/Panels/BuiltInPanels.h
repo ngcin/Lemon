@@ -12,6 +12,7 @@
 
 #include "Assets/AssetDatabase.h"
 #include "Assets/AnimAsset.h" // assets::ClipData（AnimationPanel 编辑态副本）
+#include "Assets/AnimEventRegistry.h" // M8 批⑬：AnimEventIdByName（ForTest 钩子内联）
 #include "Assets/ControllerAsset.h" // assets::ControllerData（AnimControllerPanel 编辑态）
 #include "Assets/TableAsset.h" // assets::TableData（AssetBrowserPanel .tab 表格区缓存）
 #include "Components/CoreComponents.h"
@@ -355,6 +356,17 @@ public:
         selSet_.assign(1, idx);
         DeleteSelectedFrames();
     }
+    // ---- 帧事件注册表（M8 批⑬）冒烟钩子：UI 同款路径（f134 链）----
+    /// 模态「新建事件…」同一条 CreateAnimEvent 路径（建行即写表 + Rescan + 注入）
+    bool CreateAnimEventForTest(EditorApp& app, const std::string& name) {
+        std::string err;
+        return CreateAnimEvent(app, name, err);
+    }
+    /// 按名打点（模态下拉选中 → 确定同径：名字解析 id 后走 CommitEvent）
+    bool AddNamedEventForTest(uint32_t frame, const std::string& name) {
+        const uint32_t id = lemon::assets::AnimEventIdByName(name.c_str());
+        return id != 0 && CommitEvent(frame, id, kEventNew);
+    }
 
 private:
     void LoadFrom(const AssetDatabase& db, const AssetEntry& e); // 缓存键失效 → 重读
@@ -382,14 +394,20 @@ private:
     /// 右键编辑）+ ＋ 在选中帧打点；流式折行（M7c 批⑫ 越窗教训）
     void DrawEventRow(EditorApp& app, bool ro);
     /// 编辑模态（边沿触发同 wiz/pick 族）：帧号（0 起，与 events[].frame 同基）
-    /// + 事件 id（0..65535——运行时 ClipEventDef u16 收窄，防静默截断）
-    void DrawEventModal();
+    /// + 事件 = 注册表下拉（M8 批⑬：名字选择，id 隐含；无表降级 DragInt
+    /// 0..65535 裸 id 模式）+ 内联「新建事件…」（建行即写表）
+    void DrawEventModal(EditorApp& app);
     /// 入口统一（右键帧格/chips 右键/＋）：editIdx = kEventNew 新建（frame =
     /// 预填帧号）；否则编辑该下标（frame 被事件自身帧号覆盖）
     void OpenEventModal(int frame, size_t editIdx);
     /// 提交一条打点：帧界内 / id ≤ 65535 / (frame,id) 无完全重复，三关过则按
     /// (frame,id) 升序落位 + dirty；失败写 evErr_ 返 false（模态保持开）
     bool CommitEvent(uint32_t frame, uint32_t id, size_t idx);
+    /// 注册表建行（M8 批⑬「新建事件」唯一写路径）：名检/重名拒 → 追加行
+    /// （id = AnimEventNextId，永不复用）→ TableToJson 原子写 → Rescan（尾部
+    /// RefreshAnimEventRegistry 注入进程级注册表）。缺表 = 建表（目录跟随项目
+    /// 既有 tables/ 拼写）。成功后自证注册表解析吃到新行。
+    bool CreateAnimEvent(EditorApp& app, const std::string& name, std::string& err);
     void DeleteEventAt(size_t idx); // 下标删（chips × / 模态删除共用）
     /// 极简文件夹创建框（T3-UX7：三 tab 向导退役——单页无 tab，保存位置只读）
     void DrawFolderCreate(EditorApp& app);
@@ -490,8 +508,13 @@ private:
     bool evModalOpen_ = false, evModalPending_ = false;
     size_t evEditIdx_ = kEventNew; // 编辑目标下标（kEventNew = 新建）
     int evFrame_ = 0;              // 模态字段：帧号（0 起；DragInt 钳 0..n-1）
-    int evId_ = 1;                 // 模态字段：事件 id（DragInt 钳 0..65535）
+    int evId_ = 1;                 // 模态字段：事件 id（下拉选中项的 id；裸 id 模态 = DragInt 钳 0..65535）
     std::string evErr_;            // 模态内校验消息（越界/超上限/完全重复）
+    // M8 批⑬：内联「新建事件…」（注册表下拉旁；建行即写表）
+    bool evNewOpen_ = false;
+    bool evNewFocus_ = false;      // 打开拍聚焦输入框（SetKeyboardFocusHere 时序）
+    char evNameNew_[80] = {};      // 新事件名输入（80 字节缓冲，校验 ≤64）
+    std::string evNewErr_;         // 新建校验消息（非法名/重名/写盘失败）
     // ---- T3c 动画集工作台（目标 = .ani；段编辑复用上方 clip 机制——集模式下
     // targetGuid_ 指向当前段，setGuid_ 指向集容器）----
     uint64_t setGuid_ = 0;                    // 当前集（0 = 裸 clip 传统模式）

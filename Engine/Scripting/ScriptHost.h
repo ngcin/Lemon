@@ -194,6 +194,12 @@ struct NativeApiVtable {
                                uint8_t* isDone); // 1=命中（在途或终态缓存）；
                                                 // 0=未知 op。progress 0..1（门关
                                                 // 封顶 0.9；终态 1.0=成功）
+    // ---- M8 批⑬（帧事件注册表按名解析：Lemon.AnimEvents/Anim.OnFrame →
+    // assets::AnimEventRegistry；表尾追加同上约定。装载期低频桥（ClipByName 同款
+    // 药方——ADR-013 段名按名解析先例）：订阅/Define 期一次解析后 C# 自缓存
+    //（id 永不变更），热路径仍 GameEvent.AnimFrame 队列 u16 逐位比较 = 零新通道；
+    // 按名通道不入 StateHash，基准场零调用 = 零漂移。空宿主/无表/未注册 = -1）----
+    int32_t (*animEventIdByName)(const char* name); // id 1..65535；-1 = 解析失败
 };
 
 /// 编辑器资产钩子（M4.4：编辑器宿主装配期经 SetEditorAssetHooks 注入；

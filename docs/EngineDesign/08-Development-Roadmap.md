@@ -174,7 +174,7 @@ Tilemap 数据 + chunk 烘焙渲染 → 碰撞层 → 自动瓦片 + TilePalette
 **验收**：压测 A 全绿；光照默认关闭零成本；soak 达标。**（2026-10-14 批⑥ 终表：压测 A 全绿 ✅（三跑 91/90/91）；零崩溃 ✅（转储登记零新增）；soak 内存曲线 ✅ 按引擎侧口径——引擎自有内存面零增长实证 + Windows 同构 61min 零斜率反证，mac 侧 +44.5MB/h 为 macOS SkyLight 系统行为（#R1 环境豁免收口，用户拍板）；[定位报告](../DevLog/2026-10-13-r1-soak-leak-diagnosis.md)、[Windows 反证](../DevLog/2026-10-14-r1-windows-counterproof.md)。）**
 
 > **架构债登记（2026-10-09，[引擎评审](../Reports/2026-10-09-engine-code-review.md) M23/L34/L39；D4 追认）**——只登记不修码，触发条件成立即启动（届时按条目立 ADR）：
-> - **#M23 C++/C# 边界 vtable 59 槽 god-interface**（双侧手工逐字节镜像）：当前以表尾追加 + LegacyFrozenBytes 冻结区 + 判空降级纪律管理。**触发 = 槽位数 ≥ 72 或发生一次双侧不同步回归** → 启动按域拆表（分组 + 版本化），占位 [ADR-018](../ADR/ADR-018-Script-Boundary-Vtable-Split-Placeholder.md)。
+> - **#M23 C++/C# 边界 vtable god-interface**（双侧手工逐字节镜像；登记时 59 槽，批⑬a 尾追 animEventIdByName 后 60——距 ≥72 阈值余 12）：当前以表尾追加 + LegacyFrozenBytes 冻结区 + 判空降级纪律管理。**触发 = 槽位数 ≥ 72 或发生一次双侧不同步回归** → 启动按域拆表（分组 + 版本化），占位 [ADR-018](../ADR/ADR-018-Script-Boundary-Vtable-Split-Placeholder.md)。
 > - **#L34 Assets↔Renderer 头文件级双向依赖**：目录分层纪律注记维持。**触发 = M8 光照批需在 Renderer 内新增对 Assets 类型的包含时** → 抽共享叶子或倒置依赖。**（2026-10-11 注记：ADR-019 光贴图方案下蒙版光源走 spriteId/AtlasRegistry 先例，Renderer 预计无需包含 Assets 类型——本债预计不触发，登记保留。）**
 > - **#L39 World 通道聚合 hub**（15 头 / 按值持 8+ 非 ECS 通道）：**触发 = M9 需新增第 9 个通道或出现包含编译时长恶化可测** → 通道注册表/接口化。
 > 修复进度跟踪在 [M7c 批⑪](../Plans/M7c/2026-10-09-b11-engine-review-fixes.md)；三条债不随批⑪ 修码。

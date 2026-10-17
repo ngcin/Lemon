@@ -84,6 +84,10 @@ public static class GameMain
         // ——script-tests TestLightSdk 消费：门面 Add/Get/Set/Remove + C++ emplace
         // 默认值对拍 + 镜像默认值坑实证（Type/Color/Flags 三连））
         Lemon.Behaviours.Register<LightProbeBehaviour>();
+        // M8 批⑬：帧事件注册表桥（typeId 27，表尾注册同上约定——script-tests
+        // TestAnimEventBridge 消费：AnimEvents.Define 对账红字面 + OnFrame 实例/
+        // 静态双路径订阅 + AnimFrame 队列命中/错 id/错实体三分支）
+        Lemon.Behaviours.Register<AnimEventProbeBehaviour>();
         // 批⑦：换场三事件订阅（Configure 期静态订阅，跨局存活）——事件序记录
         // "U:<name>:<valid>:<loaded>" / "L:<name>:<path>:<mode>" / "A:<old>><new>"
         Lemon.SceneManager.sceneUnloaded += st => SceneLog.Add(
@@ -1161,6 +1165,38 @@ public sealed class LightProbeBehaviour : Lemon.LemonBehaviour
                             && dn.Color == Lemon.Lighting.Rgba(120, 140, 255);
             Mark((ushort)(1918 + (dayNight ? 1 : 0)));
         } else if (fc == 11) {
+            gameObject.Destroy();
+        }
+    }
+}
+
+/// <summary>M8 批⑬（typeId 27）：帧事件注册表桥验收（script-tests
+/// TestAnimEventBridge）。C++ 侧预注入 anim-events.tab 夹具（probe-hit=7 /
+/// probe-other=9）。帧1：Define 对账（命中 true / 未注册 false = 启动红字面，
+/// stderr 可见）+ OnFrame 双路径订阅（实例助手 = 自动退订面；Anim.OnFrame 静态 =
+/// 域级，本探针自毁后无后续 AnimFrame 推送 = 恒哑）；帧2 C++ 推
+/// AnimFrame(user=7, src=本实体) → 双回调（分发在 Update 后——计数中报放帧3）；
+/// 帧3 前推错 id/错实体 → 零触发；帧4 终报 + Custom 1360 + 自毁。</summary>
+public sealed class AnimEventProbeBehaviour : Lemon.LemonBehaviour
+{
+    private int _inst;
+    private static int _static;
+
+    protected override void Update()
+    {
+        var fc = Lemon.Time.FrameCount;
+        if (fc == 1) {
+            bool hit = Lemon.AnimEvents.Define("probe-hit");
+            bool miss = Lemon.AnimEvents.Define("definitely-missing"); // 红字（stderr）
+            Lemon.Ui.Set("animreg", $"d{(hit ? 1 : 0)} m{(miss ? 1 : 0)}", -1f);
+            OnFrame("probe-hit", () => { _inst++; });                       // 实例级（推荐）
+            Lemon.Anim.OnFrame(gameObject, "probe-hit", () => { _static++; }); // 静态
+            OnFrame("definitely-missing", () => { _inst += 100; }); // 挂空：永不触发
+        } else if (fc == 3) {
+            Lemon.Ui.Set("animreg-hits", $"{_inst}|{_static}", -1f);
+        } else if (fc == 4) {
+            Lemon.Ui.Set("animreg-final", $"{_inst}|{_static}", -1f);
+            Lemon.Events.Push(Lemon.Interop.GameEvent.Custom, 1360, default, default);
             gameObject.Destroy();
         }
     }

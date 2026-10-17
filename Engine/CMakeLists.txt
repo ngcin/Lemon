@@ -16,6 +16,7 @@ add_library(lemon-engine STATIC
   Assets/AnimAsset.cpp
   Assets/ControllerAsset.cpp
   Assets/TableAsset.cpp
+  Assets/AnimEventRegistry.cpp
   Assets/PrefabCache.cpp
   Assets/PlayCaches.cpp
   Assets/FontBake.cpp

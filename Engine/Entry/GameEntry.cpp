@@ -49,6 +49,7 @@
 #include <vector>
 
 #include "Assets/AssetIndex.h"
+#include "Assets/AnimEventRegistry.h" // M8 批⑬：帧事件注册表启动注入
 #include "Assets/PlayCaches.h"
 #include "Assets/PrefabCache.h"
 #include "Assets/ProjectFile.h"
@@ -571,6 +572,31 @@ int main(int argc, char** argv) {
     }
     scripting::ScriptHost host;
     const std::string gameDll = (fs::path(root) / ".lemon" / "bin" / "Game.dll").string();
+    // M8 批⑬：帧事件注册表注入（须先于 LoadUserAssembly——GameMain.Configure 的
+    // AnimEvents.Define 在装载期解析名字）。寻址 = 固定契约路径 + tables 目录
+    // 大小写折叠回退（项目拼写不一）；缺表 = 空注入（裸 id 模式保底）
+    {
+        std::string regPath = (fs::path(root) / assets::kAnimEventTableRelPath).string();
+        if (!fs::is_regular_file(regPath))
+            for (const char* spell : {"Tables", "tables"}) {
+                const std::string cand =
+                    (fs::path(root) / "Assets" / spell / "anim-events.tab").string();
+                if (fs::is_regular_file(cand)) {
+                    regPath = cand;
+                    break;
+                }
+            }
+        std::string regText;
+        if (fs::is_regular_file(regPath)) {
+            std::ifstream rf(regPath, std::ios::binary);
+            regText.assign((std::istreambuf_iterator<char>(rf)),
+                           std::istreambuf_iterator<char>());
+        }
+        std::string regErr;
+        if (!assets::SetAnimEventTable(regText, &regErr) && !regErr.empty())
+            LEMON_WARN("lemon-game：帧事件注册表拒绝（%s）：%s——裸 id 模式",
+                       regPath.c_str(), regErr.c_str());
+    }
     if (!fs::is_regular_file(gameDll)) {
         LEMON_ERROR("lemon-game：用户程序集缺失：%s（构建归编辑器/packager——先用编辑器"
                     "打开项目编译 Game/）",

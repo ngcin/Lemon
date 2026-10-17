@@ -1,0 +1,24 @@
+{
+  "name": "anim-events",
+  "rows": [
+    [
+      "name",
+      "id",
+      "payload",
+      "desc"
+    ],
+    [
+      "attack-hit",
+      "1",
+      "-",
+      "攻击判定帧（Monster01/02 Attack.clip 帧 6）"
+    ],
+    [
+      "test-event",
+      "2",
+      "-",
+      ""
+    ]
+  ],
+  "schemaVersion": 1
+}

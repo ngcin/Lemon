@@ -9,6 +9,7 @@
 #include "Components/CoreComponents.h"
 #include "Components/RenderComponents.h"
 #include "Audio/AudioEngine.h" // NativeAudioMasterVolGet 直读引擎态（M6c 批②）
+#include "Assets/AnimEventRegistry.h" // M8 批⑬：NativeAnimEventIdByName（进程级注册表）
 #include "Core/Log.h"
 #include "Core/FileOps.h" // AcpToUtf8：win 侧 ACP 路径过 C++/C# UTF-8 边界前归一
 #include "ECS/ComponentRegistry.h"
@@ -634,6 +635,14 @@ int32_t NativeSceneAsyncQuery(uint32_t opId, float* progress, uint8_t* isDone) {
     return 1;
 }
 
+// M8 批⑬：帧事件注册表按名解析（装载期低频桥——注册表为进程级状态，不经
+// World；空名/无表/未注册 = -1，SDK 侧红字 + 订阅挂空）
+int32_t NativeAnimEventIdByName(const char* name) {
+    if (!name || !*name) return -1;
+    const uint32_t id = assets::AnimEventIdByName(name);
+    return id != 0 ? (int32_t)id : -1;
+}
+
 const NativeApiVtable kNativeApi{NativeIsAlive,
                                  NativeHas,
                                  NativeRead,
@@ -692,7 +701,8 @@ const NativeApiVtable kNativeApi{NativeIsAlive,
                                  NativeMarkDontDestroyOnLoad,
                                  NativeSceneLoadAsyncRequest,
                                  NativeSceneAsyncSetActivation,
-                                 NativeSceneAsyncQuery};
+                                 NativeSceneAsyncQuery,
+                                 NativeAnimEventIdByName};
 } // namespace
 
 void SetScriptIoHooks(const ScriptIoHooks& hooks) { g_scriptIo = hooks; }

@@ -184,6 +184,9 @@ bool EditorApp::OpenProjectPipeline(const std::string& projectRoot) {
     // （每次泄漏一个旧域；用户实测闪退链的第一环就是它）
     ScriptSourceChanged();
     LEMON_LOG("资产管线就绪：项目 %s", projectRoot.c_str());
+    // M8 批⑬：帧事件注册表注入（须先于脚本宿主装配——GameMain.Configure 的
+    // AnimEvents.Define 对账在装载期解析名字）
+    ctx_.RefreshAnimEventRegistry();
 
     // 项目自带 Game/ 工程且未显式 --script → 编译 + 装配脚本宿主（向导零配置体验）
     std::string csproj, dll;

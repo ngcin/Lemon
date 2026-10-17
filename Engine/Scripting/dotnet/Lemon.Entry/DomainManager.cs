@@ -106,6 +106,7 @@ internal static unsafe class DomainManager
                 // 换域清注册表/事件订阅 + 装配入口约定：GameMain.Configure()（无则无脚本系统）
                 Lemon.Scripting.Reset();
                 Lemon.Events.Reset();
+                Lemon.AnimEvents.Reset(); // M8 批⑬：名字解析缓存/Define 声明面随域清（Configure 重跑）
                 Lemon.UI.Reset();
                 Lemon.Behaviours.Reset();
                 Lemon.SceneOps.Reset();
@@ -150,6 +151,7 @@ internal static unsafe class DomainManager
                 s_tickFn = null; s_asm = null; s_alc = null; s_loadedPath = null;
                 Lemon.Scripting.Reset();
                 Lemon.Events.Reset();
+                Lemon.AnimEvents.Reset(); // M8 批⑬：名字解析缓存/Define 声明面随域清（Configure 重跑）
                 Lemon.UI.Reset();
                 Lemon.Behaviours.Reset();
                 Lemon.SceneOps.Reset();
@@ -204,6 +206,7 @@ internal static unsafe class DomainManager
                 Lemon.Behaviours.Reset(); // 旧实例即弃（类型来自旧域，保着只会 pin）
                 Lemon.Scripting.Reset();
                 Lemon.Events.Reset();
+                Lemon.AnimEvents.Reset(); // M8 批⑬：名字解析缓存/Define 声明面随域清（Configure 重跑）
                 Lemon.UI.Reset();
                 Lemon.SceneOps.Reset();
                 Lemon.Anim.ResetWarnTables(); // L17：告警去重表随域清

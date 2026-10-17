@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <algorithm>
 #include <limits>
 #include <filesystem>
@@ -24,6 +25,7 @@
 #include "Audio/BakedClip.h"
 #include "Audio/SpscRing.h" // M6c 批①b：SPSC 环序锁
 #include "Assets/AssetIndex.h" // M7a 批②：运行时只读索引
+#include "Assets/AnimEventRegistry.h" // M8 批⑬：帧事件注册表（进程级单测）
 #include "Assets/PlayCaches.h" // 批⑪ H2：Play 三缓存构建（坏 clip 红字跳过验收）
 #include "Assets/AtlasBake.h" // M7a 批⑥：LAT1 容器/装箱/烤制
 #include "Assets/AtlasStore.h" // M7a 批⑥：LAT1 装载登记核
@@ -1915,6 +1917,75 @@ void TestClipCacheBadArchive() {
     fs::remove_all(root, ec);
 }
 
+void TestAnimEventRegistry() {
+    // M8 批⑬：项目级帧事件注册表——.tab 轨道解析（列头契约）/行级冲突拒/
+    // id 漂移（以表为准）/缺表保底。进程级状态：测试尾清空还原（裸 id 模式）。
+    using namespace lemon::assets;
+    std::string err;
+
+    // 好表：跳号合法（1/5/6）——id 分配后永不回收复用
+    Expect(SetAnimEventTable(R"({"schemaVersion":1,"name":"anim-events","rows":[
+        ["name","id","payload","desc"],
+        ["attack-hit","1","-","命中判定"],
+        ["footstep","5","-",""],
+        ["death","6","-",""] ]})", &err),
+           "good table accepted");
+    Expect(AnimEventCount() == 3, "3 events registered");
+    Expect(AnimEventIdByName("attack-hit") == 1, "name→id");
+    Expect(AnimEventIdByName("footstep") == 5, "skip-numbered id ok");
+    Expect(std::strcmp(AnimEventNameById(5), "footstep") == 0, "id→name");
+    Expect(AnimEventNameById(2) == nullptr, "unknown id → nullptr（未注册 badge 面）");
+    Expect(AnimEventIdByName("no-such") == 0, "unknown name → 0（Define 红字面）");
+    Expect(AnimEventNextId() == 7, "next id = max+1（跳号不回收）");
+    {
+        AnimEventDef d;
+        Expect(AnimEventAt(1, d) && d.name == "footstep" && d.id == 5 && d.payload == "-",
+               "At(i) 表行序 + payload 原样保留");
+        Expect(!AnimEventAt(3, d), "At 越界 = false");
+    }
+
+    // 行级拒（同名/同 id/坏 id/坏名）：整表照常，warn-once 哲学
+    SetAnimEventTable(R"({"schemaVersion":1,"name":"anim-events","rows":[
+        ["name","id","payload","desc"],
+        ["a","1","-",""],
+        ["a","2","-",""],
+        ["b","1","-",""],
+        ["c","0","-",""],
+        ["d","70000","-",""],
+        ["e","xy","-",""],
+        ["","9","-",""],
+        ["ok","12","-",""] ]})", &err);
+    Expect(AnimEventCount() == 2, "row-level rejects skip, rest kept");
+    Expect(AnimEventIdByName("a") == 1 && AnimEventIdByName("ok") == 12,
+           "first row wins on both conflict kinds");
+    Expect(AnimEventIdByName("b") == 0 && AnimEventIdByName("c") == 0 &&
+               AnimEventIdByName("d") == 0 && AnimEventIdByName("e") == 0,
+           "conflict/bad rows not registered");
+
+    // id 漂移：同名异 id 重注入 → 以表为准（旧 clip 语义漂移面仅告警）
+    SetAnimEventTable(R"({"schemaVersion":1,"name":"anim-events","rows":[
+        ["name","id","payload","desc"],
+        ["a","1","-",""] ]})", &err);
+    SetAnimEventTable(R"({"schemaVersion":1,"name":"anim-events","rows":[
+        ["name","id","payload","desc"],
+        ["a","2","-",""] ]})", &err);
+    Expect(AnimEventIdByName("a") == 2, "id drift: table wins");
+
+    // 坏表（列头契约 / 坏 JSON）= 整表拒绝（空表 + error）——裸 id 保底
+    Expect(!SetAnimEventTable(R"({"schemaVersion":1,"name":"anim-events","rows":[
+        ["name","id","desc"],
+        ["a","1",""] ]})", &err) &&
+               !err.empty(),
+           "header mismatch rejected with error");
+    Expect(AnimEventCount() == 0, "bad table cleared registry");
+    Expect(!SetAnimEventTable("not json", &err), "bad json rejected");
+    Expect(AnimEventNameById(1) == nullptr, "bare-id mode after bad table");
+
+    // 缺表/清空 = 裸 id 模式（合法）
+    Expect(SetAnimEventTable("", &err) && AnimEventCount() == 0,
+           "empty injection = bare-id mode (合法保底)");
+}
+
 void RunAssetsTests() {
 #ifdef LEMON_EDITOR_CORE
     TestProjectFile();
@@ -1978,4 +2049,5 @@ void RunAssetsTests() {
 #ifdef LEMON_EDITOR_CORE
     TestClipCacheBadArchive(); // 批⑪ H2：坏 clip 红字跳过不炸 Play
 #endif
+    TestAnimEventRegistry(); // M8 批⑬：帧事件注册表（表解析/冲突行拒/id 漂移）
 }

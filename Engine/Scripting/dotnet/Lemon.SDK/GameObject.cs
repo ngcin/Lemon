@@ -161,6 +161,25 @@ public abstract class LemonBehaviour
         (_subscriptions ??= new List<(GameEvent, Action<GameEventMsg>)>(2)).Add((type, handler));
     }
 
+    /// <summary>命名帧事件订阅（M8 批⑬）：实体 g 的动画打点命中事件名时回调——
+    /// Anim.OnFrame 的实例级版（OnDestroy 自动退订；行为体内首选）。订阅期一次解析
+    /// name→id，热路径 m.User 逐位比较；未注册 = 启动红字 + 该订阅挂空。</summary>
+    protected void OnFrame(GameObject g, string eventName, Action cb)
+    {
+        if (cb == null || g.Entity.Id == 0) return;
+        if (!AnimEvents.TryIdOf(eventName, out ushort id)) {
+            AnimEvents.WarnUnresolved("OnFrame", eventName ?? "");
+            return;
+        }
+        void Handler(GameEventMsg m) {
+            if (m.User == id && m.Src.Id == g.Entity.Id) cb();
+        }
+        Subscribe(GameEvent.AnimFrame, Handler);
+    }
+
+    /// <summary>自身实体的命名帧事件（DuelBehaviour 式判定帧消费的 90% 形态）。</summary>
+    protected void OnFrame(string eventName, Action cb) => OnFrame(gameObject, eventName, cb);
+
     /// <summary>Behaviours.Detach 收尾调用：清本实例全部订阅（OnDestroy 后）。</summary>
     internal void ClearSubscriptions()
     {

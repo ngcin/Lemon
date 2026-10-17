@@ -145,6 +145,12 @@ public:
     // ---- 游戏存档 IO：实现已下沉 Engine/Assets/SaveStore（M7a 批③，编辑器与
     // lemon-game 共用）；EnterPlay/ExitPlay/ScriptHost saveFlush 钩子直调 ----
 
+    // ---- 帧事件注册表注入（M8 批⑬）：DB → assets::AnimEventRegistry（进程级）。
+    // 变更门 = 条目 guid+hash；Play 中冻结返回（BuildPlayTableCache 快照同语义
+    // ——Play 期改表不生效，域线程只读 = 无并发写；Play 中漏掉的变更由 ExitPlay
+    // 补注——冻结期不推进变更门记忆）----
+    void RefreshAnimEventRegistry();
+
     // ---- Undo 双轨（§3.5；Play 中禁用）----
     UndoStack& Undo() { return undo_; }
     /// 组件字节快照（属性轨原料；guid 定位）
@@ -202,6 +208,8 @@ private:
     assets::PrefabCache playPrefabs_; // M5 清障②（M7a 批③ 下沉引擎件；EnterPlay 建）
     bool lastExitVerified_ = false;
     double lastEnterMs_ = 0.0, lastExitMs_ = 0.0;
+    // M8 批⑬：注册表注入变更门（条目 guid+hash；Play 冻结期不推进）
+    uint64_t animEventsGuid_ = 0, animEventsHash_ = 0;
     UndoStack undo_;
 };
 

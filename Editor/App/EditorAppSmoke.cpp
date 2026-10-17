@@ -21,6 +21,7 @@
 #include "App/ImGuiBackend.h"
 #include "Assets/AssetDatabase.h"
 #include "Assets/AnimAsset.h" // M6a 批② T3：smoke-anim clip 编辑链（面板数据面同款）
+#include "Assets/AnimEventRegistry.h" // M8 批⑬：注册表链断言（IdByName/NextId）
 #include "Assets/ControllerAsset.h" // T3d：smoke-anim graph 链（controller 数据面）
 #include "Interaction/ViewportRenderer.h"
 #include "Components/BehaviorComponents.h"
@@ -1287,6 +1288,11 @@ struct AnimSmokeState {
     // 不变式 / 头插-头删的重映射往返 / 删除还原
     bool smokeEventsAddOk = false, smokeEventsDupOk = false, smokeEventsRtOk = false,
          smokeEventsSyncOk = false, smokeEventsDelOk = false, smokeEventsDone = false;
+    // M8 批⑬：帧事件注册表链（f134-136，Edit 态）：新建事件写表+注入 / 按名
+    // 打点（档面 id = 注册表 id）/ 裸 id 未注册 badge 面 / 基线还原。表落临时
+    // 项目（会话即弃）——种子档盘面零改动（b11 教训续）
+    bool smokeRegCreateOk = false, smokeRegPickOk = false, smokeRegUnregOk = false,
+         smokeRegDelOk = false, smokeRegDone = false;
     // review 修复回归（2026-10-16）：B2 Play 只读态画布滚轮缩放 + B1 把手单击
     // 不落自环边（f125 再进 Play → f128 滚轮注入 → f129/f130 单击注入）
     bool smokeCtrlRoPlayOk = false, smokeCtrlZoomOk = false, smokeCtrlClickOk = false;
@@ -2209,10 +2215,58 @@ void EditorApp::SmokeAnimFrame(uint64_t frame) {
                     LEMON_ERROR("smoke-anim：Play 态画布滚轮缩放无响应（相机被只读域冻结）");
             }
             // 探针毕即关窗：开窗态会被 ini 持久化（开 + 浮动位置），同项目复跑
-            // 时该窗从 f0 起浮在 FilePicker 默认落位上方吃注入点击 → picker/
+            // 时该窗从 f0 起浮在 File Picker 默认落位上方吃注入点击 → picker/
             // folder 三链假红（复跑实测）。关闭态与 fresh 跑一致 = 跨跑稳定。
             ClosePanel("AnimController");
             if (!StopPlay()) LEMON_ERROR("smoke-anim：review 回归段 Stop 失败");
+        }
+        // M8 批⑬：帧事件注册表链（f134-136，Edit 态——f133 已 StopPlay）。临时
+        // 项目零表起步：create = 「新建事件」写表 + Rescan + 进程级注册表注入；
+        // pick = 按名打点（名字→id 落进档面 events[].id——id 线上格式不变）；
+        // unreg = 裸 id 打点未注册（badge 面：NameById == nullptr）；del = 还原
+        // 基线。表落在临时项目（smoke 会话即弃）——种子档盘面仍零改动。
+        else if (frame == 134 && !g_animSmoke.smokeRegDone) {
+            g_animSmoke.smokeRegDone = true;
+            if (PanelRegistry::Entry* en = panels_.FindEntry("Animation")) {
+                AnimationPanel* ap = static_cast<AnimationPanel*>(en->panel);
+                const uint32_t expectId = assets::AnimEventNextId(); // 空表起步 = 1
+                const bool created = ap->CreateAnimEventForTest(*this, "smoke-hit");
+                g_animSmoke.smokeRegCreateOk =
+                    created &&
+                    assets::AnimEventIdByName("smoke-hit") == expectId &&
+                    ctx_.Assets().FindByPathFold(assets::kAnimEventTableRelPath) != nullptr;
+                if (!g_animSmoke.smokeRegCreateOk)
+                    LEMON_ERROR("smoke-anim：注册表链不符（建行未写表/未注入：created=%d）",
+                                (int)created);
+            }
+        } else if (frame == 135) {
+            if (PanelRegistry::Entry* en = panels_.FindEntry("Animation")) {
+                AnimationPanel* ap = static_cast<AnimationPanel*>(en->panel);
+                const uint32_t id = assets::AnimEventIdByName("smoke-hit");
+                // pick：按名打点 → 档面 id = 注册表 id（裸数字不出现在作者面）
+                g_animSmoke.smokeRegPickOk =
+                    ap->AddNamedEventForTest(0, "smoke-hit") &&
+                    ap->EventCountForTest() == 1 && ap->EventIdAtForTest(0) == id;
+                // unreg：裸 id 99 打点 → 未注册 badge 面（显示层兜住，不拦）
+                g_animSmoke.smokeRegUnregOk = ap->AddEventForTest(1, 99) &&
+                                               ap->EventIdAtForTest(1) == 99 &&
+                                               assets::AnimEventNameById(99) == nullptr;
+                if (!g_animSmoke.smokeRegPickOk || !g_animSmoke.smokeRegUnregOk)
+                    LEMON_ERROR("smoke-anim：注册表链不符（pick=%d unreg=%d）",
+                                (int)g_animSmoke.smokeRegPickOk,
+                                (int)g_animSmoke.smokeRegUnregOk);
+            }
+        } else if (frame == 136) {
+            // del：清干净（基线还原 = 种子档零污染自证）
+            if (PanelRegistry::Entry* en = panels_.FindEntry("Animation")) {
+                AnimationPanel* ap = static_cast<AnimationPanel*>(en->panel);
+                g_animSmoke.smokeRegDelOk =
+                    g_animSmoke.smokeRegPickOk && g_animSmoke.smokeRegUnregOk &&
+                    ap->DeleteEventForTest(0, assets::AnimEventIdByName("smoke-hit")) &&
+                    ap->DeleteEventForTest(1, 99) && ap->EventCountForTest() == 0;
+                if (!g_animSmoke.smokeRegDelOk)
+                    LEMON_ERROR("smoke-anim：注册表链不符（基线未还原）");
+            }
         }
     }
 }
@@ -2312,7 +2366,9 @@ bool EditorApp::SmokeAnimVerdict() {
              g_animSmoke.smokeCtrlClickOk &&
              g_animSmoke.smokeEventsAddOk && g_animSmoke.smokeEventsDupOk &&
              g_animSmoke.smokeEventsRtOk && g_animSmoke.smokeEventsSyncOk &&
-             g_animSmoke.smokeEventsDelOk;
+             g_animSmoke.smokeEventsDelOk &&
+             g_animSmoke.smokeRegCreateOk && g_animSmoke.smokeRegPickOk &&
+             g_animSmoke.smokeRegUnregOk && g_animSmoke.smokeRegDelOk;
     std::printf("[lemon] smoke-anim: prog(maxFrame=%u slice=%s booked=%u)%s "
                 "queue(hitClip=%s hit=%s back=%s) fx(text/bar=%s) "
                 "edit(rt=%s cache=%s whole=%s) set(rt=%s cache=%s open=%s "
@@ -2322,6 +2378,7 @@ bool EditorApp::SmokeAnimVerdict() {
                 "drag(item=%s) leftcol(meta=%s) ctrl(open=%s load=%s save=%s gate=%s "
                 "layout=%s edge=%s any=%s ro=%s zoom=%s click=%s) "
                 "events(add=%s dup=%s rt=%s sync=%s del=%s) "
+                "reg(create=%s pick=%s unreg=%s del=%s) "
                 "=> %s\n",
                 (unsigned)g_animSmoke.smokeAnimMax[0], g_animSmoke.smokeAnimSlice[0] ? "YES" : "NO",
                 sh ? sh->sliceCount : 0, yami, hitBooked ? "booked" : "MISSING",
@@ -2355,6 +2412,10 @@ bool EditorApp::SmokeAnimVerdict() {
                 g_animSmoke.smokeEventsRtOk ? "YES" : "NO",
                 g_animSmoke.smokeEventsSyncOk ? "YES" : "NO",
                 g_animSmoke.smokeEventsDelOk ? "YES" : "NO",
+                g_animSmoke.smokeRegCreateOk ? "YES" : "NO",
+                g_animSmoke.smokeRegPickOk ? "YES" : "NO",
+                g_animSmoke.smokeRegUnregOk ? "YES" : "NO",
+                g_animSmoke.smokeRegDelOk ? "YES" : "NO",
                 animOk ? "OK" : "FAIL");
     return animOk;
 }

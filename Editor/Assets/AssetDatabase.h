@@ -129,6 +129,8 @@ public:
     // ---- 查询（外部删除 = 条目同轮出表；missing 仅编辑器内 Remove 的同帧过渡位）----
     const AssetEntry* FindByGuid(uint64_t guid) const;
     const AssetEntry* FindByPath(const std::string& relPath) const;
+    /// 路径 ASCII 折叠寻址（大小写不敏感；M8 批⑬ 注册表固定契约路径用）
+    const AssetEntry* FindByPathFold(const std::string& relPath) const;
     const AssetEntry* FindBySpriteId(uint32_t spriteId) const;
     /// spriteId 是否已登记（全幅号 ∪ 切片连号区间；M5 批④ 场景装载悬空校验用）
     bool SpriteIdRegistered(uint32_t spriteId) const;

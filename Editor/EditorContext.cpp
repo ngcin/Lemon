@@ -13,6 +13,7 @@
 #include <nlohmann/json.hpp>
 
 #include "Assets/PlayCaches.h" // assets::Build*Cache（Play 三缓存引擎本体；M7a 批④）
+#include "Assets/AnimEventRegistry.h" // M8 批⑬：帧事件注册表注入（RefreshAnimEventRegistry）
 #include "Assets/SpriteRefs.h" // assets::ResolveSpriteRefs（guid 归一引擎本体；M7a 批②）
 #include "Assets/SaveStore.h"  // assets::SaveStore（Play 存档三通道；M7a 批③ 下沉件）
 #include "Components/CoreComponents.h"
@@ -603,6 +604,29 @@ void EditorContext::BuildPlayTableCache() {
     assets::BuildTableCache(*playWorld_, src);
 }
 
+void EditorContext::RefreshAnimEventRegistry() {
+    // M8 批⑬：Assets/Tables/anim-events.tab → assets::AnimEventRegistry（进程级，
+    // ScriptHost 低频桥 + AnimationPanel 显示面共读）。列契约/行级冲突/id 漂移
+    // 告警归引擎侧；此处只管寻址（折叠路径）+ 变更门 + Play 冻结。缺表 = 清空
+    //（裸 id 模式保底）；坏表 = 引擎整表拒 + 红字（编辑器降级显 #N（未命名））。
+    if (Playing()) return; // 快照语义：Play 中不推进（变更门记忆不消耗，ExitPlay 补注）
+    const AssetEntry* e = assets_.FindByPathFold(assets::kAnimEventTableRelPath);
+    const uint64_t guid = e && !e->missing ? e->guid : 0;
+    const uint64_t hash = e && !e->missing ? e->hash : 0;
+    if (guid == animEventsGuid_ && hash == animEventsHash_) return; // 未变
+    animEventsGuid_ = guid;
+    animEventsHash_ = hash;
+    std::string text;
+    if (e && !e->missing) {
+        std::ifstream f(assets_.AbsolutePath(*e), std::ios::binary);
+        text.assign((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    }
+    std::string err;
+    if (!assets::SetAnimEventTable(text, &err) && !err.empty())
+        LEMON_WARN("帧事件注册表拒绝（%s）：%s——裸 id 模式（打点显 #N（未命名））",
+                   assets::kAnimEventTableRelPath, err.c_str());
+}
+
 bool EditorContext::ApplyPrefabInstance(ecs::Entity e) {
     // 句柄属 ActiveScene（review 2026-10-02 #4）：原恒走 scene_ = Play 中 Apply 拿
     // play 句柄戳 edit 世界，id 撞车时把撞号实体的子树写进 .prefab 资产文件
@@ -751,6 +775,9 @@ void EditorContext::PruneSelection() {
 bool EditorContext::EnterPlay() {
     if (Playing()) return false;
     const auto t0 = std::chrono::steady_clock::now();
+    // M8 批⑬：注册表快照点（BuildPlayTableCache 同语义——本 Play 会话的名字↔id
+    // 固化于进 Play 时刻；漏掉的 watcher 变更在此补注）
+    RefreshAnimEventRegistry();
     // §3.4-1：先固化快照（未保存改动进快照但不落盘，dirty 保持）
     editSnapshot_ = SceneArchive::Save(*scene_);
     // §3.4-3：playWorld ← Load(快照)；同 seed（确定性；编辑世界种子同源）
@@ -846,6 +873,8 @@ bool EditorContext::ExitPlay() {
         if (ecs::Entity e = FindByGuid(g); !e.IsNull()) selection_.push_back(e);
     // 验收 #5：Stop 后序列化 == 进 Play 前快照（逐字节）
     lastExitVerified_ = SceneArchive::Save(*scene_) == editSnapshot_;
+    // M8 批⑬：Play 冻结解除——期间漏掉的注册表变更在此补注（hash 门零成本）
+    RefreshAnimEventRegistry();
     lastExitMs_ = std::chrono::duration<double, std::milli>(
                       std::chrono::steady_clock::now() - t0)
                       .count();

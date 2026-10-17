@@ -43,6 +43,24 @@ const AssetEntry* AssetDatabase::FindByPath(const std::string& relPath) const {
     return nullptr;
 }
 
+const AssetEntry* AssetDatabase::FindByPathFold(const std::string& relPath) const {
+    // ASCII 折叠比较（M8 批⑬）：项目既有 tables/ 目录大小写不一（svr-test =
+    // "Assets/tables"，注册表契约路径 = "Assets/Tables/…"），macOS/Windows 文件
+    // 系统本不敏感——寻址跟随，Linux 移植矩阵项
+    const auto fold = [](char c) -> char {
+        return (char)(c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c);
+    };
+    const auto eqFold = [&](const std::string& a, const std::string& b) {
+        if (a.size() != b.size()) return false;
+        for (size_t i = 0; i < a.size(); ++i)
+            if (fold(a[i]) != fold(b[i])) return false;
+        return true;
+    };
+    for (const auto& e : entries_)
+        if (!e.missing && eqFold(e.relPath, relPath)) return &e;
+    return nullptr;
+}
+
 const AssetEntry* AssetDatabase::FindBySpriteId(uint32_t spriteId) const {
     if (spriteId == 0) return nullptr;
     for (const auto& e : entries_) {

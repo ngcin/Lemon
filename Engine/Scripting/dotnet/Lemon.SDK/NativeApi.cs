@@ -78,6 +78,11 @@ public unsafe struct NativeApi
     public delegate* unmanaged<byte*, byte, uint> SceneLoadAsyncRequest;       // opId（1 起；0=失败）
     public delegate* unmanaged<uint, int, int> SceneAsyncSetActivation;        // 1=受理（在途）；0=终态/未知
     public delegate* unmanaged<uint, float*, byte*, int> SceneAsyncQuery;      // 1=命中；progress 0..1（门关封顶 0.9）
+    // ---- M8 批⑬（帧事件注册表按名解析；表尾追加同上约定。装载期低频桥——
+    // ClipByName 同款药方（ADR-013 先例）：Define/OnFrame 订阅期一次解析后
+    // AnimEvents 自缓存（id 永不变更），热路径仍是 AnimFrame 队列 u16 逐位比较。
+    // 旧宿主 = null → -1 降级（红字 + 订阅挂空）----
+    public delegate* unmanaged<byte*, int> AnimEventIdByName;                  // id 1..65535；-1 = 未注册/无表/空宿主
 }
 
 /// <summary>场景档案快照（与 C++ lemon::scripting::SceneInfoC 逐字节一致；
@@ -522,5 +527,15 @@ internal static unsafe class Native
         progress = p;
         isDone = d != 0;
         return true;
+    }
+
+    // ---- M8 批⑬（帧事件注册表按名；旧宿主未注册 = -1 降级）----
+
+    internal static unsafe int AnimEventIdByName(string name)
+    {
+        if (Api.AnimEventIdByName == null || string.IsNullOrEmpty(name)) return -1;
+        byte* p = stackalloc byte[64];
+        CopyUtf8(name, p, 63);
+        return Api.AnimEventIdByName(p);
     }
 }

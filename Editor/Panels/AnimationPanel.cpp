@@ -30,7 +30,10 @@
 
 #include "App/EditorApp.h"
 #include "Assets/AssetDatabase.h"
+#include "Assets/AnimEventRegistry.h" // M8 批⑬：帧事件注册表（下拉/显名/新建）
+#include "Assets/TableAsset.h"        // ParseTableJson/TableToJson（注册表建行写表）
 #include "Core/Log.h"
+#include "Core/FileOps.h" // WriteFileAtomic（注册表建行）
 #include "EditorContext.h"
 #include "Localization/Localization.h"
 #include "Panels/BuiltInPanels.h"
@@ -44,6 +47,16 @@ namespace lemon::editor {
 namespace {
 constexpr float kStripEdgeMin = 40.0f, kStripEdgeMax = 128.0f; // 胶片带缩放域
 constexpr float kSegListWidth = 230.0f;   // 左列宽（v3：容纳搜索框）
+
+// M8 批⑬：打点显示字面（注册表面）。已注册 id 显名字；未注册 = 红 badge
+//「#N（未命名）」（旧档裸 id 不迁移不重写，显示层兜住 = 渐进采用）。
+/// tooltip/副位字面：已注册 = 名字·#id（数字副位）；未注册 = #N（未命名）
+std::string AnimEventTipLabel(uint32_t id) {
+    using loc::trFmt;
+    if (const char* n = assets::AnimEventNameById(id))
+        return trFmt("anim.event.tip_item_fmt", {n, std::to_string(id)});
+    return trFmt("anim.event.unreg_fmt", {std::to_string(id)});
+}
 
 /// 帧引用可解析？（判据与 BuildPlayClipCache 同源——面板拦在保存前）
 bool FrameResolvable(const AssetDatabase& db, const assets::ClipFrame& f, const AssetEntry*& out) {
@@ -513,16 +526,17 @@ void AnimationPanel::DrawFilmstrip(EditorApp& app, bool ro, int playFrame) {
             previewFrame_ = i; // v3：选中即预览（取代旧"双击跳帧"）
             previewing_ = false;
         }
-        // M8 批⑫：事件帧 tooltip——该帧全部打点（chip 同款字面；空帧不出）
+        // M8 批⑫：事件帧 tooltip——该帧全部打点（chip 同款字面；空帧不出）。
+        // ⑬：字面 = 名字·#id（未注册 = #N（未命名）红字面，同 chips）
         if (evCount[(size_t)i] > 0 && ImGui::IsItemHovered()) {
-            std::string ids;
+            std::string evs;
             for (const auto& e : edit_.events)
                 if (e.frame == (uint32_t)i) {
-                    if (!ids.empty()) ids += "  ";
-                    ids += "#" + std::to_string(e.id);
+                    if (!evs.empty()) evs += "  ";
+                    evs += AnimEventTipLabel(e.id);
                 }
             ImGui::SetTooltip(
-                "%s", trFmt("anim.event.tip_fmt", {std::to_string(i), ids}).c_str());
+                "%s", trFmt("anim.event.tip_fmt", {std::to_string(i), evs}).c_str());
         }
         // 右键帧菜单：插入/删除/帧事件（删除主入口之一——属性行退役后此处在位）
         if (ImGui::BeginPopupContextItem("##framectx")) {
@@ -1217,6 +1231,11 @@ void AnimationPanel::ResetEditingState() {
     evModalPending_ = false;
     evEditIdx_ = kEventNew;
     evErr_.clear();
+    // M8 批⑬：内联新建事件态同清
+    evNewOpen_ = false;
+    evNewFocus_ = false;
+    evNameNew_[0] = '\0';
+    evNewErr_.clear();
 }
 
 void AnimationPanel::StartImageFilePick(EditorApp& app) {
@@ -2353,12 +2372,14 @@ void AnimationPanel::DrawPreview(EditorApp& app, bool ro, int shown) {
 }
 
 // ------------------------------------------------------------ 帧事件（M8 批⑫）----
+// M8 批⑬：显示面接注册表——字面构造 helper 见文件顶（AnimEventLabel/TipLabel）。
 
 void AnimationPanel::DrawEventRow(EditorApp& app, bool ro) {
     // 全部打点 chips：点击跳帧选中（导航，ro 同样可用——传输键先例）/ × 删除 /
     // 右键编辑；＋ 在选中帧打点。流式折行（剩余宽不够即换行——M7c 批⑫ 越窗
     // 教训：不硬塞一行）；超 32 个打点截断 + "+K…"（tooltip 补全量——病态长表
-    // 不拖死布局）。
+    // 不拖死布局）。⑬ 起 chip 字面 = 帧·名字（未注册 = 帧·#N（未命名）红 tint，
+    // tooltip 补 id 副位）。
     (void)app;
     using lemon::editor::loc::tr;
     using lemon::editor::loc::trFmt;
@@ -2370,8 +2391,13 @@ void AnimationPanel::DrawEventRow(EditorApp& app, bool ro) {
     const size_t cap = std::min<size_t>(total, 32);
     for (size_t k = 0; k < cap; ++k) {
         const auto& e = edit_.events[k];
-        const std::string chip = trFmt("anim.event.chip_fmt",
-                                       {std::to_string(e.frame), std::to_string(e.id)});
+        const char* regName = lemon::assets::AnimEventNameById(e.id);
+        const std::string chip =
+            regName ? trFmt("anim.event.chip_name_fmt",
+                            {std::to_string(e.frame), regName})
+                    : trFmt("anim.event.chip_fmt",
+                            {std::to_string(e.frame),
+                             trFmt("anim.event.unreg_fmt", {std::to_string(e.id)})});
         // 流式折行：chip + × 放得下当前行才 SameLine，放不下自然落下一行
         // （M7c 批⑫ 越窗教训：不硬塞一行；GetContentRegionAvail = 当行剩余宽）
         const float need = ImGui::CalcTextSize(chip.c_str()).x + st.FramePadding.x * 2.0f +
@@ -2380,6 +2406,11 @@ void AnimationPanel::DrawEventRow(EditorApp& app, bool ro) {
         ImGui::PushID((int)k);
         const bool hot = (int)e.frame == selFrame_;
         if (hot) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetColorU32(theme::kAccent));
+        else if (!regName) { // 未注册 = 红 badge（b9 结构 lint 同族告警，不拦）
+            ImVec4 eb = theme::kTextError;
+            eb.w *= 0.45f;
+            ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetColorU32(eb));
+        }
         if (ImGui::SmallButton(chip.c_str())) { // 跳帧选中（选中即预览跟随）
             selFrame_ = (int)e.frame;
             selSet_.assign(1, selFrame_);
@@ -2387,10 +2418,15 @@ void AnimationPanel::DrawEventRow(EditorApp& app, bool ro) {
             previewFrame_ = selFrame_;
             previewing_ = false;
         }
-        if (hot) ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) // id 副位（数字灰显——名字优先，id 补检索面）
+            ImGui::SetTooltip("%s", AnimEventTipLabel(e.id).c_str());
+        if (hot || !regName) ImGui::PopStyleColor();
         if (ImGui::BeginPopupContextItem("##evctx")) { // 右键 = 编辑（多事件帧的
             // 多点编辑入口——帧格右键只开该帧首个）
-            if (ImGui::MenuItem(tr("anim.event.ctx_edit"))) OpenEventModal(-1, k);
+            if (ImGui::MenuItem(
+                    regName ? trFmt("anim.event.ctx_edit_named_fmt", {regName}).c_str()
+                            : tr("anim.event.ctx_edit")))
+                OpenEventModal(-1, k);
             if (ImGui::MenuItem(tr("common.delete"))) DeleteEventAt(k);
             ImGui::EndPopup();
         }
@@ -2427,16 +2463,19 @@ void AnimationPanel::DrawEventRow(EditorApp& app, bool ro) {
 
 void AnimationPanel::OpenEventModal(int frame, size_t editIdx) {
     // 入口统一（帧格右键/chips 右键/＋）：编辑态预填事件自身字段，新建预填入口
-    // 帧（缺省回落当前选中帧）；边沿触发一次 OpenPopup（同 wiz/pick 族）
+    // 帧（缺省回落当前选中帧）；边沿触发一次 OpenPopup（同 wiz/pick 族）。
+    // ⑬：新建缺省 id = 注册表首项（打点全程不见裸数字；无表回落 1 裸 id 模态）
     if (editIdx < edit_.events.size()) {
         evFrame_ = (int)edit_.events[editIdx].frame;
         evId_ = (int)edit_.events[editIdx].id;
     } else {
         evFrame_ = frame >= 0 ? frame : std::max(selFrame_, 0);
-        evId_ = 1;
+        assets::AnimEventDef first;
+        evId_ = assets::AnimEventAt(0, first) ? (int)first.id : 1;
     }
     evEditIdx_ = editIdx;
     evErr_.clear();
+    evNewErr_.clear();
     evModalOpen_ = true;
     evModalPending_ = true;
 }
@@ -2482,9 +2521,85 @@ void AnimationPanel::DeleteEventAt(size_t idx) {
     saveMsg_.clear();
 }
 
-void AnimationPanel::DrawEventModal() {
+bool AnimationPanel::CreateAnimEvent(EditorApp& app, const std::string& name,
+                                     std::string& err) {
+    // M8 批⑬「新建事件」唯一写路径（模态内联输入/冒烟钩子共用）：
+    //   名检（引擎单源）→ 重名拒（id 分配后永不复用——重名 = 既已存在）→
+    //   既有表追加行 / 缺表建表（目录跟随项目既有 tables/ 拼写，Linux 防双目录）
+    //   → TableToJson 原子写 → Rescan（尾部 RefreshAnimEventRegistry 注入）。
+    // 成功自证 = 进程级注册表解析吃到新行（表写成功但装载拒 = 返 false 交底）。
+    using lemon::editor::loc::tr;
+    using lemon::editor::loc::trFmt;
+    err.clear();
+    if (!assets::ValidAnimEventName(name)) {
+        err = tr("anim.event.err_bad_name");
+        return false;
+    }
+    if (assets::AnimEventIdByName(name.c_str()) != 0) {
+        err = tr("anim.event.err_dup_name");
+        return false;
+    }
+    AssetDatabase& db = app.Ctx().Assets();
+    if (db.ProjectRoot().empty()) {
+        err = tr("anim.event.err_no_project");
+        return false;
+    }
+    std::vector<std::vector<std::string>> rows = {{"name", "id", "payload", "desc"}};
+    std::string abs;
+    if (const AssetEntry* e = db.FindByPathFold(assets::kAnimEventTableRelPath);
+        e && !e->missing) {
+        abs = db.AbsolutePath(*e);
+        std::ifstream f(abs, std::ios::binary);
+        std::string text((std::istreambuf_iterator<char>(f)),
+                         std::istreambuf_iterator<char>());
+        const assets::TableData t = assets::ParseTableJson(text);
+        if (!t.ok || t.Cols() < 4 || t.rows[0][0] != "name" || t.rows[0][1] != "id" ||
+            t.rows[0][2] != "payload" || t.rows[0][3] != "desc") {
+            err = trFmt("anim.event.err_table_fmt",
+                        {t.ok ? assets::kAnimEventTableRelPath : t.error});
+            return false; // 坏表/异 schema 不静默覆写（作者数据优先）
+        }
+        rows = t.rows;
+    } else {
+        // 建表目录：既有 tables/ 条目的拼写优先（大小写跟随项目现状）
+        std::string dir = "Assets/Tables";
+        for (const AssetEntry& x : db.Entries()) {
+            if (x.relPath.size() > 13 && !x.missing) {
+                bool hit = true;
+                for (size_t c = 0; c < 13 && hit; ++c) {
+                    const char a = (char)std::tolower((unsigned char)x.relPath[c]);
+                    hit = a == "assets/tables/"[c];
+                }
+                if (hit) {
+                    dir = x.relPath.substr(0, 12);
+                    break;
+                }
+            }
+        }
+        abs = db.ProjectRoot() + "/" + dir + "/anim-events.tab";
+        std::error_code ec;
+        std::filesystem::create_directories(std::filesystem::path(abs).parent_path(), ec);
+    }
+    char idBuf[16];
+    std::snprintf(idBuf, sizeof idBuf, "%u", assets::AnimEventNextId());
+    rows.push_back({name, idBuf, "-", ""});
+    const std::string json = assets::TableToJson("anim-events", rows);
+    if (json.empty() || !WriteFileAtomic(abs, json + "\n")) {
+        err = trFmt("anim.event.err_write_fmt", {abs});
+        return false;
+    }
+    app.RescanAssets(); // 内含注册表注入（hash 门）——调用后面板侧条目须 guid 重查
+    if (assets::AnimEventIdByName(name.c_str()) == 0) {
+        err = tr("anim.event.err_load_reject");
+        return false; // 写盘成功但装载拒（表内冲突行等）——交底不静默
+    }
+    return true;
+}
+
+void AnimationPanel::DrawEventModal(EditorApp& app) {
     if (!evModalOpen_) return;
     using lemon::editor::loc::tr;
+    using lemon::editor::loc::trFmt;
     // review：编辑目标被外部路径删掉（面板内不可达——模态吃输入；冒烟钩子可
     // 达）时陈旧下标降级为新建——CommitEvent 对越界 idx 走 push_back，语义
     // 恰合；标题/按钮随降级。
@@ -2501,8 +2616,85 @@ void AnimationPanel::DrawEventModal() {
         return;
     }
     ImGui::DragInt(tr("anim.event.frame"), &evFrame_, 0.05f, 0, std::max(n - 1, 0));
-    ImGui::DragInt(tr("anim.event.id"), &evId_, 0.1f, 0, 65535);
-    ImGui::TextDisabled("%s", tr("anim.event.hint"));
+    // ⑬ 事件面：注册表在场 = 下拉选名（id 隐含）；缺表 = 裸 id 模式（ADR-012
+    // 缺表保底——旧项目照常打点，hint 交代建表通道）。未注册当前 id 置顶项
+    // （旧档裸 id 事件可原样保存 = 兼容面；红字面提示）。
+    const size_t regCount = assets::AnimEventCount();
+    const bool curUnreg =
+        regCount > 0 && assets::AnimEventNameById((uint32_t)evId_) == nullptr;
+    if (regCount > 0) {
+        std::vector<uint32_t> ids;
+        std::vector<std::string> labels;
+        if (curUnreg) {
+            ids.push_back((uint32_t)evId_);
+            labels.push_back(trFmt("anim.event.unreg_fmt", {std::to_string(evId_)}));
+        }
+        for (size_t i = 0; i < regCount; ++i) {
+            assets::AnimEventDef d;
+            if (!assets::AnimEventAt(i, d)) break;
+            ids.push_back(d.id);
+            labels.push_back(trFmt("anim.event.combo_item_fmt",
+                                   {d.name, std::to_string(d.id)}));
+        }
+        int sel = -1;
+        for (size_t i = 0; i < ids.size(); ++i)
+            if ((int)ids[i] == evId_) {
+                sel = (int)i;
+                break;
+            }
+        if (sel < 0) { // 陈旧 id（注册表刚变）→ 首项兜底
+            sel = 0;
+            evId_ = (int)ids[0];
+        }
+        if (ImGui::BeginCombo(tr("anim.event.name_label"), labels[(size_t)sel].c_str())) {
+            for (int i = 0; i < (int)ids.size(); ++i) {
+                const bool isUnregItem = curUnreg && i == 0;
+                if (isUnregItem) ImGui::PushStyleColor(ImGuiCol_Text,
+                                                       ImGui::GetColorU32(theme::kTextError));
+                if (ImGui::Selectable(labels[(size_t)i].c_str(), i == sel))
+                    evId_ = (int)ids[(size_t)i];
+                if (isUnregItem) ImGui::PopStyleColor();
+            }
+            ImGui::EndCombo();
+        }
+        if (curUnreg)
+            ImGui::TextColored(theme::kTextError, "%s", tr("anim.event.unreg_keep_hint"));
+        ImGui::TextDisabled("%s", tr("anim.event.hint_named"));
+    } else {
+        ImGui::DragInt(tr("anim.event.id"), &evId_, 0.1f, 0, 65535);
+        ImGui::TextDisabled("%s", tr("anim.event.hint"));
+    }
+    // 内联「新建事件…」（两模式共用——缺表项目从这里零门槛建表采用命名事件）
+    if (ImGui::SmallButton(tr("anim.event.new_event"))) {
+        evNewOpen_ = true;
+        evNameNew_[0] = '\0';
+        evNewErr_.clear();
+        evNewFocus_ = true; // 下一拍 InputText 前聚焦（同帧无输入件可指）
+    }
+    if (evNewOpen_) {
+        if (evNewFocus_) {
+            ImGui::SetKeyboardFocusHere(); // 紧随其后的 InputText
+            evNewFocus_ = false;
+        }
+        ImGui::SetNextItemWidth(180.0f);
+        const bool enter = ImGui::InputText("##evnewname", evNameNew_, sizeof evNameNew_,
+                                            ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::SameLine();
+        if (enter || ImGui::SmallButton(tr("anim.event.new_create"))) {
+            std::string err;
+            if (CreateAnimEvent(app, evNameNew_, err)) {
+                evId_ = (int)assets::AnimEventIdByName(evNameNew_); // 建行即选中
+                evNewOpen_ = false; // 下拉下一帧显新名
+                evNameNew_[0] = '\0';
+                evNewErr_.clear();
+            } else
+                evNewErr_ = err;
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton(tr("common.cancel"))) evNewOpen_ = false;
+        if (!evNewErr_.empty())
+            ImGui::TextColored(theme::kTextError, "%s", evNewErr_.c_str());
+    }
     if (!evErr_.empty()) ImGui::TextColored(theme::kTextError, "%s", evErr_.c_str());
     ImGui::BeginDisabled(n == 0);
     // CommitEvent 拒（重复/越界）时模态保持开 + 红字（&& 短路天然成立）
@@ -2604,7 +2796,7 @@ void AnimationPanel::OnGui(EditorApp& app) {
     DrawSheetPicker(app);
     DrawSetModals(app);
     DrawClipPickModal(app);
-    DrawEventModal(); // M8 批⑫：帧事件编辑模态（边沿触发）
+    DrawEventModal(app); // M8 批⑫：帧事件编辑模态（边沿触发；⑬ 下拉+新建事件）
     HandlePickerResult(app);
 
     const AssetEntry* target = db.FindByGuid(targetGuid_);

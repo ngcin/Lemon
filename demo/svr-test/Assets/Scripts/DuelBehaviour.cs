@@ -11,7 +11,7 @@ using Lemon.Interop;
 ///   Anim.SetParam(speed)      → Idle↔Walk 条件边（移动/停下）
 ///   Anim.Trigger(attack)      → Attack 态（攻击 clip 第 7 帧打点事件 → 出伤害）
 ///   Anim.Trigger(hit/death)   → 对手受击/死亡（M01 无绑原地，M02 播 Hurt/Dying）
-/// 攻击命中判定 = 帧事件（GameEvent.AnimFrame，user=1）而非计时器——判定帧即
+/// 攻击命中判定 = 帧事件（命名 attack-hit，批⑬ 注册表 id=1）而非计时器——判定帧即
 /// 表现帧，T3d 批③的语义演示。伤害/胜负数据落存档键 duel.*（无头验收出口）。
 /// M7c 批①：Fx 表现升级验收演示场——暴击中文 Pop 弹跳黄字 + 贴图血条 +
 /// 受击延迟白条三项全接（字体 = project.lemon fxFont 烘焙页，中文「暴击」可显）。
@@ -120,10 +120,10 @@ public sealed class DuelBehaviour : LemonBehaviour
     {
         foreach (ulong id in s_roster)
             if (id != gameObject.Entity.Id) { _foe = id; break; }
-        // 攻击打点（AnimFrame user=1）→ 出伤；订阅助手 OnDestroy 自动退订
-        Subscribe(GameEvent.AnimFrame, m => {
-            if (m.Src.Id == gameObject.Entity.Id && m.User == 1) Strike();
-        });
+        // 攻击打点（命名事件，M8 批⑬：注册表 Assets/tables/anim-events.tab 的
+        // attack-hit → id 1，与 Attack.clip 帧 6 打点逐位一致）→ 出伤；实例级
+        // 订阅 OnDestroy 自动退订（原 m.User == 1 魔法数字形态退役）
+        OnFrame("attack-hit", Strike);
         // 受击闪色回程：闪入补间（Once）完成事件 → 补回本色
         Subscribe(GameEvent.TweenFinished, m => {
             if (_flashFoe != 0 && (ulong)_flashHandle == m.UserArg) {

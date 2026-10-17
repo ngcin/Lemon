@@ -199,6 +199,7 @@ void EditorApp::RescanAssets() {
     }
     // 状态对账（无条件——cs 空也要跑：被裸 Rescan 吞掉事件的墓碑正是靠这拍自愈）
     ReconcileUiDocuments();
+    ctx_.RefreshAnimEventRegistry(); // M8 批⑬：anim-events.tab 变更 → 进程级注册表（hash 门）
     db.SaveManifest();
     if (!cs.Empty())
         LEMON_LOG("资产重扫：+%zu ~%zu -%zu", cs.added.size(), cs.modified.size(),

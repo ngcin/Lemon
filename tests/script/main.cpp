@@ -30,6 +30,7 @@
 #include "ECS/ComponentRegistry.h"
 #include "ECS/ControllerTable.h" // T3d：ControllerDef/AnimParamKind（AnimGraph 探针）
 #include "ECS/Events.h"
+#include "Assets/AnimEventRegistry.h" // M8 批⑬：注册表夹具注入
 #include "ECS/SceneMembership.h" // 批⑦：TestSceneSdk 打标/DDOL 系/孤组断言
 #include "ECS/StateHash.h"
 #include "ECS/World.h"
@@ -338,7 +339,7 @@ void TestDomainManager() {
         auto listFn = (int (*)(char*, int))GetExport("lemon_behaviours_list");
         char buf[4096];
         int n = listFn ? listFn(buf, (int)sizeof buf) : -1;
-        Expect(n == 27, "behaviours list after hot reload (+M11/M15/F-08.2/T3/b1/b2/T3c/T3d/A档tween/T5存档档/b3c UI/M6c b2 audio/M7c b1 fx/M7c b7 scene/M7c b8 async/b11 H1 stale/b11 R-a1 multi-slot/M8 b1 light probes)");
+        Expect(n == 28, "behaviours list after hot reload (+M11/M15/F-08.2/T3/b1/b2/T3c/T3d/A档tween/T5存档档/b3c UI/M6c b2 audio/M7c b1 fx/M7c b7 scene/M7c b8 async/b11 H1 stale/b11 R-a1 multi-slot/M8 b1 light/M8 b13 aname probes)");
         // M4.6 回归（用户实测闪退根因）：相对路径进 dm_reload 曾抛 ArgumentException
         // 逃逸 UnmanagedCallersOnly → coreclr abort。拦截层必须转 0 返回且进程存活
         // （本断言能跑到 = 进程没死）。换装失败后旧域已弃——再换一次真路径恢复。
@@ -2293,6 +2294,91 @@ void TestUiSdk() {
     std::printf("script-tests: TestUiSdk OK（ops 6 条字节对拍（含通道 B dyn 2 条） + 事件反向 c1r0 + 去重 3写2过 + 重装载复位 6 op）\n");
 }
 
+// M8 批⑬：帧事件注册表桥端到端（进程级 AnimEventRegistry ← tab 夹具 → vtable
+// 尾加 animEventIdByName → C# AnimEvents.Define 对账红字面 + OnFrame 实例/静态
+// 双路径订阅 → AnimFrame 队列 u16 逐位比较：命中/错 id/错实体三分支 +
+// 未注册订阅挂空。AnimEventProbeBehaviour typeId 27 表尾注册（0 基——第 28 个注册））。
+void TestAnimEventBridge() {
+    using namespace lemon::ecs;
+    using namespace lemon::assets;
+    auto timeResetFn = (void (*)())GetExport("lemon_time_reset");
+    Expect(timeResetFn != nullptr, "time export resolved");
+    timeResetFn(); // 探针按 FrameCount 分段——本测试 = 新一局
+
+    // 夹具（表解析/冲突行拒/漂移告警归引擎单测 TestAnimEventRegistry——此处只走桥）
+    std::string err;
+    Expect(SetAnimEventTable(R"({"schemaVersion":1,"name":"anim-events","rows":[
+        ["name","id","payload","desc"],
+        ["probe-hit","7","-",""],
+        ["probe-other","9","-",""] ]})",
+                             &err),
+           "registry fixture injected");
+    Expect(AnimEventIdByName("probe-hit") == 7 && AnimEventIdByName("nope") == 0,
+           "engine lookup hit/miss");
+
+    WorldDesc d;
+    d.threadCount = 1;
+    World w(d);
+    Scene& s = w.CreateScene("AnimEv");
+    w.SetActiveScene(&s);
+    w.SetScriptBackend(&g_sh);
+    w.Pipeline().AddSystem(std::make_unique<DestroyCommitSystem>());
+    w.Pipeline().AddSystem(std::make_unique<CSharpBatchSystem>());
+    w.Pipeline().AddSystem(std::make_unique<ScriptEventDispatchSystem>());
+    w.Pipeline().ResolveOrder();
+
+    int sawDone = 0;
+    w.SetEventSink([&](World&, const EventPacket& p) {
+        if (p.type == GameEvent::Custom && p.user == 1360) ++sawDone;
+    });
+
+    Entity e = s.Create();
+    s.Emplace<Transform2D>(e);
+    g_sh.AttachBehaviour(w, s, e, 27); // AnimEventProbeBehaviour（typeId 27 表尾——0 基：第 28 个注册）
+    Entity other = s.Create();
+    s.Emplace<Transform2D>(other);
+
+    auto pushFrame = [&](uint16_t user, Entity src) {
+        EventPacket p{};
+        p.type = GameEvent::AnimFrame;
+        p.user = user;
+        p.src = src;
+        w.Events().Push(p);
+    };
+
+    w.Step(0.25f); // 帧1：Define 对账（miss = stderr 红字）+ 双路径订阅 + 挂空订阅
+    pushFrame(7, e); // 命中：id 对 + 实体对
+    w.Step(0.25f);   // 帧2：#16 分发（Update 后）→ 双回调
+    pushFrame(9, e);     // 错 id（probe-other）
+    pushFrame(7, other); // 错实体
+    w.Step(0.25f);       // 帧3：零触发 + 中报
+    w.Step(0.25f);       // 帧4：终报 + Custom 1360 + 自毁命令
+    w.Step(0.25f);       // 应用销毁
+    Expect(sawDone == 1, "anim-event: probe done (Custom 1360)");
+
+    const auto slotText = [&](const char* key) -> const char* {
+        for (uint32_t i = 0; i < w.RtUi().Count(); ++i) {
+            const RtUiSlot& slot = w.RtUi().At(i);
+            if (std::strcmp(slot.key, key) == 0) return slot.text;
+        }
+        return nullptr;
+    };
+    const char* def = slotText("animreg");
+    const char* mid = slotText("animreg-hits");
+    const char* fin = slotText("animreg-final");
+    std::printf("script-tests: [diag] anim-event slots: def='%s' mid='%s' fin='%s'\n",
+                def ? def : "(null)", mid ? mid : "(null)", fin ? fin : "(null)");
+    Expect(def && std::strcmp(def, "d1 m0") == 0,
+           "anim-event: Define hit=true miss=false (对账面)");
+    Expect(mid && std::strcmp(mid, "1|1") == 0,
+           "anim-event: hit fired on both subscribe paths");
+    Expect(fin && std::strcmp(fin, "1|1") == 0,
+           "anim-event: wrong id/src/unresolved never fired (三分支零触发)");
+
+    SetAnimEventTable(""); // 进程级状态还原（后续测试裸 id 模式起步）
+    g_sh.ResetPlayDomain();
+}
+
 int main() {
     Expect(g_sh.Initialize(nullptr, LEMON_SCRIPT_DIR "/Lemon.Entry.runtimeconfig.json",
                             LEMON_SCRIPT_DIR "/Lemon.Entry.dll"),
@@ -2357,6 +2443,7 @@ int main() {
     TestStaleHandleSdk(); // 批⑪ H1：失效句柄三闸（write/op2/op4）+ 无幽灵注入
     TestMultiSlotDestroyOrder(); // 批⑪ R-a1：多槽销毁序 = 槽注册序升序（M12 索引化防回归）
     TestLightSdk();     // M8 批①：Light2D/BlobShadow2D 数据面 + 哈希入流证据
+    TestAnimEventBridge(); // M8 批⑬：帧事件注册表桥（Define 对账 + OnFrame 双路径）
 
     // M4.6 探针（编辑器切项目场景）：同进程二次 ScriptHost 生命周期。CoreCLR 运行时
     // 进程单例——第二次 Initialize 的真实行为必须钉板（成功/失败都合法，崩 = 缺陷）。

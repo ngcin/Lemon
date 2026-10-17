@@ -46,6 +46,9 @@ public static class GameMain
         Lemon.Behaviours.Register<UiEcho>(); // UiTest.scene：UI 事件回显（③c 真人验收观测面）
         Lemon.Behaviours.Register<TweenDemo>(); // ani.scene：宝石 Tween.Scale OutBack 弹跳演示
         Lemon.Behaviours.Register<AnyStateProbeBehaviour>(); // 批⑪：anytest.scene any-state 运行时验收探针
+        // M8 批⑬：帧事件对账——本游戏消费的命名事件集中声明（Assets/tables/
+        // anim-events.tab 为 id 单一权威；拼错名字 = 此处启动红字，不再静默）
+        Lemon.AnimEvents.Define("attack-hit");
         // 换装批⑪：怪物朝向翻面（fox 素材默认朝右）。走批量系统而非给每只怪挂
         // MonoBehaviour——怪物由引擎 PrefabCache::Spawn 原生工厂出生，该路径
         // 不解析 scripts[]（PrefabCache.h:52 明载），挂脚本的怪永远拿不到 Update。
