@@ -64,6 +64,8 @@
   "anim.event.tip_item_fmt": "{0}·#{1}",
   "anim.event.ctx_edit_named_fmt": "Edit Frame Event ({0})…",
   "anim.event.name_label": "Event",
+  "anim.event.val_enable": "Attach value",
+  "anim.event.val": "Payload value",
   "anim.event.combo_item_fmt": "{0} (#{1})",
   "anim.event.unreg_keep_hint": "Current id is not registered (legacy raw id can be saved as-is; picking a registered event is recommended)",
   "anim.event.hint_named": "Event names resolve via Assets/Tables/anim-events.tab (ids auto-assigned, never reused); C# subscribes with Anim.OnFrame(entity, name, callback)",

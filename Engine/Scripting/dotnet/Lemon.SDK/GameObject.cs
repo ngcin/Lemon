@@ -180,6 +180,26 @@ public abstract class LemonBehaviour
     /// <summary>自身实体的命名帧事件（DuelBehaviour 式判定帧消费的 90% 形态）。</summary>
     protected void OnFrame(string eventName, Action cb) => OnFrame(gameObject, eventName, cb);
 
+    /// <summary>带载荷版（M8 ⑬c）：回调收 GameEventMsg——P0 = 帧号、
+    /// P1 = 打点数值载荷（.clip "val"；无 val 旧档 = 0），float:force 类打点的
+    /// 读取端。实体限定 = g 参数版；自身实体用双参字符串版。</summary>
+    protected void OnFrame(GameObject g, string eventName, Action<GameEventMsg> cb)
+    {
+        if (cb == null || g.Entity.Id == 0) return;
+        if (!AnimEvents.TryIdOf(eventName, out ushort id)) {
+            AnimEvents.WarnUnresolved("OnFrame", eventName ?? "");
+            return;
+        }
+        void Handler(GameEventMsg m) {
+            if (m.User == id && m.Src.Id == g.Entity.Id) cb(m);
+        }
+        Subscribe(GameEvent.AnimFrame, Handler);
+    }
+
+    /// <summary>自身实体、带载荷版（P0 = 帧号 / P1 = val）。</summary>
+    protected void OnFrame(string eventName, Action<GameEventMsg> cb)
+        => OnFrame(gameObject, eventName, cb);
+
     /// <summary>Behaviours.Detach 收尾调用：清本实例全部订阅（OnDestroy 后）。</summary>
     internal void ClearSubscriptions()
     {

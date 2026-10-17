@@ -1236,8 +1236,9 @@ void AnimatorSystem::Tick(World& world, Scene& scene, float dt) {
         }
         // T3d 批③：帧事件——进入新帧（f != 上 tick 写入的 curFrame）且该帧有打点
         // → AnimFrame 事件入队（帧末批量派发；user = 事件 id，userArg = clipId，
-        // payload[0] = 帧号）。帧号纯函数 ⇒ 事件序确定；loop 回绕/pingpong 反放
-        // 重进该帧会重发（Unity 循环重发同语义）；暂停（playOnStart=0）不推进不发。
+        // payload[0] = 帧号；⑬c payload[1] = 打点数值载荷 val（无 val 旧档 = 0））。
+        // 帧号纯函数 ⇒ 事件序确定；loop 回绕/pingpong 反放重进该帧会重发
+        //（Unity 循环重发同语义）；暂停（playOnStart=0）不推进不发。
         if (f != an.curFrame && !clip->events.empty()) {
             for (const ClipEventDef& ev : clip->events) {
                 if (ev.frame != f) continue;
@@ -1247,6 +1248,7 @@ void AnimatorSystem::Tick(World& world, Scene& scene, float dt) {
                 fev.user = ev.id;
                 fev.userArg = an.clipId;
                 fev.payload[0] = (float)f;
+                fev.payload[1] = ev.val; // ⑬c：float:force 类打点 → C# m.P1
                 world.Events().Push(fev);
             }
         }

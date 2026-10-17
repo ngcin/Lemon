@@ -1859,7 +1859,7 @@ void TestClipCacheBadArchive() {
     };
     const std::string good =
         writeFile("good.clip", "{\"fps\":8,\"loop\":true,\"frames\":[{\"sheet\":\"" + sheet +
-                                   "\",\"cell\":0}],\"events\":[{\"frame\":0,\"id\":5}]}");
+                                   "\",\"cell\":0}],\"events\":[{\"frame\":0,\"id\":5,\"val\":2.5}]}");
     const std::string badLoop = writeFile(
         "bad_loop.clip", "{\"fps\":8,\"loop\":1,\"frames\":[{\"sheet\":\"" + sheet + "\",\"cell\":0}]}");
     const std::string badFps = writeFile(
@@ -1905,6 +1905,9 @@ void TestClipCacheBadArchive() {
            "good clip registered with resolved spriteId");
     Expect(g != nullptr && g->loop && g->events.size() == 1 && g->events[0].id == 5,
            "good clip loop + frame event carried");
+    // ⑬c：数值载荷随 clip 表登记（运行时 AnimatorSystem → AnimFrame payload[1]）
+    Expect(g != nullptr && std::fabs(g->events[0].val - 2.5f) < 1e-6f,
+           "good clip event val carried into runtime clip table");
     const auto* gs = w.Clips().Find((uint32_t)0xAAAA0005ull);
     Expect(gs != nullptr && gs->frames.size() == 1 && gs->frames[0] == 102,
            "sliced clip resolves to sliceBase+cell");

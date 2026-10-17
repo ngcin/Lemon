@@ -335,8 +335,18 @@ public:
     uint32_t EventIdAtForTest(size_t i) const {
         return i < edit_.events.size() ? edit_.events[i].id : 0xFFFFFFFFu;
     }
+    /// ⑬c：打点数值载荷读取（无 val = hasVal false / val 0）
+    bool EventHasValAtForTest(size_t i) const {
+        return i < edit_.events.size() && edit_.events[i].hasVal;
+    }
+    float EventValAtForTest(size_t i) const {
+        return i < edit_.events.size() ? edit_.events[i].val : 0.0f;
+    }
     /// 添加打点（模态「确定」同一条 CommitEvent 路径；完全重复 (frame,id) 拒）
-    bool AddEventForTest(uint32_t frame, uint32_t id) { return CommitEvent(frame, id, kEventNew); }
+    bool AddEventForTest(uint32_t frame, uint32_t id, float val = 0.0f,
+                         bool hasVal = false) {
+        return CommitEvent(frame, id, kEventNew, val, hasVal);
+    }
     /// 删指定 (frame,id)（命中删 = true）
     bool DeleteEventForTest(uint32_t frame, uint32_t id) {
         for (size_t k = 0; k < edit_.events.size(); ++k)
@@ -411,8 +421,10 @@ private:
     /// 预填帧号）；否则编辑该下标（frame 被事件自身帧号覆盖）
     void OpenEventModal(int frame, size_t editIdx);
     /// 提交一条打点：帧界内 / id ≤ 65535 / (frame,id) 无完全重复，三关过则按
-    /// (frame,id) 升序落位 + dirty；失败写 evErr_ 返 false（模态保持开）
-    bool CommitEvent(uint32_t frame, uint32_t id, size_t idx);
+    /// (frame,id) 升序落位 + dirty；失败写 evErr_ 返 false（模态保持开）。
+    /// ⑬c val/hasVal = 可选数值载荷（.clip "val"；缺省参数 = 既有调用面不变）
+    bool CommitEvent(uint32_t frame, uint32_t id, size_t idx,
+                     float val = 0.0f, bool hasVal = false);
     /// 注册表建行（M8 批⑬「新建事件」唯一写路径）：名检/重名拒 → 追加行
     /// （id = AnimEventNextId，永不复用）→ TableToJson 原子写 → Rescan（尾部
     /// RefreshAnimEventRegistry 注入进程级注册表）。缺表 = 建表（目录跟随项目
@@ -526,6 +538,8 @@ private:
     size_t evEditIdx_ = kEventNew; // 编辑目标下标（kEventNew = 新建）
     int evFrame_ = 0;              // 模态字段：帧号（0 起；DragInt 钳 0..n-1）
     int evId_ = 1;                 // 模态字段：事件 id（下拉选中项的 id；裸 id 模态 = DragInt 钳 0..65535）
+    float evVal_ = 0.0f;           // ⑬c 模态字段：数值载荷（evHasVal_ 开才生效/落盘）
+    bool evHasVal_ = false;
     std::string evErr_;            // 模态内校验消息（越界/超上限/完全重复）
     // M8 批⑬：内联「新建事件…」（注册表下拉旁；建行即写表）
     bool evNewOpen_ = false;

@@ -29,9 +29,13 @@ struct ClipFrame {
 
 /// T3d 批③：帧事件打点（id = 作者自定义 16 位标识；命名事件列 v1.1）。
 /// 运行时语义：进入该帧（帧号跨入）→ AnimFrame 事件（user=id, userArg=clipId）。
+/// ⑬c：可选数值载荷 val（"val" 字段；hasVal 区分"未写"与"写了 0"——旧档
+/// no-edit 往返逐字节不变靠它）。运行时经 EventPacket.payload[1] 送达 C#（P1）。
 struct ClipEventEdit {
     uint32_t frame = 0; // 帧号（编辑侧 u32 宽容；运行时 ClipEventDef u16 收窄）
     uint32_t id = 0;    // 事件 id（缺省 0；C# 按 (clipId,id) 分发）
+    float val = 0.0f;   // 数值载荷（hasVal=false 时无效——不落盘）
+    bool hasVal = false;
     friend bool operator==(const ClipEventEdit&, const ClipEventEdit&) = default;
 };
 
@@ -46,8 +50,9 @@ struct ClipData {
     /// ——旧档 no-edit 往返逐字节不变。档面值 = 创建默认，运行时权威在实体。
     int loopMode = 1;
     std::vector<ClipFrame> frames;
-    /// T3d 批③：帧事件表（可选 "events":[{frame,id}]；空 = 无事件。序列化仅
-    /// 非空时追加——旧档 no-edit 往返逐字节不变；帧号越帧表 = 解析期拒绝）
+    /// T3d 批③：帧事件表（可选 "events":[{frame,id,val?}]；空 = 无事件。序列化仅
+    /// 非空时追加——旧档 no-edit 往返逐字节不变；帧号越帧表 = 解析期拒绝；
+    /// ⑬c val = 可选数值载荷，仅 hasVal 时落盘）
     std::vector<ClipEventEdit> events;
 };
 

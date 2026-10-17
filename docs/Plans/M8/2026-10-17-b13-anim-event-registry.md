@@ -7,8 +7,14 @@ Status: ⑬a ✅ + **⑬b ✅ 2026-10-17 机器面**（反向 lint 三件：订�
 AnimationPanel 项目级黄字条（聚合含未保存编辑态，缓存戳 = 注册表门 ^ DB 签名）+
 **编辑器侧桥污染修复四处**（RegistryIdOf 条目扫描——桥 = C# 订阅声明专用通道
 纪律沉淀）；单测 35,012（+11）/ctest 4/4/smoke-anim zh+en `lint(hit=YES clean=YES)`
-双绿（帧预算 138 不变，f137 空位即本链）/回放零重录口径维持；⑬c payload 类型化
-待开）——⑬a 原文：出口全绿：注册表 + 编辑器下拉 + C# 门面——
+双绿（帧预算 138 不变，f137 空位即本链）/回放零重录口径维持；**⑬c ✅ 2026-10-17
+机器面**（[DevLog](../../DevLog/2026-10-17-m8-b13c-event-payload.md)：`.clip`
+events 可选 `"val"` 数值载荷（hasVal 区分未写与写了 0——旧档 no-edit 往返逐字节
+不变）→ `ClipEventDef.val` → AnimFrame `payload[1]` → C# `OnFrame` 带
+`GameEventMsg` 重载读 `P1`（P0 帧号不动）；模态「附带数值」复选 + DragFloat；
+零新事件类型零 vtable；全管线 TestAnimEventPayload 端到端（id5 val=2.5 / id6
+无 val 双打点对拍）；单测 35,024→35,037（+13）/script-tests 1,924→1,925/ctest
+4/4——批⑬ 三段全收口）——⑬a 原文：出口全绿：注册表 + 编辑器下拉 + C# 门面——
 打点全程不见裸数字 / 拼错名字启动红字 / 旧档兼容面绿；单测 35,001/script-tests
 1,918/smoke-anim zh+en reg 四位 YES（帧预算 134→138）/DuelBehaviour 新旧订阅
 伤害时间线逐位 IDENTICAL/回放三档 PASS/Attack.clip 盘面零改动；vtable 尾追

@@ -1185,6 +1185,8 @@ public sealed class AnimEventProbeBehaviour : Lemon.LemonBehaviour
 {
     private int _inst;
     private static int _static;
+    private int _msg;    // ⑬c：带载荷重载（OnFrame(name, Action<GameEventMsg>)）
+    private float _p1;   // ⑬c：载荷值（payload[1]）
 
     protected override void Update()
     {
@@ -1195,11 +1197,14 @@ public sealed class AnimEventProbeBehaviour : Lemon.LemonBehaviour
             Lemon.Ui.Set("animreg", $"d{(hit ? 1 : 0)} m{(miss ? 1 : 0)}", -1f);
             OnFrame("probe-hit", () => { _inst++; });                       // 实例级（推荐）
             Lemon.Anim.OnFrame(gameObject, "probe-hit", () => { _static++; }); // 静态
+            OnFrame("probe-hit", m => { _msg++; _p1 = m.P1; });            // ⑬c 带 msg
             OnFrame("definitely-missing", () => { _inst += 100; }); // 挂空：永不触发
         } else if (fc == 3) {
             Lemon.Ui.Set("animreg-hits", $"{_inst}|{_static}", -1f);
         } else if (fc == 4) {
             Lemon.Ui.Set("animreg-final", $"{_inst}|{_static}", -1f);
+            // ⑬c：带载荷重载命中 + P1 载荷读数（×10 整数化免文化漂移）
+            Lemon.Ui.Set("animreg-msg", $"{_msg}|{(int)(_p1 * 10f)}", -1f);
             Lemon.Events.Push(Lemon.Interop.GameEvent.Custom, 1360, default, default);
             gameObject.Destroy();
         }

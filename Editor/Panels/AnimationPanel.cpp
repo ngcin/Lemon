@@ -2468,10 +2468,14 @@ void AnimationPanel::OpenEventModal(int frame, size_t editIdx) {
     if (editIdx < edit_.events.size()) {
         evFrame_ = (int)edit_.events[editIdx].frame;
         evId_ = (int)edit_.events[editIdx].id;
+        evVal_ = edit_.events[editIdx].val;        // ⑬c：编辑预填载荷
+        evHasVal_ = edit_.events[editIdx].hasVal;
     } else {
         evFrame_ = frame >= 0 ? frame : std::max(selFrame_, 0);
         assets::AnimEventDef first;
         evId_ = assets::AnimEventAt(0, first) ? (int)first.id : 1;
+        evVal_ = 0.0f; // ⑬c：新建缺省不带载荷
+        evHasVal_ = false;
     }
     evEditIdx_ = editIdx;
     evErr_.clear();
@@ -2480,11 +2484,12 @@ void AnimationPanel::OpenEventModal(int frame, size_t editIdx) {
     evModalPending_ = true;
 }
 
-bool AnimationPanel::CommitEvent(uint32_t frame, uint32_t id, size_t idx) {
+bool AnimationPanel::CommitEvent(uint32_t frame, uint32_t id, size_t idx,
+                                 float val, bool hasVal) {
     // 三关：帧界内（DragInt 已钳，双保险）/ id ≤ 65535（运行时 ClipEventDef
     // u16 收窄——超限静默截断是数据损坏面）/ (frame,id) 无完全重复（运行时
     // 线性扫会双发）。过则按 (frame,id) 升序落位（档面约定；stable_sort 对已
-    // 序表零重排 = no-edit 往返逐字节不变的根源）
+    // 序表零重排 = no-edit 往返逐字节不变的根源）。⑬c val/hasVal 随行落位。
     using lemon::editor::loc::tr;
     using lemon::editor::loc::trFmt;
     evErr_.clear();
@@ -2501,10 +2506,15 @@ bool AnimationPanel::CommitEvent(uint32_t frame, uint32_t id, size_t idx) {
             evErr_ = tr("anim.event.err_dup");
             return false;
         }
+    assets::ClipEventEdit def;
+    def.frame = frame;
+    def.id = id;
+    def.val = hasVal ? val : 0.0f; // hasVal=false = 不带载荷（旧档语义）
+    def.hasVal = hasVal;
     if (idx < edit_.events.size())
-        edit_.events[idx] = {frame, id};
+        edit_.events[idx] = def;
     else
-        edit_.events.push_back({frame, id});
+        edit_.events.push_back(def);
     std::stable_sort(edit_.events.begin(), edit_.events.end(),
                      [](const assets::ClipEventEdit& a, const assets::ClipEventEdit& b) {
                          return a.frame != b.frame ? a.frame < b.frame : a.id < b.id;
@@ -2749,6 +2759,13 @@ void AnimationPanel::DrawEventModal(EditorApp& app) {
         ImGui::DragInt(tr("anim.event.id"), &evId_, 0.1f, 0, 65535);
         ImGui::TextDisabled("%s", tr("anim.event.hint"));
     }
+    // ⑬c：可选数值载荷（float:force 类打点——运行时 AnimFrame payload[1] →
+    // C# OnFrame 带 msg 版 m.P1）。复选开才落盘（hasVal 区分未写与写了 0）
+    ImGui::Checkbox(tr("anim.event.val_enable"), &evHasVal_);
+    ImGui::BeginDisabled(!evHasVal_);
+    ImGui::SetNextItemWidth(160.0f);
+    ImGui::DragFloat(tr("anim.event.val"), &evVal_, 0.05f, -1e6f, 1e6f, "%.2f");
+    ImGui::EndDisabled();
     // 内联「新建事件…」（两模式共用——缺表项目从这里零门槛建表采用命名事件）
     if (ImGui::SmallButton(tr("anim.event.new_event"))) {
         evNewOpen_ = true;
@@ -2785,7 +2802,8 @@ void AnimationPanel::DrawEventModal(EditorApp& app) {
     // CommitEvent 拒（重复/越界）时模态保持开 + 红字（&& 短路天然成立）
     if (ImGui::Button(tr("common.ok")) &&
         CommitEvent((uint32_t)std::clamp(evFrame_, 0, std::max(n - 1, 0)),
-                    (uint32_t)std::clamp(evId_, 0, 65535), evEditIdx_)) {
+                    (uint32_t)std::clamp(evId_, 0, 65535), evEditIdx_,
+                    evVal_, evHasVal_)) {
         evModalOpen_ = false;
         ImGui::CloseCurrentPopup();
     }

@@ -86,6 +86,7 @@ void BuildClipCache(ecs::World& world, const PlayCacheSource& src) {
             ecs::ClipEventDef d;
             d.frame = (uint16_t)ev.frame;
             d.id = (uint16_t)ev.id;
+            d.val = ev.hasVal ? ev.val : 0.0f; // ⑬c：数值载荷（无 val 旧档 = 0）
             events.push_back(d);
         }
         const uint32_t clipId = (uint32_t)guid; // 低 32 位（映射约定同 prefabId）

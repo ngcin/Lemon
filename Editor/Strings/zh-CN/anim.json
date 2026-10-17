@@ -64,6 +64,8 @@
   "anim.event.tip_item_fmt": "{0}·#{1}",
   "anim.event.ctx_edit_named_fmt": "编辑帧事件（{0}）…",
   "anim.event.name_label": "事件",
+  "anim.event.val_enable": "附带数值",
+  "anim.event.val": "数值载荷",
   "anim.event.combo_item_fmt": "{0}（#{1}）",
   "anim.event.unreg_keep_hint": "当前 id 未注册（旧档裸 id 可原样保存；建议改选注册事件）",
   "anim.event.hint_named": "事件名经注册表 Assets/Tables/anim-events.tab 解析（id 自动分配、永不复用）；C# 侧 Anim.OnFrame(实体, 名字, 回调) 同名订阅",

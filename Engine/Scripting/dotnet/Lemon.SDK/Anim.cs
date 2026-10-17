@@ -311,4 +311,18 @@ public static class Anim
             if (m.User == id && m.Src.Id == g.Entity.Id) cb();
         });
     }
+
+    /// <summary>带载荷版（M8 ⑬c）：回调收 GameEventMsg——P0 = 帧号、
+    /// P1 = 打点数值载荷（.clip "val"；无 val 旧档 = 0）。</summary>
+    public static void OnFrame(GameObject g, string eventName, Action<GameEventMsg> cb)
+    {
+        if (cb == null || g.Entity.Id == 0) return;
+        if (!AnimEvents.TryIdOf(eventName, out ushort id)) {
+            AnimEvents.WarnUnresolved("Anim.OnFrame", eventName ?? "");
+            return;
+        }
+        Events.Subscribe(GameEvent.AnimFrame, m => {
+            if (m.User == id && m.Src.Id == g.Entity.Id) cb(m);
+        });
+    }
 }

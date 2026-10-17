@@ -1236,6 +1236,46 @@ void TestVerifyAnimatorPingPong() {
     Expect(a.curFrame == 0 && sr.spriteId == 30u, "clip: single-frame pingpong stays 0");
 }
 
+// ---- M8 批⑬c：帧事件数值载荷端到端（clip 表 val → AnimFrame payload[1]）----
+void TestAnimEventPayload() {
+    const float dt = 1.0f / 60.0f;
+    World w;
+    w.InstallDefaultSystems();
+    Scene& s = w.CreateScene("evval");
+    w.SetActiveScene(&s);
+    // fps8×3 帧：帧 1 挂两打点——id 5 带 val 2.5 / id 6 无 val（旧档语义 = 0）
+    w.Clips().Add(0x77u, {10u, 11u, 12u}, 8.0f, true,
+                  {{1, 5, 2.5f}, {1, 6, 0.0f}});
+
+    float p1WithVal = -1.0f, p1NoVal = -1.0f, p0WithVal = -1.0f;
+    int hits5 = 0, hits6 = 0;
+    w.SetEventSink([&](World&, const EventPacket& p) {
+        if (p.type != GameEvent::AnimFrame) return;
+        if (p.user == 5) {
+            ++hits5;
+            p1WithVal = p.payload[1];
+            p0WithVal = p.payload[0];
+        } else if (p.user == 6) {
+            ++hits6;
+            p1NoVal = p.payload[1];
+        }
+    });
+
+    Entity e = s.Create();
+    Animator2D& a = s.Emplace<Animator2D>(e);
+    a.clipId = 0x77u;
+    a.loop = 0; // Once：帧 1 只进一次（免 loop 重发干扰计数）
+    for (int i = 0; i < 30; ++i) w.Step(dt); // 帧 1 在 tick 8 进入（time 0.1333×8fps）
+
+    Expect(hits5 == 1 && hits6 == 1, "anim-event-val: both markers fired exactly once");
+    Expect(std::fabs(p1WithVal - 2.5f) < 1e-6f,
+           "anim-event-val: payload[1] carries clip val (float:force)");
+    Expect(std::fabs(p1NoVal) < 1e-6f,
+           "anim-event-val: marker without val reads payload[1]=0");
+    Expect(std::fabs(p0WithVal - 1.0f) < 1e-6f,
+           "anim-event-val: payload[0] stays frame number");
+}
+
 // ---- A 档补间单元（2026-09-28 用户插入项）：TweenTable 建链校验/缓动精确值/
 // Yoyo 折返/Once 完成恰一事件/同字段顶替/颜色字节插值/Kill 三通道/销毁自清。
 // C# ABI 端到端在 script-tests TestTweenSdk（探针 typeId 15）。----
@@ -1796,6 +1836,7 @@ void RunGameplayTests() {
     TestVerifyAnimatorFrameMapping();
     TestVerifyAnimatorQueue();
     TestVerifyAnimatorPingPong();
+    TestAnimEventPayload(); // M8 批⑬c：帧事件数值载荷端到端
     TestTweenTable();
     TestVerifyFxChannel();
     TestFxPresentationUpgradeMath(); // M7c 批① S2/S3：lag/UV 裁剪/Pop/寿命

@@ -17,9 +17,11 @@ namespace lemon::ecs {
 
 /// T3d 批③：帧事件（.clip events[]；id = 作者自定义 16 位标识，C# 侧按 (clipId,id)
 /// 分发——命名事件列 v1.1）。帧跨越检测在 AnimatorSystem（帧号纯函数 ⇒ 事件序确定）。
+/// ⑬c：可选数值载荷 val（float:force 类打点）——经 AnimFrame payload[1] 送达 C# P1。
 struct ClipEventDef {
     uint16_t frame = 0;
     uint16_t id = 0;
+    float val = 0.0f; // 数值载荷（缺省 0 = 旧档无 val，与 payload[1]=0 等价）
     friend bool operator==(const ClipEventDef&, const ClipEventDef&) = default;
 };
 

@@ -89,7 +89,15 @@ ClipData ParseClipJson(std::string_view text) {
                 else
                     return Fail("事件 id 负数/超界", idx);
             }
-            out.events.push_back({frame, id});
+            ClipEventEdit def; // ⑬c：val 可选数值载荷（hasVal 区分未写与写了 0）
+            def.frame = frame;
+            def.id = id;
+            if (ev.contains("val")) {
+                if (!ev.at("val").is_number()) return Fail("事件 val 非数值", idx);
+                def.val = ev.at("val").get<float>();
+                def.hasVal = true;
+            }
+            out.events.push_back(def);
         }
     }
     out.ok = true;
@@ -128,13 +136,28 @@ std::string ClipToJson(const ClipData& c) {
     if (!c.events.empty()) {
         out += ",\n  \"events\": [";
         for (size_t i = 0; i < c.events.size(); ++i) {
-            char ev[96];
+            // ⑬c：val 仅 hasVal 时落盘（旧档 no-edit 往返逐字节不变；格式与
+            // fps 同款——整值省小数、非整值一位小数）
+            char valBuf[32];
+            if (c.events[i].hasVal) {
+                const float v = c.events[i].val;
+                if (v == (float)(long long)v)
+                    std::snprintf(valBuf, sizeof valBuf, "%lld",
+                                  (long long)v);
+                else
+                    std::snprintf(valBuf, sizeof valBuf, "%.1f", v);
+            }
+            char ev[128];
             if (c.events[i].id != 0)
-                std::snprintf(ev, sizeof(ev), "%s\n    { \"frame\": %u, \"id\": %u }",
-                              i ? "," : "", c.events[i].frame, c.events[i].id);
+                std::snprintf(ev, sizeof(ev), "%s\n    { \"frame\": %u, \"id\": %u%s%s }",
+                              i ? "," : "", c.events[i].frame, c.events[i].id,
+                              c.events[i].hasVal ? ", \"val\": " : "",
+                              c.events[i].hasVal ? valBuf : "");
             else
-                std::snprintf(ev, sizeof(ev), "%s\n    { \"frame\": %u }", i ? "," : "",
-                              c.events[i].frame);
+                std::snprintf(ev, sizeof(ev), "%s\n    { \"frame\": %u%s%s }",
+                              i ? "," : "", c.events[i].frame,
+                              c.events[i].hasVal ? ", \"val\": " : "",
+                              c.events[i].hasVal ? valBuf : "");
             out += ev;
         }
         out += "\n  ]";

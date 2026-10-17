@@ -2338,16 +2338,17 @@ void TestAnimEventBridge() {
     Entity other = s.Create();
     s.Emplace<Transform2D>(other);
 
-    auto pushFrame = [&](uint16_t user, Entity src) {
+    auto pushFrame = [&](uint16_t user, Entity src, float p1 = 0.0f) {
         EventPacket p{};
         p.type = GameEvent::AnimFrame;
         p.user = user;
         p.src = src;
+        p.payload[1] = p1; // ⑬c：数值载荷（引擎侧 = clip "val" → AnimatorSystem）
         w.Events().Push(p);
     };
 
     w.Step(0.25f); // 帧1：Define 对账（miss = stderr 红字）+ 双路径订阅 + 挂空订阅
-    pushFrame(7, e); // 命中：id 对 + 实体对
+    pushFrame(7, e, 2.5f); // 命中：id 对 + 实体对 + val 载荷（⑬c msg 重载读 P1）
     w.Step(0.25f);   // 帧2：#16 分发（Update 后）→ 双回调
     pushFrame(9, e);     // 错 id（probe-other）
     pushFrame(7, other); // 错实体
@@ -2366,14 +2367,19 @@ void TestAnimEventBridge() {
     const char* def = slotText("animreg");
     const char* mid = slotText("animreg-hits");
     const char* fin = slotText("animreg-final");
-    std::printf("script-tests: [diag] anim-event slots: def='%s' mid='%s' fin='%s'\n",
-                def ? def : "(null)", mid ? mid : "(null)", fin ? fin : "(null)");
+    const char* msg = slotText("animreg-msg");
+    std::printf("script-tests: [diag] anim-event slots: def='%s' mid='%s' fin='%s' msg='%s'\n",
+                def ? def : "(null)", mid ? mid : "(null)", fin ? fin : "(null)",
+                msg ? msg : "(null)");
     Expect(def && std::strcmp(def, "d1 m0") == 0,
            "anim-event: Define hit=true miss=false (对账面)");
     Expect(mid && std::strcmp(mid, "1|1") == 0,
            "anim-event: hit fired on both subscribe paths");
     Expect(fin && std::strcmp(fin, "1|1") == 0,
            "anim-event: wrong id/src/unresolved never fired (三分支零触发)");
+    // ⑬c：带载荷重载命中恰一次 + P1 载荷读数（2.5 → ×10 整数化 25）
+    Expect(msg && std::strcmp(msg, "1|25") == 0,
+           "anim-event: msg overload fired once reading payload[1] (⑬c val)");
 
     SetAnimEventTable(""); // 进程级状态还原（后续测试裸 id 模式起步）
     g_sh.ResetPlayDomain();

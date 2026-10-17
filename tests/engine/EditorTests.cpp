@@ -345,6 +345,47 @@ void TestClipEdit() {
     Expect(assets::ParseClipJson(assets::ClipToJson(c)).fps == c.fps,
            "clip fractional fps roundtrip");
 
+    // ⑬c：打点数值载荷——val 可选（缺省 hasVal=false）；带 val 解析/落盘/
+    // roundtrip；no-edit 往返（无 val 档序列化不出现 "val"）；val 非数值拒
+    c = assets::ParseClipJson(
+        "{\"fps\":8,\"frames\":[{\"sheet\":\"000000000000000f\",\"cell\":0}],"
+        "\"events\":[{\"frame\":0,\"id\":3,\"val\":12.5}]}");
+    Expect(c.ok && c.events.size() == 1 && c.events[0].hasVal &&
+               std::fabs(c.events[0].val - 12.5f) < 1e-6f,
+           "clip event val parsed");
+    {
+        const std::string j = assets::ClipToJson(c);
+        Expect(j.find("\"val\": 12.5") != std::string::npos,
+               "clip event val serialized (fractional one-decimal)");
+        const assets::ClipData back = assets::ParseClipJson(j);
+        Expect(back.ok && back.events.size() == 1 && back.events[0].hasVal &&
+                   std::fabs(back.events[0].val - 12.5f) < 1e-6f,
+               "clip event val roundtrip");
+    }
+    c.events[0].hasVal = false; // 去 val → 序列化不出现 val 字段（旧档语义）
+    Expect(assets::ClipToJson(c).find("\"val\"") == std::string::npos,
+           "clip event val omitted when hasVal=false");
+    c = assets::ParseClipJson(
+        "{\"fps\":8,\"frames\":[{\"sheet\":\"000000000000000f\",\"cell\":0}],"
+        "\"events\":[{\"frame\":0,\"id\":3}]}");
+    Expect(c.ok && c.events.size() == 1 && !c.events[0].hasVal && c.events[0].val == 0.0f,
+           "clip event without val parses hasVal=false");
+    Expect(assets::ClipToJson(c).find("\"val\"") == std::string::npos,
+           "clip no-edit roundtrip stays val-free");
+    Expect(!assets::ParseClipJson(
+                "{\"fps\":8,\"frames\":[{\"sheet\":\"000000000000000f\",\"cell\":0}],"
+                "\"events\":[{\"frame\":0,\"id\":3,\"val\":\"x\"}]}")
+                .ok,
+           "clip event non-numeric val rejected");
+    c = assets::ParseClipJson(
+        "{\"fps\":8,\"frames\":[{\"sheet\":\"000000000000000f\",\"cell\":0}],"
+        "\"events\":[{\"frame\":0,\"id\":3,\"val\":7}]}");
+    {
+        const std::string j = assets::ClipToJson(c);
+        Expect(j.find("\"val\": 7 }") != std::string::npos,
+               "clip event integral val serialized without decimals");
+    }
+
     // 空帧表合法（新建 clip 起步态；保存侧 ≥1 帧校验归面板）
     c = assets::ParseClipJson("{\"fps\":8,\"frames\":[]}");
     Expect(c.ok && c.frames.empty(), "clip empty frames parse");
